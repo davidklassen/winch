@@ -1,5 +1,3 @@
-//go:build integration
-
 package integration
 
 import (
@@ -18,6 +16,10 @@ func TestMain(m *testing.M) {
 }
 
 func run(m *testing.M) int {
+	if os.Getenv("WINCH_VM_IMAGE") == "" {
+		fmt.Println("integration tests skipped: WINCH_VM_IMAGE is not set; run make test-integration")
+		return 0
+	}
 	image, arch, err := vmtest.FromEnv()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
