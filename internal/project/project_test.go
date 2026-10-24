@@ -10,6 +10,7 @@ import (
 	"testing/fstest"
 
 	"github.com/davidklassen/winch/internal/golden"
+	"github.com/davidklassen/winch/internal/module"
 )
 
 var base = map[string]string{
@@ -72,11 +73,39 @@ func describe(p *Project) string {
 		}
 		fmt.Fprintf(&b, "stage %s hosts=%s targets=%s\n", s.Name, s.Hosts, strings.Join(names, ","))
 		for _, st := range s.Steps {
-			args, _ := json.Marshal(st.Args)
-			fmt.Fprintf(&b, "  %s %s at %s\n", st.Module, args, st.Pos)
+			describeStep(&b, "  ", st)
+			if st.Recipe == nil {
+				continue
+			}
+			for _, r := range st.Recipe.Require {
+				fmt.Fprintf(&b, "    require %s at %s\n", r.Text, r.Pos)
+			}
+			for _, rs := range st.Recipe.Steps {
+				describeStep(&b, "    ", rs)
+			}
 		}
 	}
 	return b.String()
+}
+
+func describeStep(b *strings.Builder, indent string, st Step) {
+	name := ""
+	if st.Name != "" {
+		name = fmt.Sprintf(" name=%q", st.Name)
+	}
+	if st.Recipe != nil {
+		fmt.Fprintf(b, "%srecipe %s%s at %s\n", indent, st.Recipe.Name, name, st.Pos)
+		return
+	}
+	args, _ := json.Marshal(st.Args)
+	data := ""
+	if f, ok := st.Args.(*module.File); ok && f.Data != nil {
+		c := *f
+		c.Data = nil
+		args, _ = json.Marshal(&c)
+		data = fmt.Sprintf(" data=%q", f.Data)
+	}
+	fmt.Fprintf(b, "%s%s %s%s%s at %s\n", indent, st.Module, strings.Replace(string(args), `,"data":null`, "", 1), data, name, st.Pos)
 }
 
 func result(p *Project, err error) []byte {
@@ -198,6 +227,19 @@ func TestValidate(t *testing.T) {
 		{name: "every-pipeline", files: map[string]string{
 			"pipelines/other.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - pkg: {}\n",
 		}},
+		{name: "recipe-error-once", files: map[string]string{
+			"pipelines/site.yaml":       stage("      - recipe: nginx\n"),
+			"pipelines/other.yaml":      stage("      - recipe: nginx\n"),
+			"recipes/nginx/recipe.yaml": "stpes: []\n",
+		}},
+		{name: "recipe-twice-in-one-inventory", files: map[string]string{
+			"winch.yaml":              "name: acme\n",
+			"inventories/a.yaml":      "hosts:\n  web1: {}\n",
+			"inventories/b.yaml":      "hosts:\n  web2: {}\n",
+			"pipelines/site.yaml":     "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: pkg\n  - name: b\n    hosts: web2\n    steps:\n      - recipe: pkg\n",
+			"recipes/pkg/recipe.yaml": "steps:\n  - pkg:\n      name: curl\n",
+			"inventories/test.yaml":   "",
+		}},
 		{name: "no-inventories", files: map[string]string{
 			"winch.yaml":            "name: acme\n",
 			"inventories/test.yaml": "",
@@ -212,5 +254,227 @@ func TestValidate(t *testing.T) {
 			}
 			golden.Assert(t, filepath.Join("testdata", "validate", tt.name+".golden"), []byte(got))
 		})
+	}
+}
+
+var nginx = map[string]string{
+	"pipelines/site.yaml": `stages:
+  - name: web
+    hosts: all
+    steps:
+      - name: Web server
+        recipe: nginx
+      - file:
+          path: /etc/issue
+          content: x
+`,
+	"recipes/nginx/recipe.yaml": `require:
+  - !expr 'facts.os.id == "debian" and facts.os.version == "13"'
+  - !expr 'facts.os.codename in ["bookworm", "trixie"]'
+steps:
+  - pkg:
+      name: nginx
+  - name: Site
+    file:
+      path: /etc/nginx/sites-available/default
+      template: sites/default.tmpl
+  - file:
+      path: /etc/nginx/snippets/tls.conf
+      source: snippets/tls.conf
+`,
+	"recipes/nginx/templates/sites/default.tmpl": "server_name {{ .host.name }};\n",
+	"recipes/nginx/files/snippets/tls.conf":      "ssl_protocols TLSv1.3;\n",
+	"recipes/pkg/recipe.yaml":                    "steps:\n  - pkg:\n      name: curl\n",
+}
+
+func with(base map[string]string, files map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range files {
+		out[k] = v
+	}
+	return out
+}
+
+func stage(steps string) string {
+	return "stages:\n  - name: web\n    hosts: all\n    steps:\n" + steps
+}
+
+func recipe(steps string) string {
+	return "steps:\n" + steps
+}
+
+// spec: Recipes; Pipelines; Steps; Templates and expressions/When they run; Modules/file, dir, link
+func TestLoadRecipes(t *testing.T) {
+	tests := []struct {
+		name  string
+		files map[string]string
+	}{
+		{name: "recipe"},
+		{name: "recipe-named-like-module", files: map[string]string{
+			"pipelines/site.yaml": stage("      - recipe: pkg\n"),
+		}},
+		{name: "unknown-recipe", files: map[string]string{
+			"pipelines/site.yaml": stage("      - recipe: ngnix\n"),
+		}},
+		{name: "bad-recipe-name", files: map[string]string{
+			"pipelines/site.yaml": stage("      - recipe: ../nginx\n"),
+		}},
+		{name: "empty-recipe-name", files: map[string]string{
+			"pipelines/site.yaml": stage("      - recipe: \"\"\n"),
+		}},
+		{name: "step-key-typo", files: map[string]string{
+			"pipelines/site.yaml": stage("      - recpie: nginx\n      - nmae: x\n        pkg:\n          name: curl\n"),
+		}},
+		{name: "require-not-a-list", files: map[string]string{
+			"recipes/nginx/recipe.yaml": "require: !expr 'facts.os.id == \"debian\"'\nsteps: []\n",
+		}},
+		{name: "template-names-in-branches", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
+			"recipes/nginx/templates/bad.tmpl": "{{ if .vars.x }}a{{ end }}{{ range .vars.l }}b{{ end }}\n" +
+				"{{ .hots.name.x }} {{ $.hots }}\n" +
+				"{{ define \"row\" }}{{ $.name }}{{ .y }}{{ end }}{{ template \"row\" .host }}\n",
+		}},
+		{name: "template-parse-error-mid-line", files: map[string]string{
+			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
+			"recipes/nginx/templates/bad.tmpl": "a {{ .host.name ) }}\n",
+		}},
+		{name: "recipe-without-file", files: map[string]string{
+			"pipelines/site.yaml":       stage("      - recipe: empty\n"),
+			"recipes/empty/files/a.txt": "a",
+		}},
+		{name: "recipe-unknown-key", files: map[string]string{
+			"recipes/nginx/recipe.yaml": "stpes: []\n",
+		}},
+		{name: "recipe-in-recipe", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe("  - recipe: pkg\n"),
+		}},
+		{name: "recipe-step-with-module", files: map[string]string{
+			"pipelines/site.yaml": stage("      - recipe: nginx\n        pkg:\n          name: x\n"),
+		}},
+		{name: "recipe-step-other-key", files: map[string]string{
+			"pipelines/site.yaml": stage("      - recipe: nginx\n        foo: 1\n"),
+		}},
+		{name: "missing-template", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe("  - file:\n      path: /a\n      template: nope.tmpl\n"),
+		}},
+		{name: "missing-source", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe("  - file:\n      path: /a\n      source: nope.conf\n"),
+		}},
+		{name: "source-is-directory", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe("  - file:\n      path: /a\n      source: snippets\n"),
+		}},
+		{name: "template-parse-error", files: map[string]string{
+			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
+			"recipes/nginx/templates/bad.tmpl": "line 1\n{{ if .host.name }}\n",
+		}},
+		{name: "template-unknown-name", files: map[string]string{
+			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
+			"recipes/nginx/templates/bad.tmpl": "a\n  {{ .vars.domain }}\n{{ with .host }}{{ .x }}{{ $.hots.name }}{{ end }}\n",
+		}},
+		{name: "template-in-stage", files: map[string]string{
+			"pipelines/site.yaml": stage("      - file:\n          path: /a\n          template: a.tmpl\n      - file:\n          path: /b\n          source: b\n"),
+		}},
+		{name: "require-untagged", files: map[string]string{
+			"recipes/nginx/recipe.yaml": "require:\n  - facts.os.id == \"debian\"\nsteps: []\n",
+		}},
+		{name: "require-errors", files: map[string]string{
+			"recipes/nginx/recipe.yaml": "require:\n  - !expr 'facts.os.id =='\n  - !expr 'fact.os.id == \"debian\"'\n  - !expr 'facts.os.idd == \"debian\"'\n  - !expr facts.os.id\n  - !expr 'facts.os.version == 13'\nsteps: []\n",
+		}},
+		{name: "recipe-twice-in-stage", files: map[string]string{
+			"pipelines/site.yaml": stage("      - recipe: pkg\n      - recipe: pkg\n"),
+		}},
+		{name: "recipe-in-overlapping-stages", files: map[string]string{
+			"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: pkg\n  - name: b\n    hosts: web2\n    steps:\n      - recipe: pkg\n",
+		}},
+		{name: "recipe-in-separate-stages", files: map[string]string{
+			"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: web1\n    steps:\n      - recipe: pkg\n  - name: b\n    hosts: web2\n    steps:\n      - recipe: pkg\n",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeProject(t, with(nginx, tt.files))
+			p, err := Load(dir, "", "site")
+			golden.Assert(t, filepath.Join("testdata", "load", tt.name+".golden"), result(p, err))
+		})
+	}
+}
+
+// spec: Templates and expressions/Data; Templates and expressions/When they run; Modules/file, dir, link
+func TestRender(t *testing.T) {
+	binary := string([]byte{0, 1, 0xfe, 0xff, '\r', '\n', 0x80})
+	tests := []struct {
+		name     string
+		template string
+		want     map[string]string
+	}{
+		{"host fields", "{{ .host.name }} {{ .host.short }} {{ .host.address }}\n", map[string]string{
+			"web1.acme.com": "web1.acme.com web1 192.0.2.1\n",
+			"web2":          "web2 web2 web2\n",
+		}},
+		{"no trailing newline", "{{ .host.short }}", map[string]string{"web2": "web2"}},
+		{"with and dollar", "{{ with .host }}{{ .short }}-{{ $.host.name }}{{ end }}", map[string]string{"web1.acme.com": "web1-web1.acme.com"}},
+		{"missing key", "a\n b {{ .host.nme }}\n", map[string]string{
+			"web1.acme.com": "error: recipes/r/templates/t.tmpl:2:12: .host.nme: map has no entry for key \"nme\"",
+		}},
+		{"source bytes", "", map[string]string{"web2": binary}},
+		{"range over a map", "{{ range $k, $v := .host }}{{ $k }}={{ $v }};{{ end }}", map[string]string{"web2": "address=web2;name=web2;short=web2;"}},
+		{"index", "{{ index .host \"short\" }}", map[string]string{"web2": "web2"}},
+		{"index of a missing key", "{{ index .host \"nme\" }}", map[string]string{
+			"web2": "error: recipes/r/templates/t.tmpl:1:4: index .host \"nme\": error calling index: map has no entry for key \"nme\"",
+		}},
+		{"empty output", "{{ if false }}x{{ end }}", map[string]string{"web2": ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			step := "  - file:\n      path: /a\n      template: t.tmpl\n"
+			if tt.template == "" {
+				step = "  - file:\n      path: /a\n      source: s.bin\n"
+			}
+			dir := writeProject(t, map[string]string{
+				"inventories/test.yaml":      "hosts:\n  web1.acme.com:\n    address: 192.0.2.1\n  web2: {}\n",
+				"pipelines/site.yaml":        stage("      - recipe: r\n"),
+				"recipes/r/recipe.yaml":      recipe(step),
+				"recipes/r/templates/t.tmpl": tt.template,
+				"recipes/r/files/s.bin":      binary,
+			})
+			p, err := Load(dir, "", "site")
+			if err != nil {
+				t.Fatal(err)
+			}
+			st := p.Pipeline.Stages[0].Steps[0].Recipe.Steps[0]
+			for _, h := range p.Inventory.Hosts {
+				want, ok := tt.want[h.Name]
+				if !ok {
+					continue
+				}
+				got := ""
+				if es, err := st.For(h); err != nil {
+					got = "error: " + err.Error()
+				} else {
+					got = string(es.Args.(*module.File).Data)
+				}
+				if got != want {
+					t.Errorf("%s: got %q, want %q", h.Name, got, want)
+				}
+			}
+		})
+	}
+}
+
+// spec: Recipes
+func TestSourceLinkOutOfRecipe(t *testing.T) {
+	dir := writeProject(t, with(nginx, map[string]string{
+		"recipes/nginx/recipe.yaml": recipe("  - file:\n      path: /a\n      source: key\n"),
+		"secret":                    "private key\n",
+	}))
+	if err := os.Symlink("../../../secret", filepath.Join(dir, "recipes/nginx/files/key")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(dir, "", "site")
+	if err == nil || !strings.Contains(err.Error(), "recipes/nginx/recipe.yaml:4:15: source: read recipes/nginx/files/key:") {
+		t.Errorf("a source link out of the recipe: %v", err)
 	}
 }

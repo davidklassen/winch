@@ -1,0 +1,2 @@
+pipelines/site.yaml:7:12: unknown host or group "web2" in inventories/a.yaml; did you mean "web1"?
+pipelines/site.yaml:9:9: recipe pkg runs twice on host web2; it runs first at pipelines/site.yaml:5:9

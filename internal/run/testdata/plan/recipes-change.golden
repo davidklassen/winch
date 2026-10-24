@@ -1,0 +1,18 @@
+stdout:
+web1
+  web
+    Web server
+      ~ Site: file /etc/nginx/site
+          @@ -1,1 +1,1 @@
+          -server_name old;
+          +server_name web1;
+      ~ file /etc/nginx/logo.png
+          content (binary or larger than 1 MiB)
+    + file /etc/issue
+        owner root, group root, mode 0644
+        @@ -0,0 +1,1 @@
+        +stage step
+
+2 hosts: 1 to change, 0 unchanged, 0 unknown, 1 failed
+stderr:
+web2: recipes/tools/templates/tools.tmpl:1:38: .host.nope: map has no entry for key "nope"

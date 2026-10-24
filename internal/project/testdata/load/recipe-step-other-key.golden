@@ -1,0 +1,1 @@
+pipelines/site.yaml:6:9: a recipe step has only name and recipe, not "foo"

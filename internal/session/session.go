@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/helperbin"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
@@ -220,6 +221,12 @@ func withoutContent(m module.Module) module.Module {
 		return c.WithoutContent()
 	}
 	return m
+}
+
+func (s *Session) Facts(ctx context.Context) (facts.Facts, error) {
+	var f facts.Facts
+	err := s.call("facts", nil, &f)
+	return f, err
 }
 
 // Check checks a step and updates st. It sends only the hash of the content.

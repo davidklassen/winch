@@ -1,0 +1,1 @@
+recipes/nginx/recipe.yaml:4:17: template: recipes/nginx/templates/nope.tmpl does not exist

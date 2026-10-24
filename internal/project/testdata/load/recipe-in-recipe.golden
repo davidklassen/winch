@@ -1,0 +1,1 @@
+recipes/nginx/recipe.yaml:2:5: a recipe cannot run another recipe; recipe steps belong in stages

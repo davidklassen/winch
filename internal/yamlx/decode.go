@@ -46,6 +46,10 @@ func (d *decoder) value(n *Node, v reflect.Value, name string) {
 		v.Set(reflect.ValueOf(n))
 		return
 	}
+	if n.Tag != "" {
+		d.errorf(n.Pos, name, "%s is not allowed here", n.Tag)
+		return
+	}
 	if v.Type() == stringsType {
 		switch n.Kind {
 		case List:

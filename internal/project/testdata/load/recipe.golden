@@ -1,0 +1,12 @@
+project acme, inventory inventories/test.yaml
+host web1 address=192.0.2.1 user=admin
+host web2 address=web2 user=deploy
+pipeline site
+stage web hosts=all targets=web1,web2
+  recipe nginx name="Web server" at pipelines/site.yaml:5:9
+    require facts.os.id == "debian" and facts.os.version == "13" at recipes/nginx/recipe.yaml:2:5
+    require facts.os.codename in ["bookworm", "trixie"] at recipes/nginx/recipe.yaml:3:5
+    pkg {"name":["nginx"]} at recipes/nginx/recipe.yaml:5:5
+    file {"path":"/etc/nginx/sites-available/default"} name="Site" at recipes/nginx/recipe.yaml:7:5
+    file {"path":"/etc/nginx/snippets/tls.conf"} data="ssl_protocols TLSv1.3;\n" at recipes/nginx/recipe.yaml:11:5
+  file {"path":"/etc/issue"} data="x" at pipelines/site.yaml:7:9

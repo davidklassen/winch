@@ -23,13 +23,20 @@ import (
 )
 
 type File struct {
-	Path          string  `yaml:"path,required" json:"path"`
-	Content       *string `yaml:"content" json:"content,omitempty"`
-	ContentSHA256 string  `json:"content_sha256,omitempty"`
-	Owner         string  `yaml:"owner" json:"owner,omitempty"`
-	Group         string  `yaml:"group" json:"group,omitempty"`
-	Mode          string  `yaml:"mode" json:"mode,omitempty"`
-	Absent        bool    `yaml:"absent" json:"absent,omitempty"`
+	Path        string    `yaml:"path,required" json:"path"`
+	Content     *string   `yaml:"content" json:"-"`
+	Template    string    `yaml:"template" json:"-"`
+	TemplatePos yamlx.Pos `json:"-"`
+	Source      string    `yaml:"source" json:"-"`
+	SourcePos   yamlx.Pos `json:"-"`
+	// Data is the content for the host, from content, template, or source.
+	// Without omitempty, JSON keeps nil apart from empty content.
+	Data       []byte `json:"data"`
+	DataSHA256 string `json:"data_sha256,omitempty"`
+	Owner      string `yaml:"owner" json:"owner,omitempty"`
+	Group      string `yaml:"group" json:"group,omitempty"`
+	Mode       string `yaml:"mode" json:"mode,omitempty"`
+	Absent     bool   `yaml:"absent" json:"absent,omitempty"`
 }
 
 func (f *File) Main() string { return f.Path }
@@ -38,11 +45,27 @@ func (f *File) Validate() error {
 	if err := checkPath(f.Path); err != nil {
 		return err
 	}
+	sources := []arg{{"content", f.Content != nil}, {"template", f.Template != ""}, {"source", f.Source != ""}}
 	if f.Absent {
-		return absentTakesNone(arg{"content", f.Content != nil}, arg{"owner", f.Owner != ""}, arg{"group", f.Group != ""}, arg{"mode", f.Mode != ""})
+		return absentTakesNone(append(sources, arg{"owner", f.Owner != ""}, arg{"group", f.Group != ""}, arg{"mode", f.Mode != ""})...)
 	}
-	if f.Content == nil {
-		return &yamlx.FieldError{Field: "content", Msg: "a file needs content, or absent: true"}
+	set := 0
+	for _, a := range sources {
+		if a.set {
+			set++
+		}
+		if a.set && set > 1 {
+			return &yamlx.FieldError{Field: a.name, Msg: "a file has only one of content, template, and source"}
+		}
+	}
+	if set == 0 {
+		return &yamlx.FieldError{Field: "content", Msg: "a file needs content, template, or source, or absent: true"}
+	}
+	if err := checkRelative("template", f.Template); err != nil {
+		return err
+	}
+	if err := checkRelative("source", f.Source); err != nil {
+		return err
 	}
 	if err := checkNames(f.Owner, f.Group); err != nil {
 		return err
@@ -67,6 +90,13 @@ var modeRe = regexp.MustCompile(`^[0-7]{3,4}$`)
 func checkMode(mode, example string) error {
 	if mode != "" && !modeRe.MatchString(mode) {
 		return &yamlx.FieldError{Field: "mode", Msg: fmt.Sprintf("must be an octal mode such as %q", example)}
+	}
+	return nil
+}
+
+func checkRelative(field, p string) error {
+	if p != "" && (!fs.ValidPath(p) || p == ".") {
+		return &yamlx.FieldError{Field: field, Msg: `must be a clean relative path, such as "a/b.conf"`}
 	}
 	return nil
 }
@@ -99,14 +129,20 @@ func absentTakesNone(args ...arg) error {
 
 func (f *File) WithoutContent() Module {
 	c := *f
-	if f.Content != nil {
-		c.ContentSHA256 = sha(*f.Content)
-		c.Content = nil
+	if f.Data != nil {
+		c.DataSHA256 = sha(f.Data)
+		c.Data = nil
 	}
 	return &c
 }
 
-func (f *File) Text() *string { return f.Content }
+// Text returns the content when it is text, for a diff.
+func (f *File) Text() *string {
+	if f.Data == nil || !isText(f.Data) {
+		return nil
+	}
+	return new(string(f.Data))
+}
 
 const maxDiff = 1 << 20
 
@@ -276,7 +312,7 @@ func (f *File) Apply(ctx context.Context) error {
 			return setAttrs(r, uid, gid, mode)
 		}
 	}
-	if f.Content == nil {
+	if f.Data == nil {
 		return ErrNeedContent
 	}
 	sub, err := mkdirs(dir, missing)
@@ -284,18 +320,18 @@ func (f *File) Apply(ctx context.Context) error {
 		return err
 	}
 	defer sub.Close()
-	return writeFile(sub, name, *f.Content, uid, gid, mode)
+	return writeFile(sub, name, f.Data, uid, gid, mode)
 }
 
 func (f *File) sum() string {
-	if f.Content != nil {
-		return sha(*f.Content)
+	if f.Data != nil {
+		return sha(f.Data)
 	}
-	return f.ContentSHA256
+	return f.DataSHA256
 }
 
-func sha(s string) string {
-	h := sha256.Sum256([]byte(s))
+func sha(b []byte) string {
+	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
 
@@ -315,10 +351,14 @@ func readText(r io.ReadSeeker, size int64) (string, bool) {
 		return "", false
 	}
 	data, err := io.ReadAll(r)
-	if err != nil || !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
+	if err != nil || !isText(data) {
 		return "", false
 	}
 	return string(data), true
+}
+
+func isText(data []byte) bool {
+	return len(data) <= maxDiff && utf8.Valid(data) && bytes.IndexByte(data, 0) < 0
 }
 
 func kind(fi fs.FileInfo) string {
@@ -562,14 +602,14 @@ func parentChanges(missing []string) []string {
 	return changes
 }
 
-func writeFile(dir *os.Root, name, content string, uid, gid, mode uint32) error {
+func writeFile(dir *os.Root, name string, content []byte, uid, gid, mode uint32) error {
 	tmpName := ".winch-" + rand.Text()
 	tmp, err := dir.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
 	defer dir.Remove(tmpName)
-	_, err = tmp.WriteString(content)
+	_, err = tmp.Write(content)
 	if err == nil {
 		err = tmp.Chown(int(uid), int(gid))
 	}

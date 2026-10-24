@@ -1,0 +1,10 @@
+project acme, inventory inventories/test.yaml
+host web1 address=192.0.2.1 user=admin
+host web2 address=web2 user=deploy
+pipeline site
+stage a hosts=web1 targets=web1
+  recipe pkg at pipelines/site.yaml:5:9
+    pkg {"name":["curl"]} at recipes/pkg/recipe.yaml:2:5
+stage b hosts=web2 targets=web2
+  recipe pkg at pipelines/site.yaml:9:9
+    pkg {"name":["curl"]} at recipes/pkg/recipe.yaml:2:5

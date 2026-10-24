@@ -156,3 +156,48 @@ func TestStrings(t *testing.T) {
 		})
 	}
 }
+
+// spec: Templates and expressions; YAML
+func TestTags(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"expr", "x: !expr 'facts.os.id == \"debian\"'\n", `!expr "facts.os.id == \"debian\""`},
+		{"expr keeps the text", "x: !expr 010\n", `!expr "010"`},
+		{"expr on a list", "x: !expr [a]\n", `t.yaml:1:4: the !expr tag needs a string, got a list`},
+		{"expr on a map", "x: !expr {a: b}\n", `t.yaml:1:4: the !expr tag needs a string, got a map`},
+		{"tpl", "x: !tpl a\n", `t.yaml:1:4: unknown tag "!tpl"`},
+		{"str", "x: !!str 10\n", ` "10"`},
+		{"tag on a key", "!expr x: a\n", `t.yaml:1:1: a map key cannot have the tag "!expr"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := Parse("t.yaml", []byte(tt.yaml))
+			got := ""
+			if err != nil {
+				got = err.Error()
+			} else {
+				v := n.Pairs[0].Value
+				got = fmt.Sprintf("%s %q", v.Tag, v.Value)
+			}
+			if got != tt.want {
+				t.Errorf("got  %s\nwant %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Templates and expressions
+func TestTagInPlainField(t *testing.T) {
+	n, err := Parse("t.yaml", []byte("name: !expr x\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = Decode(n, &testDoc{})
+	want := "t.yaml:1:7: name: !expr is not allowed here"
+	if err == nil || err.Error() != want {
+		t.Errorf("got %v, want %s", err, want)
+	}
+}

@@ -3,12 +3,14 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/helperbin"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
@@ -219,13 +221,33 @@ while read -r line; do
   printf '%s\n' "$line" >> ` + file + `
   id=$(printf '%s' "$line" | sed 's/^{"id":\([0-9]*\).*/\1/')
   case "$line" in
-  *'"method":"apply"'*'"content":'*) echo '{"id":'$id',"result":{"status":"change","action":"create"}}' ;;
+  *'"method":"apply"'*'"data":"'*) echo '{"id":'$id',"result":{"status":"change","action":"create"}}' ;;
+  *'"method":"facts"'*) echo '{"id":'$id',"result":{"os":{"id":"debian","version":"13","codename":"trixie"}}}' ;;
   *'"method":"apply"'*) echo '{"id":'$id',"error":"apply needs the content","need_content":true}' ;;
   *) echo '{"id":'$id',"result":{"status":"ok"}}' ;;
   esac
 done
 `
 	return helperbin.New(arch, []byte(script))
+}
+
+// spec: Remote execution/Facts
+func TestFacts(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	dir := t.TempDir()
+	s, err := Open(context.Background(), Config{
+		Host: "web1", Address: "web1", Dir: dir,
+		Binaries: []helperbin.Binary{fakeHelper("amd64"), recordingHelper("arm64", filepath.Join(dir, "requests"))},
+		Hello:    protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	f, err := s.Facts(context.Background())
+	if want := (facts.OS{ID: "debian", Version: "13", Codename: "trixie"}); err != nil || f.OS != want {
+		t.Errorf("facts = %+v, %v; want %+v", f, err, want)
+	}
 }
 
 // spec: Remote execution/Helper
@@ -242,7 +264,8 @@ func TestContentOnlyWhenNeeded(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := "secret text"
-	f := &module.File{Path: "/etc/motd", Content: &content}
+	f := &module.File{Path: "/etc/motd", Data: []byte(content)}
+	wire := base64.StdEncoding.EncodeToString(f.Data)
 	if _, err := s.Check(context.Background(), "file", f, &module.State{}); err != nil {
 		t.Fatal(err)
 	}
@@ -259,14 +282,14 @@ func TestContentOnlyWhenNeeded(t *testing.T) {
 		t.Fatalf("requests:\n%s", data)
 	}
 	for i, wantContent := range []bool{false, false, false, true} {
-		if got := strings.Contains(lines[i], content); got != wantContent {
+		if got := strings.Contains(lines[i], wire); got != wantContent {
 			t.Errorf("request %d has content = %v, want %v: %s", i+1, got, wantContent, lines[i])
 		}
 	}
-	if !strings.Contains(lines[1], `"content_sha256":`) {
+	if !strings.Contains(lines[1], `"data_sha256":`) {
 		t.Errorf("check has no hash: %s", lines[1])
 	}
-	if f.Content == nil || *f.Content != content {
+	if string(f.Data) != content {
 		t.Error("check changed the step")
 	}
 }

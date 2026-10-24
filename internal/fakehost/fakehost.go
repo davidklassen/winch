@@ -1,5 +1,5 @@
-// Package fakehost is a test double for hosts: it keeps files and packages in
-// memory and checks and applies file and pkg steps against them.
+// Package fakehost is a test double for hosts: it keeps files, packages, and
+// facts in memory and checks and applies file and pkg steps against them.
 package fakehost
 
 import (
@@ -9,32 +9,37 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/run"
 )
 
 type Hosts struct {
-	mu        sync.Mutex
-	files     map[string]map[string]string
-	pkgs      map[string]map[string]bool
-	pkgFiles  map[string]map[string]string
-	failCheck map[string]bool
-	failApply map[string]bool
-	Applies   int
-	Refreshes map[string]int
+	mu         sync.Mutex
+	files      map[string]map[string]string
+	pkgs       map[string]map[string]bool
+	pkgFiles   map[string]map[string]string
+	failCheck  map[string]bool
+	failApply  map[string]bool
+	Applies    int
+	Refreshes  map[string]int
+	FactsReads map[string]int
+	facts      map[string]facts.Facts
 	// Open is the number of open connections.
 	Open int
 }
 
 func New() *Hosts {
 	return &Hosts{
-		files:     map[string]map[string]string{},
-		pkgs:      map[string]map[string]bool{},
-		pkgFiles:  map[string]map[string]string{},
-		failCheck: map[string]bool{},
-		failApply: map[string]bool{},
-		Refreshes: map[string]int{},
+		files:      map[string]map[string]string{},
+		pkgs:       map[string]map[string]bool{},
+		pkgFiles:   map[string]map[string]string{},
+		failCheck:  map[string]bool{},
+		failApply:  map[string]bool{},
+		Refreshes:  map[string]int{},
+		FactsReads: map[string]int{},
+		facts:      map[string]facts.Facts{},
 	}
 }
 
@@ -55,6 +60,13 @@ func (h *Hosts) SetPkgFile(pkg, path, content string) {
 		h.pkgFiles[pkg] = map[string]string{}
 	}
 	h.pkgFiles[pkg][path] = content
+}
+
+// SetFacts sets the facts of a host. A host without them is Debian 13.
+func (h *Hosts) SetFacts(host string, f facts.Facts) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.facts[host] = f
 }
 
 func (h *Hosts) File(host, path string) (string, bool) {
@@ -116,7 +128,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	case !ok:
 		return module.Result{Status: module.Change, Action: module.Create, Old: new(""),
 			Changes: []string{"owner root, group root, mode 0644"}}, nil
-	case cur != *f.Content:
+	case cur != string(f.Data):
 		return module.Result{Status: module.Change, Action: module.Modify, Old: &cur}, nil
 	}
 	return module.Result{Status: module.OK}, nil
@@ -185,8 +197,18 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 	if c.hosts.files[c.host] == nil {
 		c.hosts.files[c.host] = map[string]string{}
 	}
-	c.hosts.files[c.host][f.Path] = *f.Content
+	c.hosts.files[c.host][f.Path] = string(f.Data)
 	return res, nil
+}
+
+func (c *Conn) Facts(ctx context.Context) (facts.Facts, error) {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	c.hosts.FactsReads[c.host]++
+	if f, ok := c.hosts.facts[c.host]; ok {
+		return f, nil
+	}
+	return facts.Facts{OS: facts.OS{ID: "debian", Version: "13", Codename: "trixie"}}, nil
 }
 
 func (c *Conn) Close() error {

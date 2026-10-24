@@ -1,0 +1,2 @@
+pipelines/site.yaml:5:9: unknown module "recpie"; did you mean "recipe"?
+pipelines/site.yaml:6:9: unknown module "nmae"; did you mean "name"?

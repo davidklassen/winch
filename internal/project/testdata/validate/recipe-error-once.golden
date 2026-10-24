@@ -1,0 +1,2 @@
+recipes/nginx/recipe.yaml:1:1: unknown key "stpes"; did you mean "steps"?
+recipes/nginx/recipe.yaml:1:1: missing key "steps"

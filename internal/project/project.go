@@ -5,11 +5,14 @@ package project
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
+	"text/template"
 	"unicode"
 
 	"github.com/davidklassen/winch/internal/module"
@@ -51,6 +54,8 @@ type Group struct {
 type Pipeline struct {
 	Name   string
 	Stages []Stage
+	// Recipes are the recipes of each host in the pipeline.
+	Recipes map[string][]*Recipe
 }
 
 type Stage struct {
@@ -62,10 +67,14 @@ type Stage struct {
 	Targets []Host
 }
 
+// Step is a module step, or a recipe step with Recipe set.
 type Step struct {
+	Name   string
 	Module string
 	Args   module.Module
 	Pos    yamlx.Pos
+	Recipe *Recipe
+	tmpl   *template.Template
 }
 
 // Load reads the project in dir with one inventory and one pipeline. The
@@ -76,7 +85,8 @@ func Load(dir, inventory, pipeline string) (*Project, error) {
 		return nil, cfgErr
 	}
 	invs, invErr := loadInventories(dir, inventory, cfg, false)
-	pl, plErr := loadPipeline(dir, pipeline)
+	l := newLoader(dir)
+	pl, plErr := l.loadPipeline(pipeline)
 	if err := errors.Join(cfgErr, invErr, plErr); err != nil {
 		return nil, err
 	}
@@ -100,8 +110,9 @@ func Validate(dir, inventory string) error {
 	if err != nil {
 		return err
 	}
+	l := newLoader(dir)
 	for _, file := range files {
-		pl, err := decodePipeline(dir, file)
+		pl, err := l.decodePipeline(file)
 		errs = append(errs, err)
 		if err != nil {
 			continue
@@ -155,14 +166,31 @@ func loadInventories(dir, flag string, cfg *Config, all bool) ([]*Inventory, err
 	return invs, errors.Join(errs...)
 }
 
-// resolve sets the targets of every stage from the inventory.
+// resolve sets the targets of every stage and the recipes of every host from
+// the inventory, and checks that a recipe runs at most once per host.
 func resolve(inv *Inventory, pl *Pipeline) error {
 	var errs []error
+	first := map[[2]string]yamlx.Pos{}
+	pl.Recipes = map[string][]*Recipe{}
 	for i := range pl.Stages {
 		s := &pl.Stages[i]
 		var err error
 		s.Targets, err = inv.match(s.Hosts, s.HostsPos)
 		errs = append(errs, err)
+		for _, st := range s.Steps {
+			if st.Recipe == nil {
+				continue
+			}
+			for _, h := range s.Targets {
+				key := [2]string{h.Name, st.Recipe.Name}
+				if pos, ok := first[key]; ok {
+					errs = append(errs, yamlx.Errorf(st.Pos, "recipe %s runs twice on host %s; it runs first at %s", st.Recipe.Name, h.Name, pos))
+					break
+				}
+				first[key] = st.Pos
+				pl.Recipes[h.Name] = append(pl.Recipes[h.Name], st.Recipe)
+			}
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -296,8 +324,19 @@ type stageFile struct {
 	Pos      yamlx.Pos
 }
 
-func loadPipeline(dir, name string) (*Pipeline, error) {
-	files, err := list(dir, "pipelines")
+// loader loads pipelines and the recipes they use, each recipe once.
+type loader struct {
+	dir string
+	// recipes holds nil for a recipe that failed to load.
+	recipes map[string]*Recipe
+}
+
+func newLoader(dir string) *loader {
+	return &loader{dir: dir, recipes: map[string]*Recipe{}}
+}
+
+func (l *loader) loadPipeline(name string) (*Pipeline, error) {
+	files, err := list(l.dir, "pipelines")
 	if err != nil {
 		return nil, err
 	}
@@ -309,15 +348,15 @@ func loadPipeline(dir, name string) (*Pipeline, error) {
 		}
 		return nil, fmt.Errorf("unknown pipeline %q%s", name, yamlx.Suggest(name, names))
 	}
-	return decodePipeline(dir, file)
+	return l.decodePipeline(file)
 }
 
 func pipelineName(file string) string {
 	return strings.TrimSuffix(filepath.Base(file), ".yaml")
 }
 
-func decodePipeline(dir, file string) (*Pipeline, error) {
-	n, err := parse(dir, file)
+func (l *loader) decodePipeline(file string) (*Pipeline, error) {
+	n, err := parse(l.dir, file)
 	if err != nil {
 		return nil, err
 	}
@@ -335,12 +374,14 @@ func decodePipeline(dir, file string) (*Pipeline, error) {
 		seen[sf.Name] = true
 		s := Stage{Name: sf.Name, Hosts: sf.Hosts, HostsPos: sf.HostsPos}
 		for _, sn := range sf.Steps {
-			st, err := loadStep(sn)
-			if err != nil {
+			st, err := l.loadStep(sn, nil)
+			switch {
+			case errors.Is(err, errReported):
+			case err != nil:
 				errs = append(errs, err)
-				continue
+			default:
+				s.Steps = append(s.Steps, st)
 			}
-			s.Steps = append(s.Steps, st)
 		}
 		pl.Stages = append(pl.Stages, s)
 	}
@@ -350,16 +391,35 @@ func decodePipeline(dir, file string) (*Pipeline, error) {
 	return pl, nil
 }
 
-func loadStep(n *yamlx.Node) (Step, error) {
+// loadStep loads a step of a stage, or of the recipe r.
+func (l *loader) loadStep(n *yamlx.Node, r *Recipe) (Step, error) {
 	if n.Kind != yamlx.Map {
 		return Step{}, yamlx.Errorf(n.Pos, "a step must be a map, got %s", yamlx.Describe(n))
 	}
 	st := Step{Pos: n.Pos}
+	isRecipe := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "recipe" })
+	var recipe string
+	var recipePos yamlx.Pos
 	var errs []error
 	for _, p := range n.Pairs {
+		switch {
+		case p.Key == "name":
+			errs = append(errs, yamlx.Decode(p.Value, &st.Name))
+			continue
+		case p.Key == "recipe" && r != nil:
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "a recipe cannot run another recipe; recipe steps belong in stages"))
+			continue
+		case p.Key == "recipe":
+			errs = append(errs, yamlx.Decode(p.Value, &recipe))
+			recipePos = p.Value.Pos
+			continue
+		case isRecipe:
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "a recipe step has only name and recipe, not %q", p.Key))
+			continue
+		}
 		m, ok := module.New(p.Key)
 		if !ok {
-			errs = append(errs, yamlx.Errorf(p.KeyPos, "unknown module %q%s", p.Key, yamlx.Suggest(p.Key, module.Names())))
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "unknown module %q%s", p.Key, yamlx.Suggest(p.Key, append(module.Names(), "name", "recipe"))))
 			continue
 		}
 		if st.Args != nil {
@@ -375,8 +435,74 @@ func loadStep(n *yamlx.Node) (Step, error) {
 	if err := errors.Join(errs...); err != nil {
 		return Step{}, err
 	}
+	if isRecipe {
+		var err error
+		st.Recipe, err = l.recipe(recipe, recipePos)
+		return st, err
+	}
 	if st.Args == nil {
 		return Step{}, yamlx.Errorf(n.Pos, "a step needs a module")
 	}
+	if f, ok := st.Args.(*module.File); ok {
+		if err := l.fileContent(f, &st, r); err != nil {
+			return Step{}, err
+		}
+	}
 	return st, nil
+}
+
+// fileContent sets the data of a file step from content or source, or parses
+// its template. Only a recipe step can use template and source.
+func (l *loader) fileContent(f *module.File, st *Step, r *Recipe) error {
+	switch {
+	case f.Content != nil:
+		f.Data = []byte(*f.Content)
+	case r == nil && f.Template != "":
+		return yamlx.Errorf(f.TemplatePos, "template: a step in a stage cannot use template; use it in a recipe")
+	case r == nil && f.Source != "":
+		return yamlx.Errorf(f.SourcePos, "source: a step in a stage cannot use source; use it in a recipe")
+	case f.Source != "":
+		data, err := l.readRecipeFile(r, "files", f.Source)
+		if err != nil {
+			return yamlx.Errorf(f.SourcePos, "source: %v", err)
+		}
+		f.Data = data
+	case f.Template != "":
+		text, err := l.readRecipeFile(r, "templates", f.Template)
+		if err != nil {
+			return yamlx.Errorf(f.TemplatePos, "template: %v", err)
+		}
+		st.tmpl, err = parseTemplate(r.Dir+"/templates/"+f.Template, text)
+		return err
+	}
+	return nil
+}
+
+// readRecipeFile reads name in the directory sub of a recipe. It does not
+// follow a symbolic link out of that directory.
+func (l *loader) readRecipeFile(r *Recipe, sub, name string) ([]byte, error) {
+	file := r.Dir + "/" + sub + "/" + name
+	f, err := os.OpenInRoot(filepath.Join(l.dir, r.Dir, sub), name)
+	if err != nil {
+		return nil, readError(file, err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, readError(file, err)
+	}
+	return data, nil
+}
+
+func readError(file string, err error) error {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("%s does not exist", file)
+	case errors.Is(err, syscall.EISDIR):
+		return fmt.Errorf("%s is a directory", file)
+	}
+	if pe, ok := errors.AsType[*fs.PathError](err); ok {
+		err = pe.Err
+	}
+	return fmt.Errorf("read %s: %w", file, err)
 }

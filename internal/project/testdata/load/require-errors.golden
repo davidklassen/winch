@@ -1,0 +1,5 @@
+recipes/nginx/recipe.yaml:2:5: require: unexpected token EOF
+recipes/nginx/recipe.yaml:3:5: require: unknown name "fact"; did you mean "facts"?
+recipes/nginx/recipe.yaml:4:5: require: unknown fact "idd"; did you mean "id"?
+recipes/nginx/recipe.yaml:5:5: require: expected bool, but got string
+recipes/nginx/recipe.yaml:6:5: require: invalid operation: == (mismatched types string and int)

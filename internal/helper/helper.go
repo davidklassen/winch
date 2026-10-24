@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
 )
@@ -45,6 +46,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) e
 			lock, err = takeLock(req.Params, dir, self)
 		case lock == nil:
 			err = errors.New("the first request must be hello")
+		case req.Method == "facts":
+			result, err = facts.Read("/etc/os-release")
 		case req.Method == "check":
 			result, err = step(ctx, req.Params, false)
 		case req.Method == "apply":

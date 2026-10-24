@@ -32,6 +32,8 @@ type Node struct {
 	Pairs []Pair
 	Items []*Node
 	Pos   Pos
+	// Tag is "!expr" for an expression, else empty.
+	Tag string
 }
 
 type Pair struct {
@@ -104,9 +106,22 @@ func (c *converter) convert(n *yaml.Node) *Node {
 	c.seen[n] = out
 	c.open[n] = true
 	defer delete(c.open, n)
-	if n.Style&yaml.TaggedStyle != 0 && (n.Kind != yaml.ScalarNode || n.Tag != "!!str") {
-		c.errorf(n, "unknown tag %q", n.Tag)
-		return out
+	if n.Style&yaml.TaggedStyle != 0 {
+		switch {
+		case n.Tag == "!expr" && n.Kind == yaml.ScalarNode:
+			out.Kind, out.Value, out.Tag = Scalar, n.Value, n.Tag
+			return out
+		case n.Tag == "!expr":
+			kind := "a map"
+			if n.Kind == yaml.SequenceNode {
+				kind = "a list"
+			}
+			c.errorf(n, "the %s tag needs a string, got %s", n.Tag, kind)
+			return out
+		case n.Kind != yaml.ScalarNode || n.Tag != "!!str":
+			c.errorf(n, "unknown tag %q", n.Tag)
+			return out
+		}
 	}
 	switch n.Kind {
 	case yaml.ScalarNode:
@@ -118,6 +133,10 @@ func (c *converter) convert(n *yaml.Node) *Node {
 			k, v := n.Content[i], n.Content[i+1]
 			if k.Kind != yaml.ScalarNode {
 				c.errorf(k, "a map key must be a scalar")
+				continue
+			}
+			if k.Style&yaml.TaggedStyle != 0 && k.Tag != "!!str" {
+				c.errorf(k, "a map key cannot have the tag %q", k.Tag)
 				continue
 			}
 			if k.Value == "<<" && k.Style == 0 {

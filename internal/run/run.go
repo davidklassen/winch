@@ -10,12 +10,14 @@ import (
 	"unicode"
 
 	"github.com/davidklassen/winch/internal/diff"
+	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 )
 
 // Conn is a session with one host.
 type Conn interface {
+	Facts(ctx context.Context) (facts.Facts, error)
 	Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
 	Apply(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
 	Close() error
@@ -41,8 +43,11 @@ type HostPlan struct {
 	Steps []Planned
 }
 
+// Planned is a module step for one host. In is the recipe step that the step
+// belongs to, or nil for a module step of the stage.
 type Planned struct {
 	Step   project.Step
+	In     *project.Step
 	Result module.Result
 }
 
@@ -50,12 +55,20 @@ func (h HostPlan) changes() bool {
 	return slices.ContainsFunc(h.Steps, func(p Planned) bool { return p.Result.Status == module.Change })
 }
 
-// MakePlan checks every step on every host, stage by stage. A host that
-// fails stops there.
+// hostRun is what the plan keeps about a host between its stages.
+type hostRun struct {
+	state module.State
+	// facts are nil until the first contact with the host.
+	facts *facts.Facts
+}
+
+// MakePlan checks every step on every host, stage by stage. At the first
+// contact with a host, it reads the facts and checks the requirements of the
+// recipes that the host runs. A host that fails stops there.
 func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 	plan := &Plan{Failed: map[string]error{}}
 	inStages := map[string]bool{}
-	states := map[string]*module.State{}
+	runs := map[string]*hostRun{}
 	for i := range p.Pipeline.Stages {
 		stage := &p.Pipeline.Stages[i]
 		sp := StagePlan{Stage: stage}
@@ -64,10 +77,10 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 			if plan.Failed[h.Name] != nil {
 				continue
 			}
-			if states[h.Name] == nil {
-				states[h.Name] = &module.State{}
+			if runs[h.Name] == nil {
+				runs[h.Name] = &hostRun{}
 			}
-			steps, err := check(ctx, connect, h, stage, states[h.Name])
+			steps, err := check(ctx, connect, h, stage, p.Pipeline.Recipes[h.Name], runs[h.Name])
 			if err != nil {
 				plan.Failed[h.Name] = err
 				continue
@@ -84,7 +97,9 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 	return plan
 }
 
-func check(ctx context.Context, connect Connect, h project.Host, stage *project.Stage, state *module.State) (steps []Planned, err error) {
+// check checks the steps of a stage on one host. At the first contact, it
+// reads the facts and checks the requirements of the host's recipes.
+func check(ctx context.Context, connect Connect, h project.Host, stage *project.Stage, recipes []*project.Recipe, hr *hostRun) (steps []Planned, err error) {
 	conn, err := connect(ctx, h)
 	if err != nil {
 		return nil, err
@@ -94,14 +109,51 @@ func check(ctx context.Context, connect Connect, h project.Host, stage *project.
 			err = cerr
 		}
 	}()
-	for _, st := range stage.Steps {
-		res, err := conn.Check(ctx, st.Module, st.Args, state)
+	if hr.facts == nil {
+		f, err := conn.Facts(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", label(st), err)
+			return nil, err
 		}
-		steps = append(steps, Planned{Step: st, Result: res})
+		hr.facts = &f
+		for _, r := range recipes {
+			if err := r.Check(f); err != nil {
+				return nil, err
+			}
+		}
+	}
+	steps, err = evaluate(stage, h)
+	if err != nil {
+		return nil, err
+	}
+	for i, p := range steps {
+		steps[i].Result, err = conn.Check(ctx, p.Step.Module, p.Step.Args, &hr.state)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", label(p.Step), err)
+		}
 	}
 	return steps, nil
+}
+
+// evaluate returns the module steps of a stage for one host, with the recipe
+// steps expanded.
+func evaluate(stage *project.Stage, h project.Host) ([]Planned, error) {
+	var out []Planned
+	for i := range stage.Steps {
+		var in *project.Step
+		todo := stage.Steps[i : i+1]
+		if stage.Steps[i].Recipe != nil {
+			in = &stage.Steps[i]
+			todo = in.Recipe.Steps
+		}
+		for _, st := range todo {
+			st, err := st.For(h)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, Planned{Step: st, In: in})
+		}
+	}
+	return out, nil
 }
 
 // HasChanges reports whether a host that did not fail has changes.
@@ -116,8 +168,13 @@ func (p *Plan) HasChanges() bool {
 	return false
 }
 
+// label is the text of a step in the plan and the logs.
 func label(st project.Step) string {
-	return st.Module + " " + st.Args.Main()
+	l := st.Module + " " + st.Args.Main()
+	if st.Name != "" {
+		l = st.Name + ": " + l
+	}
+	return printable(l)
 }
 
 var marks = map[module.Action]string{module.Create: "+", module.Modify: "~", module.Remove: "-"}
@@ -137,10 +194,20 @@ func (p *Plan) Write(out, errOut io.Writer) {
 				bodies[hp.Host.Name] = b
 			}
 			fmt.Fprintf(b, "  %s\n", sp.Stage.Name)
+			var in *project.Step
 			for _, p := range hp.Steps {
-				if p.Result.Status == module.Change {
-					writeStep(b, p.Step, p.Result)
+				if p.Result.Status != module.Change {
+					continue
 				}
+				indent := "    "
+				if p.In != nil {
+					if p.In != in {
+						fmt.Fprintf(b, "    %s\n", recipeLabel(p.In))
+					}
+					indent = "      "
+				}
+				in = p.In
+				writeStep(b, indent, p.Step, p.Result)
 			}
 		}
 	}
@@ -180,19 +247,31 @@ func (p *Plan) Write(out, errOut io.Writer) {
 		hosts(len(p.Hosts)), changed, len(p.Hosts)-changed-failed, failures(failed))
 }
 
-func writeStep(w io.Writer, st project.Step, res module.Result) {
-	fmt.Fprintf(w, "    %s %s\n", marks[res.Action], label(st))
+func recipeLabel(st *project.Step) string {
+	if st.Name != "" {
+		return printable(st.Name)
+	}
+	return st.Recipe.Name
+}
+
+func writeStep(w io.Writer, indent string, st project.Step, res module.Result) {
+	fmt.Fprintf(w, "%s%s %s\n", indent, marks[res.Action], label(st))
 	for _, c := range res.Changes {
-		fmt.Fprintf(w, "        %s\n", printable(c))
+		fmt.Fprintf(w, "%s    %s\n", indent, printable(c))
 	}
 	t, ok := st.Args.(module.WithContent)
-	if res.Old == nil || !ok || t.Text() == nil {
+	if res.Old == nil || !ok {
 		return
 	}
-	d := diff.Diff([]byte(*res.Old), []byte(*t.Text()))
+	text := t.Text()
+	if text == nil {
+		fmt.Fprintf(w, "%s    content (binary or larger than 1 MiB)\n", indent)
+		return
+	}
+	d := diff.Diff([]byte(*res.Old), []byte(*text))
 	for _, line := range strings.SplitAfter(string(d), "\n") {
 		if line != "" {
-			fmt.Fprintf(w, "        %s\n", printable(strings.TrimSuffix(line, "\n")))
+			fmt.Fprintf(w, "%s    %s\n", indent, printable(strings.TrimSuffix(line, "\n")))
 		}
 	}
 }

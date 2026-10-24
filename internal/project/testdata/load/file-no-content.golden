@@ -1,1 +1,1 @@
-pipelines/site.yaml:6:11: content: a file needs content, or absent: true
+pipelines/site.yaml:6:11: content: a file needs content, template, or source, or absent: true
