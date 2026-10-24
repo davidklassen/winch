@@ -1,0 +1,2 @@
+winch.yaml:3:1: unknown key "foo"
+pipelines/site.yaml:4:5: unknown key "bar"

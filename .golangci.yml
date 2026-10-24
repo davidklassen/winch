@@ -1,0 +1,25 @@
+version: "2"
+linters:
+  default: standard
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*os.File).Close
+        - (io.WriteCloser).Close
+        - (*github.com/davidklassen/winch/internal/session.Session).Close
+        - (*io.PipeWriter).Close
+        - os.Remove
+        - os.RemoveAll
+        - (net.Listener).Close
+        - (*net/http.Server).Close
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/davidklassen/winch

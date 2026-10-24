@@ -1,0 +1,21 @@
+stdout:
+web1
+  base
+    ~ file /etc/motd
+        @@ -1,2 +1,2 @@
+         hello
+        -there
+        +world
+
+web2
+  base
+    ~ file /etc/motd
+        @@ -1,2 +1,2 @@
+         hello
+        -there
+        +world
+  cleanup
+    - file /etc/issue
+
+3 hosts: 2 to change, 1 unchanged, 0 unknown
+stderr:

@@ -1,0 +1,12 @@
+stdout:
+web1, web2 (2 hosts)
+  base
+    + file /etc/motd
+        owner root, group root, mode 0644
+        @@ -0,0 +1,2 @@
+        +hello
+        +world
+
+3 hosts: 2 to change, 0 unchanged, 0 unknown, 1 failed
+stderr:
+web3: ssh: connect to host unreachable: Connection refused

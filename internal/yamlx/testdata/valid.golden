@@ -1,0 +1,2 @@
+name="a" enabled=true count=3 mode="0644" (at test.yaml:4:7) note=hi tags=["x" "y"] pos=test.yaml:1:1
+hosts=[{Name:h2 Address:10.0.0.2 Pos:test.yaml:8:3} {Name:h1 Address: Pos:test.yaml:10:3}]

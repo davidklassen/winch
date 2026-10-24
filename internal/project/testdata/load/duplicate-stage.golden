@@ -1,0 +1,1 @@
+pipelines/site.yaml:5:5: duplicate stage name "a"

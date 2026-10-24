@@ -1,0 +1,1 @@
+test.yaml:2:11: an alias cannot refer to its own anchor

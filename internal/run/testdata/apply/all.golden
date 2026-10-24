@@ -1,0 +1,7 @@
+stdout:
+web1: + file /etc/motd
+web2: + file /etc/motd
+web2: - file /etc/issue
+
+3 hosts: 2 changed, 1 unchanged
+stderr:

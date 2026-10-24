@@ -1,0 +1,2 @@
+name="shared" enabled=false count=0 mode="shared" (at test.yaml:1:7) note=<nil> tags=[] pos=test.yaml:1:1
+hosts=[]

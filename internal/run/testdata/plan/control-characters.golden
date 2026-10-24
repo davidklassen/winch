@@ -1,0 +1,19 @@
+stdout:
+web1
+  base
+    ~ file /etc/motd
+        @@ -1,2 +1,2 @@
+         hello
+        -?]0;owned??[2Aworld
+        +world
+
+web2, web3 (2 hosts)
+  base
+    + file /etc/motd
+        owner root, group root, mode 0644
+        @@ -0,0 +1,2 @@
+        +hello
+        +world
+
+3 hosts: 3 to change, 0 unchanged, 0 unknown
+stderr:

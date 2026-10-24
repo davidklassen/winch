@@ -1,0 +1,151 @@
+// Package helper is the program that runs on the host. It reads requests on
+// stdin and answers on stdout until stdin closes.
+package helper
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/protocol"
+)
+
+// Serve answers requests. dir is the state directory, self the path of the
+// running helper binary in dir/bin.
+func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) error {
+	dec := json.NewDecoder(in)
+	enc := json.NewEncoder(out)
+	var lock *os.File
+	defer func() {
+		if lock != nil {
+			lock.Close()
+		}
+	}()
+	for {
+		var req protocol.Request
+		if err := dec.Decode(&req); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("read request: %w", err)
+		}
+		var result any
+		var err error
+		switch {
+		case req.Method == "hello" && lock != nil:
+			err = errors.New("hello was already sent")
+		case req.Method == "hello":
+			lock, err = takeLock(req.Params, dir, self)
+		case lock == nil:
+			err = errors.New("the first request must be hello")
+		case req.Method == "check":
+			result, err = step(ctx, req.Params, false)
+		case req.Method == "apply":
+			result, err = step(ctx, req.Params, true)
+		default:
+			err = fmt.Errorf("unknown method %q", req.Method)
+		}
+		resp := protocol.Response{ID: req.ID}
+		if err != nil {
+			resp.Error = err.Error()
+			resp.NeedContent = errors.Is(err, module.ErrNeedContent)
+		} else if resp.Result, err = json.Marshal(result); err != nil {
+			return fmt.Errorf("encode result: %w", err)
+		}
+		if err := enc.Encode(resp); err != nil {
+			return fmt.Errorf("write response: %w", err)
+		}
+	}
+}
+
+func takeLock(params json.RawMessage, dir, self string) (_ *os.File, err error) {
+	var h protocol.Hello
+	if err := json.Unmarshal(params, &h); err != nil {
+		return nil, fmt.Errorf("decode hello: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create state directory: %w", err)
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open lock: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			f.Close()
+		}
+	}()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			var held protocol.Hello
+			data, _ := io.ReadAll(f)
+			_ = json.Unmarshal(data, &held)
+			return nil, fmt.Errorf("locked by run %s (%s@%s, since %s)",
+				held.Run, held.User, held.Machine, held.Started.UTC().Format(time.RFC3339))
+		}
+		return nil, fmt.Errorf("lock: %w", err)
+	}
+	data, err := json.Marshal(h)
+	if err != nil {
+		return nil, err
+	}
+	// Write before truncate, so a reader never sees an empty file.
+	if _, err := f.WriteAt(data, 0); err != nil {
+		return nil, fmt.Errorf("write lock: %w", err)
+	}
+	if err := f.Truncate(int64(len(data))); err != nil {
+		return nil, fmt.Errorf("write lock: %w", err)
+	}
+	if err := deleteOthers(filepath.Join(dir, "bin"), self); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func deleteOthers(bin, self string) error {
+	entries, err := os.ReadDir(bin)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Name() == filepath.Base(self) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(bin, e.Name())); err != nil {
+			return fmt.Errorf("delete old helper: %w", err)
+		}
+	}
+	return nil
+}
+
+// step checks a step. With apply, it then makes the changes the check found.
+func step(ctx context.Context, params json.RawMessage, apply bool) (module.Result, error) {
+	var s protocol.Step
+	if err := json.Unmarshal(params, &s); err != nil {
+		return module.Result{}, fmt.Errorf("decode step: %w", err)
+	}
+	m, ok := module.New(s.Module)
+	if !ok {
+		return module.Result{}, fmt.Errorf("unknown module %q", s.Module)
+	}
+	if err := json.Unmarshal(s.Args, m); err != nil {
+		return module.Result{}, fmt.Errorf("decode %s arguments: %w", s.Module, err)
+	}
+	res, err := m.Check(ctx)
+	if err != nil || !apply || res.Status == module.OK {
+		return res, err
+	}
+	// The plan has shown the diff already.
+	res.Old = nil
+	return res, m.Apply(ctx)
+}

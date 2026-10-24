@@ -1,0 +1,1 @@
+test.yaml:2:8: count: must not be less than -10

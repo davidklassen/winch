@@ -1,0 +1,1 @@
+pipelines/site.yaml:3:12: unknown host or group "web3" in inventories/test.yaml; did you mean "web1"?

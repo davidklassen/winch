@@ -1,0 +1,1 @@
+inventories/test.yaml:4:3: unknown group "web"; an inventory has only the group "all"
