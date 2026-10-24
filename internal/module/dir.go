@@ -7,7 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"syscall"
+	"path"
 )
 
 type Dir struct {
@@ -34,18 +34,19 @@ func (d *Dir) Validate() error {
 }
 
 func (d *Dir) Check(ctx context.Context, _ *State) (Result, error) {
-	fi, err := os.Lstat(d.Path)
-	if errors.Is(err, syscall.ENOTDIR) {
-		if d.Absent {
-			return Result{Status: OK}, nil
-		}
-		_, err = missingParents(d.Path)
+	dir, missing, err := openParent(d.Path)
+	if _, ok := errors.AsType[*noPathError](err); ok && d.Absent {
+		return Result{Status: OK}, nil
+	}
+	if err != nil {
 		return Result{}, err
 	}
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	defer dir.Close()
+	name := path.Base(d.Path)
+	fi, exists, err := lstat(dir, name, missing)
+	if err != nil {
 		return Result{}, err
 	}
-	exists := err == nil
 	if exists && !fi.IsDir() {
 		return Result{}, fmt.Errorf("%s is %s, not a directory", d.Path, kind(fi))
 	}
@@ -54,7 +55,7 @@ func (d *Dir) Check(ctx context.Context, _ *State) (Result, error) {
 			return Result{Status: OK}, nil
 		}
 		res := Result{Status: Change, Action: Remove}
-		empty, err := isEmpty(d.Path)
+		empty, err := isEmpty(dir, name, fi)
 		if err != nil {
 			return Result{}, err
 		}
@@ -68,11 +69,7 @@ func (d *Dir) Check(ctx context.Context, _ *State) (Result, error) {
 		return Result{}, err
 	}
 	if !exists {
-		changes, err := parentChanges(d.Path)
-		if err != nil {
-			return Result{}, err
-		}
-		changes = append(changes, attrLine(owner, group, mode)+userNote(owner, group))
+		changes := append(parentChanges(missing), attrLine(owner, group, mode)+userNote(owner, group))
 		return Result{Status: Change, Action: Create, Changes: changes}, nil
 	}
 	changes, err := attrChanges(fi, owner, group, mode)
@@ -83,8 +80,14 @@ func (d *Dir) Check(ctx context.Context, _ *State) (Result, error) {
 }
 
 func (d *Dir) Apply(ctx context.Context) error {
+	name := path.Base(d.Path)
 	if d.Absent {
-		return os.RemoveAll(d.Path)
+		dir, err := openDir(d.Path)
+		if err != nil {
+			return err
+		}
+		defer dir.Close()
+		return dir.RemoveAll(name)
 	}
 	owner, group, mode, err := attrs(d.Owner, d.Group, d.Mode, "0755")
 	if err != nil {
@@ -94,17 +97,36 @@ func (d *Dir) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := mkParents(d.Path); err != nil {
+	dir, missing, err := openParent(d.Path)
+	if err != nil {
 		return err
 	}
-	if err := os.Mkdir(d.Path, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+	defer dir.Close()
+	sub, err := mkdirs(dir, missing)
+	if err != nil {
 		return err
 	}
-	return setAttrs(d.Path, uid, gid, mode)
+	defer sub.Close()
+	if err := sub.Mkdir(name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	fi, err := sub.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s is %s, not a directory", d.Path, kind(fi))
+	}
+	f, err := openSame(sub, name, fi)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return setAttrs(f, uid, gid, mode)
 }
 
-func isEmpty(dir string) (bool, error) {
-	f, err := os.Open(dir)
+func isEmpty(dir *os.Root, name string, fi fs.FileInfo) (bool, error) {
+	f, err := openSame(dir, name, fi)
 	if err != nil {
 		return false, err
 	}

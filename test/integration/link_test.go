@@ -82,5 +82,39 @@ func TestLinkModule(t *testing.T) {
 			Args:    &module.Link{Path: "/tmp/w/d", Target: new("/etc/hostname")},
 			WantErr: "/tmp/w/d is a directory, not a symbolic link",
 		},
+		{
+			Name:    "a link in a user's home fails",
+			Setup:   `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
+			Args:    &module.Link{Path: "/home/admin/w/l", Target: new("/etc/hostname")},
+			WantErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
+		},
+		{
+			Name:         "a link put in a user's home before apply fails",
+			Setup:        `rm -rf /home/admin/w && mkdir /home/admin/w && chown admin: /home/admin/w`,
+			Args:         &module.Link{Path: "/home/admin/w/l", Target: new("/etc/hostname")},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"target /etc/hostname"}},
+			BeforeApply:  `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
+			WantApplyErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
+			After:        `[ ! -e /tmp/w/l ] && [ ! -L /tmp/w/l ]`,
+		},
+		{
+			Name:    "a link in /tmp fails",
+			Setup:   `rm -f /tmp/wl && ln -s /tmp/w /tmp/wl`,
+			Args:    &module.Link{Path: "/tmp/wl/l", Target: new("/etc/hostname")},
+			WantErr: "/tmp/wl is a symbolic link in /tmp, which a user other than root can write",
+		},
+		{
+			Name:  "a path under /var/run works",
+			Setup: `rm -rf /run/w`,
+			Args:  &module.Link{Path: "/var/run/w/l", Target: new("/etc/hostname")},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /var/run/w (owner root, group root, mode 0755)", "target /etc/hostname"}},
+			After: `[ -L /run/w/l ]`,
+		},
+		{
+			Name:    "absent through a link in a user's home fails",
+			Setup:   `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w && ln -s /etc/hostname /tmp/w/l`,
+			Args:    &module.Link{Path: "/home/admin/w/l", Absent: true},
+			WantErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
+		},
 	})
 }

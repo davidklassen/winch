@@ -3,6 +3,7 @@ package module
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -13,8 +14,8 @@ import (
 	"os/user"
 	"path"
 	"regexp"
-	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"unicode/utf8"
 
@@ -144,18 +145,19 @@ func ids(owner, group string) (uid, gid uint32, err error) {
 }
 
 func (f *File) Check(ctx context.Context, _ *State) (Result, error) {
-	fi, err := os.Lstat(f.Path)
-	if errors.Is(err, syscall.ENOTDIR) {
-		if f.Absent {
-			return Result{Status: OK}, nil
-		}
-		_, err = missingParents(f.Path)
+	dir, missing, err := openParent(f.Path)
+	if _, ok := errors.AsType[*noPathError](err); ok && f.Absent {
+		return Result{Status: OK}, nil
+	}
+	if err != nil {
 		return Result{}, err
 	}
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	defer dir.Close()
+	name := path.Base(f.Path)
+	fi, exists, err := lstat(dir, name, missing)
+	if err != nil {
 		return Result{}, err
 	}
-	exists := err == nil
 	if f.Absent {
 		switch {
 		case !exists:
@@ -171,27 +173,28 @@ func (f *File) Check(ctx context.Context, _ *State) (Result, error) {
 	}
 	switch {
 	case !exists:
-		changes, err := parentChanges(f.Path)
-		if err != nil {
-			return Result{}, err
-		}
-		changes = append(changes, attrLine(owner, group, mode)+userNote(owner, group))
+		changes := append(parentChanges(missing), attrLine(owner, group, mode)+userNote(owner, group))
 		return Result{Status: Change, Action: Create, Changes: changes, Old: new("")}, nil
 	case fi.Mode()&fs.ModeSymlink != 0:
-		target, _ := os.Readlink(f.Path)
+		target, _ := dir.Readlink(name)
 		changes := []string{"replace the symbolic link to " + target, attrLine(owner, group, mode) + userNote(owner, group)}
 		return Result{Status: Change, Action: Modify, Changes: changes, Old: new("")}, nil
 	case !fi.Mode().IsRegular():
 		return Result{}, fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
 	}
+	r, err := openSame(dir, name, fi)
+	if err != nil {
+		return Result{}, err
+	}
+	defer r.Close()
 	res := Result{Status: OK}
-	sum, err := fileSHA(f.Path)
+	sum, err := fileSHA(r)
 	if err != nil {
 		return Result{}, err
 	}
 	if sum != f.sum() {
 		res.Status, res.Action = Change, Modify
-		if old, ok := readText(f.Path, fi.Size()); ok {
+		if old, ok := readText(r, fi.Size()); ok {
 			res.Old = &old
 		} else {
 			res.Changes = append(res.Changes, "content (binary or larger than 1 MiB)")
@@ -233,8 +236,14 @@ func attrChanges(fi fs.FileInfo, owner, group string, mode uint32) ([]string, er
 }
 
 func (f *File) Apply(ctx context.Context) error {
+	name := path.Base(f.Path)
 	if f.Absent {
-		return os.Remove(f.Path)
+		dir, err := openDir(f.Path)
+		if err != nil {
+			return err
+		}
+		defer dir.Close()
+		return dir.Remove(name)
 	}
 	owner, group, mode, err := attrs(f.Owner, f.Group, f.Mode, "0644")
 	if err != nil {
@@ -244,23 +253,38 @@ func (f *File) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	fi, err := os.Lstat(f.Path)
-	if err == nil && fi.Mode().IsRegular() {
-		sum, err := fileSHA(f.Path)
+	dir, missing, err := openParent(f.Path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	fi, exists, err := lstat(dir, name, missing)
+	if err != nil {
+		return err
+	}
+	if exists && fi.Mode().IsRegular() {
+		r, err := openSame(dir, name, fi)
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+		sum, err := fileSHA(r)
 		if err != nil {
 			return err
 		}
 		if sum == f.sum() {
-			return setAttrs(f.Path, uid, gid, mode)
+			return setAttrs(r, uid, gid, mode)
 		}
 	}
 	if f.Content == nil {
 		return ErrNeedContent
 	}
-	if err := mkParents(f.Path); err != nil {
+	sub, err := mkdirs(dir, missing)
+	if err != nil {
 		return err
 	}
-	return writeFile(f.Path, *f.Content, uid, gid, mode)
+	defer sub.Close()
+	return writeFile(sub, name, *f.Content, uid, gid, mode)
 }
 
 func (f *File) sum() string {
@@ -275,12 +299,7 @@ func sha(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func fileSHA(path string) (string, error) {
-	r, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer r.Close()
+func fileSHA(r io.Reader) (string, error) {
 	h := sha256.New()
 	if _, err := io.Copy(h, r); err != nil {
 		return "", err
@@ -288,11 +307,14 @@ func fileSHA(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func readText(path string, size int64) (string, bool) {
+func readText(r io.ReadSeeker, size int64) (string, bool) {
 	if size > maxDiff {
 		return "", false
 	}
-	data, err := os.ReadFile(path)
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return "", false
+	}
+	data, err := io.ReadAll(r)
 	if err != nil || !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
 		return "", false
 	}
@@ -311,81 +333,242 @@ func kind(fi fs.FileInfo) string {
 	return "a special file"
 }
 
-// missingParents returns the parent directories of path that do not exist,
-// deepest first. A parent that is not a directory is an error.
-func missingParents(p string) ([]string, error) {
-	var out []string
-	for dir := path.Dir(p); dir != "/"; dir = path.Dir(dir) {
-		fi, err := os.Stat(dir)
-		if err == nil {
-			if !fi.IsDir() {
-				return nil, fmt.Errorf("%s is %s, not a directory", dir, kind(fi))
+// noPathError is a parent of a path that is not a directory or a link to a
+// missing target, so the path cannot exist.
+type noPathError struct{ msg string }
+
+func (e *noPathError) Error() string { return e.msg }
+
+// openParent opens the parent directory of p. When parents are missing, it
+// opens the deepest one that exists and also returns the missing ones, from
+// the top. It follows a symbolic link only in a directory that only root can
+// write. Each part opens relative to the directory before it, so a user cannot
+// swap in a link while the helper works.
+func openParent(p string) (*os.Root, []string, error) {
+	dir, err := os.OpenRoot("/")
+	if err != nil {
+		return nil, nil, err
+	}
+	fail := func(err error) (*os.Root, []string, error) {
+		dir.Close()
+		return nil, nil, err
+	}
+	todo := parts(path.Dir(p))
+	// The last tail parts of todo come from p, the others from link targets.
+	tail := len(todo)
+	link := ""
+	for links := 0; len(todo) > 0; {
+		name, full := todo[0], path.Join(dir.Name(), todo[0])
+		switch name {
+		case "", ".":
+			todo = todo[1:]
+			continue
+		case "..":
+			todo = append(parts(path.Dir(dir.Name())), todo[1:]...)
+			next, err := os.OpenRoot("/")
+			if err != nil {
+				return fail(err)
 			}
-			break
+			dir.Close()
+			dir = next
+			continue
 		}
-		if !errors.Is(err, fs.ErrNotExist) {
+		fi, err := dir.Lstat(name)
+		switch {
+		case errors.Is(err, fs.ErrNotExist) && len(todo) > tail:
+			return fail(&noPathError{link + " is a symbolic link to a missing target"})
+		case errors.Is(err, fs.ErrNotExist):
+			missing := make([]string, len(todo))
+			d := path.Dir(p)
+			for i := len(missing) - 1; i >= 0; i-- {
+				missing[i], d = d, path.Dir(d)
+			}
+			return dir, missing, nil
+		case err != nil:
+			return fail(err)
+		case fi.Mode()&fs.ModeSymlink != 0:
+			safe, err := onlyRoot(dir)
+			if err != nil {
+				return fail(err)
+			}
+			if !safe {
+				return fail(fmt.Errorf("%s is a symbolic link in %s, which a user other than root can write", full, dir.Name()))
+			}
+			if links++; links > 40 {
+				return fail(fmt.Errorf("%s: too many levels of symbolic links", p))
+			}
+			target, err := dir.Readlink(name)
+			if err != nil {
+				return fail(err)
+			}
+			tail = min(tail, len(todo)-1)
+			todo = append(strings.Split(target, "/"), todo[1:]...)
+			link = full
+			if path.IsAbs(target) {
+				next, err := os.OpenRoot("/")
+				if err != nil {
+					return fail(err)
+				}
+				dir.Close()
+				dir = next
+			}
+		case !fi.IsDir():
+			return fail(&noPathError{fmt.Sprintf("%s is %s, not a directory", full, kind(fi))})
+		default:
+			next, err := openRoot(dir, name, fi)
+			if err != nil {
+				return fail(err)
+			}
+			dir.Close()
+			dir = next
+			todo = todo[1:]
+		}
+	}
+	return dir, nil, nil
+}
+
+func parts(p string) []string {
+	if p == "/" {
+		return nil
+	}
+	return strings.Split(p[1:], "/")
+}
+
+// onlyRoot reports whether no user other than root owns or can write dir.
+func onlyRoot(dir *os.Root) (bool, error) {
+	fi, err := dir.Stat(".")
+	if err != nil {
+		return false, err
+	}
+	return fi.Sys().(*syscall.Stat_t).Uid == 0 && fi.Mode()&0o022 == 0, nil
+}
+
+// openDir opens the parent directory of p, which must exist.
+func openDir(p string) (*os.Root, error) {
+	dir, missing, err := openParent(p)
+	if err == nil && len(missing) > 0 {
+		dir.Close()
+		return nil, fmt.Errorf("%s does not exist", missing[0])
+	}
+	return dir, err
+}
+
+// lstat reports that name does not exist when its parents are missing.
+func lstat(dir *os.Root, name string, missing []string) (fs.FileInfo, bool, error) {
+	if len(missing) > 0 {
+		return nil, false, nil
+	}
+	fi, err := dir.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	return fi, err == nil, err
+}
+
+// mkdirs creates the missing directories below dir with the default owner and
+// mode, and opens the last one.
+func mkdirs(dir *os.Root, missing []string) (*os.Root, error) {
+	cur, err := dir.OpenRoot(".")
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range missing {
+		next, err := mkdir(cur, path.Base(m))
+		cur.Close()
+		if err != nil {
 			return nil, err
 		}
-		if _, err := os.Lstat(dir); err == nil {
-			return nil, fmt.Errorf("%s is a symbolic link to a missing target", dir)
-		}
-		out = append(out, dir)
+		cur = next
 	}
-	return out, nil
+	return cur, nil
 }
 
-// mkParents creates the missing parents of p with the default owner and mode.
-func mkParents(p string) error {
-	parents, err := missingParents(p)
+func mkdir(dir *os.Root, name string) (*os.Root, error) {
+	if err := dir.Mkdir(name, 0o700); err != nil {
+		return nil, err
+	}
+	fi, err := dir.Lstat(name)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for _, d := range slices.Backward(parents) {
-		if err := mkdir(d, 0, 0, 0o755); err != nil {
-			return err
-		}
+	sub, err := openRoot(dir, name, fi)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	f, err := sub.Open(".")
+	if err == nil {
+		err = setAttrs(f, 0, 0, 0o755)
+		f.Close()
+	}
+	if err != nil {
+		sub.Close()
+		return nil, err
+	}
+	return sub, nil
 }
 
-func mkdir(dir string, uid, gid, mode uint32) error {
-	if err := os.Mkdir(dir, 0o700); err != nil {
-		return err
+// openSame opens name in dir and checks that it is still the file that fi
+// describes. Root follows a link that a user swaps in after the Lstat.
+func openSame(dir *os.Root, name string, fi fs.FileInfo) (*os.File, error) {
+	f, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
 	}
-	return setAttrs(dir, uid, gid, mode)
+	got, err := f.Stat()
+	if err == nil && !os.SameFile(fi, got) {
+		err = fmt.Errorf("%s changed while winch worked on it", path.Join(dir.Name(), name))
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
-func setAttrs(p string, uid, gid, mode uint32) error {
-	if err := os.Chown(p, int(uid), int(gid)); err != nil {
+// openRoot opens the directory name in dir and checks that it is still the
+// one that fi describes.
+func openRoot(dir *os.Root, name string, fi fs.FileInfo) (*os.Root, error) {
+	r, err := dir.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	got, err := r.Stat(".")
+	if err == nil && !os.SameFile(fi, got) {
+		err = fmt.Errorf("%s changed while winch worked on it", path.Join(dir.Name(), name))
+	}
+	if err != nil {
+		r.Close()
+		return nil, err
+	}
+	return r, nil
+}
+
+func setAttrs(f *os.File, uid, gid, mode uint32) error {
+	if err := f.Chown(int(uid), int(gid)); err != nil {
 		return err
 	}
-	return os.Chmod(p, fileMode(mode))
+	return f.Chmod(fileMode(mode))
 }
 
 func attrLine(owner, group string, mode uint32) string {
 	return fmt.Sprintf("owner %s, group %s, mode %04o", owner, group, mode)
 }
 
-// parentChanges describes the missing parents of p in the order apply
-// creates them.
-func parentChanges(p string) ([]string, error) {
-	parents, err := missingParents(p)
-	if err != nil {
-		return nil, err
-	}
+func parentChanges(missing []string) []string {
 	var changes []string
-	for _, d := range slices.Backward(parents) {
+	for _, d := range missing {
 		changes = append(changes, "create directory "+d+" ("+attrLine("root", "root", 0o755)+")")
 	}
-	return changes, nil
+	return changes
 }
 
-func writeFile(p, content string, uid, gid, mode uint32) error {
-	tmp, err := os.CreateTemp(path.Dir(p), ".winch-")
+func writeFile(dir *os.Root, name, content string, uid, gid, mode uint32) error {
+	tmpName := ".winch-" + rand.Text()
+	tmp, err := dir.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer dir.Remove(tmpName)
 	_, err = tmp.WriteString(content)
 	if err == nil {
 		err = tmp.Chown(int(uid), int(gid))
@@ -402,7 +585,7 @@ func writeFile(p, content string, uid, gid, mode uint32) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), p)
+	return dir.Rename(tmpName, name)
 }
 
 // fileMode converts a numeric mode such as 04755 to a Go file mode.

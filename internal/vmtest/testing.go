@@ -114,11 +114,14 @@ type Case struct {
 	// Unchanged runs as root after the check and must exit 0: it shows that
 	// the check changed nothing.
 	Unchanged string
+	// BeforeApply runs as root after the check and before apply.
+	BeforeApply string
 	// WantErr is part of the error of the first check.
 	WantErr string
 	// WantApplyErr is part of the error of apply.
 	WantApplyErr string
-	// After runs as root after apply and must exit 0.
+	// After runs as root after apply, also after a failed one, and must
+	// exit 0.
 	After string
 	// NoConverge marks a case where the host cannot reach the wanted state,
 	// so the second check is Want again.
@@ -154,11 +157,17 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 			if c.Unchanged != "" {
 				vm.MustRun(t, c.Unchanged)
 			}
+			if c.BeforeApply != "" {
+				vm.MustRun(t, c.BeforeApply)
+			}
 			st = c.State
 			applied, err := s.Apply(ctx, name, c.Args, &st)
 			if c.WantApplyErr != "" {
 				if err == nil || !strings.Contains(err.Error(), c.WantApplyErr) {
 					t.Fatalf("apply error = %v, want %q", err, c.WantApplyErr)
+				}
+				if c.After != "" {
+					vm.MustRun(t, c.After)
 				}
 				return
 			}

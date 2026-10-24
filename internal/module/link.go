@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path"
-	"syscall"
 
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -37,18 +35,19 @@ func (l *Link) Validate() error {
 }
 
 func (l *Link) Check(ctx context.Context, _ *State) (Result, error) {
-	fi, err := os.Lstat(l.Path)
-	if errors.Is(err, syscall.ENOTDIR) {
-		if l.Absent {
-			return Result{Status: OK}, nil
-		}
-		_, err = missingParents(l.Path)
+	dir, missing, err := openParent(l.Path)
+	if _, ok := errors.AsType[*noPathError](err); ok && l.Absent {
+		return Result{Status: OK}, nil
+	}
+	if err != nil {
 		return Result{}, err
 	}
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	defer dir.Close()
+	name := path.Base(l.Path)
+	fi, exists, err := lstat(dir, name, missing)
+	if err != nil {
 		return Result{}, err
 	}
-	exists := err == nil
 	if exists && fi.Mode()&fs.ModeSymlink == 0 {
 		return Result{}, fmt.Errorf("%s is %s, not a symbolic link", l.Path, kind(fi))
 	}
@@ -58,13 +57,9 @@ func (l *Link) Check(ctx context.Context, _ *State) (Result, error) {
 	case l.Absent:
 		return Result{Status: Change, Action: Remove}, nil
 	case !exists:
-		changes, err := parentChanges(l.Path)
-		if err != nil {
-			return Result{}, err
-		}
-		return Result{Status: Change, Action: Create, Changes: append(changes, "target "+*l.Target)}, nil
+		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), "target "+*l.Target)}, nil
 	}
-	cur, err := os.Readlink(l.Path)
+	cur, err := dir.Readlink(name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -75,19 +70,32 @@ func (l *Link) Check(ctx context.Context, _ *State) (Result, error) {
 }
 
 func (l *Link) Apply(ctx context.Context) error {
+	name := path.Base(l.Path)
 	if l.Absent {
-		return os.Remove(l.Path)
+		dir, err := openDir(l.Path)
+		if err != nil {
+			return err
+		}
+		defer dir.Close()
+		return dir.Remove(name)
 	}
-	if err := mkParents(l.Path); err != nil {
+	dir, missing, err := openParent(l.Path)
+	if err != nil {
 		return err
 	}
+	defer dir.Close()
+	sub, err := mkdirs(dir, missing)
+	if err != nil {
+		return err
+	}
+	defer sub.Close()
 	// A new link replaces the old one in one rename.
-	tmp := path.Join(path.Dir(l.Path), ".winch-"+rand.Text())
-	if err := os.Symlink(*l.Target, tmp); err != nil {
+	tmp := ".winch-" + rand.Text()
+	if err := sub.Symlink(*l.Target, tmp); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, l.Path); err != nil {
-		os.Remove(tmp)
+	if err := sub.Rename(tmp, name); err != nil {
+		sub.Remove(tmp)
 		return err
 	}
 	return nil

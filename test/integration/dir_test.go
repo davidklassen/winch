@@ -108,5 +108,42 @@ func TestDirModule(t *testing.T) {
 			Args:    &module.Dir{Path: "/tmp/w/f/d"},
 			WantErr: "/tmp/w/f is a file, not a directory",
 		},
+		{
+			Name:    "a link in a user's home fails",
+			Setup:   `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
+			Args:    &module.Dir{Path: "/home/admin/w/d"},
+			WantErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
+		},
+		{
+			Name:         "a link put in a user's home before apply fails",
+			Setup:        `rm -rf /home/admin/w && mkdir /home/admin/w && chown admin: /home/admin/w`,
+			Args:         &module.Dir{Path: "/home/admin/w/d"},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{attrs}},
+			BeforeApply:  `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
+			WantApplyErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
+			After:        `[ ! -e /tmp/w/d ] && [ ! -L /tmp/w/d ]`,
+		},
+		{
+			Name:    "a link in /tmp fails",
+			Setup:   `rm -f /tmp/wl && ln -s /tmp/w /tmp/wl`,
+			Args:    &module.Dir{Path: "/tmp/wl/d"},
+			WantErr: "/tmp/wl is a symbolic link in /tmp, which a user other than root can write",
+		},
+		{
+			Name:  "a path under /var/run works",
+			Setup: `rm -rf /run/w`,
+			Args:  &module.Dir{Path: "/var/run/w/d"},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /var/run/w (owner root, group root, mode 0755)", attrs}},
+			After: `[ -d /run/w/d ]`,
+		},
+		{
+			Name:         "absent through a link put in a user's home before apply fails",
+			Setup:        `rm -rf /home/admin/w && mkdir -p /home/admin/w/d && chown -R admin: /home/admin/w && mkdir /tmp/w/d`,
+			Args:         &module.Dir{Path: "/home/admin/w/d", Absent: true},
+			Want:         module.Result{Status: module.Change, Action: module.Remove},
+			BeforeApply:  `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
+			WantApplyErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
+			After:        `[ -d /tmp/w/d ]`,
+		},
 	})
 }

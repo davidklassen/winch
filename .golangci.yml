@@ -8,6 +8,8 @@ linters:
         - fmt.Fprintf
         - fmt.Fprintln
         - (*os.File).Close
+        - (*os.Root).Close
+        - (*os.Root).Remove
         - (io.WriteCloser).Close
         - (*github.com/davidklassen/winch/internal/session.Session).Close
         - (*io.PipeWriter).Close
