@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"os"
 	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -55,17 +59,20 @@ var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive"}
 const aptLock = "DPkg::Lock::Timeout=300"
 
 func (p *Pkg) Check(ctx context.Context, st *State) (Result, error) {
-	states, err := dpkgStates(ctx, p.Name)
+	pkgs, err := readDpkg(ctx, p.Name)
 	if err != nil {
 		return Result{}, err
 	}
 	var inst []string
 	for _, n := range p.Name {
-		s := states[n]
+		s := pkgs[n].state
 		switch {
 		case !p.Absent && s != installed,
-			p.Absent && s >= partial,
+			p.Absent && s == installed,
 			p.Purge && s == configFiles:
+			if pkgs[n].held {
+				return Result{}, fmt.Errorf("%s is held; apt-mark unhold %s changes it", n, n)
+			}
 			p.todo = append(p.todo, n)
 		case !p.Absent:
 			inst = append(inst, n)
@@ -172,21 +179,79 @@ type pkgState int
 const (
 	notInstalled pkgState = iota
 	configFiles
-	// partial is a package that dpkg did not finish to unpack or configure.
-	partial
 	installed
 )
 
-// dpkgStates returns the state of each named package that dpkg knows.
-func dpkgStates(ctx context.Context, names []string) (map[string]pkgState, error) {
+type dpkgPkg struct {
+	state pkgState
+	held  bool
+}
+
+// readDpkg holds the locks of apt and dpkg while it reads, so it does not see
+// the half-done packages of a running apt.
+func readDpkg(ctx context.Context, names []string) (map[string]dpkgPkg, error) {
+	for _, name := range []string{"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock"} {
+		f, err := lockFile(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+	}
+	pkgs, err := dpkgStates(ctx, names)
+	if err != nil {
+		return nil, err
+	}
+	audit, err := run(ctx, nil, "dpkg", "--audit")
+	if err != nil {
+		return nil, err
+	}
+	// dpkg --audit exits 0 also when it lists half-installed packages.
+	if strings.TrimSpace(audit) != "" {
+		return nil, errors.New("dpkg was interrupted; run dpkg --configure -a")
+	}
+	return pkgs, nil
+}
+
+// lockFile takes the fcntl lock that apt and dpkg use. It waits as long as
+// aptLock. Closing the file releases the lock.
+func lockFile(ctx context.Context, name string) (*os.File, error) {
+	f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE, 0o640)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, errors.New("/var/lib/dpkg not found: the host needs dpkg")
+	}
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(300 * time.Second)
+	for {
+		err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &syscall.Flock_t{Type: syscall.F_WRLCK, Whence: io.SeekStart})
+		if err == nil {
+			return f, nil
+		}
+		if !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EACCES) {
+			f.Close()
+			return nil, fmt.Errorf("lock %s: %w", name, err)
+		}
+		if time.Now().After(deadline) {
+			f.Close()
+			return nil, fmt.Errorf("another apt or dpkg run holds %s", name)
+		}
+		select {
+		case <-ctx.Done():
+			f.Close()
+			return nil, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// dpkgStates returns each named package that dpkg knows.
+func dpkgStates(ctx context.Context, names []string) (map[string]dpkgPkg, error) {
 	args := append([]string{"-W", "-f=${Package}\t${db:Status-Abbrev}\n"}, names...)
 	out, err := exec.CommandContext(ctx, "dpkg-query", args...).Output()
 	// dpkg-query exits 1 when it does not know one of the packages.
 	if exit, ok := errors.AsType[*exec.ExitError](err); ok && exit.ExitCode() == 1 && unknownOnly(exit.Stderr) {
 		err = nil
-	}
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, errors.New("dpkg-query not found: the host needs dpkg")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("dpkg-query: %w", err)
@@ -204,9 +269,10 @@ func unknownOnly(stderr []byte) bool {
 }
 
 // parseDpkg reads lines of a package name and its status abbreviation, such
-// as "ii " or "rc ". The second letter is the state of the package.
-func parseDpkg(out string) map[string]pkgState {
-	states := map[string]pkgState{}
+// as "ii " or "hi ". The first letter is the selection, the second the state
+// of the package.
+func parseDpkg(out string) map[string]dpkgPkg {
+	pkgs := map[string]dpkgPkg{}
 	for line := range strings.SplitSeq(out, "\n") {
 		name, abbrev, ok := strings.Cut(line, "\t")
 		if !ok || len(abbrev) < 2 {
@@ -214,15 +280,14 @@ func parseDpkg(out string) map[string]pkgState {
 		}
 		s := notInstalled
 		switch abbrev[1] {
-		case 'i', 'W', 't':
+		case 'i':
 			s = installed
-		case 'U', 'F', 'H':
-			s = partial
 		case 'c':
 			s = configFiles
 		}
 		// One line per architecture: the most installed one counts.
-		states[name] = max(states[name], s)
+		pkg := pkgs[name]
+		pkgs[name] = dpkgPkg{state: max(pkg.state, s), held: pkg.held || abbrev[0] == 'h'}
 	}
-	return states
+	return pkgs
 }

@@ -121,18 +121,19 @@ func TestServiceValidate(t *testing.T) {
 
 // spec: Modules/pkg
 func TestParseDpkg(t *testing.T) {
-	out := "bash\tii \nexim4\trc \nunpacked\tiU \nheld\thi \ntriggers\tit \npurged\tun \n" +
-		"libc6\tii \nlibc6\trc \nlibfoo\trc \nlibfoo\tii \n"
+	out := "bash\tii \nexim4\trc \nheld\thi \nheldrc\thc \npurged\tun \n" +
+		"libc6\tii \nlibc6\trc \nlibfoo\trc \nlibfoo\tii \nheld2\thi \nheld2\trc \n"
 	got := parseDpkg(out)
-	want := map[string]pkgState{"bash": installed, "exim4": configFiles, "unpacked": partial, "held": installed,
-		"triggers": installed, "purged": notInstalled, "libc6": installed, "libfoo": installed}
+	want := map[string]dpkgPkg{"bash": {state: installed}, "exim4": {state: configFiles},
+		"held": {state: installed, held: true}, "heldrc": {state: configFiles, held: true}, "purged": {state: notInstalled},
+		"libc6": {state: installed}, "libfoo": {state: installed}, "held2": {state: installed, held: true}}
 	for name, w := range want {
 		if got[name] != w {
-			t.Errorf("%s = %v, want %v", name, got[name], w)
+			t.Errorf("%s = %+v, want %+v", name, got[name], w)
 		}
 	}
-	if got["nginx"] != notInstalled {
-		t.Errorf("an unknown package = %v, want notInstalled", got["nginx"])
+	if got["nginx"] != (dpkgPkg{}) {
+		t.Errorf("an unknown package = %+v, want not installed", got["nginx"])
 	}
 }
 
