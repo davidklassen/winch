@@ -64,6 +64,9 @@ func TestDirValidate(t *testing.T) {
 		{"not octal", "path: /x\nmode: \"0855\"\n", `t.yaml:2:7: mode: must be an octal mode such as "0755"`},
 		{"mode and absent", "path: /x\nmode: \"0755\"\nabsent: true\n", `t.yaml:2:7: mode: absent: true takes no mode`},
 		{"owner and absent", "path: /x\nowner: root\nabsent: true\n", `t.yaml:2:8: owner: absent: true takes no owner`},
+		{"names with digits", "path: /x\nowner: user1\ngroup: \"2g\"\n", ""},
+		{"numeric owner", "path: /x\nowner: \"1000\"\n", `t.yaml:2:8: owner: must be a user name, not a number`},
+		{"numeric group", "path: /x\ngroup: \"50\"\n", `t.yaml:2:8: group: must be a group name, not a number`},
 		{"purge", "path: /x\npurge: true\n", `t.yaml:2:1: unknown key "purge"`},
 	}
 	for _, tt := range tests {

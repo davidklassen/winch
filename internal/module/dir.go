@@ -27,6 +27,9 @@ func (d *Dir) Validate() error {
 	if d.Absent {
 		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""})
 	}
+	if err := checkNames(d.Owner, d.Group); err != nil {
+		return err
+	}
 	return checkMode(d.Mode, "0755")
 }
 

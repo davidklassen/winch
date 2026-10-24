@@ -43,7 +43,22 @@ func (f *File) Validate() error {
 	if f.Content == nil {
 		return &yamlx.FieldError{Field: "content", Msg: "a file needs content, or absent: true"}
 	}
+	if err := checkNames(f.Owner, f.Group); err != nil {
+		return err
+	}
 	return checkMode(f.Mode, "0644")
+}
+
+var numberRe = regexp.MustCompile(`^[0-9]+$`)
+
+func checkNames(owner, group string) error {
+	if numberRe.MatchString(owner) {
+		return &yamlx.FieldError{Field: "owner", Msg: "must be a user name, not a number"}
+	}
+	if numberRe.MatchString(group) {
+		return &yamlx.FieldError{Field: "group", Msg: "must be a group name, not a number"}
+	}
+	return nil
 }
 
 var modeRe = regexp.MustCompile(`^[0-7]{3,4}$`)
