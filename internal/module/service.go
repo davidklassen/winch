@@ -3,6 +3,9 @@ package module
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -15,7 +18,8 @@ type Service struct {
 	Enabled *bool  `yaml:"enabled" json:"enabled,omitempty"`
 
 	// Check sets these for Apply: the systemctl commands, in order.
-	todo []string
+	todo  []string
+	links []string
 }
 
 func (s *Service) Main() string { return s.Name }
@@ -59,6 +63,16 @@ func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
 			}
 		case !*s.Enabled && u.file == "enabled":
 			s.todo = append(s.todo, "disable")
+		case !*s.Enabled && u.file == "masked-runtime":
+			// systemctl disable ignores a masked unit. When the mask goes
+			// away, the enable links start the unit.
+			s.links, err = enableLinks(u.id)
+			if err != nil {
+				return Result{}, err
+			}
+			if len(s.links) > 0 {
+				s.todo = append(s.todo, "disable")
+			}
 		case !*s.Enabled, u.file == "enabled":
 		case u.file == "disabled":
 			s.todo = append(s.todo, "enable")
@@ -90,6 +104,14 @@ func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
 
 func (s *Service) Apply(ctx context.Context) error {
 	for _, c := range s.todo {
+		if c == "disable" && s.links != nil {
+			for _, l := range s.links {
+				if err := os.Remove(l); err != nil {
+					return fmt.Errorf("disable %s: %w", s.Name, err)
+				}
+			}
+			c = "daemon-reload"
+		}
 		args := []string{c}
 		if c != "daemon-reload" {
 			args = append(args, "--", s.Name)
@@ -99,6 +121,30 @@ func (s *Service) Apply(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// enableLinks returns the links in /etc/systemd/system that systemctl
+// disable removes: the ones with the unit's name, and the ones to the unit.
+func enableLinks(id string) ([]string, error) {
+	var links []string
+	err := filepath.WalkDir("/etc/systemd/system", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.Type() != fs.ModeSymlink {
+			return err
+		}
+		if d.Name() == id {
+			links = append(links, p)
+			return nil
+		}
+		target, err := os.Readlink(p)
+		if err == nil && filepath.Base(target) == id {
+			links = append(links, p)
+		}
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("find the enable links of %s: %w", id, err)
+	}
+	return links, nil
 }
 
 type unitState struct {
