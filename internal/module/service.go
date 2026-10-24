@@ -38,6 +38,9 @@ func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
 		return Result{}, err
 	}
 	u := parseShow(out)
+	if u.id != s.Name && u.id != s.Name+".service" {
+		return Result{}, fmt.Errorf("%s is an alias of %s; use %s", s.Name, u.id, strings.TrimSuffix(u.id, ".service"))
+	}
 	missing := u.load == "not-found"
 	if !missing && u.load != "loaded" {
 		return Result{}, fmt.Errorf("%s has the load state %q", u.id, u.load)

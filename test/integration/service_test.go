@@ -124,6 +124,24 @@ func TestServiceModule(t *testing.T) {
 			WantApplyErr: "winch-nope.service does not exist",
 		},
 		{
+			Name:    "an alias fails and names the unit",
+			Setup:   `systemctl is-enabled -q ssh && test -L /etc/systemd/system/sshd.service`,
+			Args:    &module.Service{Name: "sshd", Enabled: new(true)},
+			WantErr: "sshd is an alias of ssh.service; use ssh",
+		},
+		{
+			Name:    "an alias with the .service suffix fails",
+			Setup:   `systemctl is-enabled -q ssh && test -L /etc/systemd/system/sshd.service`,
+			Args:    &module.Service{Name: "sshd.service", Running: new(true)},
+			WantErr: "sshd.service is an alias of ssh.service; use ssh",
+		},
+		{
+			Name:  "the unit of an alias is ok",
+			Setup: `systemctl is-enabled -q ssh && systemctl is-active -q ssh`,
+			Args:  &module.Service{Name: "ssh", Enabled: new(true), Running: new(true)},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
 			Name: "a missing unit that must not run is ok",
 			Args: &module.Service{Name: "winch-nope", Enabled: new(false), Running: new(false)},
 			Want: module.Result{Status: module.OK},
