@@ -222,19 +222,29 @@ func failures(n int) string {
 	return fmt.Sprintf(", %d failed", n)
 }
 
-// Apply applies the stages of a plan on the hosts with changes. Each step is
-// checked again right before it is applied. Failures go to errOut. It returns
-// false when a host failed, in the plan or in the apply.
+// Apply applies every stage of a plan on the hosts with a change in the plan.
+// A stage can undo what an earlier stage does, so a stage without a change
+// runs too. Each step is checked again right before it is applied. Failures
+// go to errOut. It returns false when a host failed, in the plan or in the
+// apply.
 func Apply(ctx context.Context, plan *Plan, connect Connect, out, errOut io.Writer) bool {
 	failed := map[string]bool{}
 	for name := range plan.Failed {
 		failed[name] = true
 	}
+	toApply := map[string]bool{}
+	for _, sp := range plan.Stages {
+		for _, hp := range sp.Hosts {
+			if hp.changes() {
+				toApply[hp.Host.Name] = true
+			}
+		}
+	}
 	changed := map[string]bool{}
 	states := map[string]*module.State{}
 	for _, sp := range plan.Stages {
 		for _, hp := range sp.Hosts {
-			if !hp.changes() || failed[hp.Host.Name] {
+			if !toApply[hp.Host.Name] || failed[hp.Host.Name] {
 				continue
 			}
 			if states[hp.Host.Name] == nil {
@@ -257,7 +267,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, out, errOut io.Writ
 	return len(failed) == 0
 }
 
-// apply runs the planned steps of a stage on one host. It reports whether a
+// apply runs the steps of a stage on one host. It reports whether a
 // step changed something.
 func apply(ctx context.Context, connect Connect, hp HostPlan, state *module.State, out io.Writer) (changed bool, err error) {
 	conn, err := connect(ctx, hp.Host)

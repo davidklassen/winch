@@ -8,6 +8,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/run"
 	"github.com/davidklassen/winch/internal/vmtest"
@@ -186,5 +187,47 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
 		if n := h.Refreshes[host]; n != 1 {
 			t.Errorf("%s: %d index refreshes, want 1", host, n)
 		}
+	}
+}
+
+// spec: Running a pipeline/Apply
+func TestApplyChecksStagesWithoutChange(t *testing.T) {
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: install
+    hosts: all
+    steps:
+      - pkg:
+          name: nginx
+  - name: configure
+    hosts: all
+    steps:
+      - file:
+          path: /etc/nginx/sites-enabled/default
+          absent: true
+`,
+	})
+	p, err := project.Load(dir, "", "site")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	h.SetPkgFile("nginx", "/etc/nginx/sites-enabled/default", "server {}\n")
+	plan := run.MakePlan(context.Background(), p, h.Connector())
+	if st := plan.Stages[1].Hosts[0].Steps[0].Result.Status; st != module.OK {
+		t.Fatalf("plan of stage configure = %v, want ok", st)
+	}
+	var out, errOut bytes.Buffer
+	if !run.Apply(context.Background(), plan, h.Connector(), &out, &errOut) {
+		t.Fatalf("apply failed: %s", errOut.String())
+	}
+	if _, ok := h.File("web1", "/etc/nginx/sites-enabled/default"); ok {
+		t.Errorf("apply did not run stage configure; apply output:\n%s", out.String())
+	}
+	again := run.MakePlan(context.Background(), p, h.Connector())
+	if again.HasChanges() || len(again.Failed) != 0 {
+		t.Errorf("second plan: changes %v, failed %v", again.HasChanges(), again.Failed)
 	}
 }

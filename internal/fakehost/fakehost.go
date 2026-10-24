@@ -18,6 +18,7 @@ type Hosts struct {
 	mu        sync.Mutex
 	files     map[string]map[string]string
 	pkgs      map[string]map[string]bool
+	pkgFiles  map[string]map[string]string
 	failCheck map[string]bool
 	failApply map[string]bool
 	Applies   int
@@ -30,6 +31,7 @@ func New() *Hosts {
 	return &Hosts{
 		files:     map[string]map[string]string{},
 		pkgs:      map[string]map[string]bool{},
+		pkgFiles:  map[string]map[string]string{},
 		failCheck: map[string]bool{},
 		failApply: map[string]bool{},
 		Refreshes: map[string]int{},
@@ -43,6 +45,16 @@ func (h *Hosts) SetFile(host, path, content string) {
 		h.files[host] = map[string]string{}
 	}
 	h.files[host][path] = content
+}
+
+// SetPkgFile makes an install of the package pkg write a file.
+func (h *Hosts) SetPkgFile(pkg, path, content string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.pkgFiles[pkg] == nil {
+		h.pkgFiles[pkg] = map[string]string{}
+	}
+	h.pkgFiles[pkg][path] = content
 }
 
 func (h *Hosts) File(host, path string) (string, bool) {
@@ -148,8 +160,14 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 		if c.hosts.pkgs[c.host] == nil {
 			c.hosts.pkgs[c.host] = map[string]bool{}
 		}
+		if c.hosts.files[c.host] == nil {
+			c.hosts.files[c.host] = map[string]string{}
+		}
 		for _, n := range p.Name {
 			c.hosts.pkgs[c.host][n] = true
+			for path, content := range c.hosts.pkgFiles[n] {
+				c.hosts.files[c.host][path] = content
+			}
 		}
 		return res, nil
 	}
