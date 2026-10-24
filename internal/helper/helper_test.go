@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -98,6 +99,39 @@ func TestLock(t *testing.T) {
 	third := start(t, dir, "")
 	if r := third.call(t, "hello", hello("r3")); r.Error != "" {
 		t.Errorf("hello after release: %s", r.Error)
+	}
+}
+
+// spec: Remote execution/Helper
+func TestLockWithoutPID(t *testing.T) {
+	for _, tc := range []struct {
+		name, content, want string
+	}{
+		{"empty", "", "locked by run  (@, since 0001-01-01T00:00:00Z)"},
+		{"no pid", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z"}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
+		{"pid not a number", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":"x"}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
+		{"pid 0", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":0}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
+		{"pid -1", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":-1}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
+		{"pid 1", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":1}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			f, err := os.Create(filepath.Join(dir, "lock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			if _, err := f.WriteString(tc.content); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+				t.Fatal(err)
+			}
+			r := start(t, dir, "").call(t, "hello", hello("r2"))
+			if r.Error != tc.want {
+				t.Errorf("hello error = %q, want %q", r.Error, tc.want)
+			}
+		})
 	}
 }
 

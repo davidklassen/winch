@@ -92,8 +92,13 @@ func takeLock(params json.RawMessage, dir, self string) (_ *os.File, err error) 
 			var held lockRecord
 			data, _ := io.ReadAll(f)
 			_ = json.Unmarshal(data, &held)
-			return nil, fmt.Errorf("locked by run %s (%s@%s, since %s, helper process %d); if that run is gone, end it with: sudo kill %d",
-				held.Run, held.User, held.Machine, held.Started.UTC().Format(time.RFC3339), held.PID, held.PID)
+			msg := fmt.Sprintf("locked by run %s (%s@%s, since %s", held.Run, held.User, held.Machine, held.Started.UTC().Format(time.RFC3339))
+			// A new lock file is empty until its holder writes it. A kill with
+			// a PID below 2 signals a process group or init, not one helper.
+			if held.PID <= 1 {
+				return nil, errors.New(msg + ")")
+			}
+			return nil, fmt.Errorf("%s, helper process %d); if that run is gone, end it with: sudo kill %d", msg, held.PID, held.PID)
 		}
 		return nil, fmt.Errorf("lock: %w", err)
 	}
