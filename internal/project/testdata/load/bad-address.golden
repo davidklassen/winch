@@ -1,0 +1,2 @@
+inventories/test.yaml:2:3: host "web1": address "a$(id)b" is not a host name or IP
+inventories/test.yaml:4:3: host "web2": address "-oProxyCommand=x" is not a host name or IP

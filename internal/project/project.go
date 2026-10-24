@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -216,6 +217,17 @@ func loadConfig(dir string) (*Config, error) {
 	return &cfg, yamlx.Decode(n, &cfg)
 }
 
+// validAddress is the check of OpenSSH for a destination. ssh does not check
+// a HostName option, and a ProxyCommand gets it through %h.
+func validAddress(s string) bool {
+	if strings.HasPrefix(s, "-") {
+		return false
+	}
+	return !strings.ContainsFunc(s, func(r rune) bool {
+		return strings.ContainsRune("'`\"$\\;&<>|(){},", r) || unicode.IsSpace(r) || unicode.IsControl(r)
+	})
+}
+
 func loadInventory(dir, file string) (*Inventory, error) {
 	n, err := parse(dir, file)
 	if err != nil {
@@ -244,6 +256,8 @@ func loadInventory(dir, file string) (*Inventory, error) {
 		}
 		if h.Address == "" {
 			h.Address = h.Name
+		} else if !validAddress(h.Address) {
+			errs = append(errs, yamlx.Errorf(h.Pos, "host %q: address %q is not a host name or IP", h.Name, h.Address))
 		}
 		if h.User == "" {
 			h.User = allUser

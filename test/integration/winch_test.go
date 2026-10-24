@@ -26,9 +26,10 @@ func project(t *testing.T, inventory string) string {
 func TestWinch(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "winch")
-	// The inventory address overrides the host name for SSH.
-	dir := project(t, "hosts:\n  web:\n    address: winch\n")
-	sending := "web: sending the helper (" + lab.Arch + ")"
+	// The Host block of the lab SSH config matches the host name and sets the
+	// port. The address sets only the HostName.
+	dir := project(t, "hosts:\n  winch:\n    address: 127.0.0.1\n")
+	sending := "winch: sending the helper (" + lab.Arch + ")"
 
 	t.Run("apply, then plan shows no changes", func(t *testing.T) {
 		vm.MustRun(t, "mkdir -p /var/lib/winch/bin && touch /var/lib/winch/bin/old")
@@ -50,7 +51,7 @@ func TestWinch(t *testing.T) {
 		}
 
 		r = lab.Winch(t, dir, "apply", "site", "--yes")
-		if r.Code != 0 || !strings.Contains(r.Stdout, "web: ~ file /etc/motd") {
+		if r.Code != 0 || !strings.Contains(r.Stdout, "winch: ~ file /etc/motd") {
 			t.Fatalf("apply --yes: exit %d", r.Code)
 		}
 		if strings.Contains(r.Stderr, "sending the helper") {
@@ -82,7 +83,7 @@ func TestWinch(t *testing.T) {
 	})
 
 	t.Run("a host without passwordless sudo fails", func(t *testing.T) {
-		dir := project(t, "hosts:\n  web:\n    address: winch\n    user: nosudo\n")
+		dir := project(t, "hosts:\n  winch:\n    address: 127.0.0.1\n    user: nosudo\n")
 		r := lab.Winch(t, dir, "plan", "site")
 		if r.Code != 1 || !strings.Contains(r.Stderr, "the login user needs passwordless sudo") {
 			t.Errorf("plan as nosudo: exit %d", r.Code)

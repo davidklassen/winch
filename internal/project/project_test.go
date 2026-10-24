@@ -112,6 +112,7 @@ func TestLoad(t *testing.T) {
 		{name: "host-unknown-key", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    adress: 1.2.3.4\n"}},
 		{name: "all-with-hosts", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1: {}\ngroups:\n  all:\n    hosts: [web1]\n"}},
 		{name: "other-group", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1: {}\ngroups:\n  web:\n    user: x\n"}},
+		{name: "bad-address", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    address: a$(id)b\n  web2:\n    address: -oProxyCommand=x\n  web3:\n    address: fe80::1%eth0\n"}},
 		{name: "host-named-all", files: map[string]string{"inventories/test.yaml": "hosts:\n  all: {}\n"}},
 		{name: "empty-inventory", files: map[string]string{"inventories/test.yaml": "hosts: {}\n"}},
 		{name: "unknown-pipeline", pipeline: "sit"},

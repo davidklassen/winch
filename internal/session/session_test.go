@@ -230,22 +230,68 @@ func TestContentOnlyWhenNeeded(t *testing.T) {
 	}
 }
 
-// spec: Remote execution/Sessions
-func TestOpenTimeouts(t *testing.T) {
+// sshArgs opens a session to host at address with a fake ssh. It returns the
+// ssh options before "--" and the target after it.
+func sshArgs(t *testing.T, host, address string) (options, target string) {
+	t.Helper()
 	fakeBin(t, "aarch64", "0", goodSudo)
 	argsFile := filepath.Join(t.TempDir(), "args")
 	t.Setenv("SSH_ARGS", argsFile)
-	if _, err := open(t, t.TempDir(), []helperbin.Binary{fakeHelper("amd64"), fakeHelper("arm64")}); err == nil || !strings.Contains(err.Error(), "ran arm64") {
+	s, err := Open(context.Background(), Config{
+		Host:     host,
+		Address:  address,
+		Dir:      t.TempDir(),
+		Binaries: []helperbin.Binary{fakeHelper("arm64")},
+		Hello:    protocol.Hello{Run: "r1"},
+		Progress: &bytes.Buffer{},
+	})
+	if s != nil {
+		s.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "ran arm64") {
 		t.Fatalf("error = %v", err)
 	}
 	data, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	options, _, _ := strings.Cut(string(data), "\n--\n")
+	options, rest, _ := strings.Cut(string(data), "\n--\n")
+	target, _, _ = strings.Cut(rest, "\n")
+	return options + "\n", target
+}
+
+// spec: Remote execution/Sessions
+func TestOpenTimeouts(t *testing.T) {
+	options, _ := sshArgs(t, "web1", "web1")
 	for _, want := range []string{"ConnectTimeout=15", "ServerAliveInterval=15"} {
-		if !strings.Contains(options+"\n", "-o\n"+want+"\n") {
+		if !strings.Contains(options, "-o\n"+want+"\n") {
 			t.Errorf("ssh arguments have no -o %s", want)
 		}
+	}
+}
+
+// spec: Inventory
+func TestOpenHostName(t *testing.T) {
+	tests := []struct {
+		address, wantHostName string
+	}{
+		{"mail.acme.com", ""},
+		{"192.0.2.10", "192.0.2.10"},
+		{"fe80::1%eth0", "fe80::1%%eth0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.address, func(t *testing.T) {
+			options, target := sshArgs(t, "mail.acme.com", tt.address)
+			if target != "mail.acme.com" {
+				t.Errorf("target = %q, want mail.acme.com", target)
+			}
+			if tt.wantHostName == "" {
+				if strings.Contains(options, "HostName=") {
+					t.Errorf("options %q have a HostName", options)
+				}
+			} else if !strings.Contains(options, "-o\nHostName="+tt.wantHostName+"\n") {
+				t.Errorf("options %q have no -o HostName=%s", options, tt.wantHostName)
+			}
+		})
 	}
 }
