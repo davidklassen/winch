@@ -101,7 +101,7 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	if dir == "" {
 		dir = StateDir
 	}
-	args := []string{"-T"}
+	args := []string{"-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15"}
 	if cfg.User != "" {
 		args = append(args, "-l", cfg.User)
 	}

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -51,7 +52,6 @@ Host *
   StrictHostKeyChecking no
   UserKnownHostsFile /dev/null
   LogLevel ERROR
-  ConnectTimeout 5
 `, dir, key)
 	if err := os.WriteFile(filepath.Join(dir, "ssh_config"), []byte(config), 0o644); err != nil {
 		return nil, err
@@ -233,12 +233,22 @@ func freePort() (int, error) {
 // Run runs a shell command as root on the VM over ssh.
 func (vm *VM) Run(ctx context.Context, command string) (string, error) {
 	command = "sudo sh -c " + quote(command)
-	cmd := exec.CommandContext(ctx, filepath.Join(vm.lab.Dir, "bin", "ssh"), vm.Name, command)
+	cmd := exec.CommandContext(ctx, filepath.Join(vm.lab.Dir, "bin", "ssh"), "-o", "ConnectTimeout=5", vm.Name, command)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("%s: %w: %s", command, err, out)
 	}
 	return string(out), nil
+}
+
+// Freeze stops the VM process with SIGSTOP. The VM does not answer, and its
+// connections stay open.
+func (vm *VM) Freeze() error {
+	return vm.cmd.Process.Signal(syscall.SIGSTOP)
+}
+
+func (vm *VM) Thaw() error {
+	return vm.cmd.Process.Signal(syscall.SIGCONT)
 }
 
 // Stop ends the VM. Its files stay in the lab directory.

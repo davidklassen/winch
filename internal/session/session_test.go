@@ -19,13 +19,14 @@ func fakeHelper(arch string) helperbin.Binary {
 	return helperbin.New(arch, []byte("#!/bin/sh\nread line\necho '{\"id\":1,\"error\":\"ran "+arch+"\"}'\n"))
 }
 
-// fakeBin puts fake ssh, uname, id, and sudo first in PATH. ssh runs its
-// last argument with sh, on this machine.
+// fakeBin puts fake ssh, uname, id, and sudo first in PATH. ssh writes its
+// arguments to $SSH_ARGS when it is set, and runs its last argument with sh,
+// on this machine.
 func fakeBin(t *testing.T, arch, uid, sudo string) {
 	t.Helper()
 	bin := t.TempDir()
 	scripts := map[string]string{
-		"ssh":   "#!/bin/sh\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
+		"ssh":   "#!/bin/sh\n[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
 		"uname": "#!/bin/sh\necho " + arch + "\n",
 		"id":    "#!/bin/sh\necho " + uid + "\n",
 		"sudo":  sudo,
@@ -226,5 +227,25 @@ func TestContentOnlyWhenNeeded(t *testing.T) {
 	}
 	if f.Content == nil || *f.Content != content {
 		t.Error("check changed the step")
+	}
+}
+
+// spec: Remote execution/Sessions
+func TestOpenTimeouts(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	argsFile := filepath.Join(t.TempDir(), "args")
+	t.Setenv("SSH_ARGS", argsFile)
+	if _, err := open(t, t.TempDir(), []helperbin.Binary{fakeHelper("amd64"), fakeHelper("arm64")}); err == nil || !strings.Contains(err.Error(), "ran arm64") {
+		t.Fatalf("error = %v", err)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, _, _ := strings.Cut(string(data), "\n--\n")
+	for _, want := range []string{"ConnectTimeout=15", "ServerAliveInterval=15"} {
+		if !strings.Contains(options+"\n", "-o\n"+want+"\n") {
+			t.Errorf("ssh arguments have no -o %s", want)
+		}
 	}
 }
