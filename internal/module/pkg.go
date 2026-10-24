@@ -117,7 +117,7 @@ func (p *Pkg) dependents(ctx context.Context) ([]string, error) {
 
 func (p *Pkg) Apply(ctx context.Context) error {
 	if p.refresh {
-		if _, err := run(ctx, aptEnv, "apt-get", "update", "-q", "-o", aptLock); err != nil {
+		if _, err := run(ctx, aptEnv, "apt-get", "update", "-q", "--error-on=any", "-o", aptLock); err != nil {
 			return err
 		}
 	}

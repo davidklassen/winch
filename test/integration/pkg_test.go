@@ -26,7 +26,7 @@ func TestPkgModule(t *testing.T) {
 		same  = `[ "$(wc -l < /root/updates)" = "$(cat /root/before)" ]`
 	)
 	refresh := "refresh the package index"
-	reset := "rm -f /etc/apt/apt.conf.d/99norecommends; dpkg --purge hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
+	reset := "rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources; dpkg --purge hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
 		{
 			Name:      "the first install of a run refreshes the index",
@@ -36,6 +36,15 @@ func TestPkgModule(t *testing.T) {
 			WantState: module.State{IndexFresh: true},
 			Unchanged: same + " && ! dpkg -s hello >/dev/null 2>&1",
 			After:     `[ "$(wc -l < /root/updates)" = $(( $(cat /root/before) + 1 )) ] && dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii'`,
+		},
+		{
+			Name: "a refresh fails when apt cannot fetch a source",
+			// Nothing listens on port 9.
+			Setup:        "printf 'Types: deb\\nURIs: http://127.0.0.1:9/winch-down\\nSuites: trixie\\nComponents: main\\nTrusted: yes\\n' > /etc/apt/sources.list.d/winch-down.sources",
+			Args:         &module.Pkg{Name: []string{"hello"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello"}},
+			WantState:    module.State{IndexFresh: true},
+			WantApplyErr: "Failed to fetch http://127.0.0.1:9/winch-down",
 		},
 		{
 			Name:  "ok when installed",
