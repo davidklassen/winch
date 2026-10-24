@@ -33,7 +33,7 @@ func TestPkgModule(t *testing.T) {
 	// exists, so a test can kill its install.
 	vm.MustRun(t, `mkdir -p /root/slow-pkg/DEBIAN && printf 'Package: winch-slow\nVersion: 1\nArchitecture: all\nMaintainer: winch\nDescription: test\n' > /root/slow-pkg/DEBIAN/control && `+
 		`printf '#!/bin/sh\nwhile [ -e /root/slow ]; do sleep 1; done\n' > /root/slow-pkg/DEBIAN/postinst && chmod 755 /root/slow-pkg/DEBIAN/postinst && dpkg-deb -b /root/slow-pkg /root/winch-slow.deb >/dev/null`)
-	reset := "rm -f /root/slow; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; " +
+	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; " +
 		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
 		{
@@ -185,6 +185,17 @@ func TestPkgModule(t *testing.T) {
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install hello"}},
 			WantState: module.State{IndexFresh: true},
 			Unchanged: "dpkg-query -W -f='${db:Status-Abbrev}' winch-slow | grep -q '^ii'",
+		},
+		{
+			Name:      "apply waits for another apt",
+			State:     module.State{IndexFresh: true},
+			Args:      &module.Pkg{Name: []string{"hello"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install hello"}},
+			WantState: module.State{IndexFresh: true},
+			// The fcntl lock of apt; flock(1) takes a lock that apt does not see.
+			BeforeApply: `(python3 -c 'import fcntl, time; f = open("/var/lib/dpkg/lock-frontend", "w"); fcntl.lockf(f, fcntl.LOCK_EX); open("/root/locked", "w"); time.sleep(5)' >/dev/null 2>&1 &) && ` +
+				"timeout 10 sh -c 'until [ -e /root/locked ]; do sleep 0.1; done'",
+			After: "! pgrep -f 'fcntl[.]lockf' && dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii'",
 		},
 		{
 			Name:    "absent fails when apt must remove a held package with it",

@@ -42,6 +42,14 @@ func TestDirModule(t *testing.T) {
 			After: `[ "$(stat -c '%U %G %a' /tmp/w/d)" = "admin adm 2750" ]`,
 		},
 		{
+			Name:      "setgid mode stays after a change of group",
+			Setup:     `mkdir /tmp/w/d && chgrp admin /tmp/w/d && chmod 2775 /tmp/w/d`,
+			Args:      &module.Dir{Path: "/tmp/w/d", Mode: "2775"},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"group admin → root"}},
+			Unchanged: `[ "$(stat -c '%G %a' /tmp/w/d)" = "admin 2775" ]`,
+			After:     `[ "$(stat -c '%U %G %a' /tmp/w/d)" = "root root 2775" ]`,
+		},
+		{
 			Name:  "parents get the default owner and mode",
 			Args:  &module.Dir{Path: "/tmp/w/a/b", Owner: "admin", Mode: "0700"},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /tmp/w/a (owner root, group root, mode 0755)", "owner admin, group root, mode 0700"}},
@@ -138,6 +146,23 @@ func TestDirModule(t *testing.T) {
 			WantErr: "/tmp/w/l is a symbolic link, not a directory",
 		},
 		{
+			Name:    "a FIFO at path fails",
+			Setup:   "mkfifo /tmp/w/p",
+			Args:    &module.Dir{Path: "/tmp/w/p"},
+			WantErr: "/tmp/w/p is a special file, not a directory",
+		},
+		{
+			Name:    "a socket at path fails",
+			Setup:   mksock,
+			Args:    &module.Dir{Path: "/tmp/w/s", Absent: true},
+			WantErr: "/tmp/w/s is a special file, not a directory",
+		},
+		{
+			Name:    "/var/run fails because it is a link",
+			Args:    &module.Dir{Path: "/var/run"},
+			WantErr: "/var/run is a symbolic link, not a directory",
+		},
+		{
 			Name:    "a file as parent fails",
 			Setup:   `touch /tmp/w/f`,
 			Args:    &module.Dir{Path: "/tmp/w/f/d"},
@@ -179,6 +204,12 @@ func TestDirModule(t *testing.T) {
 			BeforeApply:  `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
 			WantApplyErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
 			After:        `[ -d /tmp/w/d ]`,
+		},
+		{
+			Name:  "a path with spaces and shell characters",
+			Args:  &module.Dir{Path: oddDir},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{attrs}},
+			After: "[ -d " + vmtest.Quote(oddDir) + " ] && [ ! -e /tmp/pwn ]",
 		},
 	})
 }

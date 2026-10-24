@@ -11,6 +11,13 @@ const nginxSite = `stages:
   - name: web
     hosts: all
     steps:
+      - file:
+          path: /etc/nginx/nginx.conf
+          content: |
+            events {}
+            http {
+                include /etc/nginx/sites-enabled/*;
+            }
       - dir:
           path: /var/www/demo
       - file:
@@ -49,7 +56,7 @@ func TestNginx(t *testing.T) {
 	if r.Code != 0 || strings.Count(r.Stdout, "refresh the package index") != 1 {
 		t.Fatalf("plan: exit %d, want one index refresh", r.Code)
 	}
-	for _, want := range []string{"+ dir /var/www/demo", "+ link /etc/nginx/sites-enabled/demo", "+ pkg nginx, curl", "~ service nginx"} {
+	for _, want := range []string{"+ file /etc/nginx/nginx.conf", "+ dir /var/www/demo", "+ link /etc/nginx/sites-enabled/demo", "+ pkg nginx, curl", "~ service nginx"} {
 		if !strings.Contains(r.Stdout, want) {
 			t.Errorf("plan has no %q", want)
 		}
@@ -61,6 +68,10 @@ func TestNginx(t *testing.T) {
 	}
 	if out := vm.MustRun(t, "curl -s http://localhost:8080/"); out != "Hello from winch.\n" {
 		t.Errorf("page = %q", out)
+	}
+	// dpkg keeps a config file that a step wrote before the install.
+	if out := vm.MustRun(t, "head -1 /etc/nginx/nginx.conf"); out != "events {}\n" {
+		t.Errorf("nginx.conf starts with %q", out)
 	}
 	if out := vm.MustRun(t, "wc -l < /root/updates"); strings.TrimSpace(out) != "1" {
 		t.Errorf("index refreshes = %s, want 1", out)

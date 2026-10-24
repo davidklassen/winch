@@ -68,6 +68,14 @@ func TestFileModule(t *testing.T) {
 			After: `[ "$(stat -c '%a' /tmp/w/f)" = 4755 ]`,
 		},
 		{
+			Name:      "setuid mode stays after a change of owner",
+			Setup:     `printf 'x\n' > /tmp/w/f && chown admin /tmp/w/f && chmod 4755 /tmp/w/f`,
+			Args:      &module.File{Path: "/tmp/w/f", Content: new("x\n"), Mode: "4755"},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner admin → root"}},
+			Unchanged: `[ "$(stat -c '%U %a' /tmp/w/f)" = "admin 4755" ]`,
+			After:     `[ "$(stat -c '%U %G %a' /tmp/w/f)" = "root root 4755" ]`,
+		},
+		{
 			Name:      "parent directories",
 			Args:      &module.File{Path: "/tmp/w/a/b/c", Content: new("x\n")},
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /tmp/w/a (owner root, group root, mode 0755)", "create directory /tmp/w/a/b (owner root, group root, mode 0755)", attrs}, Old: new("")},
@@ -117,6 +125,24 @@ func TestFileModule(t *testing.T) {
 			Setup:   `mkdir /tmp/w/d`,
 			Args:    &module.File{Path: "/tmp/w/d", Content: new("x\n")},
 			WantErr: "/tmp/w/d is a directory, not a file",
+		},
+		{
+			Name:    "a FIFO at path fails",
+			Setup:   "mkfifo /tmp/w/p",
+			Args:    &module.File{Path: "/tmp/w/p", Content: new("x\n")},
+			WantErr: "/tmp/w/p is a special file, not a file",
+		},
+		{
+			Name:    "absent on a FIFO fails",
+			Setup:   "mkfifo /tmp/w/p",
+			Args:    &module.File{Path: "/tmp/w/p", Absent: true},
+			WantErr: "/tmp/w/p is a special file, not a file",
+		},
+		{
+			Name:    "a socket at path fails",
+			Setup:   mksock,
+			Args:    &module.File{Path: "/tmp/w/s", Content: new("x\n")},
+			WantErr: "/tmp/w/s is a special file, not a file",
 		},
 		{
 			Name:    "a file as parent fails",
@@ -202,6 +228,12 @@ func TestFileModule(t *testing.T) {
 			Setup:   `ln -s b /tmp/w/a && ln -s a /tmp/w/b`,
 			Args:    &module.File{Path: "/tmp/w/a/f", Content: new("x\n")},
 			WantErr: "/tmp/w/a/f: too many levels of symbolic links",
+		},
+		{
+			Name:  "a path with spaces and shell characters",
+			Args:  &module.File{Path: oddDir + "/f $x", Content: new("x\n")},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory " + oddDir + " (owner root, group root, mode 0755)", attrs}, Old: new("")},
+			After: "[ -f " + vmtest.Quote(oddDir+"/f $x") + " ] && [ ! -e /tmp/pwn ]",
 		},
 	})
 }

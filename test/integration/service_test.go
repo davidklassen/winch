@@ -35,6 +35,10 @@ Type=notify
 ExecStart=/bin/sleep infinity
 TimeoutStartSec=infinity
 U
+cat > /etc/systemd/system/winch-tpl@.service <<'U'
+[Service]
+ExecStart=/bin/sleep infinity
+U
 cat > /usr/lib/systemd/system/winch-vendor.service <<'U'
 [Service]
 ExecStart=/bin/sleep infinity
@@ -43,12 +47,15 @@ systemctl daemon-reload`
 
 const waitCrash = `timeout 10 sh -c 'until systemctl show -P SubState winch-crash | grep -qx auto-restart; do sleep 0.1; done'`
 
+// oddUnit has the instance "a b;$(touch /tmp/pwn)", as systemd-escape writes it.
+const oddUnit = `winch-tpl@a\x20b\x3b\x24\x28touch\x20-tmp-pwn\x29`
+
 // spec: Modules/service and unit
 func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor; systemctl stop winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service; systemctl disable winch-test.service winch-test.timer 2>/dev/null; true"
+	reset := "if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service; systemctl disable winch-test.service winch-test.timer 2>/dev/null; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -101,6 +108,13 @@ systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
 			Setup: `systemctl start --no-block winch-notify && timeout 10 sh -c 'until systemctl show -P ActiveState winch-notify | grep -qx activating; do sleep 0.1; done'`,
 			Args:  &module.Service{Name: "winch-notify", Running: new(true)},
 			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:      "an instance name with escaped spaces and shell characters",
+			Args:      &module.Service{Name: oddUnit, Running: new(true)},
+			Want:      change("start"),
+			Unchanged: `! systemctl is-active -q ` + vmtest.Quote(oddUnit),
+			After:     `systemctl is-active -q ` + vmtest.Quote(oddUnit),
 		},
 		{
 			Name:  "ok when running",

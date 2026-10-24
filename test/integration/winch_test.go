@@ -1,8 +1,12 @@
 package integration
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -98,5 +102,33 @@ func TestWinch(t *testing.T) {
 			t.Errorf("plan with a .bashrc that prints: exit %d", r.Code)
 		}
 		vm.MustRun(t, "sed -i 1d /home/nosudo/.bashrc")
+	})
+
+	t.Run("closing a session with ControlPersist does not wait", func(t *testing.T) {
+		// A unix socket path must be short, and the lab directory is long on macOS.
+		ctl, err := os.MkdirTemp("/tmp", "winch-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		conf := filepath.Join(lab.Dir, "hosts", "winch-mux.conf")
+		if err := os.WriteFile(conf, []byte("Host "+vm.Name+"\n  ControlMaster auto\n  ControlPath "+ctl+"/%C\n  ControlPersist 60\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			exec.Command("ssh", "-O", "exit", vm.Name).Run() //nolint:errcheck // the master may be gone
+			os.Remove(conf)
+			os.RemoveAll(ctl)
+		})
+		s := vm.Session(t)
+		start := time.Now()
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if d := time.Since(start); d > 2*time.Second {
+			t.Errorf("close took %v", d)
+		}
+		if out, err := exec.Command("ssh", "-O", "check", vm.Name).CombinedOutput(); err != nil {
+			t.Errorf("no ssh master runs: %v: %s", err, out)
+		}
 	})
 }

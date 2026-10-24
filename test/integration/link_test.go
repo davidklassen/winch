@@ -34,6 +34,14 @@ func TestLinkModule(t *testing.T) {
 			After:     `[ "$(readlink /tmp/w/l)" = /etc/hosts ] && [ -f /etc/hostname ]`,
 		},
 		{
+			Name:      "change the target from one directory to another",
+			Setup:     `mkdir /tmp/w/a /tmp/w/b && ln -s /tmp/w/a /tmp/w/l`,
+			Args:      &module.Link{Path: "/tmp/w/l", Target: new("/tmp/w/b")},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"target /tmp/w/a → /tmp/w/b"}},
+			Unchanged: `[ "$(readlink /tmp/w/l)" = /tmp/w/a ]`,
+			After:     `[ "$(readlink /tmp/w/l)" = /tmp/w/b ] && [ -z "$(ls -A /tmp/w/a)$(ls -A /tmp/w/b)" ]`,
+		},
+		{
 			Name:  "a target that does not exist",
 			Args:  &module.Link{Path: "/tmp/w/l", Target: new("/tmp/w/nothing")},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"target /tmp/w/nothing"}},
@@ -83,6 +91,18 @@ func TestLinkModule(t *testing.T) {
 			WantErr: "/tmp/w/d is a directory, not a symbolic link",
 		},
 		{
+			Name:    "a FIFO at path fails",
+			Setup:   "mkfifo /tmp/w/p",
+			Args:    &module.Link{Path: "/tmp/w/p", Target: new("/etc/hostname")},
+			WantErr: "/tmp/w/p is a special file, not a symbolic link",
+		},
+		{
+			Name:    "a socket at path fails",
+			Setup:   mksock,
+			Args:    &module.Link{Path: "/tmp/w/s", Absent: true},
+			WantErr: "/tmp/w/s is a special file, not a symbolic link",
+		},
+		{
 			Name:    "a link in a user's home fails",
 			Setup:   `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
 			Args:    &module.Link{Path: "/home/admin/w/l", Target: new("/etc/hostname")},
@@ -115,6 +135,12 @@ func TestLinkModule(t *testing.T) {
 			Setup:   `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w && ln -s /etc/hostname /tmp/w/l`,
 			Args:    &module.Link{Path: "/home/admin/w/l", Absent: true},
 			WantErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
+		},
+		{
+			Name:  "a path with spaces and shell characters",
+			Args:  &module.Link{Path: oddDir, Target: new(oddDir + " $x")},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"target " + oddDir + " $x"}},
+			After: `[ "$(readlink ` + vmtest.Quote(oddDir) + `)" = ` + vmtest.Quote(oddDir+" $x") + " ] && [ ! -e /tmp/pwn ]",
 		},
 	})
 }

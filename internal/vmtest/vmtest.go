@@ -232,7 +232,7 @@ func freePort() (int, error) {
 
 // Run runs a shell command as root on the VM over ssh.
 func (vm *VM) Run(ctx context.Context, command string) (string, error) {
-	command = "sudo sh -c " + quote(command)
+	command = "sudo sh -c " + Quote(command)
 	cmd := exec.CommandContext(ctx, filepath.Join(vm.lab.Dir, "bin", "ssh"), "-o", "ConnectTimeout=5", vm.Name, command)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -263,7 +263,7 @@ func (vm *VM) Stop() {
 	os.Remove(filepath.Join(vm.lab.Dir, "hosts", vm.Name+".conf"))
 }
 
-func quote(s string) string {
+func Quote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
