@@ -60,6 +60,25 @@ func TestPkgModule(t *testing.T) {
 			After:     same,
 		},
 		{
+			Name:      "a package that came in as a dependency is marked as manually installed",
+			Setup:     install + " fortune-mod && apt-mark showauto librecode3 | grep -q librecode3",
+			Args:      &module.Pkg{Name: []string{"librecode3"}},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"mark librecode3 as manually installed"}},
+			Unchanged: "apt-mark showauto librecode3 | grep -q librecode3",
+			// A dry run of autoremove keeps the other automatic packages of the VM.
+			After: "DEBIAN_FRONTEND=noninteractive apt-get purge -y -q fortune-mod && ! apt-get -s autoremove | grep -q '^Remv librecode3 '",
+		},
+		{
+			Name:      "a list installs a missing package and marks a dependency",
+			State:     module.State{IndexFresh: true},
+			Setup:     install + " fortune-mod",
+			Args:      &module.Pkg{Name: []string{"hello", "librecode3"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install hello", "mark librecode3 as manually installed"}},
+			WantState: module.State{IndexFresh: true},
+			Unchanged: "apt-mark showauto librecode3 | grep -q librecode3",
+			After:     "apt-mark showmanual hello librecode3 | grep -c . | grep -qx 2",
+		},
+		{
 			Name:      "a list installs the missing packages in one apt call",
 			State:     module.State{IndexFresh: true},
 			Setup:     install + " hello && grep -c ^Commandline /var/log/apt/history.log > /root/hist",

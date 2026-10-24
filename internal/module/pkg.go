@@ -23,6 +23,8 @@ type Pkg struct {
 	refresh bool
 	verb    string
 	todo    []string
+	// auto holds installed packages that apt marked automatic.
+	auto []string
 }
 
 func (p *Pkg) Main() string { return strings.Join(p.Name, ", ") }
@@ -57,6 +59,7 @@ func (p *Pkg) Check(ctx context.Context, st *State) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	var inst []string
 	for _, n := range p.Name {
 		s := states[n]
 		switch {
@@ -64,38 +67,56 @@ func (p *Pkg) Check(ctx context.Context, st *State) (Result, error) {
 			p.Absent && s >= partial,
 			p.Purge && s == configFiles:
 			p.todo = append(p.todo, n)
+		case !p.Absent:
+			inst = append(inst, n)
 		}
 	}
-	if len(p.todo) == 0 {
-		return Result{Status: OK}, nil
-	}
-	p.verb = "install"
-	switch {
-	case p.Purge:
-		p.verb = "purge"
-	case p.Absent:
-		p.verb = "remove"
-	}
-	changes := []string{p.verb + " " + strings.Join(p.todo, ", ")}
-	if p.Absent {
-		others, err := p.dependents(ctx)
+	// apt-mark showauto with no names lists every automatic package.
+	if len(inst) > 0 {
+		out, err := run(ctx, nil, "apt-mark", append([]string{"showauto"}, inst...)...)
 		if err != nil {
 			return Result{}, err
 		}
-		if len(others) > 0 {
-			changes = append(changes, "also "+p.verb+" "+strings.Join(others, ", "))
+		p.auto = strings.Fields(out)
+	}
+	if len(p.todo) == 0 && len(p.auto) == 0 {
+		return Result{Status: OK}, nil
+	}
+	var changes []string
+	action := Modify
+	if len(p.todo) > 0 {
+		p.verb = "install"
+		switch {
+		case p.Purge:
+			p.verb = "purge"
+		case p.Absent:
+			p.verb = "remove"
 		}
-		return Result{Status: Change, Action: Remove, Changes: changes}, nil
+		changes = []string{p.verb + " " + strings.Join(p.todo, ", ")}
+		if p.Absent {
+			others, err := p.dependents(ctx)
+			if err != nil {
+				return Result{}, err
+			}
+			if len(others) > 0 {
+				changes = append(changes, "also "+p.verb+" "+strings.Join(others, ", "))
+			}
+			return Result{Status: Change, Action: Remove, Changes: changes}, nil
+		}
+		if p.Recommends != nil && !*p.Recommends {
+			changes[0] += " (without recommended packages)"
+		}
+		p.refresh = !st.IndexFresh
+		st.IndexFresh = true
+		if p.refresh {
+			changes = append([]string{"refresh the package index"}, changes...)
+		}
+		action = Create
 	}
-	if p.Recommends != nil && !*p.Recommends {
-		changes[0] += " (without recommended packages)"
+	if len(p.auto) > 0 {
+		changes = append(changes, "mark "+strings.Join(p.auto, ", ")+" as manually installed")
 	}
-	p.refresh = !st.IndexFresh
-	st.IndexFresh = true
-	if p.refresh {
-		changes = append([]string{"refresh the package index"}, changes...)
-	}
-	return Result{Status: Change, Action: Create, Changes: changes}, nil
+	return Result{Status: Change, Action: action, Changes: changes}, nil
 }
 
 // dependents returns the other packages that apt removes with the step's
@@ -116,6 +137,14 @@ func (p *Pkg) dependents(ctx context.Context) ([]string, error) {
 }
 
 func (p *Pkg) Apply(ctx context.Context) error {
+	if len(p.auto) > 0 {
+		if _, err := run(ctx, nil, "apt-mark", append([]string{"manual", "-o", aptLock}, p.auto...)...); err != nil {
+			return err
+		}
+	}
+	if len(p.todo) == 0 {
+		return nil
+	}
 	if p.refresh {
 		if _, err := run(ctx, aptEnv, "apt-get", "update", "-q", "--error-on=any", "-o", aptLock); err != nil {
 			return err
