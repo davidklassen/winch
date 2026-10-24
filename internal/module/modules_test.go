@@ -88,6 +88,9 @@ func TestLinkValidate(t *testing.T) {
 		{"relative path", "path: a\ntarget: /b\n", `t.yaml:1:7: path: must be an absolute path`},
 		{"no target", "path: /a\n", `t.yaml:1:1: target: a link needs a target, or absent: true`},
 		{"empty target", "path: /a\ntarget: \"\"\n", `t.yaml:2:9: target: must not be empty`},
+		{"trailing slash target", "path: /a\ntarget: /etc/nginx/\n", `t.yaml:2:9: target: must be a clean path, such as "/etc/nginx"`},
+		{"dot target", "path: /a\ntarget: ./x\n", `t.yaml:2:9: target: must be a clean path, such as "x"`},
+		{"double slash target", "path: /a\ntarget: a//b\n", `t.yaml:2:9: target: must be a clean path, such as "a/b"`},
 		{"target and absent", "path: /a\ntarget: /b\nabsent: true\n", `t.yaml:2:9: target: absent: true takes no target`},
 		{"validate", "path: /a\ntarget: /b\nvalidate: nginx -t\n", `t.yaml:3:1: unknown key "validate"`},
 	}

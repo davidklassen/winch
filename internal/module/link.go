@@ -30,6 +30,8 @@ func (l *Link) Validate() error {
 		return &yamlx.FieldError{Field: "target", Msg: "a link needs a target, or absent: true"}
 	case *l.Target == "":
 		return &yamlx.FieldError{Field: "target", Msg: "must not be empty"}
+	case path.Clean(*l.Target) != *l.Target:
+		return &yamlx.FieldError{Field: "target", Msg: fmt.Sprintf("must be a clean path, such as %q", path.Clean(*l.Target))}
 	}
 	return nil
 }
