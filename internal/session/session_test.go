@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/davidklassen/winch/internal/helperbin"
 	"github.com/davidklassen/winch/internal/module"
@@ -20,13 +21,14 @@ func fakeHelper(arch string) helperbin.Binary {
 }
 
 // fakeBin puts fake ssh, uname, id, and sudo first in PATH. ssh writes its
-// arguments to $SSH_ARGS when it is set, prints $SSH_BANNER when it is set,
-// and runs its last argument with sh, on this machine.
+// arguments to $SSH_ARGS when it is set, prints $SSH_BANNER and the output of
+// $SSH_BANNER_CMD when they are set, and runs its last argument with sh, on
+// this machine.
 func fakeBin(t *testing.T, arch, uid, sudo string) {
 	t.Helper()
 	bin := t.TempDir()
 	scripts := map[string]string{
-		"ssh":   "#!/bin/sh\n[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
+		"ssh":   "#!/bin/sh\n[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
 		"uname": "#!/bin/sh\necho " + arch + "\n",
 		"id":    "#!/bin/sh\necho " + uid + "\n",
 		"sudo":  sudo,
@@ -170,6 +172,34 @@ func TestOpenLoginShellText(t *testing.T) {
 	want := `the login shell printed "Welcome" before winch started; remove it from the shell startup files, such as ~/.bashrc`
 	if err == nil || err.Error() != want {
 		t.Errorf("error = %v, want %q", err, want)
+	}
+}
+
+// spec: Remote execution/Helper
+func TestOpenMuchLoginShellText(t *testing.T) {
+	tests := []struct{ name, banner string }{
+		{"1 MB", "echo Welcome; head -c 1048576 /dev/zero"},
+		{"without end", "echo Welcome; yes"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			t.Setenv("SSH_BANNER_CMD", tt.banner)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, err := Open(ctx, Config{
+				Host: "web1", Address: "web1", Dir: t.TempDir(),
+				Binaries: []helperbin.Binary{fakeHelper("arm64")},
+				Hello:    protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
+			})
+			if ctx.Err() != nil {
+				t.Error("Open did not end before the 5s timeout")
+			}
+			want := `the login shell printed "Welcome" before winch started`
+			if err == nil || !strings.HasPrefix(err.Error(), want) {
+				t.Errorf("error = %v, want %q", err, want)
+			}
+		})
 	}
 }
 

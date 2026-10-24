@@ -129,6 +129,8 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 		return nil, fmt.Errorf("start ssh: %w", err)
 	}
 	if err := s.start(cfg); err != nil {
+		// ssh can block on a full pipe, or the host can print without end.
+		_ = cmd.Process.Kill()
 		s.Close()
 		return nil, err
 	}
