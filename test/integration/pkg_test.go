@@ -21,8 +21,6 @@ func TestPkgModule(t *testing.T) {
 	vm.MustRun(t, quietApt+` && echo 'APT::Update::Pre-Invoke {"echo x >> /root/updates";};' > /etc/apt/apt.conf.d/99count && touch /root/updates`)
 	const (
 		install = "DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends"
-		stale   = "mkdir -p /var/lib/apt/lists/partial && touch -d '2 hours ago' /var/lib/apt/lists/partial"
-		fresh   = "mkdir -p /var/lib/apt/lists/partial && touch /var/lib/apt/lists/partial"
 		// count keeps the number of refreshes; same checks it after apply.
 		count = "wc -l < /root/updates > /root/before"
 		same  = `[ "$(wc -l < /root/updates)" = "$(cat /root/before)" ]`
@@ -31,32 +29,23 @@ func TestPkgModule(t *testing.T) {
 	reset := "rm -f /etc/apt/apt.conf.d/99norecommends; dpkg --purge hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
 		{
-			Name:      "install with a stale index refreshes it",
-			Setup:     stale + " && " + count,
+			Name:      "the first install of a run refreshes the index",
+			Setup:     count,
 			Args:      &module.Pkg{Name: []string{"hello"}},
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello"}},
 			WantState: module.State{IndexFresh: true},
 			Unchanged: same + " && ! dpkg -s hello >/dev/null 2>&1",
-			After: `[ "$(wc -l < /root/updates)" = $(( $(cat /root/before) + 1 )) ] && dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii' && ` +
-				`[ -n "$(find /var/lib/apt/lists/partial -maxdepth 0 -mmin -5)" ]`,
+			After:     `[ "$(wc -l < /root/updates)" = $(( $(cat /root/before) + 1 )) ] && dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii'`,
 		},
 		{
 			Name:  "ok when installed",
-			Setup: install + " hello && " + stale,
+			Setup: install + " hello",
 			Args:  &module.Pkg{Name: []string{"hello"}},
 			Want:  module.Result{Status: module.OK},
 		},
 		{
-			Name:      "no refresh with a fresh index",
-			Setup:     fresh + " && " + count,
-			Args:      &module.Pkg{Name: []string{"sl"}},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install sl"}},
-			WantState: module.State{IndexFresh: true},
-			After:     same,
-		},
-		{
 			Name:      "no refresh after the first install of the run",
-			Setup:     stale + " && " + count,
+			Setup:     count,
 			State:     module.State{IndexFresh: true},
 			Args:      &module.Pkg{Name: []string{"figlet"}},
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install figlet"}},
@@ -65,7 +54,8 @@ func TestPkgModule(t *testing.T) {
 		},
 		{
 			Name:      "a list installs the missing packages in one apt call",
-			Setup:     install + " hello && " + fresh + " && grep -c ^Commandline /var/log/apt/history.log > /root/hist",
+			State:     module.State{IndexFresh: true},
+			Setup:     install + " hello && grep -c ^Commandline /var/log/apt/history.log > /root/hist",
 			Args:      &module.Pkg{Name: []string{"tree", "hello", "figlet"}},
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install tree, figlet"}},
 			WantState: module.State{IndexFresh: true},
@@ -74,7 +64,7 @@ func TestPkgModule(t *testing.T) {
 		},
 		{
 			Name:      "recommends false",
-			Setup:     fresh,
+			State:     module.State{IndexFresh: true},
 			Args:      &module.Pkg{Name: []string{"fortune-mod"}, Recommends: new(false)},
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod (without recommended packages)"}},
 			WantState: module.State{IndexFresh: true},
@@ -82,7 +72,7 @@ func TestPkgModule(t *testing.T) {
 		},
 		{
 			Name:      "recommended packages by default",
-			Setup:     fresh,
+			State:     module.State{IndexFresh: true},
 			Args:      &module.Pkg{Name: []string{"fortune-mod"}},
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod"}},
 			WantState: module.State{IndexFresh: true},
@@ -98,7 +88,8 @@ func TestPkgModule(t *testing.T) {
 		},
 		{
 			Name:      "recommends true overrides the apt config",
-			Setup:     fresh + ` && echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/99norecommends`,
+			State:     module.State{IndexFresh: true},
+			Setup:     `echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/99norecommends`,
 			Args:      &module.Pkg{Name: []string{"fortune-mod"}, Recommends: new(true)},
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod"}},
 			WantState: module.State{IndexFresh: true},
@@ -146,7 +137,7 @@ func TestPkgModule(t *testing.T) {
 		},
 		{
 			Name:         "an unknown package checks as a change and fails at apply",
-			Setup:        fresh,
+			State:        module.State{IndexFresh: true},
 			Args:         &module.Pkg{Name: []string{"winch-no-such-package"}},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install winch-no-such-package"}},
 			WantState:    module.State{IndexFresh: true},

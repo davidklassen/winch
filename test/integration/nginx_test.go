@@ -40,8 +40,7 @@ const nginxSite = `stages:
 func TestNginx(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "nginx")
-	vm.MustRun(t, quietApt+` && echo 'APT::Update::Pre-Invoke {"echo x >> /root/updates";};' > /etc/apt/apt.conf.d/99count && touch /root/updates && `+
-		`mkdir -p /var/lib/apt/lists/partial && touch -d '2 hours ago' /var/lib/apt/lists/partial`)
+	vm.MustRun(t, quietApt+` && echo 'APT::Update::Pre-Invoke {"echo x >> /root/updates";};' > /etc/apt/apt.conf.d/99count && touch /root/updates`)
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
 		"inventories/test.yaml": "hosts:\n  nginx: {}\n",

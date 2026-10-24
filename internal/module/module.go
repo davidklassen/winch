@@ -40,8 +40,8 @@ type Result struct {
 // State is what earlier steps of the run did on the host. The controller
 // keeps it per host and sends it with each step.
 type State struct {
-	// IndexFresh is true after the first install of the run decided about
-	// the index refresh.
+	// IndexFresh is true after an install of the run refreshed the package
+	// index.
 	IndexFresh bool `json:"index_fresh,omitempty"`
 }
 

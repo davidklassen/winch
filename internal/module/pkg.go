@@ -5,12 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -48,13 +46,6 @@ func (p *Pkg) Validate() error {
 	}
 	return nil
 }
-
-// The index is older than this before the first install of a run refreshes
-// it.
-const indexMaxAge = time.Hour
-
-// listsPartial is touched by every apt-get update, also when no list changed.
-const listsPartial = "/var/lib/apt/lists/partial"
 
 var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive"}
 
@@ -99,10 +90,8 @@ func (p *Pkg) Check(ctx context.Context, st *State) (Result, error) {
 	if p.Recommends != nil && !*p.Recommends {
 		changes[0] += " (without recommended packages)"
 	}
-	if !st.IndexFresh {
-		st.IndexFresh = true
-		p.refresh = indexStale()
-	}
+	p.refresh = !st.IndexFresh
+	st.IndexFresh = true
 	if p.refresh {
 		changes = append([]string{"refresh the package index"}, changes...)
 	}
@@ -124,11 +113,6 @@ func (p *Pkg) dependents(ctx context.Context) ([]string, error) {
 		}
 	}
 	return others, nil
-}
-
-func indexStale() bool {
-	fi, err := os.Stat(listsPartial)
-	return err != nil || time.Since(fi.ModTime()) > indexMaxAge
 }
 
 func (p *Pkg) Apply(ctx context.Context) error {
