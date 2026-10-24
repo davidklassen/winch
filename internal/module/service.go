@@ -42,7 +42,10 @@ func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
 		return Result{}, fmt.Errorf("%s is an alias of %s; use %s", s.Name, u.id, strings.TrimSuffix(u.id, ".service"))
 	}
 	missing := u.load == "not-found"
-	if !missing && u.load != "loaded" {
+	switch {
+	case missing, u.load == "loaded":
+	case u.load == "masked" && (s.Enabled == nil || !*s.Enabled) && (s.Running == nil || !*s.Running):
+	default:
 		return Result{}, fmt.Errorf("%s has the load state %q", u.id, u.load)
 	}
 	if s.Enabled != nil {

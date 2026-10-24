@@ -25,6 +25,10 @@ cat > /etc/systemd/system/winch-static.service <<'U'
 [Service]
 ExecStart=/bin/sleep infinity
 U
+cat > /usr/lib/systemd/system/winch-vendor.service <<'U'
+[Service]
+ExecStart=/bin/sleep infinity
+U
 systemctl daemon-reload`
 
 // spec: Modules/service and unit
@@ -32,7 +36,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl stop winch-test.service winch-test.timer winch-static.service; systemctl disable winch-test.service winch-test.timer 2>/dev/null; true"
+	reset := "systemctl unmask winch-vendor; systemctl stop winch-test.service winch-test.timer winch-static.service winch-vendor.service; systemctl disable winch-test.service winch-test.timer 2>/dev/null; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -112,10 +116,41 @@ func TestServiceModule(t *testing.T) {
 			Want: module.Result{Status: module.OK},
 		},
 		{
-			Name:    "a masked unit fails",
-			Setup:   `ln -sf /dev/null /etc/systemd/system/winch-masked.service && systemctl daemon-reload`,
+			Name:    "a masked unit that must run fails",
+			Setup:   `systemctl mask winch-masked`,
 			Args:    &module.Service{Name: "winch-masked", Running: new(true)},
 			WantErr: `winch-masked.service has the load state "masked"`,
+		},
+		{
+			Name:    "a masked unit that must be enabled fails",
+			Setup:   `systemctl mask winch-masked`,
+			Args:    &module.Service{Name: "winch-masked", Enabled: new(true)},
+			WantErr: `winch-masked.service has the load state "masked"`,
+		},
+		{
+			Name:  "a masked unit that must not run is ok",
+			Setup: `systemctl mask winch-masked && systemctl show -P LoadState winch-masked | grep -qx masked`,
+			Args:  &module.Service{Name: "winch-masked", Enabled: new(false), Running: new(false)},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "a masked unit with only running: false is ok",
+			Setup: `systemctl mask winch-masked`,
+			Args:  &module.Service{Name: "winch-masked", Running: new(false)},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "a masked unit with only enabled: false is ok",
+			Setup: `systemctl mask winch-masked`,
+			Args:  &module.Service{Name: "winch-masked", Enabled: new(false)},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "a masked unit that still runs stops",
+			Setup: `systemctl start winch-vendor && systemctl mask winch-vendor && systemctl show -P LoadState winch-vendor | grep -qx masked`,
+			Args:  &module.Service{Name: "winch-vendor", Enabled: new(false), Running: new(false)},
+			Want:  change("stop"),
+			After: `! systemctl is-active -q winch-vendor`,
 		},
 		{
 			Name:         "a missing unit checks as a change and fails at apply",
