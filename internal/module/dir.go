@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"strings"
 )
 
 type Dir struct {
@@ -54,6 +55,9 @@ func (d *Dir) Check(ctx context.Context, _ *State) (Result, error) {
 		if !exists {
 			return Result{Status: OK}, nil
 		}
+		if err := noMount(dir, name, fi, d.Path); err != nil {
+			return Result{}, err
+		}
 		res := Result{Status: Change, Action: Remove}
 		empty, err := isEmpty(dir, name, fi)
 		if err != nil {
@@ -87,6 +91,13 @@ func (d *Dir) Apply(ctx context.Context) error {
 			return err
 		}
 		defer dir.Close()
+		fi, exists, err := lstat(dir, name, nil)
+		if err != nil || !exists {
+			return err
+		}
+		if err := noMount(dir, name, fi, d.Path); err != nil {
+			return err
+		}
 		return dir.RemoveAll(name)
 	}
 	owner, group, mode, err := attrs(d.Owner, d.Group, d.Mode, "0755")
@@ -137,3 +148,35 @@ func isEmpty(dir *os.Root, name string, fi fs.FileInfo) (bool, error) {
 	}
 	return false, err
 }
+
+// noMount fails when name in dir, or anything below it, is a mount point.
+// RemoveAll would remove the files on the mounted file system. p is the path
+// of name in the step, which can differ from the real path behind links.
+func noMount(dir *os.Root, name string, fi fs.FileInfo, p string) error {
+	f, err := openSame(dir, name, fi)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	target, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", f.Fd()))
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return err
+	}
+	for line := range strings.Lines(string(data)) {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		mp := mountEscapes.Replace(fields[4])
+		if mp == target || strings.HasPrefix(mp, target+"/") {
+			return fmt.Errorf("%s is a mount point", p+mp[len(target):])
+		}
+	}
+	return nil
+}
+
+var mountEscapes = strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)

@@ -12,7 +12,8 @@ func TestDirModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "dir")
 	attrs := "owner root, group root, mode 0755"
-	vmtest.RunCases(t, vm, "dir", "rm -rf /tmp/w && mkdir /tmp/w", []vmtest.Case{
+	reset := "grep -o ' /tmp/w/[^ ]*' /proc/self/mounts | sort -r | xargs -r umount\nrm -rf /tmp/w /tmp/wsrc && mkdir /tmp/w"
+	vmtest.RunCases(t, vm, "dir", reset, []vmtest.Case{
 		{
 			Name:      "create with parents",
 			Args:      &module.Dir{Path: "/tmp/w/a/b"},
@@ -72,6 +73,40 @@ func TestDirModule(t *testing.T) {
 			Args:  &module.Dir{Path: "/tmp/w/d", Absent: true},
 			Want:  module.Result{Status: module.Change, Action: module.Remove},
 			After: `[ ! -e /tmp/w/d ]`,
+		},
+		{
+			Name:    "absent on a tree with a mount point fails",
+			Setup:   `mkdir -p /tmp/w/d/x/m && mount -t tmpfs tmpfs /tmp/w/d/x/m && touch /tmp/w/d/x/m/f`,
+			Args:    &module.Dir{Path: "/tmp/w/d", Absent: true},
+			WantErr: "/tmp/w/d/x/m is a mount point",
+		},
+		{
+			Name:    "absent on a mount point fails",
+			Setup:   `mkdir /tmp/w/d && mount -t tmpfs tmpfs /tmp/w/d && touch /tmp/w/d/f`,
+			Args:    &module.Dir{Path: "/tmp/w/d", Absent: true},
+			WantErr: "/tmp/w/d is a mount point",
+		},
+		{
+			Name:    "absent on a tree with a bind mount fails",
+			Setup:   `mkdir -p /tmp/wsrc /tmp/w/d/m && touch /tmp/wsrc/f && mount --bind /tmp/wsrc /tmp/w/d/m`,
+			Args:    &module.Dir{Path: "/tmp/w/d", Absent: true},
+			WantErr: "/tmp/w/d/m is a mount point",
+		},
+		{
+			Name:  "absent below a mount point works",
+			Setup: `mkdir -p /tmp/w/p && mount -t tmpfs tmpfs /tmp/w/p && mkdir /tmp/w/p/d`,
+			Args:  &module.Dir{Path: "/tmp/w/p/d", Absent: true},
+			Want:  module.Result{Status: module.Change, Action: module.Remove},
+			After: `[ -d /tmp/w/p ] && [ ! -e /tmp/w/p/d ]`,
+		},
+		{
+			Name:         "a mount put in the tree before apply stays",
+			Setup:        `mkdir -p /tmp/w/d/m`,
+			Args:         &module.Dir{Path: "/tmp/w/d", Absent: true},
+			Want:         module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove its content"}},
+			BeforeApply:  `mount -t tmpfs tmpfs /tmp/w/d/m && touch /tmp/w/d/m/f`,
+			WantApplyErr: "/tmp/w/d/m is a mount point",
+			After:        `[ -f /tmp/w/d/m/f ]`,
 		},
 		{
 			Name: "absent when missing is ok",
