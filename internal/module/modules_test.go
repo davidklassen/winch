@@ -135,8 +135,8 @@ func TestParseDpkg(t *testing.T) {
 
 // spec: Modules/service and unit
 func TestParseShow(t *testing.T) {
-	got := parseShow("Id=nginx.service\nLoadState=loaded\nActiveState=active\nUnitFileState=enabled\n")
-	want := unitState{id: "nginx.service", load: "loaded", active: "active", file: "enabled"}
+	got := parseShow("Id=nginx.service\nLoadState=loaded\nActiveState=active\nUnitFileState=enabled\nNeedDaemonReload=yes\n")
+	want := unitState{id: "nginx.service", load: "loaded", active: "active", file: "enabled", reload: true}
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)
 	}

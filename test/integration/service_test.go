@@ -34,7 +34,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl unmask winch-vendor; systemctl stop winch-test.service winch-test.timer winch-static.service winch-vendor.service; systemctl disable winch-test.service winch-test.timer 2>/dev/null; true"
+	reset := "if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor; systemctl stop winch-test.service winch-test.timer winch-static.service winch-vendor.service; systemctl disable winch-test.service winch-test.timer 2>/dev/null; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -45,6 +45,27 @@ func TestServiceModule(t *testing.T) {
 			Want:      change("start"),
 			Unchanged: `! systemctl is-active -q winch-test`,
 			After:     `systemctl is-active -q winch-test`,
+		},
+		{
+			Name: "a new drop-in reloads systemd before the start",
+			Setup: `systemctl enable winch-test
+mkdir /etc/systemd/system/winch-test.service.d
+printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service.d/limits.conf
+systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
+			Args:      &module.Service{Name: "winch-test", Running: new(true)},
+			Want:      change("daemon-reload", "start"),
+			Unchanged: `systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
+			After:     `grep -q '^Max open files  *12345 ' /proc/$(systemctl show -P MainPID winch-test)/limits`,
+		},
+		{
+			Name: "a new drop-in of a running unit reloads systemd",
+			Setup: `systemctl enable --now winch-test
+mkdir /etc/systemd/system/winch-test.service.d
+printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service.d/limits.conf
+systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
+			Args:  &module.Service{Name: "winch-test", Running: new(true)},
+			Want:  change("daemon-reload"),
+			After: `systemctl show -P NeedDaemonReload winch-test | grep -qx no`,
 		},
 		{
 			Name:  "ok when running",

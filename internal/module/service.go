@@ -33,7 +33,7 @@ func (s *Service) Validate() error {
 }
 
 func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,UnitFileState", "--", s.Name)
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,UnitFileState,NeedDaemonReload", "--", s.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -47,6 +47,9 @@ func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
 	case u.load == "masked" && (s.Enabled == nil || !*s.Enabled) && (s.Running == nil || !*s.Running):
 	default:
 		return Result{}, fmt.Errorf("%s has the load state %q", u.id, u.load)
+	}
+	if u.reload {
+		s.todo = append(s.todo, "daemon-reload")
 	}
 	if s.Enabled != nil {
 		switch {
@@ -84,7 +87,11 @@ func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
 
 func (s *Service) Apply(ctx context.Context) error {
 	for _, c := range s.todo {
-		if _, err := run(ctx, nil, "systemctl", c, "--", s.Name); err != nil {
+		args := []string{c}
+		if c != "daemon-reload" {
+			args = append(args, "--", s.Name)
+		}
+		if _, err := run(ctx, nil, "systemctl", args...); err != nil {
 			return err
 		}
 	}
@@ -93,6 +100,7 @@ func (s *Service) Apply(ctx context.Context) error {
 
 type unitState struct {
 	id, load, active, file string
+	reload                 bool
 }
 
 func parseShow(out string) unitState {
@@ -108,6 +116,8 @@ func parseShow(out string) unitState {
 			u.active = v
 		case "UnitFileState":
 			u.file = v
+		case "NeedDaemonReload":
+			u.reload = v == "yes"
 		}
 	}
 	return u
