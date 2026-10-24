@@ -1,0 +1,2 @@
+pipelines/site.yaml:7:17: mode: expected a string, got the integer 644; quote the value to make it a string
+pipelines/site.yaml:8:11: unknown key "contnet"; did you mean "content"?

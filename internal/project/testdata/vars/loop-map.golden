@@ -1,0 +1,1 @@
+recipes/web/recipe.yaml:10:11: loop: use a list, or an expression with the !expr tag, such as loop: !expr vars.sites

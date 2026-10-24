@@ -23,6 +23,15 @@ func Decode(n *Node, v any) error {
 	return errors.Join(d.errs...)
 }
 
+// DecodeLazy is Decode for a value that can hold tagged scalars. It skips
+// them, counts their keys as set, and skips Validate for a struct that holds
+// one.
+func DecodeLazy(n *Node, v any) error {
+	d := decoder{lazy: true}
+	d.value(n, reflect.ValueOf(v).Elem(), "")
+	return errors.Join(d.errs...)
+}
+
 var (
 	nodeType    = reflect.TypeFor[*Node]()
 	posType     = reflect.TypeFor[Pos]()
@@ -30,7 +39,9 @@ var (
 )
 
 type decoder struct {
-	errs []error
+	errs     []error
+	lazy     bool
+	deferred int
 }
 
 func (d *decoder) errorf(pos Pos, name, format string, args ...any) {
@@ -44,6 +55,10 @@ func (d *decoder) errorf(pos Pos, name, format string, args ...any) {
 func (d *decoder) value(n *Node, v reflect.Value, name string) {
 	if v.Type() == nodeType {
 		v.Set(reflect.ValueOf(n))
+		return
+	}
+	if n.Tag != "" && d.lazy {
+		d.deferred++
 		return
 	}
 	if n.Tag != "" {
@@ -176,7 +191,7 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 	if f := v.FieldByName("Pos"); f.IsValid() && f.Type() == posType {
 		f.Set(reflect.ValueOf(n.Pos))
 	}
-	before := len(d.errs)
+	before, deferred := len(d.errs), d.deferred
 	fs := fields(v.Type())
 	seen := map[string]Pos{}
 	for _, p := range n.Pairs {
@@ -200,7 +215,7 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 			d.errorf(n.Pos, "", "missing key %q", f.name)
 		}
 	}
-	if len(d.errs) > before {
+	if len(d.errs) > before || d.deferred > deferred {
 		return
 	}
 	val, ok := v.Addr().Interface().(interface{ Validate() error })

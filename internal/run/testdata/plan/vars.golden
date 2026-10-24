@@ -1,0 +1,36 @@
+stdout:
+web1
+  web
+    site
+      + file /etc/site/www
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +www on web1
+      + file /etc/site/port
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +81
+
+web2
+  web
+    site
+      + file /etc/site/mail
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +mail on web2
+      + file /etc/site/www
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +www on web2
+      + file /etc/site/mail.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +relay web2
+      + file /etc/site/port
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +81
+
+3 hosts: 2 to change, 0 unchanged, 0 unknown, 1 failed
+stderr:
+web3: recipes/site/recipe.yaml:14:16: content: invalid operation: string + int

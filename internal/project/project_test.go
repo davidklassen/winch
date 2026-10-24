@@ -140,7 +140,7 @@ func TestLoad(t *testing.T) {
 		{name: "winch-unknown-key", files: map[string]string{"winch.yaml": "name: acme\ninventroy: x\n"}},
 		{name: "host-unknown-key", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    adress: 1.2.3.4\n"}},
 		{name: "all-with-hosts", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1: {}\ngroups:\n  all:\n    hosts: [web1]\n"}},
-		{name: "other-group", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1: {}\ngroups:\n  web:\n    user: x\n"}},
+		{name: "other-group", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\ngroups:\n  web:\n    hosts: [web2]\n    user: x\n"}},
 		{name: "bad-address", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    address: a$(id)b\n  web2:\n    address: -oProxyCommand=x\n  web3:\n    address: fe80::1%eth0\n"}},
 		{name: "host-named-all", files: map[string]string{"inventories/test.yaml": "hosts:\n  all: {}\n"}},
 		{name: "empty-inventory", files: map[string]string{"inventories/test.yaml": "hosts: {}\n"}},
@@ -199,7 +199,7 @@ func TestLoad(t *testing.T) {
 			if pipeline == "" {
 				pipeline = "site"
 			}
-			p, err := Load(dir, tt.inventory, pipeline)
+			p, err := Load(dir, tt.inventory, pipeline, nil)
 			golden.Assert(t, filepath.Join("testdata", "load", tt.name+".golden"), result(p, err))
 		})
 	}
@@ -396,7 +396,7 @@ func TestLoadRecipes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, with(nginx, tt.files))
-			p, err := Load(dir, "", "site")
+			p, err := Load(dir, "", "site", nil)
 			golden.Assert(t, filepath.Join("testdata", "load", tt.name+".golden"), result(p, err))
 		})
 	}
@@ -416,11 +416,11 @@ func TestRender(t *testing.T) {
 		}},
 		{"no trailing newline", "{{ .host.short }}", map[string]string{"web2": "web2"}},
 		{"with and dollar", "{{ with .host }}{{ .short }}-{{ $.host.name }}{{ end }}", map[string]string{"web1.acme.com": "web1-web1.acme.com"}},
-		{"missing key", "a\n b {{ .host.nme }}\n", map[string]string{
-			"web1.acme.com": "error: recipes/r/templates/t.tmpl:2:12: .host.nme: map has no entry for key \"nme\"",
+		{"missing key", "a\n b {{ with .host }}{{ .nme }}{{ end }}\n", map[string]string{
+			"web1.acme.com": "error: recipes/r/templates/t.tmpl:2:23: .nme: map has no entry for key \"nme\"",
 		}},
 		{"source bytes", "", map[string]string{"web2": binary}},
-		{"range over a map", "{{ range $k, $v := .host }}{{ $k }}={{ $v }};{{ end }}", map[string]string{"web2": "address=web2;name=web2;short=web2;"}},
+		{"range over a map", "{{ range $k, $v := .host }}{{ $k }}={{ $v }};{{ end }}", map[string]string{"web2": "address=web2;groups=[all];name=web2;short=web2;vars=map[];"}},
 		{"index", "{{ index .host \"short\" }}", map[string]string{"web2": "web2"}},
 		{"index of a missing key", "{{ index .host \"nme\" }}", map[string]string{
 			"web2": "error: recipes/r/templates/t.tmpl:1:4: index .host \"nme\": error calling index: map has no entry for key \"nme\"",
@@ -440,7 +440,7 @@ func TestRender(t *testing.T) {
 				"recipes/r/templates/t.tmpl": tt.template,
 				"recipes/r/files/s.bin":      binary,
 			})
-			p, err := Load(dir, "", "site")
+			p, err := Load(dir, "", "site", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -451,10 +451,16 @@ func TestRender(t *testing.T) {
 					continue
 				}
 				got := ""
-				if es, err := st.For(h); err != nil {
+				env, err := p.Start(h, debian13)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if es, err := st.Eval(env); err != nil {
 					got = "error: " + err.Error()
+				} else if len(es) != 1 {
+					got = fmt.Sprintf("%d steps", len(es))
 				} else {
-					got = string(es.Args.(*module.File).Data)
+					got = string(es[0].Args.(*module.File).Data)
 				}
 				if got != want {
 					t.Errorf("%s: got %q, want %q", h.Name, got, want)
@@ -473,7 +479,7 @@ func TestSourceLinkOutOfRecipe(t *testing.T) {
 	if err := os.Symlink("../../../secret", filepath.Join(dir, "recipes/nginx/files/key")); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(dir, "", "site")
+	_, err := Load(dir, "", "site", nil)
 	if err == nil || !strings.Contains(err.Error(), "recipes/nginx/recipe.yaml:4:15: source: read recipes/nginx/files/key:") {
 		t.Errorf("a source link out of the recipe: %v", err)
 	}

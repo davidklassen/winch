@@ -1,0 +1,1 @@
+pipelines/site.yaml:3:12: unknown host or group "mial" in inventories/test.yaml; did you mean "mail"?

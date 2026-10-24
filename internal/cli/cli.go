@@ -53,6 +53,7 @@ Run "winch <command> --help" for the arguments and flags of a command.
 
 type command struct {
 	help string
+	set  bool
 	// yes is true when the command takes --yes.
 	yes bool
 	run func(ctx context.Context, env Env, f *flags, args []string) int
@@ -60,8 +61,8 @@ type command struct {
 
 var commands = map[string]command{
 	"validate": {help: validateHelp, run: validate},
-	"plan":     {help: planHelp, run: plan},
-	"apply":    {help: applyHelp, yes: true, run: apply},
+	"plan":     {help: planHelp, set: true, run: plan},
+	"apply":    {help: applyHelp, set: true, yes: true, run: apply},
 }
 
 const validateHelp = `Examples:
@@ -82,13 +83,16 @@ Flags:
 const planHelp = `Examples:
   winch plan site
   winch plan site --inventory inventories/production.yaml
+  winch plan site --set vars.nginx_port=8080
 
 Show the changes that apply would make. Change nothing.
 
 Usage: winch plan <pipeline> [flags]
 
 Flags:
-  --inventory <path>   The inventory file for this run.
+  --inventory <path>            The inventory file for this run.
+  --set vars.<name>=<value>     Set a variable for this run. The value
+                                parses as YAML. Repeatable.
 `
 
 const applyHelp = `Examples:
@@ -103,12 +107,15 @@ winch asks only when stdin and stderr are terminals. Without a terminal
 and without --yes, apply prints the plan and exits with code 5.
 
 Flags:
-  --inventory <path>   The inventory file for this run.
-  --yes                Apply without the question.
+  --inventory <path>            The inventory file for this run.
+  --set vars.<name>=<value>     Set a variable for this run. The value
+                                parses as YAML. Repeatable.
+  --yes                         Apply without the question.
 `
 
 type flags struct {
 	inventory string
+	set       []string
 	yes       bool
 }
 
@@ -131,6 +138,12 @@ func Main(ctx context.Context, args []string, env Env) int {
 	fs.SetOutput(io.Discard)
 	var f flags
 	fs.StringVar(&f.inventory, "inventory", "", "")
+	if cmd.set {
+		fs.Func("set", "", func(s string) error {
+			f.set = append(f.set, s)
+			return nil
+		})
+	}
 	if cmd.yes {
 		fs.BoolVar(&f.yes, "yes", false, "")
 	}
@@ -180,7 +193,7 @@ func load(env Env, f *flags, cmd string, args []string) (*project.Project, bool)
 		fmt.Fprintf(env.Err, "winch: %s needs one pipeline\n", cmd)
 		return nil, false
 	}
-	p, err := project.Load(env.Dir, f.inventory, args[0])
+	p, err := project.Load(env.Dir, f.inventory, args[0], f.set)
 	if err != nil {
 		fmt.Fprintln(env.Err, err)
 		return nil, false
@@ -240,6 +253,9 @@ func applyCommand(pipeline string, f *flags) string {
 	cmd := "winch apply " + quote(pipeline)
 	if f.inventory != "" {
 		cmd += " --inventory " + quote(f.inventory)
+	}
+	for _, s := range f.set {
+		cmd += " --set " + quote(s)
 	}
 	return cmd + " --yes"
 }

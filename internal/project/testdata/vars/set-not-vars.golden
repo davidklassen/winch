@@ -1,0 +1,1 @@
+--set mail_server=true: use --set vars.<name>=<value>

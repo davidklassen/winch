@@ -15,4 +15,4 @@ web1
 
 2 hosts: 1 to change, 0 unchanged, 0 unknown, 1 failed
 stderr:
-web2: recipes/tools/templates/tools.tmpl:1:38: .host.nope: map has no entry for key "nope"
+web2: recipes/tools/templates/tools.tmpl:1:33: index .host.groups 3: error calling index: index 3 out of range for length 1

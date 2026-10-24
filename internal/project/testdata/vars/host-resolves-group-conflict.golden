@@ -1,0 +1,4 @@
+host mail.acme.com user=root groups=all,mail,web vars={"domain":"acme.com","mail_server":true,"web_port":8080,"web_sites":["z"]}
+host monitor.acme.com user=admin groups=all vars={"domain":"acme.com"}
+stage web targets=mail.acme.com,monitor.acme.com
+stage mail targets=mail.acme.com

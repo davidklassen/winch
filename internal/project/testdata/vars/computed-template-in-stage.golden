@@ -1,0 +1,1 @@
+pipelines/site.yaml:7:21: template: a step in a stage cannot use template; use it in a recipe

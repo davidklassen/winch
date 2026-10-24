@@ -67,3 +67,8 @@ func unquote(s string) string {
 	}
 	return b.String()
 }
+
+// Map returns the facts with the names that templates read.
+func (f Facts) Map() map[string]any {
+	return map[string]any{"os": map[string]any{"id": f.OS.ID, "version": f.OS.Version, "codename": f.OS.Codename}}
+}

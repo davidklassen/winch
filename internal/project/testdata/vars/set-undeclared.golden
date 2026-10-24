@@ -1,0 +1,1 @@
+--set vars.mail_sever=true: unknown variable "mail_sever"; did you mean "mail_server"?

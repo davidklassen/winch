@@ -1,0 +1,14 @@
+mail.acme.com web
+  file {"path":"/etc/web/a.conf"} data="server a 8080 all,mail\n" at recipes/web/recipe.yaml:7:5
+  file {"path":"/etc/web/b.conf"} data="server b 8080 all,mail\n" at recipes/web/recipe.yaml:7:5
+  file {"path":"/etc/web/mail"} data="ACME.COM\n" name="Mail only" at recipes/web/recipe.yaml:11:5
+  file {"path":"/etc/web/port"} data="8080 trixie acme.com-tools\n" at recipes/web/recipe.yaml:16:5
+  file {"path":"/etc/motd"} data="hello mail in mail\n" at pipelines/site.yaml:6:9
+monitor.acme.com web
+  skipped at recipes/web/recipe.yaml:7:5
+  skipped at recipes/web/recipe.yaml:11:5
+  file {"path":"/etc/web/port"} data="80 trixie monitor.acme.com-tools\n" at recipes/web/recipe.yaml:16:5
+  skipped at pipelines/site.yaml:6:9
+mail.acme.com mail
+  file {"path":"/etc/mail/a"} data="A\n" at pipelines/site.yaml:13:9
+  file {"path":"/etc/mail/mail"} data="acme.com\n" at pipelines/site.yaml:13:9

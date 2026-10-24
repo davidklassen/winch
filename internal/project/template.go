@@ -1,7 +1,6 @@
 package project
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"reflect"
@@ -11,43 +10,110 @@ import (
 	"strings"
 	"text/template"
 	tparse "text/template/parse"
+	"unicode"
 
-	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
-// dataNames are the names that a template can read.
-var dataNames = []string{"host"}
-
 // funcs replaces the built-in index, which gives the zero value for a missing
 // map key.
-var funcs = template.FuncMap{"index": index}
+var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": title}
+
+// tmplFile is a parsed template file of a recipe.
+type tmplFile struct {
+	t *template.Template
+	// item is true when the template reads .item.
+	item bool
+}
 
 // parseTemplate parses the template text of file and checks the names it
-// reads.
-func parseTemplate(file string, text []byte) (*template.Template, error) {
+// reads. item is allowed: the step that uses the file decides.
+func parseTemplate(file string, text []byte, sc scope) (*tmplFile, error) {
 	t, err := template.New(file).Option("missingkey=error").Funcs(funcs).Parse(string(text))
 	if err != nil {
 		return nil, templateError(file, err)
 	}
-	var errs []error
-	for _, d := range t.Templates() {
-		c := nameCheck{file: file, text: string(text), main: d.Name() == file}
-		c.walk(d.Root, c.main)
-		errs = append(errs, c.errs...)
-	}
-	if err := errors.Join(errs...); err != nil {
+	c := nameCheck{sc: sc, at: func(off int) yamlx.Pos {
+		before := string(text[:off])
+		return yamlx.Pos{File: file, Line: strings.Count(before, "\n") + 1, Col: off - strings.LastIndexByte(before, '\n')}
+	}}
+	c.check(t, file)
+	if err := errors.Join(c.errs...); err != nil {
 		return nil, err
 	}
-	return t, nil
+	return &tmplFile{t: t, item: c.item}, nil
 }
 
-// nameCheck checks the first name of each field that reads the data. main is
-// true in the template of the file, where $ is the data.
+// parseInline parses the text of a !tpl value at pos. It returns the
+// variables that the template reads.
+func parseInline(pos yamlx.Pos, text string, sc scope) (*template.Template, []string, error) {
+	t, err := template.New(pos.String()).Option("missingkey=error").Funcs(funcs).Parse(text)
+	if err != nil {
+		// A parse error names the template, which is the position here.
+		msg := strings.ReplaceAll(templateMessage(pos.String(), err), pos.String()+":", "line ")
+		return nil, nil, yamlx.Errorf(pos, "%s", msg)
+	}
+	c := nameCheck{sc: sc, at: func(int) yamlx.Pos { return pos }}
+	c.check(t, pos.String())
+	if c.item && sc.noItem != "" {
+		c.errs = append(c.errs, yamlx.Errorf(pos, "%s", sc.noItem))
+	}
+	if err := errors.Join(c.errs...); err != nil {
+		return nil, nil, err
+	}
+	return t, c.reads, nil
+}
+
+// names is a level of the names that a template can read. A nil *names allows
+// any name.
+type names struct {
+	noun string
+	sub  map[string]*names
+}
+
+func (sc scope) names() *names {
+	vars := &names{noun: "variable", sub: map[string]*names{}}
+	for n := range sc.vars {
+		vars.sub[n] = nil
+	}
+	fact := map[string]*names{}
+	for _, n := range osFields {
+		fact[n] = nil
+	}
+	host := map[string]*names{"vars": vars}
+	for _, n := range hostFields {
+		if n != "vars" {
+			host[n] = nil
+		}
+	}
+	return &names{noun: "name", sub: map[string]*names{
+		"vars":  vars,
+		"facts": {noun: "fact", sub: map[string]*names{"os": {noun: "fact", sub: fact}}},
+		"host":  {noun: "host field", sub: host},
+		"item":  nil,
+	}}
+}
+
+// nameCheck checks the names of each field that reads the data. at gives the
+// position of an offset in the text.
 type nameCheck struct {
-	file, text string
-	main       bool
-	errs       []error
+	sc    scope
+	at    func(off int) yamlx.Pos
+	top   *names
+	main  bool
+	item  bool
+	reads []string
+	errs  []error
+}
+
+// check checks every template of t. main names the template of the text,
+// where $ is the data.
+func (c *nameCheck) check(t *template.Template, main string) {
+	c.top = c.sc.names()
+	for _, d := range t.Templates() {
+		c.main = d.Name() == main
+		c.walk(d.Root, c.main)
+	}
 }
 
 // walk checks n. top is false where "." is another value: inside range and
@@ -92,28 +158,52 @@ func (c *nameCheck) walk(n tparse.Node, top bool) {
 		c.walk(n.ElseList, top)
 	case *tparse.FieldNode:
 		// The position of .a.b is the position of .b.
-		start := int(n.Pos)
+		dot := int(n.Pos)
 		if len(n.Ident) > 1 {
-			start -= len(n.Ident[0]) + 1
+			dot -= len(n.Ident[0]) + 1
 		}
 		if top {
-			c.check(n.Ident[0], start)
+			c.field(n.Ident, dot, dot)
 		}
 	case *tparse.VariableNode:
 		// The position of $.a is the position of .a.
 		if c.main && n.Ident[0] == "$" && len(n.Ident) > 1 {
-			c.check(n.Ident[1], int(n.Pos)-1)
+			c.field(n.Ident[1:], int(n.Pos), int(n.Pos)-1)
 		}
 	}
 }
 
-func (c *nameCheck) check(name string, off int) {
-	if slices.Contains(dataNames, name) {
-		return
+// field checks the names of a field such as .host.vars.domain. dot is the
+// offset of its first dot, first the offset for an error in the first name.
+func (c *nameCheck) field(ident []string, dot, first int) {
+	if ident[0] == "item" {
+		c.item = true
 	}
-	before := c.text[:off]
-	pos := yamlx.Pos{File: c.file, Line: strings.Count(before, "\n") + 1, Col: off - strings.LastIndexByte(before, '\n')}
-	c.errs = append(c.errs, yamlx.Errorf(pos, "unknown name %q%s", name, yamlx.Suggest(name, dataNames)))
+	level := c.top
+	off := first
+	for i, id := range ident {
+		if level == nil {
+			return
+		}
+		if i > 0 {
+			off = dot
+		}
+		next, ok := level.sub[id]
+		if !ok {
+			var opts []string
+			for n := range level.sub {
+				opts = append(opts, n)
+			}
+			slices.Sort(opts)
+			c.errs = append(c.errs, yamlx.Errorf(c.at(off), "unknown %s %q%s", level.noun, id, yamlx.Suggest(id, opts)))
+			return
+		}
+		if level.noun == "variable" {
+			c.reads = append(c.reads, id)
+		}
+		level = next
+		dot += len(id) + 1
+	}
 }
 
 // index is the built-in index, except that a missing map key is an error.
@@ -153,43 +243,90 @@ func index(item any, keys ...any) (any, error) {
 	return v.Interface(), nil
 }
 
+func listArg(name string, l any) (reflect.Value, error) {
+	v := reflect.ValueOf(l)
+	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
+		return v, fmt.Errorf("%s: %s is not a list", name, describeValue(l))
+	}
+	return v, nil
+}
+
+func join(l any, sep string) (string, error) {
+	v, err := listArg("join", l)
+	if err != nil {
+		return "", err
+	}
+	parts := make([]string, v.Len())
+	for i := range v.Len() {
+		parts[i] = fmt.Sprint(v.Index(i).Interface())
+	}
+	return strings.Join(parts, sep), nil
+}
+
+func has(l any, x any) (bool, error) {
+	v, err := listArg("has", l)
+	if err != nil {
+		return false, err
+	}
+	for i := range v.Len() {
+		if reflect.DeepEqual(v.Index(i).Interface(), x) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func title(s string) string {
+	var b strings.Builder
+	start := true
+	for _, r := range s {
+		if start {
+			r = unicode.ToUpper(r)
+		}
+		start = unicode.IsSpace(r)
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 var templateErrRe = regexp.MustCompile(`(?s)^(\d+)(?::(\d+))?: (?:executing "(?:[^"\\]|\\.)*" at <(.*?)>: )?(.*)$`)
 
-// templateError turns an error of the template package into an error with
-// the position in file. A parse error has no column, so it gets column 1.
-func templateError(file string, err error) error {
-	m := templateErrRe.FindStringSubmatch(strings.TrimPrefix(err.Error(), "template: "+file+":"))
+// parseTemplateError splits an error of the template package for the template
+// name into the line, the column, and the message. A parse error has no
+// column, so it gets column 1.
+func parseTemplateError(name string, err error) (line, col int, msg string, ok bool) {
+	m := templateErrRe.FindStringSubmatch(strings.TrimPrefix(err.Error(), "template: "+name+":"))
 	if m == nil {
-		return fmt.Errorf("%s: %w", file, err)
+		return 0, 0, "", false
 	}
-	line, _ := strconv.Atoi(m[1])
-	col := 1
+	line, _ = strconv.Atoi(m[1])
+	col = 1
 	if m[2] != "" {
 		col, _ = strconv.Atoi(m[2])
 		col++
 	}
-	msg := m[4]
+	msg = m[4]
 	if m[3] != "" {
 		msg = m[3] + ": " + msg
+	}
+	return line, col, msg, true
+}
+
+// templateError turns an error of the template package into an error with
+// the position in file.
+func templateError(file string, err error) error {
+	line, col, msg, ok := parseTemplateError(file, err)
+	if !ok {
+		return fmt.Errorf("%s: %w", file, err)
 	}
 	return yamlx.Errorf(yamlx.Pos{File: file, Line: line, Col: col}, "%s", msg)
 }
 
-// For returns the step for host h: a file step with a template gets the
-// rendered content.
-func (st Step) For(h Host) (Step, error) {
-	if st.tmpl == nil {
-		return st, nil
+// templateMessage is the message of an error of the template package, without
+// the position.
+func templateMessage(name string, err error) string {
+	if _, _, msg, ok := parseTemplateError(name, err); ok {
+		return msg
 	}
-	short, _, _ := strings.Cut(h.Name, ".")
-	data := map[string]any{"host": map[string]any{"name": h.Name, "short": short, "address": h.Address}}
-	var b bytes.Buffer
-	if err := st.tmpl.Execute(&b, data); err != nil {
-		return Step{}, templateError(st.tmpl.Name(), err)
-	}
-	f := *st.Args.(*module.File)
-	// Empty output is empty content, not missing content.
-	f.Data = append([]byte{}, b.Bytes()...)
-	st.Args = &f
-	return st, nil
+	return err.Error()
 }

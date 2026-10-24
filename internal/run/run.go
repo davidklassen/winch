@@ -58,13 +58,13 @@ func (h HostPlan) changes() bool {
 // hostRun is what the plan keeps about a host between its stages.
 type hostRun struct {
 	state module.State
-	// facts are nil until the first contact with the host.
-	facts *facts.Facts
+	// env is nil until the first contact with the host.
+	env *project.Env
 }
 
 // MakePlan checks every step on every host, stage by stage. At the first
-// contact with a host, it reads the facts and checks the requirements of the
-// recipes that the host runs. A host that fails stops there.
+// contact with a host, it reads the facts and starts the host's evaluation.
+// A host that fails stops there.
 func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 	plan := &Plan{Failed: map[string]error{}}
 	inStages := map[string]bool{}
@@ -80,7 +80,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 			if runs[h.Name] == nil {
 				runs[h.Name] = &hostRun{}
 			}
-			steps, err := check(ctx, connect, h, stage, p.Pipeline.Recipes[h.Name], runs[h.Name])
+			steps, err := check(ctx, connect, p, h, stage, runs[h.Name])
 			if err != nil {
 				plan.Failed[h.Name] = err
 				continue
@@ -98,8 +98,8 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 }
 
 // check checks the steps of a stage on one host. At the first contact, it
-// reads the facts and checks the requirements of the host's recipes.
-func check(ctx context.Context, connect Connect, h project.Host, stage *project.Stage, recipes []*project.Recipe, hr *hostRun) (steps []Planned, err error) {
+// reads the facts and starts the host's evaluation.
+func check(ctx context.Context, connect Connect, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun) (steps []Planned, err error) {
 	conn, err := connect(ctx, h)
 	if err != nil {
 		return nil, err
@@ -109,19 +109,16 @@ func check(ctx context.Context, connect Connect, h project.Host, stage *project.
 			err = cerr
 		}
 	}()
-	if hr.facts == nil {
+	if hr.env == nil {
 		f, err := conn.Facts(ctx)
 		if err != nil {
 			return nil, err
 		}
-		hr.facts = &f
-		for _, r := range recipes {
-			if err := r.Check(f); err != nil {
-				return nil, err
-			}
+		if hr.env, err = p.Start(h, f); err != nil {
+			return nil, err
 		}
 	}
-	steps, err = evaluate(stage, h)
+	steps, err = evaluate(stage, hr.env)
 	if err != nil {
 		return nil, err
 	}
@@ -134,23 +131,32 @@ func check(ctx context.Context, connect Connect, h project.Host, stage *project.
 	return steps, nil
 }
 
-// evaluate returns the module steps of a stage for one host, with the recipe
-// steps expanded.
-func evaluate(stage *project.Stage, h project.Host) ([]Planned, error) {
+// evaluate returns the module steps of a stage for one host, with recipe
+// steps, when, and loop applied.
+func evaluate(stage *project.Stage, env *project.Env) ([]Planned, error) {
 	var out []Planned
 	for i := range stage.Steps {
 		var in *project.Step
 		todo := stage.Steps[i : i+1]
 		if stage.Steps[i].Recipe != nil {
 			in = &stage.Steps[i]
-			todo = in.Recipe.Steps
-		}
-		for _, st := range todo {
-			st, err := st.For(h)
+			ok, err := in.Runs(env)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, Planned{Step: st, In: in})
+			if !ok {
+				continue
+			}
+			todo = in.Recipe.Steps
+		}
+		for _, st := range todo {
+			steps, err := st.Eval(env)
+			if err != nil {
+				return nil, err
+			}
+			for _, s := range steps {
+				out = append(out, Planned{Step: s, In: in})
+			}
 		}
 	}
 	return out, nil

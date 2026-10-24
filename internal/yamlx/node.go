@@ -32,7 +32,7 @@ type Node struct {
 	Pairs []Pair
 	Items []*Node
 	Pos   Pos
-	// Tag is "!expr" for an expression, else empty.
+	// Tag is "!expr" for an expression, "!tpl" for a template, else empty.
 	Tag string
 }
 
@@ -108,10 +108,10 @@ func (c *converter) convert(n *yaml.Node) *Node {
 	defer delete(c.open, n)
 	if n.Style&yaml.TaggedStyle != 0 {
 		switch {
-		case n.Tag == "!expr" && n.Kind == yaml.ScalarNode:
+		case (n.Tag == "!expr" || n.Tag == "!tpl") && n.Kind == yaml.ScalarNode:
 			out.Kind, out.Value, out.Tag = Scalar, n.Value, n.Tag
 			return out
-		case n.Tag == "!expr":
+		case n.Tag == "!expr" || n.Tag == "!tpl":
 			kind := "a map"
 			if n.Kind == yaml.SequenceNode {
 				kind = "a list"

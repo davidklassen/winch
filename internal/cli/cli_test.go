@@ -259,3 +259,42 @@ func TestIsTerminal(t *testing.T) {
 		}
 	}
 }
+
+const greeting = `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/motd
+          content: !tpl "{{ .vars.greeting }}\n"
+`
+
+// spec: CLI ("--set vars.<name>=<value>"); Variables/Sources
+func TestSet(t *testing.T) {
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nvars:\n  greeting: hello\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   greeting,
+	})
+	r := winch(t, dir, fakehost.New(), false, "", "plan", "site", "--set", "vars.greeting=first", "--set", "vars.greeting=hi there")
+	if r.code != exitOK || !strings.Contains(r.out, "+hi there\n") || strings.Contains(r.out, "first") {
+		t.Errorf("plan with the last --set: exit %d, stdout %q", r.code, r.out)
+	}
+	r = winch(t, dir, fakehost.New(), false, "", "plan", "site", "--set", "vars.greting=x")
+	if r.code != exitInvalid || !strings.Contains(r.err, `--set vars.greting=x: unknown variable "greting"; did you mean "greeting"?`) {
+		t.Errorf("unknown variable: exit %d, stderr %q", r.code, r.err)
+	}
+	h := fakehost.New()
+	r = winch(t, dir, h, false, "", "apply", "site", "--set", "vars.greeting=it's")
+	if want := `To apply, run: winch apply site --set 'vars.greeting=it'\''s' --yes` + "\n"; r.code != exitConfirm || !strings.HasSuffix(r.out, want) {
+		t.Errorf("apply without a terminal: exit %d, stdout %q, want suffix %q", r.code, r.out, want)
+	}
+	r = winch(t, dir, h, false, "", "apply", "site", "--set", "vars.greeting=it's", "--yes")
+	if c, _ := h.File("web1", "/etc/motd"); r.code != exitOK || c != "it's\n" {
+		t.Errorf("apply: exit %d, /etc/motd %q", r.code, c)
+	}
+	r = winch(t, dir, fakehost.New(), false, "", "validate", "--set", "vars.greeting=x")
+	if r.code != exitInvalid || !strings.Contains(r.err, "flag provided but not defined: -set") {
+		t.Errorf("validate takes no --set: exit %d, stderr %q", r.code, r.err)
+	}
+}

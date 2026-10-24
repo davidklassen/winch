@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/golden"
@@ -59,7 +60,7 @@ func TestDecode(t *testing.T) {
 		{"wrong-kind", "name: [a]\n"},
 		{"two-documents", "name: a\n---\nname: b\n"},
 		{"syntax", "name: a\n  bad: [\n"},
-		{"unknown-tag", "name: !tpl x\n"},
+		{"unknown-tag", "name: !foo x\n"},
 		{"validate", "name: a\ncount: -11\n"},
 		{"self-alias", "name: a\ntags: &t [*t]\n"},
 		{"hex", "name: a\ncount: 0x1f\n"},
@@ -168,7 +169,10 @@ func TestTags(t *testing.T) {
 		{"expr keeps the text", "x: !expr 010\n", `!expr "010"`},
 		{"expr on a list", "x: !expr [a]\n", `t.yaml:1:4: the !expr tag needs a string, got a list`},
 		{"expr on a map", "x: !expr {a: b}\n", `t.yaml:1:4: the !expr tag needs a string, got a map`},
-		{"tpl", "x: !tpl a\n", `t.yaml:1:4: unknown tag "!tpl"`},
+		{"tpl", "x: !tpl '{{ .host.name }}'\n", `!tpl "{{ .host.name }}"`},
+		{"tpl on a list", "x: !tpl [a]\n", `t.yaml:1:4: the !tpl tag needs a string, got a list`},
+		{"tpl on a map", "x: !tpl {a: b}\n", `t.yaml:1:4: the !tpl tag needs a string, got a map`},
+		{"other tag", "x: !foo a\n", `t.yaml:1:4: unknown tag "!foo"`},
 		{"str", "x: !!str 10\n", ` "10"`},
 		{"tag on a key", "!expr x: a\n", `t.yaml:1:1: a map key cannot have the tag "!expr"`},
 	}
@@ -199,5 +203,74 @@ func TestTagInPlainField(t *testing.T) {
 	want := "t.yaml:1:7: name: !expr is not allowed here"
 	if err == nil || err.Error() != want {
 		t.Errorf("got %v, want %s", err, want)
+	}
+}
+
+// spec: Templates and expressions ("Any module argument can be a template or an expression")
+func TestDecodeLazy(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"static", "name: a\ncount: 3\n", `name="a" count=3 tags=[]`},
+		{"static runs Validate", "name: a\ncount: -11\n", `t.yaml:2:8: count: must not be less than -10`},
+		{"tagged required key", "name: !tpl '{{ .x }}'\ncount: -11\n", `name="" count=-11 tags=[]`},
+		{"tagged list item", "name: a\ntags: [x, !expr y]\n", `name="a" count=0 tags=["x" ""]`},
+		{"unknown key", "name: !expr x\nnmae: b\n", `t.yaml:2:1: unknown key "nmae"; did you mean "name"?`},
+		{"static type error", "name: !expr x\ncount: a\n", `t.yaml:2:8: count: expected an integer, got the string "a"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := Parse("t.yaml", []byte(tt.yaml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var d testDoc
+			err = DecodeLazy(n, &d)
+			got := fmt.Sprintf("name=%q count=%d tags=%q", d.Name, d.Count, d.Tags)
+			if d.Tags == nil {
+				got = fmt.Sprintf("name=%q count=%d tags=[]", d.Name, d.Count)
+			}
+			if err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("got  %s\nwant %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Variables ("A value keeps the type YAML gives it")
+func TestValue(t *testing.T) {
+	n, err := Parse("t.yaml", []byte("a: 1\nb: 1.5\nc: x\nd: true\ne: [1, y]\nf: {k: v}\ng:\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := Value(n)
+	want := map[string]any{"a": 1, "b": 1.5, "c": "x", "d": true, "e": []any{1, "y"}, "f": map[string]any{"k": "v"}, "g": nil}
+	if !reflect.DeepEqual(v, want) {
+		t.Errorf("Value = %#v, want %#v", v, want)
+	}
+	back, err := FromValue(v, Pos{File: "e", Line: 1, Col: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(Value(back), want) {
+		t.Errorf("FromValue round trip = %#v", Value(back))
+	}
+	if _, err := FromValue(struct{}{}, Pos{File: "e", Line: 1, Col: 1}); err == nil {
+		t.Error("FromValue of a struct: no error")
+	}
+	if l, err := FromValue([]string{"a"}, Pos{}); err != nil || l.Kind != List {
+		t.Errorf("FromValue of []string = %v, %v", l, err)
+	}
+}
+
+// spec: CLI/Errors
+func TestSuggestSwap(t *testing.T) {
+	if got := Suggest("web_titel", []string{"web_sites", "web_title"}); got != `; did you mean "web_title"?` {
+		t.Errorf("Suggest = %q", got)
 	}
 }

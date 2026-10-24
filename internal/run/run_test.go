@@ -36,7 +36,7 @@ func load(t *testing.T, web3 string) *project.Project {
           absent: true
 `,
 	})
-	p, err := project.Load(dir, "", "site")
+	p, err := project.Load(dir, "", "site", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
           name: jq
 `,
 	})
-	p, err := project.Load(dir, "", "site")
+	p, err := project.Load(dir, "", "site", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestApplyChecksStagesWithoutChange(t *testing.T) {
           absent: true
 `,
 	})
-	p, err := project.Load(dir, "", "site")
+	p, err := project.Load(dir, "", "site", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,12 +273,12 @@ steps:
       path: /etc/tools
       template: tools.tmpl
 `,
-	"recipes/tools/templates/tools.tmpl": "{{ if eq .host.name \"web2\" }}{{ .host.nope }}{{ end }}\n",
+	"recipes/tools/templates/tools.tmpl": "{{ if eq .host.name \"web2\" }}{{ index .host.groups 3 }}{{ end }}\n",
 }
 
 func loadFiles(t *testing.T, files map[string]string) *project.Project {
 	t.Helper()
-	p, err := project.Load(vmtest.WriteProject(t, files), "", "site")
+	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,5 +377,81 @@ func TestApplyRecipes(t *testing.T) {
 	}
 	if n := h.FactsReads["web1"]; n != 1 {
 		t.Errorf("facts read %d times in plan and apply, want 1", n)
+	}
+}
+
+var varsFiles = map[string]string{
+	"winch.yaml": `name: acme
+inventory: inventories/test.yaml
+vars:
+  mail_server: false
+  port: 80
+`,
+	"inventories/test.yaml": `hosts:
+  web1: {}
+  web2: {}
+  web3: {}
+groups:
+  mail:
+    hosts: [web2, web3]
+    vars:
+      mail_server: true
+  broken:
+    hosts: [web3]
+    vars:
+      port: eighty
+`,
+	"pipelines/site.yaml": `stages:
+  - name: web
+    hosts: all
+    steps:
+      - recipe: site
+`,
+	"recipes/site/recipe.yaml": `vars:
+  site_names: !expr 'vars.mail_server ? ["mail", "www"] : ["www"]'
+steps:
+  - file:
+      path: !tpl /etc/site/{{ .item }}
+      content: !tpl "{{ .item }} on {{ .host.name }}\n"
+    loop: !expr vars.site_names
+  - file:
+      path: /etc/site/mail.conf
+      template: mail.tmpl
+    when: !expr vars.mail_server
+  - file:
+      path: /etc/site/port
+      content: !expr 'string(vars.port + 1) + "\n"'
+`,
+	"recipes/site/templates/mail.tmpl": "relay {{ .host.short }}\n",
+}
+
+// spec: Templates and expressions/When they run; Steps; Running a pipeline/Plan; CLI/Output
+func TestPlanVars(t *testing.T) {
+	h := fakehost.New()
+	plan := run.MakePlan(context.Background(), loadFiles(t, varsFiles), h.Connector())
+	var out, errOut bytes.Buffer
+	plan.Write(&out, &errOut)
+	golden.Assert(t, filepath.Join("testdata", "plan", "vars.golden"),
+		[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
+	if plan.Failed["web3"] == nil || len(plan.Failed) != 1 {
+		t.Errorf("failed hosts %v, want web3 only", plan.Failed)
+	}
+	if !run.Apply(context.Background(), plan, h.Connector(), &out, &errOut) {
+		t.Logf("apply: %s", errOut.String())
+	}
+	for _, f := range []struct{ host, path, want string }{
+		{"web1", "/etc/site/www", "www on web1\n"},
+		{"web2", "/etc/site/mail", "mail on web2\n"},
+		{"web2", "/etc/site/mail.conf", "relay web2\n"},
+		{"web2", "/etc/site/port", "81\n"},
+	} {
+		if c, _ := h.File(f.host, f.path); c != f.want {
+			t.Errorf("%s %s = %q, want %q", f.host, f.path, c, f.want)
+		}
+	}
+	for _, path := range []string{"/etc/site/mail", "/etc/site/mail.conf"} {
+		if _, ok := h.File("web1", path); ok {
+			t.Errorf("web1 has %s", path)
+		}
 	}
 }

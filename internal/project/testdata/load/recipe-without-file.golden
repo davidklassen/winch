@@ -1,1 +1,1 @@
-pipelines/site.yaml:5:17: recipe "empty" has no recipes/empty/recipe.yaml
+recipes/empty: a recipe needs a recipe.yaml
