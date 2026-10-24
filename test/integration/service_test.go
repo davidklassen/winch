@@ -23,18 +23,32 @@ cat > /etc/systemd/system/winch-static.service <<'U'
 [Service]
 ExecStart=/bin/sleep infinity
 U
+cat > /etc/systemd/system/winch-crash.service <<'U'
+[Service]
+ExecStart=/bin/false
+Restart=always
+RestartSec=1h
+U
+cat > /etc/systemd/system/winch-notify.service <<'U'
+[Service]
+Type=notify
+ExecStart=/bin/sleep infinity
+TimeoutStartSec=infinity
+U
 cat > /usr/lib/systemd/system/winch-vendor.service <<'U'
 [Service]
 ExecStart=/bin/sleep infinity
 U
 systemctl daemon-reload`
 
+const waitCrash = `timeout 10 sh -c 'until systemctl show -P SubState winch-crash | grep -qx auto-restart; do sleep 0.1; done'`
+
 // spec: Modules/service and unit
 func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor; systemctl stop winch-test.service winch-test.timer winch-static.service winch-vendor.service; systemctl disable winch-test.service winch-test.timer 2>/dev/null; true"
+	reset := "if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor; systemctl stop winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service; systemctl disable winch-test.service winch-test.timer 2>/dev/null; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -66,6 +80,27 @@ systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
 			Args:  &module.Service{Name: "winch-test", Running: new(true)},
 			Want:  change("daemon-reload"),
 			After: `systemctl show -P NeedDaemonReload winch-test | grep -qx no`,
+		},
+		{
+			Name:       "a unit that waits to restart after a crash is not running",
+			Setup:      "systemctl start winch-crash\n" + waitCrash,
+			Args:       &module.Service{Name: "winch-crash", Running: new(true)},
+			Want:       change("start"),
+			After:      waitCrash,
+			NoConverge: true,
+		},
+		{
+			Name:  "stop a unit that waits to restart after a crash",
+			Setup: "systemctl start winch-crash\n" + waitCrash,
+			Args:  &module.Service{Name: "winch-crash", Running: new(false)},
+			Want:  change("stop"),
+			After: `systemctl show -P ActiveState winch-crash | grep -qx inactive`,
+		},
+		{
+			Name:  "ok when the unit starts",
+			Setup: `systemctl start --no-block winch-notify && timeout 10 sh -c 'until systemctl show -P ActiveState winch-notify | grep -qx activating; do sleep 0.1; done'`,
+			Args:  &module.Service{Name: "winch-notify", Running: new(true)},
+			Want:  module.Result{Status: module.OK},
 		},
 		{
 			Name:  "ok when running",

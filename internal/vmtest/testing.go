@@ -98,7 +98,8 @@ func (vm *VM) Session(t *testing.T) *session.Session {
 }
 
 // Case is one module case: a start state, the arguments, and the expected
-// check result. Every case also checks that a second check after apply is ok.
+// check result. Every case also checks that a second check after apply is ok,
+// or Want again when the case never converges.
 type Case struct {
 	Name string
 	// Setup runs as root before the check.
@@ -119,6 +120,9 @@ type Case struct {
 	WantApplyErr string
 	// After runs as root after apply and must exit 0.
 	After string
+	// NoConverge marks a case where the host cannot reach the wanted state,
+	// so the second check is Want again.
+	NoConverge bool
 }
 
 // RunCases runs module cases one after another on one VM. reset runs as root
@@ -173,9 +177,13 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 			if c.After != "" {
 				vm.MustRun(t, c.After)
 			}
+			want2 := module.Result{Status: module.OK}
+			if c.NoConverge {
+				want2 = c.Want
+			}
 			again, err := s.Check(ctx, name, c.Args, &module.State{})
-			if err != nil || again.Status != module.OK {
-				t.Fatalf("second check = %s, %v; want ok", show(again), err)
+			if err != nil || !equal(again, want2) {
+				t.Fatalf("second check = %s, %v; want %s", show(again), err, show(want2))
 			}
 		})
 	}

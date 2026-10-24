@@ -33,7 +33,7 @@ func (s *Service) Validate() error {
 }
 
 func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,UnitFileState,NeedDaemonReload", "--", s.Name)
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,NeedDaemonReload", "--", s.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -67,11 +67,14 @@ func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
 		}
 	}
 	if s.Running != nil {
-		running := u.active == "active" || u.active == "activating" || u.active == "reloading"
+		up := u.active == "active" || u.active == "activating" || u.active == "reloading"
+		// A unit that waits to restart is down, but systemd starts it again
+		// unless a stop cancels the restart.
+		crashed := strings.HasPrefix(u.sub, "auto-restart")
 		switch {
-		case *s.Running && !running:
+		case *s.Running && (!up || crashed):
 			s.todo = append(s.todo, "start")
-		case !*s.Running && running:
+		case !*s.Running && up:
 			s.todo = append(s.todo, "stop")
 		}
 	}
@@ -99,8 +102,8 @@ func (s *Service) Apply(ctx context.Context) error {
 }
 
 type unitState struct {
-	id, load, active, file string
-	reload                 bool
+	id, load, active, sub, file string
+	reload                      bool
 }
 
 func parseShow(out string) unitState {
@@ -114,6 +117,8 @@ func parseShow(out string) unitState {
 			u.load = v
 		case "ActiveState":
 			u.active = v
+		case "SubState":
+			u.sub = v
 		case "UnitFileState":
 			u.file = v
 		case "NeedDaemonReload":
