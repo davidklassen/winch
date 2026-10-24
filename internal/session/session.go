@@ -157,7 +157,7 @@ func (s *Session) start(cfg Config) error {
 			return fmt.Errorf("unexpected output from the host: %q", line)
 		}
 	} else if line != "have" {
-		return fmt.Errorf("unexpected output from the host: %q", line)
+		return fmt.Errorf("the login shell printed %q before winch started; remove it from the shell startup files, such as ~/.bashrc", line)
 	}
 	return s.call("hello", cfg.Hello, nil)
 }

@@ -20,13 +20,13 @@ func fakeHelper(arch string) helperbin.Binary {
 }
 
 // fakeBin puts fake ssh, uname, id, and sudo first in PATH. ssh writes its
-// arguments to $SSH_ARGS when it is set, and runs its last argument with sh,
-// on this machine.
+// arguments to $SSH_ARGS when it is set, prints $SSH_BANNER when it is set,
+// and runs its last argument with sh, on this machine.
 func fakeBin(t *testing.T, arch, uid, sudo string) {
 	t.Helper()
 	bin := t.TempDir()
 	scripts := map[string]string{
-		"ssh":   "#!/bin/sh\n[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
+		"ssh":   "#!/bin/sh\n[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
 		"uname": "#!/bin/sh\necho " + arch + "\n",
 		"id":    "#!/bin/sh\necho " + uid + "\n",
 		"sudo":  sudo,
@@ -160,6 +160,17 @@ func TestOpenSudo(t *testing.T) {
 			t.Errorf("error = %v, want %q", err, want)
 		}
 	})
+}
+
+// spec: Remote execution/Helper
+func TestOpenLoginShellText(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	t.Setenv("SSH_BANNER", "Welcome")
+	_, err := open(t, t.TempDir(), []helperbin.Binary{fakeHelper("arm64")})
+	want := `the login shell printed "Welcome" before winch started; remove it from the shell startup files, such as ~/.bashrc`
+	if err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
+	}
 }
 
 // The script travels inside single quotes.

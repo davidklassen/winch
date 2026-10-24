@@ -89,4 +89,14 @@ func TestWinch(t *testing.T) {
 			t.Errorf("plan as nosudo: exit %d", r.Code)
 		}
 	})
+
+	t.Run("text from the login shell fails with its cause", func(t *testing.T) {
+		vm.MustRun(t, "sed -i '1i echo Welcome' /home/nosudo/.bashrc")
+		dir := project(t, "hosts:\n  winch:\n    address: 127.0.0.1\n    user: nosudo\n")
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 1 || !strings.Contains(r.Stderr, `the login shell printed "Welcome" before winch started`) {
+			t.Errorf("plan with a .bashrc that prints: exit %d", r.Code)
+		}
+		vm.MustRun(t, "sed -i 1d /home/nosudo/.bashrc")
+	})
 }
