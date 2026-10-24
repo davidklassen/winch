@@ -2,7 +2,7 @@ ARCH ?= arm64
 IMAGE := $(HOME)/.cache/winch/debian-13-genericcloud-$(ARCH).qcow2
 VMENV := WINCH_BIN=$(CURDIR)/bin/winch WINCH_VM_IMAGE=$(IMAGE) WINCH_VM_ARCH=$(ARCH)
 
-.PHONY: build helpers tidy lint test check test-integration vm-image vm
+.PHONY: build helpers tidy lint test test-integration vm-image vm
 
 build: helpers
 	go build -o bin/winch ./cmd/winch
@@ -21,9 +21,6 @@ lint: helpers
 
 test: helpers
 	go test ./...
-
-check: tidy lint test
-	git diff --exit-code
 
 test-integration: build vm-image
 	$(VMENV) go test -tags integration -count=1 -timeout 30m ./test/...
