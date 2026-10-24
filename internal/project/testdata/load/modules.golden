@@ -1,0 +1,9 @@
+project acme, inventory inventories/test.yaml
+host web1 address=192.0.2.1 user=admin
+host web2 address=web2 user=deploy
+pipeline site
+stage web hosts=all targets=web1,web2
+  pkg {"name":["nginx","curl"],"recommends":false} at pipelines/site.yaml:5:9
+  dir {"path":"/var/www/demo"} at pipelines/site.yaml:8:9
+  link {"path":"/etc/nginx/sites-enabled/demo","target":"/etc/nginx/sites-available/demo"} at pipelines/site.yaml:10:9
+  service {"name":"nginx","running":true,"enabled":true} at pipelines/site.yaml:13:9

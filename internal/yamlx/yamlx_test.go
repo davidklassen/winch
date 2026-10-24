@@ -120,3 +120,39 @@ func TestSuggest(t *testing.T) {
 		}
 	}
 }
+
+// spec: Modules/pkg
+func TestStrings(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"one", "names: nginx\n", `["nginx"]`},
+		{"list", "names: [a, b]\n", `["a" "b"]`},
+		{"empty list", "names: []\n", `[]`},
+		{"number", "names: 1\n", `t.yaml:1:8: names: expected a string, got the integer 1; quote the value to make it a string`},
+		{"map", "names: {a: b}\n", `t.yaml:1:8: names: expected a string or a list of strings, got a map`},
+		{"number in list", "names: [a, 2]\n", `t.yaml:1:12: names: expected a string, got the integer 2; quote the value to make it a string`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := Parse("t.yaml", []byte(tt.yaml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var d struct {
+				Names Strings `yaml:"names"`
+			}
+			got := ""
+			if err := Decode(n, &d); err != nil {
+				got = err.Error()
+			} else {
+				got = fmt.Sprintf("%q", []string(d.Names))
+			}
+			if got != tt.want {
+				t.Errorf("got  %s\nwant %s", got, tt.want)
+			}
+		})
+	}
+}

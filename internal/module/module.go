@@ -37,11 +37,20 @@ type Result struct {
 	Old     *string  `json:"old,omitempty"`
 }
 
+// State is what earlier steps of the run did on the host. The controller
+// keeps it per host and sends it with each step.
+type State struct {
+	// IndexFresh is true after the first install of the run decided about
+	// the index refresh.
+	IndexFresh bool `json:"index_fresh,omitempty"`
+}
+
 // Module is the decoded arguments of one step. Main returns the main
-// argument for the plan.
+// argument for the plan. Check updates the state. Apply runs on the value
+// that Check returned a change for, and does what Check decided.
 type Module interface {
 	Main() string
-	Check(ctx context.Context) (Result, error)
+	Check(ctx context.Context, st *State) (Result, error)
 	Apply(ctx context.Context) error
 }
 
@@ -54,7 +63,11 @@ type WithContent interface {
 }
 
 var modules = map[string]func() Module{
-	"file": func() Module { return new(File) },
+	"dir":     func() Module { return new(Dir) },
+	"file":    func() Module { return new(File) },
+	"link":    func() Module { return new(Link) },
+	"pkg":     func() Module { return new(Pkg) },
+	"service": func() Module { return new(Service) },
 }
 
 // New returns empty arguments for the module name.

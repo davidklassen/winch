@@ -1,0 +1,14 @@
+stdout:
+web1, web2 (2 hosts)
+  base
+    + pkg curl
+        refresh the package index
+        install curl
+    + pkg nginx, htop
+        install nginx, htop
+  tools
+    + pkg jq
+        install jq
+
+2 hosts: 2 to change, 0 unchanged, 0 unknown
+stderr:

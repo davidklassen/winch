@@ -129,23 +129,24 @@ func deleteOthers(bin, self string) error {
 }
 
 // step checks a step. With apply, it then makes the changes the check found.
-func step(ctx context.Context, params json.RawMessage, apply bool) (module.Result, error) {
+func step(ctx context.Context, params json.RawMessage, apply bool) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
-		return module.Result{}, fmt.Errorf("decode step: %w", err)
+		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
 	}
 	m, ok := module.New(s.Module)
 	if !ok {
-		return module.Result{}, fmt.Errorf("unknown module %q", s.Module)
+		return protocol.StepResult{}, fmt.Errorf("unknown module %q", s.Module)
 	}
 	if err := json.Unmarshal(s.Args, m); err != nil {
-		return module.Result{}, fmt.Errorf("decode %s arguments: %w", s.Module, err)
+		return protocol.StepResult{}, fmt.Errorf("decode %s arguments: %w", s.Module, err)
 	}
-	res, err := m.Check(ctx)
+	res, err := m.Check(ctx, &s.State)
+	out := protocol.StepResult{Result: res, State: s.State}
 	if err != nil || !apply || res.Status == module.OK {
-		return res, err
+		return out, err
 	}
 	// The plan has shown the diff already.
-	res.Old = nil
-	return res, m.Apply(ctx)
+	out.Old = nil
+	return out, m.Apply(ctx)
 }

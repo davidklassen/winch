@@ -1,1 +1,1 @@
-pipelines/site.yaml:6:9: unknown module "pkg"
+pipelines/site.yaml:6:9: a step has one module; this one also has "file"

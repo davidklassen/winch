@@ -127,6 +127,36 @@ func TestLoad(t *testing.T) {
 		{name: "file-content-and-absent", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: a\n          absent: true\n"}},
 		{name: "file-relative-path", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: x\n          content: a\n"}},
 		{name: "file-bad-mode", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: a\n          mode: 0644\n"}},
+		{name: "modules", files: map[string]string{"pipelines/site.yaml": `stages:
+  - name: web
+    hosts: all
+    steps:
+      - pkg:
+          name: [nginx, curl]
+          recommends: false
+      - dir:
+          path: /var/www/demo
+      - link:
+          path: /etc/nginx/sites-enabled/demo
+          target: /etc/nginx/sites-available/demo
+      - service:
+          name: nginx
+          running: true
+          enabled: true
+`}},
+		{name: "module-errors", files: map[string]string{"pipelines/site.yaml": `stages:
+  - name: web
+    hosts: all
+    steps:
+      - pkg:
+          name: Nginx
+      - dir:
+          path: www
+      - link:
+          path: /a
+      - service:
+          name: nginx
+`}},
 		{name: "errors-in-two-files", files: map[string]string{
 			"winch.yaml":          "name: acme\ninventory: inventories/test.yaml\nfoo: 1\n",
 			"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    bar: 1\n    steps: []\n",

@@ -103,9 +103,13 @@ type Case struct {
 	Name string
 	// Setup runs as root before the check.
 	Setup string
+	// State is the state of the run before the step.
+	State module.State
 	Args  module.Module
 	// Want is the result of the check, and of the apply without Old.
 	Want module.Result
+	// WantState is the state after the check and after the apply.
+	WantState module.State
 	// Unchanged runs as root after the check and must exit 0: it shows that
 	// the check changed nothing.
 	Unchanged string
@@ -126,7 +130,8 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 		t.Run(c.Name, func(t *testing.T) {
 			ctx := t.Context()
 			vm.MustRun(t, reset+"\n"+c.Setup)
-			got, err := s.Check(ctx, name, c.Args)
+			st := c.State
+			got, err := s.Check(ctx, name, c.Args, &st)
 			if c.WantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), c.WantErr) {
 					t.Fatalf("check error = %v, want %q", err, c.WantErr)
@@ -139,10 +144,14 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 			if !equal(got, c.Want) {
 				t.Fatalf("check = %s, want %s", show(got), show(c.Want))
 			}
+			if st != c.WantState {
+				t.Fatalf("state after check = %+v, want %+v", st, c.WantState)
+			}
 			if c.Unchanged != "" {
 				vm.MustRun(t, c.Unchanged)
 			}
-			applied, err := s.Apply(ctx, name, c.Args)
+			st = c.State
+			applied, err := s.Apply(ctx, name, c.Args, &st)
 			if c.WantApplyErr != "" {
 				if err == nil || !strings.Contains(err.Error(), c.WantApplyErr) {
 					t.Fatalf("apply error = %v, want %q", err, c.WantApplyErr)
@@ -158,10 +167,13 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 			if !equal(applied, want) {
 				t.Errorf("apply = %s, want %s", show(applied), show(want))
 			}
+			if st != c.WantState {
+				t.Errorf("state after apply = %+v, want %+v", st, c.WantState)
+			}
 			if c.After != "" {
 				vm.MustRun(t, c.After)
 			}
-			again, err := s.Check(ctx, name, c.Args)
+			again, err := s.Check(ctx, name, c.Args, &module.State{})
 			if err != nil || again.Status != module.OK {
 				t.Fatalf("second check = %s, %v; want ok", show(again), err)
 			}

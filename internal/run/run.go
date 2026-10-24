@@ -16,8 +16,8 @@ import (
 
 // Conn is a session with one host.
 type Conn interface {
-	Check(ctx context.Context, name string, m module.Module) (module.Result, error)
-	Apply(ctx context.Context, name string, m module.Module) (module.Result, error)
+	Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
+	Apply(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
 	Close() error
 }
 
@@ -55,6 +55,7 @@ func (h HostPlan) changes() bool {
 func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 	plan := &Plan{Failed: map[string]error{}}
 	inStages := map[string]bool{}
+	states := map[string]*module.State{}
 	for i := range p.Pipeline.Stages {
 		stage := &p.Pipeline.Stages[i]
 		sp := StagePlan{Stage: stage}
@@ -63,7 +64,10 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 			if plan.Failed[h.Name] != nil {
 				continue
 			}
-			steps, err := check(ctx, connect, h, stage)
+			if states[h.Name] == nil {
+				states[h.Name] = &module.State{}
+			}
+			steps, err := check(ctx, connect, h, stage, states[h.Name])
 			if err != nil {
 				plan.Failed[h.Name] = err
 				continue
@@ -80,7 +84,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 	return plan
 }
 
-func check(ctx context.Context, connect Connect, h project.Host, stage *project.Stage) (steps []Planned, err error) {
+func check(ctx context.Context, connect Connect, h project.Host, stage *project.Stage, state *module.State) (steps []Planned, err error) {
 	conn, err := connect(ctx, h)
 	if err != nil {
 		return nil, err
@@ -91,7 +95,7 @@ func check(ctx context.Context, connect Connect, h project.Host, stage *project.
 		}
 	}()
 	for _, st := range stage.Steps {
-		res, err := conn.Check(ctx, st.Module, st.Args)
+		res, err := conn.Check(ctx, st.Module, st.Args, state)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", label(st), err)
 		}
@@ -227,12 +231,16 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, out, errOut io.Writ
 		failed[name] = true
 	}
 	changed := map[string]bool{}
+	states := map[string]*module.State{}
 	for _, sp := range plan.Stages {
 		for _, hp := range sp.Hosts {
 			if !hp.changes() || failed[hp.Host.Name] {
 				continue
 			}
-			ok, err := apply(ctx, connect, hp, out)
+			if states[hp.Host.Name] == nil {
+				states[hp.Host.Name] = &module.State{}
+			}
+			ok, err := apply(ctx, connect, hp, states[hp.Host.Name], out)
 			if err != nil {
 				fmt.Fprintf(errOut, "%s: failed: %v\n", hp.Host.Name, err)
 				failed[hp.Host.Name] = true
@@ -251,7 +259,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, out, errOut io.Writ
 
 // apply runs the planned steps of a stage on one host. It reports whether a
 // step changed something.
-func apply(ctx context.Context, connect Connect, hp HostPlan, out io.Writer) (changed bool, err error) {
+func apply(ctx context.Context, connect Connect, hp HostPlan, state *module.State, out io.Writer) (changed bool, err error) {
 	conn, err := connect(ctx, hp.Host)
 	if err != nil {
 		return false, err
@@ -262,7 +270,7 @@ func apply(ctx context.Context, connect Connect, hp HostPlan, out io.Writer) (ch
 		}
 	}()
 	for _, p := range hp.Steps {
-		res, err := conn.Apply(ctx, p.Step.Module, p.Step.Args)
+		res, err := conn.Apply(ctx, p.Step.Module, p.Step.Args, state)
 		if err != nil {
 			return changed, fmt.Errorf("%s: %w", label(p.Step), err)
 		}

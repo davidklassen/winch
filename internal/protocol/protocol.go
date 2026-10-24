@@ -5,6 +5,8 @@ package protocol
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/davidklassen/winch/internal/module"
 )
 
 type Request struct {
@@ -34,4 +36,11 @@ type Hello struct {
 type Step struct {
 	Module string          `json:"module"`
 	Args   json.RawMessage `json:"args"`
+	State  module.State    `json:"state"`
+}
+
+// StepResult is the result of check and apply, with the new state.
+type StepResult struct {
+	module.Result
+	State module.State `json:"state"`
 }

@@ -24,8 +24,9 @@ func Decode(n *Node, v any) error {
 }
 
 var (
-	nodeType = reflect.TypeFor[*Node]()
-	posType  = reflect.TypeFor[Pos]()
+	nodeType    = reflect.TypeFor[*Node]()
+	posType     = reflect.TypeFor[Pos]()
+	stringsType = reflect.TypeFor[Strings]()
 )
 
 type decoder struct {
@@ -43,6 +44,18 @@ func (d *decoder) errorf(pos Pos, name, format string, args ...any) {
 func (d *decoder) value(n *Node, v reflect.Value, name string) {
 	if v.Type() == nodeType {
 		v.Set(reflect.ValueOf(n))
+		return
+	}
+	if v.Type() == stringsType {
+		switch n.Kind {
+		case List:
+			d.slice(n, v, name)
+		case Scalar:
+			v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+			d.value(n, v.Index(0), name)
+		default:
+			d.errorf(n.Pos, name, "expected a string or a list of strings, got %s", Describe(n))
+		}
 		return
 	}
 	switch v.Kind() {
@@ -204,3 +217,6 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 	}
 	d.errorf(n.Pos, "", "%s", err)
 }
+
+// Strings decodes from one string or a list of strings.
+type Strings []string

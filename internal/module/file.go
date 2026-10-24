@@ -13,6 +13,7 @@ import (
 	"os/user"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"syscall"
 	"unicode/utf8"
@@ -32,33 +33,50 @@ type File struct {
 
 func (f *File) Main() string { return f.Path }
 
-var modeRe = regexp.MustCompile(`^[0-7]{3,4}$`)
-
 func (f *File) Validate() error {
-	switch {
-	case !path.IsAbs(f.Path):
-		return &yamlx.FieldError{Field: "path", Msg: "must be an absolute path"}
-	case path.Clean(f.Path) != f.Path:
-		return &yamlx.FieldError{Field: "path", Msg: fmt.Sprintf("must be a clean path, such as %q", path.Clean(f.Path))}
-	case f.Path == "/":
-		return &yamlx.FieldError{Field: "path", Msg: "must name a file"}
+	if err := checkPath(f.Path); err != nil {
+		return err
 	}
 	if f.Absent {
-		for _, a := range []struct {
-			name string
-			set  bool
-		}{{"content", f.Content != nil}, {"owner", f.Owner != ""}, {"group", f.Group != ""}, {"mode", f.Mode != ""}} {
-			if a.set {
-				return &yamlx.FieldError{Field: a.name, Msg: "absent: true takes no " + a.name}
-			}
-		}
-		return nil
+		return absentTakesNone(arg{"content", f.Content != nil}, arg{"owner", f.Owner != ""}, arg{"group", f.Group != ""}, arg{"mode", f.Mode != ""})
 	}
 	if f.Content == nil {
 		return &yamlx.FieldError{Field: "content", Msg: "a file needs content, or absent: true"}
 	}
-	if f.Mode != "" && !modeRe.MatchString(f.Mode) {
-		return &yamlx.FieldError{Field: "mode", Msg: `must be an octal mode such as "0644"`}
+	return checkMode(f.Mode, "0644")
+}
+
+var modeRe = regexp.MustCompile(`^[0-7]{3,4}$`)
+
+func checkMode(mode, example string) error {
+	if mode != "" && !modeRe.MatchString(mode) {
+		return &yamlx.FieldError{Field: "mode", Msg: fmt.Sprintf("must be an octal mode such as %q", example)}
+	}
+	return nil
+}
+
+func checkPath(p string) error {
+	switch {
+	case !path.IsAbs(p):
+		return &yamlx.FieldError{Field: "path", Msg: "must be an absolute path"}
+	case path.Clean(p) != p:
+		return &yamlx.FieldError{Field: "path", Msg: fmt.Sprintf("must be a clean path, such as %q", path.Clean(p))}
+	case p == "/":
+		return &yamlx.FieldError{Field: "path", Msg: "must not be /"}
+	}
+	return nil
+}
+
+type arg struct {
+	name string
+	set  bool
+}
+
+func absentTakesNone(args ...arg) error {
+	for _, a := range args {
+		if a.set {
+			return &yamlx.FieldError{Field: a.name, Msg: "absent: true takes no " + a.name}
+		}
 	}
 	return nil
 }
@@ -76,22 +94,41 @@ func (f *File) Text() *string { return f.Content }
 
 const maxDiff = 1 << 20
 
-func (f *File) attrs() (owner, group string, mode uint32, err error) {
-	owner, group, m := f.Owner, f.Group, f.Mode
+// attrs returns the owner, group, and mode with their defaults.
+func attrs(owner, group, mode, defaultMode string) (string, string, uint32, error) {
 	if owner == "" {
 		owner = "root"
 	}
 	if group == "" {
 		group = "root"
 	}
-	if m == "" {
-		m = "0644"
+	if mode == "" {
+		mode = defaultMode
 	}
-	n, err := strconv.ParseUint(m, 8, 32)
+	n, err := strconv.ParseUint(mode, 8, 32)
 	return owner, group, uint32(n), err
 }
 
-func (f *File) Check(ctx context.Context) (Result, error) {
+// ids returns the IDs of a user and a group that must exist.
+func ids(owner, group string) (uid, gid uint32, err error) {
+	uid, ok, err := lookupUser(owner)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !ok {
+		return 0, 0, fmt.Errorf("user %q does not exist", owner)
+	}
+	gid, ok, err = lookupGroup(group)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !ok {
+		return 0, 0, fmt.Errorf("group %q does not exist", group)
+	}
+	return uid, gid, nil
+}
+
+func (f *File) Check(ctx context.Context, _ *State) (Result, error) {
 	fi, err := os.Lstat(f.Path)
 	if errors.Is(err, syscall.ENOTDIR) {
 		if f.Absent {
@@ -113,26 +150,21 @@ func (f *File) Check(ctx context.Context) (Result, error) {
 		}
 		return Result{Status: Change, Action: Remove}, nil
 	}
-	owner, group, mode, err := f.attrs()
+	owner, group, mode, err := attrs(f.Owner, f.Group, f.Mode, "0644")
 	if err != nil {
 		return Result{}, err
 	}
-	attrs := fmt.Sprintf("owner %s, group %s, mode %04o", owner, group, mode)
 	switch {
 	case !exists:
-		parents, err := missingParents(f.Path)
+		changes, err := parentChanges(f.Path)
 		if err != nil {
 			return Result{}, err
 		}
-		var changes []string
-		for _, p := range parents {
-			changes = append(changes, "create directory "+p+" (owner root, group root, mode 0755)")
-		}
-		changes = append(changes, attrs+userNote(owner, group))
+		changes = append(changes, attrLine(owner, group, mode)+userNote(owner, group))
 		return Result{Status: Change, Action: Create, Changes: changes, Old: new("")}, nil
 	case fi.Mode()&fs.ModeSymlink != 0:
 		target, _ := os.Readlink(f.Path)
-		changes := []string{"replace the symbolic link to " + target, attrs + userNote(owner, group)}
+		changes := []string{"replace the symbolic link to " + target, attrLine(owner, group, mode) + userNote(owner, group)}
 		return Result{Status: Change, Action: Modify, Changes: changes, Old: new("")}, nil
 	case !fi.Mode().IsRegular():
 		return Result{}, fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
@@ -150,49 +182,52 @@ func (f *File) Check(ctx context.Context) (Result, error) {
 			res.Changes = append(res.Changes, "content (binary or larger than 1 MiB)")
 		}
 	}
+	changes, err := attrChanges(fi, owner, group, mode)
+	if err != nil {
+		return Result{}, err
+	}
+	if len(changes) > 0 {
+		res.Status, res.Action = Change, Modify
+		res.Changes = append(res.Changes, changes...)
+	}
+	return res, nil
+}
+
+// attrChanges describes how the owner, group, and mode of fi differ from the
+// wanted ones.
+func attrChanges(fi fs.FileInfo, owner, group string, mode uint32) ([]string, error) {
 	st := fi.Sys().(*syscall.Stat_t)
 	ownerLine, err := ownerChange("owner", owner, st.Uid, lookupUser, userName)
 	if err != nil {
-		return Result{}, err
+		return nil, err
 	}
 	groupLine, err := ownerChange("group", group, st.Gid, lookupGroup, groupName)
 	if err != nil {
-		return Result{}, err
+		return nil, err
 	}
+	var changes []string
 	for _, c := range []string{ownerLine, groupLine} {
 		if c != "" {
-			res.Status, res.Action = Change, Modify
-			res.Changes = append(res.Changes, c)
+			changes = append(changes, c)
 		}
 	}
 	if cur := uint32(st.Mode) & 0o7777; cur != mode {
-		res.Status, res.Action = Change, Modify
-		res.Changes = append(res.Changes, fmt.Sprintf("mode %04o → %04o", cur, mode))
+		changes = append(changes, fmt.Sprintf("mode %04o → %04o", cur, mode))
 	}
-	return res, nil
+	return changes, nil
 }
 
 func (f *File) Apply(ctx context.Context) error {
 	if f.Absent {
 		return os.Remove(f.Path)
 	}
-	owner, group, mode, err := f.attrs()
+	owner, group, mode, err := attrs(f.Owner, f.Group, f.Mode, "0644")
 	if err != nil {
 		return err
 	}
-	uid, ok, err := lookupUser(owner)
+	uid, gid, err := ids(owner, group)
 	if err != nil {
 		return err
-	}
-	if !ok {
-		return fmt.Errorf("user %q does not exist", owner)
-	}
-	gid, ok, err := lookupGroup(group)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("group %q does not exist", group)
 	}
 	fi, err := os.Lstat(f.Path)
 	if err == nil && fi.Mode().IsRegular() {
@@ -201,23 +236,14 @@ func (f *File) Apply(ctx context.Context) error {
 			return err
 		}
 		if sum == f.sum() {
-			if err := os.Chown(f.Path, int(uid), int(gid)); err != nil {
-				return err
-			}
-			return os.Chmod(f.Path, fileMode(mode))
+			return setAttrs(f.Path, uid, gid, mode)
 		}
 	}
 	if f.Content == nil {
 		return ErrNeedContent
 	}
-	parents, err := missingParents(f.Path)
-	if err != nil {
+	if err := mkParents(f.Path); err != nil {
 		return err
-	}
-	for i := len(parents) - 1; i >= 0; i-- {
-		if err := mkdir(parents[i]); err != nil {
-			return err
-		}
 	}
 	return writeFile(f.Path, *f.Content, uid, gid, mode)
 }
@@ -293,14 +319,50 @@ func missingParents(p string) ([]string, error) {
 	return out, nil
 }
 
-func mkdir(dir string) error {
-	if err := os.Mkdir(dir, 0o755); err != nil {
+// mkParents creates the missing parents of p with the default owner and mode.
+func mkParents(p string) error {
+	parents, err := missingParents(p)
+	if err != nil {
 		return err
 	}
-	if err := os.Chown(dir, 0, 0); err != nil {
+	for _, d := range slices.Backward(parents) {
+		if err := mkdir(d, 0, 0, 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func mkdir(dir string, uid, gid, mode uint32) error {
+	if err := os.Mkdir(dir, 0o700); err != nil {
 		return err
 	}
-	return os.Chmod(dir, 0o755)
+	return setAttrs(dir, uid, gid, mode)
+}
+
+func setAttrs(p string, uid, gid, mode uint32) error {
+	if err := os.Chown(p, int(uid), int(gid)); err != nil {
+		return err
+	}
+	return os.Chmod(p, fileMode(mode))
+}
+
+func attrLine(owner, group string, mode uint32) string {
+	return fmt.Sprintf("owner %s, group %s, mode %04o", owner, group, mode)
+}
+
+// parentChanges describes the missing parents of p in the order apply
+// creates them.
+func parentChanges(p string) ([]string, error) {
+	parents, err := missingParents(p)
+	if err != nil {
+		return nil, err
+	}
+	var changes []string
+	for _, d := range slices.Backward(parents) {
+		changes = append(changes, "create directory "+d+" ("+attrLine("root", "root", 0o755)+")")
+	}
+	return changes, nil
 }
 
 func writeFile(p, content string, uid, gid, mode uint32) error {

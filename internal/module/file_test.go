@@ -21,7 +21,7 @@ func TestFileValidate(t *testing.T) {
 		{"no path", "content: hi\n", `t.yaml:1:1: missing key "path"`},
 		{"relative path", "path: etc/motd\ncontent: hi\n", `t.yaml:1:7: path: must be an absolute path`},
 		{"unclean path", "path: /etc/../motd\ncontent: hi\n", `t.yaml:1:7: path: must be a clean path, such as "/motd"`},
-		{"root path", "path: /\ncontent: hi\n", `t.yaml:1:7: path: must name a file`},
+		{"root path", "path: /\ncontent: hi\n", `t.yaml:1:7: path: must not be /`},
 		{"no content", "path: /etc/motd\n", `t.yaml:1:1: content: a file needs content, or absent: true`},
 		{"content and absent", "path: /x\ncontent: hi\nabsent: true\n", `t.yaml:2:10: content: absent: true takes no content`},
 		{"mode and absent", "path: /x\nmode: \"0644\"\nabsent: true\n", `t.yaml:2:7: mode: absent: true takes no mode`},

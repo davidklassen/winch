@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
 )
 
@@ -136,5 +137,23 @@ func TestUnknownModule(t *testing.T) {
 	r := c.call(t, "check", protocol.Step{Module: "nope", Args: json.RawMessage(`{}`)})
 	if r.Error != `unknown module "nope"` {
 		t.Errorf("error = %q", r.Error)
+	}
+}
+
+// spec: Modules/pkg
+func TestStateRoundTrip(t *testing.T) {
+	c := start(t, t.TempDir(), "")
+	c.call(t, "hello", hello("r1"))
+	args, _ := json.Marshal(module.File{Path: filepath.Join(t.TempDir(), "f"), Absent: true})
+	r := c.call(t, "check", protocol.Step{Module: "file", Args: args, State: module.State{IndexFresh: true}})
+	if r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	var res protocol.StepResult
+	if err := json.Unmarshal(r.Result, &res); err != nil {
+		t.Fatal(err)
+	}
+	if !res.State.IndexFresh || res.Status != module.OK {
+		t.Errorf("result = %+v, want ok with the state of the request", res)
 	}
 }

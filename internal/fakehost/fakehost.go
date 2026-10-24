@@ -1,11 +1,12 @@
-// Package fakehost is a test double for hosts: it keeps files in memory and
-// checks and applies file steps against them.
+// Package fakehost is a test double for hosts: it keeps files and packages in
+// memory and checks and applies file and pkg steps against them.
 package fakehost
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/davidklassen/winch/internal/module"
@@ -16,15 +17,23 @@ import (
 type Hosts struct {
 	mu        sync.Mutex
 	files     map[string]map[string]string
+	pkgs      map[string]map[string]bool
 	failCheck map[string]bool
 	failApply map[string]bool
 	Applies   int
+	Refreshes map[string]int
 	// Open is the number of open connections.
 	Open int
 }
 
 func New() *Hosts {
-	return &Hosts{files: map[string]map[string]string{}, failCheck: map[string]bool{}, failApply: map[string]bool{}}
+	return &Hosts{
+		files:     map[string]map[string]string{},
+		pkgs:      map[string]map[string]bool{},
+		failCheck: map[string]bool{},
+		failApply: map[string]bool{},
+		Refreshes: map[string]int{},
+	}
 }
 
 func (h *Hosts) SetFile(host, path, content string) {
@@ -78,7 +87,10 @@ type Conn struct {
 	host  string
 }
 
-func (c *Conn) Check(ctx context.Context, name string, m module.Module) (module.Result, error) {
+func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
+	if p, ok := m.(*module.Pkg); ok {
+		return c.checkPkg(p, st), nil
+	}
 	f := m.(*module.File)
 	if c.hosts.fails(c.hosts.failCheck, c.host, f.Path) {
 		return module.Result{}, errors.New("permission denied")
@@ -98,10 +110,48 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module) (module.
 	return module.Result{Status: module.OK}, nil
 }
 
-func (c *Conn) Apply(ctx context.Context, name string, m module.Module) (module.Result, error) {
-	res, err := c.Check(ctx, name, m)
+// checkPkg installs only. The first install with a state that is not fresh
+// refreshes the index.
+func (c *Conn) checkPkg(p *module.Pkg, st *module.State) module.Result {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	var missing []string
+	for _, n := range p.Name {
+		if !c.hosts.pkgs[c.host][n] {
+			missing = append(missing, n)
+		}
+	}
+	if len(missing) == 0 {
+		return module.Result{Status: module.OK}
+	}
+	var changes []string
+	if !st.IndexFresh {
+		changes = append(changes, "refresh the package index")
+		st.IndexFresh = true
+	}
+	changes = append(changes, "install "+strings.Join(missing, ", "))
+	return module.Result{Status: module.Change, Action: module.Create, Changes: changes}
+}
+
+func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
+	fresh := st.IndexFresh
+	res, err := c.Check(ctx, name, m, st)
 	if err != nil || res.Status == module.OK {
 		return res, err
+	}
+	if p, ok := m.(*module.Pkg); ok {
+		c.hosts.mu.Lock()
+		defer c.hosts.mu.Unlock()
+		if !fresh {
+			c.hosts.Refreshes[c.host]++
+		}
+		if c.hosts.pkgs[c.host] == nil {
+			c.hosts.pkgs[c.host] = map[string]bool{}
+		}
+		for _, n := range p.Name {
+			c.hosts.pkgs[c.host][n] = true
+		}
+		return res, nil
 	}
 	f := m.(*module.File)
 	if c.hosts.fails(c.hosts.failApply, c.host, f.Path) {

@@ -148,3 +148,43 @@ func TestHasChangesIgnoresFailedHosts(t *testing.T) {
 		t.Error("a plan whose changes are all on failed hosts has changes")
 	}
 }
+
+// spec: Modules/pkg; Running a pipeline/Plan
+func TestIndexRefreshOncePerRun(t *testing.T) {
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - pkg:
+          name: curl
+      - pkg:
+          name: [nginx, htop]
+  - name: tools
+    hosts: all
+    steps:
+      - pkg:
+          name: jq
+`,
+	})
+	p, err := project.Load(dir, "", "site")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	plan := run.MakePlan(context.Background(), p, h.Connector())
+	var out, errOut bytes.Buffer
+	plan.Write(&out, &errOut)
+	golden.Assert(t, filepath.Join("testdata", "plan", "index-refresh.golden"),
+		[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
+	if !run.Apply(context.Background(), plan, h.Connector(), &out, &errOut) {
+		t.Fatalf("apply failed: %s", errOut.String())
+	}
+	for _, host := range []string{"web1", "web2"} {
+		if n := h.Refreshes[host]; n != 1 {
+			t.Errorf("%s: %d index refreshes, want 1", host, n)
+		}
+	}
+}

@@ -72,7 +72,7 @@ func TestFileModule(t *testing.T) {
 		{
 			Name:      "parent directories",
 			Args:      &module.File{Path: "/tmp/w/a/b/c", Content: new("x\n")},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /tmp/w/a/b (owner root, group root, mode 0755)", "create directory /tmp/w/a (owner root, group root, mode 0755)", attrs}, Old: new("")},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /tmp/w/a (owner root, group root, mode 0755)", "create directory /tmp/w/a/b (owner root, group root, mode 0755)", attrs}, Old: new("")},
 			Unchanged: `[ ! -e /tmp/w/a ]`,
 			After:     `[ "$(stat -c '%U %G %a' /tmp/w/a /tmp/w/a/b | sort -u)" = "root root 755" ]`,
 		},

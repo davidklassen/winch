@@ -1,1 +1,1 @@
-pipelines/other.yaml:5:9: unknown module "pkg"
+pipelines/other.yaml:5:14: missing key "name"

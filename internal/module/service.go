@@ -1,0 +1,108 @@
+package module
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/davidklassen/winch/internal/yamlx"
+)
+
+type Service struct {
+	Name    string `yaml:"name,required" json:"name"`
+	Running *bool  `yaml:"running" json:"running,omitempty"`
+	Enabled *bool  `yaml:"enabled" json:"enabled,omitempty"`
+
+	// Check sets these for Apply: the systemctl commands, in order.
+	todo []string
+}
+
+func (s *Service) Main() string { return s.Name }
+
+var unitRe = regexp.MustCompile(`^[A-Za-z0-9:_.\\@-]+$`)
+
+func (s *Service) Validate() error {
+	switch {
+	case !unitRe.MatchString(s.Name):
+		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q is not a unit name", s.Name)}
+	case s.Running == nil && s.Enabled == nil:
+		return &yamlx.FieldError{Msg: "a service step needs running or enabled"}
+	}
+	return nil
+}
+
+func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,UnitFileState", "--", s.Name)
+	if err != nil {
+		return Result{}, err
+	}
+	u := parseShow(out)
+	missing := u.load == "not-found"
+	if !missing && u.load != "loaded" {
+		return Result{}, fmt.Errorf("%s has the load state %q", u.id, u.load)
+	}
+	if s.Enabled != nil {
+		switch {
+		case missing:
+			if *s.Enabled {
+				s.todo = append(s.todo, "enable")
+			}
+		case !*s.Enabled && u.file == "enabled":
+			s.todo = append(s.todo, "disable")
+		case !*s.Enabled, u.file == "enabled":
+		case u.file == "disabled":
+			s.todo = append(s.todo, "enable")
+		default:
+			return Result{}, fmt.Errorf("%s has the unit file state %q; enabled: true needs an enabled or disabled unit", u.id, u.file)
+		}
+	}
+	if s.Running != nil {
+		running := u.active == "active" || u.active == "activating" || u.active == "reloading"
+		switch {
+		case *s.Running && !running:
+			s.todo = append(s.todo, "start")
+		case !*s.Running && running:
+			s.todo = append(s.todo, "stop")
+		}
+	}
+	if len(s.todo) == 0 {
+		return Result{Status: OK}, nil
+	}
+	changes := s.todo
+	if missing {
+		changes = append([]string{u.id + " does not exist yet"}, changes...)
+	}
+	return Result{Status: Change, Action: Modify, Changes: changes}, nil
+}
+
+func (s *Service) Apply(ctx context.Context) error {
+	for _, c := range s.todo {
+		if _, err := run(ctx, nil, "systemctl", c, "--", s.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type unitState struct {
+	id, load, active, file string
+}
+
+func parseShow(out string) unitState {
+	var u unitState
+	for line := range strings.SplitSeq(out, "\n") {
+		k, v, _ := strings.Cut(line, "=")
+		switch k {
+		case "Id":
+			u.id = v
+		case "LoadState":
+			u.load = v
+		case "ActiveState":
+			u.active = v
+		case "UnitFileState":
+			u.file = v
+		}
+	}
+	return u
+}

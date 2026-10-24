@@ -214,29 +214,32 @@ func withoutContent(m module.Module) module.Module {
 	return m
 }
 
-// Check checks a step. It sends only the hash of the content.
-func (s *Session) Check(ctx context.Context, name string, m module.Module) (module.Result, error) {
-	return s.step("check", name, withoutContent(m))
+// Check checks a step and updates st. It sends only the hash of the content.
+func (s *Session) Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
+	return s.step("check", name, withoutContent(m), st)
 }
 
-// Apply checks a step again and makes its changes. It sends the content only
-// when the helper must write it.
-func (s *Session) Apply(ctx context.Context, name string, m module.Module) (module.Result, error) {
-	res, err := s.step("apply", name, withoutContent(m))
+// Apply checks a step again, makes its changes, and updates st. It sends the
+// content only when the helper must write it.
+func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
+	res, err := s.step("apply", name, withoutContent(m), st)
 	if errors.Is(err, errNeedContent) {
-		return s.step("apply", name, m)
+		return s.step("apply", name, m, st)
 	}
 	return res, err
 }
 
-func (s *Session) step(method, name string, m module.Module) (module.Result, error) {
+func (s *Session) step(method, name string, m module.Module, st *module.State) (module.Result, error) {
 	args, err := json.Marshal(m)
 	if err != nil {
 		return module.Result{}, err
 	}
-	var res module.Result
-	err = s.call(method, protocol.Step{Module: name, Args: args}, &res)
-	return res, err
+	var res protocol.StepResult
+	if err := s.call(method, protocol.Step{Module: name, Args: args, State: *st}, &res); err != nil {
+		return module.Result{}, err
+	}
+	*st = res.State
+	return res.Result, nil
 }
 
 // Close ends the helper and waits for ssh.

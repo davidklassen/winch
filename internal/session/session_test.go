@@ -201,10 +201,10 @@ func TestContentOnlyWhenNeeded(t *testing.T) {
 	}
 	content := "secret text"
 	f := &module.File{Path: "/etc/motd", Content: &content}
-	if _, err := s.Check(context.Background(), "file", f); err != nil {
+	if _, err := s.Check(context.Background(), "file", f, &module.State{}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := s.Apply(context.Background(), "file", f)
+	res, err := s.Apply(context.Background(), "file", f, &module.State{})
 	if err != nil || res.Action != module.Create {
 		t.Fatalf("apply = %+v, %v", res, err)
 	}
