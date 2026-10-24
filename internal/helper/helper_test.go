@@ -67,9 +67,27 @@ func TestLock(t *testing.T) {
 	if r := first.call(t, "hello", hello("r1")); r.Error != "" {
 		t.Fatalf("first hello: %s", r.Error)
 	}
+	// Both helpers run in this process, so the record gets a PID that is not ours.
+	lock := filepath.Join(dir, "lock")
+	data, err := os.ReadFile(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec["pid"] != float64(os.Getpid()) {
+		t.Errorf("lock file pid = %v, want %d", rec["pid"], os.Getpid())
+	}
+	rec["pid"] = 4242
+	data, _ = json.Marshal(rec)
+	if err := os.WriteFile(lock, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	second := start(t, dir, "")
 	r := second.call(t, "hello", hello("r2"))
-	want := "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"
+	want := "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z, helper process 4242); if that run is gone, end it with: sudo kill 4242"
 	if !strings.Contains(r.Error, want) {
 		t.Errorf("second hello error = %q, want %q", r.Error, want)
 	}

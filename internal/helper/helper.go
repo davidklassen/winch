@@ -65,6 +65,11 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) e
 	}
 }
 
+type lockRecord struct {
+	protocol.Hello
+	PID int `json:"pid"`
+}
+
 func takeLock(params json.RawMessage, dir, self string) (_ *os.File, err error) {
 	var h protocol.Hello
 	if err := json.Unmarshal(params, &h); err != nil {
@@ -84,15 +89,15 @@ func takeLock(params json.RawMessage, dir, self string) (_ *os.File, err error) 
 	}()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			var held protocol.Hello
+			var held lockRecord
 			data, _ := io.ReadAll(f)
 			_ = json.Unmarshal(data, &held)
-			return nil, fmt.Errorf("locked by run %s (%s@%s, since %s)",
-				held.Run, held.User, held.Machine, held.Started.UTC().Format(time.RFC3339))
+			return nil, fmt.Errorf("locked by run %s (%s@%s, since %s, helper process %d); if that run is gone, end it with: sudo kill %d",
+				held.Run, held.User, held.Machine, held.Started.UTC().Format(time.RFC3339), held.PID, held.PID)
 		}
 		return nil, fmt.Errorf("lock: %w", err)
 	}
-	data, err := json.Marshal(h)
+	data, err := json.Marshal(lockRecord{Hello: h, PID: os.Getpid()})
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -82,7 +83,18 @@ func TestWinch(t *testing.T) {
 		vm.Session(t)
 		r := lab.Winch(t, dir, "plan", "site")
 		if r.Code != 1 || !strings.Contains(r.Stderr, "locked by run test-TestWinch/a_second_session_fails_on_the_lock (test@test, since") {
-			t.Errorf("plan during a session: exit %d", r.Code)
+			t.Fatalf("plan during a session: exit %d", r.Code)
+		}
+		m := regexp.MustCompile(`helper process (\d+)\); if that run is gone, end it with: sudo kill (\d+)`).FindStringSubmatch(r.Stderr)
+		if m == nil || m[1] != m[2] {
+			t.Fatalf("lock message without the helper process: %q", r.Stderr)
+		}
+		if out := vm.MustRun(t, "readlink /proc/"+m[1]+"/exe"); !strings.HasPrefix(out, "/var/lib/winch/bin/") {
+			t.Fatalf("process %s is %q, want the helper", m[1], out)
+		}
+		vm.MustRun(t, "kill "+m[1])
+		if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 {
+			t.Errorf("plan after kill: exit %d, stderr %q", r.Code, r.Stderr)
 		}
 	})
 
