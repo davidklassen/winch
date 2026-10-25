@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -62,15 +61,12 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 		if !fi.IsDir() {
 			return Result{}, fmt.Errorf("%s is %s, not a directory", d.Path, kind(fi))
 		}
-		if err := noMount(dir, name, fi, d.Path); err != nil {
-			return Result{}, err
-		}
-		res := Result{Status: Change, Action: Remove}
-		empty, err := isEmpty(dir, name, fi)
+		t, err := walkTree(dir, name, d.Path, fi)
 		if err != nil {
 			return Result{}, err
 		}
-		if !empty {
+		res := Result{Status: Change, Action: Remove}
+		if t.files+t.dirs > 0 {
 			res.Changes = []string{"remove its content"}
 		}
 		return res, nil
@@ -81,6 +77,7 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 	}
 	want := attrLine(owner, group, mode) + userNote(owner, group)
 	link := ""
+	at, atName := dir, name
 	if exists && fi.Mode()&fs.ModeSymlink != 0 && !d.Replace {
 		if link, err = dir.Readlink(name); err != nil {
 			return Result{}, err
@@ -93,6 +90,7 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 		if fi, err = behind.Stat("."); err != nil {
 			return Result{}, err
 		}
+		at, atName = behind, "."
 	}
 	switch {
 	case !exists:
@@ -108,6 +106,9 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 		return Result{Status: Change, Action: Modify, Changes: []string{line, want}}, nil
 	case !fi.IsDir():
 		return Result{}, fmt.Errorf("%s is %s, not a directory", d.Path, kind(fi))
+	}
+	if err := noFlags(at, atName, fi, d.Path); err != nil {
+		return Result{}, err
 	}
 	changes, err := attrChanges(fi, owner, group, mode)
 	if err != nil || len(changes) == 0 {
@@ -206,19 +207,6 @@ func openLinked(p string) (*os.Root, error) {
 		return nil, fmt.Errorf("%s does not exist", missing[0])
 	}
 	return dir, err
-}
-
-func isEmpty(dir *os.Root, name string, fi fs.FileInfo) (bool, error) {
-	f, err := openSame(dir, name, fi)
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
-	_, err = f.Readdirnames(1)
-	if errors.Is(err, io.EOF) {
-		return true, nil
-	}
-	return false, err
 }
 
 // noMount fails when name in dir, or anything below it, is a mount point.

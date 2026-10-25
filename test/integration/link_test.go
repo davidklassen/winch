@@ -11,7 +11,7 @@ import (
 func TestLinkModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "link")
-	reset := "grep -o ' /tmp/w/[^ ]*' /proc/self/mounts | sort -r | xargs -r umount\nrm -rf /tmp/w /tmp/wsrc && mkdir /tmp/w"
+	reset := "grep -o ' /tmp/w/[^ ]*' /proc/self/mounts | sort -r | xargs -r umount\n[ ! -d /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w /tmp/wsrc && mkdir /tmp/w"
 	vmtest.RunCases(t, vm, "link", reset, []vmtest.Case{
 		{
 			Name:      "create with parents",
@@ -113,6 +113,18 @@ func TestLinkModule(t *testing.T) {
 			Args:  &module.Link{Path: "/tmp/w/d", Target: new("/tmp"), Replace: true},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 0 files, 0 directories", "target /tmp"}},
 			After: `[ "$(readlink /tmp/w/d)" = /tmp ]`,
+		},
+		{
+			Name:    "replace an immutable file fails",
+			Setup:   `touch /tmp/w/f && chattr +i /tmp/w/f`,
+			Args:    &module.Link{Path: "/tmp/w/f", Target: new("/etc/hostname"), Replace: true},
+			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "replace a directory with an append-only directory fails",
+			Setup:   `mkdir -p /tmp/w/d/x && touch /tmp/w/d/x/b && chattr +a /tmp/w/d/x`,
+			Args:    &module.Link{Path: "/tmp/w/d", Target: new("/tmp"), Replace: true},
+			WantErr: "/tmp/w/d/x is append-only; chattr -a changes it",
 		},
 		{
 			Name:    "replace a tree with a mount point fails",

@@ -220,6 +220,11 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	if err != nil {
 		return Result{}, err
 	}
+	if exists && fi.Mode().IsRegular() {
+		if err := noFlags(dir, name, fi, f.Path); err != nil {
+			return Result{}, err
+		}
+	}
 	if f.Absent {
 		switch {
 		case !exists:

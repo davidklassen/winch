@@ -12,7 +12,7 @@ func TestDirModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "dir")
 	attrs := "owner root, group root, mode 0755"
-	reset := "grep -o ' /tmp/w/[^ ]*' /proc/self/mounts | sort -r | xargs -r umount\nrm -rf /tmp/w /tmp/wsrc && mkdir /tmp/w"
+	reset := "grep -o ' /tmp/w/[^ ]*' /proc/self/mounts | sort -r | xargs -r umount\nfor d in /tmp/w /tmp/wsrc; do [ ! -e $d ] || find $d \\( -type f -o -type d \\) -exec chattr -ia {} +; done\nrm -rf /tmp/w /tmp/wsrc && mkdir /tmp/w"
 	vmtest.RunCases(t, vm, "dir", reset, []vmtest.Case{
 		{
 			Name:      "create with parents",
@@ -155,6 +155,43 @@ func TestDirModule(t *testing.T) {
 			Setup: `touch /tmp/w/f`,
 			Args:  &module.Dir{Path: "/tmp/w/f/d", Absent: true},
 			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:    "absent on a tree with an immutable file fails",
+			Setup:   `mkdir -p /tmp/w/d/a /tmp/w/d/b && touch /tmp/w/d/a/1 /tmp/w/d/b/2 /tmp/w/d/c && chattr +i /tmp/w/d/b/2`,
+			Args:    &module.Dir{Path: "/tmp/w/d", Absent: true},
+			WantErr: "/tmp/w/d/b/2 is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "absent on an append-only directory fails",
+			Setup:   `mkdir -p /tmp/w/d && touch /tmp/w/d/f && chattr +a /tmp/w/d`,
+			Args:    &module.Dir{Path: "/tmp/w/d", Absent: true},
+			WantErr: "/tmp/w/d is append-only; chattr -a changes it",
+		},
+		{
+			Name:  "absent on a tree with a link to an immutable file works",
+			Setup: `mkdir /tmp/w/d && touch /tmp/wsrc && chattr +i /tmp/wsrc && ln -s /tmp/wsrc /tmp/w/d/l`,
+			Args:  &module.Dir{Path: "/tmp/w/d", Absent: true},
+			Want:  module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove its content"}},
+			After: `[ ! -e /tmp/w/d ] && [ -f /tmp/wsrc ]`,
+		},
+		{
+			Name:    "replace an immutable file fails",
+			Setup:   `touch /tmp/w/f && chattr +i /tmp/w/f`,
+			Args:    &module.Dir{Path: "/tmp/w/f", Replace: true},
+			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "an immutable directory fails",
+			Setup:   `mkdir /tmp/w/d && chmod 700 /tmp/w/d && chattr +i /tmp/w/d`,
+			Args:    &module.Dir{Path: "/tmp/w/d"},
+			WantErr: "/tmp/w/d is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "an immutable directory behind a link fails",
+			Setup:   `mkdir /tmp/wsrc && chattr +i /tmp/wsrc && ln -s /tmp/wsrc /tmp/w/l`,
+			Args:    &module.Dir{Path: "/tmp/w/l"},
+			WantErr: "/tmp/w/l is immutable; chattr -i changes it",
 		},
 		{
 			Name:    "absent on a file fails",

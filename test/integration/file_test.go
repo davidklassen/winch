@@ -12,7 +12,8 @@ func TestFileModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "file")
 	attrs := "owner root, group root, mode 0644"
-	vmtest.RunCases(t, vm, "file", "rm -rf /tmp/w && mkdir /tmp/w", []vmtest.Case{
+	reset := "[ ! -d /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w && mkdir /tmp/w"
+	vmtest.RunCases(t, vm, "file", reset, []vmtest.Case{
 		{
 			Name:      "create",
 			Args:      &module.File{Path: "/tmp/w/sub/create", Data: []byte("hello\n")},
@@ -278,6 +279,36 @@ func TestFileModule(t *testing.T) {
 			Setup:   `ln -s b /tmp/w/a && ln -s a /tmp/w/b`,
 			Args:    &module.File{Path: "/tmp/w/a/f", Data: []byte("x\n")},
 			WantErr: "/tmp/w/a/f: too many levels of symbolic links",
+		},
+		{
+			Name:    "an immutable file fails",
+			Setup:   `printf 'hello\n' > /tmp/w/f && chattr +i /tmp/w/f`,
+			Args:    &module.File{Path: "/tmp/w/f", Data: []byte("bye\n")},
+			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "an immutable file with the wanted content fails",
+			Setup:   `printf 'hello\n' > /tmp/w/f && chattr +i /tmp/w/f`,
+			Args:    &module.File{Path: "/tmp/w/f", Data: []byte("hello\n")},
+			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "an append-only file fails",
+			Setup:   `printf 'hello\n' > /tmp/w/f && chattr +a /tmp/w/f`,
+			Args:    &module.File{Path: "/tmp/w/f", Data: []byte("bye\n")},
+			WantErr: "/tmp/w/f is append-only; chattr -a changes it",
+		},
+		{
+			Name:    "absent on an immutable file fails",
+			Setup:   `touch /tmp/w/f && chattr +i /tmp/w/f`,
+			Args:    &module.File{Path: "/tmp/w/f", Absent: true},
+			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "replace a directory with an immutable file fails",
+			Setup:   `mkdir -p /tmp/w/d/x && touch /tmp/w/d/a /tmp/w/d/x/b && chattr +i /tmp/w/d/x/b`,
+			Args:    &module.File{Path: "/tmp/w/d", Data: []byte("x\n"), Replace: true},
+			WantErr: "/tmp/w/d/x/b is immutable; chattr -i changes it",
 		},
 		{
 			Name:  "a path with spaces and shell characters",
