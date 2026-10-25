@@ -68,9 +68,12 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	if err := othersHalfDone(pkgs, p.Name); err != nil {
 		return Result{}, err
 	}
-	var inst, conf []string
+	var inst, conf, missing []string
 	for _, n := range p.Name {
 		pkg := pkgs[n]
+		if pkg.state != installed && pkg.half == 0 {
+			missing = append(missing, n)
+		}
 		switch {
 		case !p.Absent && pkg.half != 0:
 			conf = append(conf, n)
@@ -85,6 +88,9 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 		case !p.Absent:
 			inst = append(inst, n)
 		}
+	}
+	if err := providedOnly(ctx, missing); err != nil {
+		return Result{}, err
 	}
 	// apt-mark showauto with no names lists every automatic package.
 	if len(inst) > 0 {
@@ -128,6 +134,65 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 		changes = append(changes, "mark "+strings.Join(p.auto, ", ")+" as manually installed")
 	}
 	return Result{Status: Change, Action: action, Changes: changes}, nil
+}
+
+// providedOnly fails on each name that apt knows only as provided by other
+// packages. apt installs a sole provider under its own name, so the step never
+// converges, and fails when there are several.
+func providedOnly(ctx context.Context, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	out, err := run(ctx, nil, "apt-cache", append([]string{"showpkg"}, names...)...)
+	if err != nil {
+		return err
+	}
+	providers := parseShowpkg(out)
+	var errs []error
+	for _, n := range names {
+		switch ps := providers[n]; len(ps) {
+		case 0:
+		case 1:
+			errs = append(errs, fmt.Errorf("%s is provided by %s; name that package", n, ps[0]))
+		default:
+			errs = append(errs, fmt.Errorf("%s is provided by %s; name one of them", n, strings.Join(ps, ", ")))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// parseShowpkg returns the sorted native providers of each package in the
+// output of apt-cache showpkg that has no version of its own.
+func parseShowpkg(out string) map[string][]string {
+	providers := map[string][]string{}
+	var name, section string
+	hasVersion := false
+	for line := range strings.SplitSeq(out, "\n") {
+		if n, ok := strings.CutPrefix(line, "Package: "); ok {
+			name, section, hasVersion = n, "", false
+			continue
+		}
+		switch strings.TrimSpace(line) {
+		case "Versions:", "Reverse Depends:", "Dependencies:", "Provides:", "Reverse Provides:":
+			section = strings.TrimSpace(line)
+			continue
+		}
+		f := strings.Fields(line)
+		switch {
+		case len(f) == 0:
+		case section == "Versions:" && !strings.HasPrefix(line, " "):
+			hasVersion = true
+		// A step names packages of the native architecture, which have no
+		// :arch suffix.
+		case section == "Reverse Provides:" && !hasVersion && !strings.Contains(f[0], ":"):
+			providers[name] = append(providers[name], f[0])
+		}
+	}
+	for n, ps := range providers {
+		slices.Sort(ps)
+		providers[n] = slices.Compact(ps)
+	}
+	return providers
 }
 
 func (p *Pkg) verb() string {

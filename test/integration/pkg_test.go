@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -43,11 +44,24 @@ func TestPkgModule(t *testing.T) {
 	// exists, so a test can kill its install.
 	vm.MustRun(t, `mkdir -p /root/slow-pkg/DEBIAN && printf 'Package: winch-slow\nVersion: 1\nArchitecture: all\nMaintainer: winch\nDescription: test\n' > /root/slow-pkg/DEBIAN/control && `+
 		`printf '#!/bin/sh\nwhile [ -e /root/slow ]; do sleep 1; done\n' > /root/slow-pkg/DEBIAN/postinst && chmod 755 /root/slow-pkg/DEBIAN/postinst && dpkg-deb -b /root/slow-pkg /root/winch-slow.deb >/dev/null`)
-	// The local repository has version 2 of winch-fragile.
+	// The local repository has version 2 of winch-fragile, and winch-mta-a,
+	// winch-mta-b, and winch-mta-c for armhf, which provide winch-mta. The
+	// provides of a foreign package with Multi-Arch: foreign count for the
+	// native architecture too.
+	// winch-mta-a also provides winch-fragile.
+	mta := func(name, arch, provides string) string {
+		return fmt.Sprintf("mkdir -p /root/%[1]s/DEBIAN && printf 'Package: %[1]s\\nVersion: 1\\nArchitecture: %[2]s\\nProvides: %[3]s\\nMulti-Arch: foreign\\nMaintainer: winch\\nDescription: test\\n' > /root/%[1]s/DEBIAN/control && "+
+			"dpkg-deb -b /root/%[1]s /root/repo/%[1]s_1_%[2]s.deb >/dev/null && ", name, arch, provides)
+	}
 	vm.MustRun(t, fragileDeb+" && mkdir -p /root/repo && cp -r /root/fragile /root/fragile2 && sed -i 's/^Version: 1/Version: 2/' /root/fragile2/DEBIAN/control && "+
-		"dpkg-deb -b /root/fragile2 /root/repo/winch-fragile_2_all.deb >/dev/null && cd /root/repo && apt-ftparchive packages . > Packages")
+		"dpkg-deb -b /root/fragile2 /root/repo/winch-fragile_2_all.deb >/dev/null && "+
+		mta("winch-mta-a", "all", "winch-mta, winch-fragile")+mta("winch-mta-b", "all", "winch-mta")+mta("winch-mta-c", "armhf", "winch-mta")+
+		"cd /root/repo && apt-ftparchive packages . > Packages")
 	const localRepo = "echo 'deb [trusted=yes] file:/root/repo ./' > /etc/apt/sources.list.d/winch-local.list && apt-get update -q >/dev/null"
-	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /etc/apt/sources.list.d/winch-local.list /var/lib/apt/lists/_root_repo_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; " +
+	// localArmhf adds armhf and refreshes only the local repository.
+	const localArmhf = "dpkg --add-architecture armhf && echo 'deb [trusted=yes] file:/root/repo ./' > /etc/apt/sources.list.d/winch-local.list && " +
+		"apt-get update -q -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/winch-local.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 >/dev/null"
+	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /etc/apt/sources.list.d/winch-local.list /var/lib/apt/lists/_root_repo_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --remove-architecture armhf 2>/dev/null; " +
 		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-fragile hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
 		{
@@ -301,6 +315,48 @@ func TestPkgModule(t *testing.T) {
 		{
 			Name: "absent when not installed is ok",
 			Args: &module.Pkg{Name: []string{"sl", "winch-no-such-package"}, Absent: true, Purge: true},
+			Want: module.Result{Status: module.OK},
+		},
+		{
+			Name:    "a name that only another package provides fails the check",
+			Args:    &module.Pkg{Name: []string{"libssl3"}},
+			WantErr: "libssl3 is provided by libssl3t64; name that package",
+		},
+		{
+			Name:    "a name with several providers fails the check",
+			Setup:   "apt-get update -q >/dev/null",
+			Args:    &module.Pkg{Name: []string{"mail-transport-agent"}},
+			WantErr: "mail-transport-agent is provided by ",
+		},
+		{
+			Name:    "a name with several providers names the native ones",
+			Setup:   localArmhf,
+			Args:    &module.Pkg{Name: []string{"winch-mta"}},
+			WantErr: "winch-mta is provided by winch-mta-a, winch-mta-b; name one of them",
+		},
+		{
+			Name:        "a package that others also provide installs",
+			State:       module.State{IndexFresh: true},
+			Setup:       localArmhf,
+			Args:        &module.Pkg{Name: []string{"winch-fragile"}},
+			Want:        module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install winch-fragile"}},
+			WantState:   module.State{IndexFresh: true},
+			BeforeApply: "touch /etc/winch-fragile.ok",
+			After:       "[ \"$(dpkg-query -W -f='${db:Status-Abbrev}${Version}' winch-fragile)\" = 'ii 2' ]",
+		},
+		{
+			Name:    "a list names the provided name after a real package",
+			Args:    &module.Pkg{Name: []string{"hello", "libssl3"}},
+			WantErr: "libssl3 is provided by libssl3t64; name that package",
+		},
+		{
+			Name:    "absent of a name that only another package provides fails the check",
+			Args:    &module.Pkg{Name: []string{"libssl3"}, Absent: true},
+			WantErr: "libssl3 is provided by libssl3t64; name that package",
+		},
+		{
+			Name: "the providing package converges",
+			Args: &module.Pkg{Name: []string{"libssl3t64"}},
 			Want: module.Result{Status: module.OK},
 		},
 		{
