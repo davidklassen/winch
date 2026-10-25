@@ -28,7 +28,7 @@ func TestSilentAddressFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	t.Cleanup(func() { l.Close() })
 	go func() {
 		var conns []net.Conn
 		for {
@@ -42,34 +42,41 @@ func TestSilentAddressFails(t *testing.T) {
 			conns = append(conns, c)
 		}
 	}()
+	// The jump host is the silent address. ssh does not pass ConnectTimeout
+	// to the ssh of the jump.
 	conf := filepath.Join(lab.Dir, "hosts", "silent.conf")
-	host := fmt.Sprintf("Host silent\n  HostName 127.0.0.1\n  Port %d\n", l.Addr().(*net.TCPAddr).Port)
-	if err := os.WriteFile(conf, []byte(host), 0o644); err != nil {
+	hosts := fmt.Sprintf("Host silent\n  HostName 127.0.0.1\n  Port %d\nHost silentjump\n  HostName 127.0.0.1\n  ProxyJump silent\n", l.Addr().(*net.TCPAddr).Port)
+	if err := os.WriteFile(conf, []byte(hosts), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Remove(conf) })
-	dir := project(t, "hosts:\n  silent: {}\n")
 
-	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Getenv("WINCH_BIN"), "plan", "site")
-	cmd.Dir = dir
-	cmd.Env = lab.Env()
-	start := time.Now()
-	out, err := cmd.CombinedOutput()
-	elapsed := time.Since(start)
-	t.Logf("winch plan site: %v after %s\n%s", err, elapsed, out)
-	if ctx.Err() != nil {
-		t.Fatal("winch did not end within a minute")
-	}
-	if exit, ok := errors.AsType[*exec.ExitError](err); !ok || exit.ExitCode() != 1 {
-		t.Errorf("exit = %v, want 1", err)
-	}
-	if !strings.Contains(string(out), "silent:") || !strings.Contains(string(out), "timed out") {
-		t.Errorf("output does not name the host and the timeout")
-	}
-	if elapsed < 10*time.Second || elapsed > 25*time.Second {
-		t.Errorf("winch ended after %s, want about 15s", elapsed)
+	for _, host := range []string{"silent", "silentjump"} {
+		t.Run(host, func(t *testing.T) {
+			t.Parallel()
+			dir := project(t, "hosts:\n  "+host+": {}\n")
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Getenv("WINCH_BIN"), "plan", "site")
+			cmd.Dir = dir
+			cmd.Env = lab.Env()
+			start := time.Now()
+			out, err := cmd.CombinedOutput()
+			elapsed := time.Since(start)
+			t.Logf("winch plan site: %v after %s\n%s", err, elapsed, out)
+			if ctx.Err() != nil {
+				t.Fatal("winch did not end within a minute")
+			}
+			if exit, ok := errors.AsType[*exec.ExitError](err); !ok || exit.ExitCode() != 1 {
+				t.Errorf("exit = %v, want 1", err)
+			}
+			if !strings.Contains(string(out), host+":") || !strings.Contains(string(out), "timed out") {
+				t.Errorf("output does not name the host and the timeout")
+			}
+			if elapsed < 10*time.Second || elapsed > 25*time.Second {
+				t.Errorf("winch ended after %s, want about 15s", elapsed)
+			}
+		})
 	}
 }
 

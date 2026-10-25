@@ -12,7 +12,7 @@ func TestDirModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "dir")
 	attrs := "owner root, group root, mode 0755"
-	reset := "grep -o ' /tmp/w/[^ ]*' /proc/self/mounts | sort -r | xargs -r umount\nfor d in /tmp/w /tmp/wsrc; do [ ! -e $d ] || find $d \\( -type f -o -type d \\) -exec chattr -ia {} +; done\nrm -rf /tmp/w /tmp/wsrc && mkdir /tmp/w"
+	reset := "[ ! -d /tmp/w ] || find /tmp/w -depth -mindepth 1 -type d -exec mountpoint -q {} \\; -exec umount {} \\;\nfor d in /tmp/w /tmp/wsrc; do [ ! -e $d ] || find $d \\( -type f -o -type d \\) -exec chattr -ia {} +; done\nrm -rf /tmp/w /tmp/wsrc && mkdir /tmp/w"
 	vmtest.RunCases(t, vm, "dir", reset, []vmtest.Case{
 		{
 			Name:      "create with parents",
@@ -79,6 +79,20 @@ func TestDirModule(t *testing.T) {
 			After:     `[ "$(stat -c '%U %G %a' /tmp/w/d)" = "root root 2775" ]`,
 		},
 		{
+			Name:  "sticky mode",
+			Args:  &module.Dir{Path: "/tmp/w/d", Mode: "1777"},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"owner root, group root, mode 1777"}},
+			After: `[ "$(stat -c '%a' /tmp/w/d)" = 1777 ]`,
+		},
+		{
+			Name:      "sticky mode to 0755",
+			Setup:     `mkdir /tmp/w/d && chmod 1777 /tmp/w/d`,
+			Args:      &module.Dir{Path: "/tmp/w/d"},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"mode 1777 → 0755"}},
+			Unchanged: `[ "$(stat -c '%a' /tmp/w/d)" = 1777 ]`,
+			After:     `[ "$(stat -c '%a' /tmp/w/d)" = 755 ]`,
+		},
+		{
 			Name:  "parents get the default owner and mode",
 			Args:  &module.Dir{Path: "/tmp/w/a/b", Owner: "admin", Mode: "0700"},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /tmp/w/a (owner root, group root, mode 0755)", "owner admin, group root, mode 0700"}},
@@ -122,6 +136,20 @@ func TestDirModule(t *testing.T) {
 			Setup:   `mkdir /tmp/w/d && mount -t tmpfs tmpfs /tmp/w/d && touch /tmp/w/d/f`,
 			Args:    &module.Dir{Path: "/tmp/w/d", Absent: true},
 			WantErr: "/tmp/w/d is a mount point",
+		},
+		{
+			Name:      "absent on a name with a space and a backslash",
+			Setup:     `mkdir -p '/tmp/w/a b\c/x' && touch '/tmp/w/a b\c/x/f'`,
+			Args:      &module.Dir{Path: `/tmp/w/a b\c`, Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove its content: 1 file, 1 directory"}},
+			Unchanged: `[ -f '/tmp/w/a b\c/x/f' ]`,
+			After:     `[ -z "$(ls -A /tmp/w)" ]`,
+		},
+		{
+			Name:    "absent on a tree with a mount point at a name with a space and a backslash fails",
+			Setup:   `mkdir -p '/tmp/w/d/a b\c' && mount -t tmpfs tmpfs '/tmp/w/d/a b\c' && touch '/tmp/w/d/a b\c/f'`,
+			Args:    &module.Dir{Path: "/tmp/w/d", Absent: true},
+			WantErr: `/tmp/w/d/a b\c is a mount point`,
 		},
 		{
 			Name:    "absent on a tree with a bind mount fails",
@@ -354,7 +382,7 @@ func TestDirModule(t *testing.T) {
 			After:        `[ -d /tmp/w/d ]`,
 		},
 		{
-			Name:  "a path with spaces and shell characters",
+			Name:  "a path with spaces, shell characters, and UTF-8",
 			Args:  &module.Dir{Path: oddDir},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{attrs}},
 			After: "[ -d " + vmtest.Quote(oddDir) + " ] && [ ! -e /tmp/pwn ]",

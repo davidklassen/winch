@@ -83,7 +83,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service; rm -f /tmp/boom; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ]; then systemctl disable winch-linked.service; rm -f /etc/systemd/system/winch-linked.service; systemctl daemon-reload; fi; true"
+	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service; rm -f /tmp/boom; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ]; then systemctl disable winch-linked.service; rm -f /etc/systemd/system/winch-linked.service; systemctl daemon-reload; fi; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -170,6 +170,40 @@ systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
 			Args:  &module.Service{Name: "winch-test", Enabled: new(false)},
 			Want:  change("disable"),
 			After: `! systemctl is-enabled -q winch-test`,
+		},
+		{
+			Name:      "enable a template instance",
+			Args:      &module.Service{Name: "winch-tpl@one", Enabled: new(true)},
+			Want:      change("enable"),
+			Unchanged: `! systemctl is-enabled -q winch-tpl@one`,
+			After:     `test -L /etc/systemd/system/multi-user.target.wants/winch-tpl@one.service`,
+		},
+		{
+			Name:  "disable a template instance",
+			Setup: `systemctl enable winch-tpl@one`,
+			Args:  &module.Service{Name: "winch-tpl@one", Enabled: new(false)},
+			Want:  change("disable"),
+			After: `! systemctl is-enabled -q winch-tpl@one && test -f /etc/systemd/system/winch-tpl@.service`,
+		},
+		{
+			Name:  "enable a second instance while the first is enabled",
+			Setup: `systemctl enable winch-tpl@one`,
+			Args:  &module.Service{Name: "winch-tpl@two", Enabled: new(true)},
+			Want:  change("enable"),
+			After: `systemctl is-enabled -q winch-tpl@one && systemctl is-enabled -q winch-tpl@two`,
+		},
+		{
+			Name:  "a second instance is not enabled by the first",
+			Setup: `systemctl enable winch-tpl@one`,
+			Args:  &module.Service{Name: "winch-tpl@two", Enabled: new(false)},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "disable a second instance keeps the first",
+			Setup: `systemctl enable winch-tpl@one winch-tpl@two`,
+			Args:  &module.Service{Name: "winch-tpl@two", Enabled: new(false)},
+			Want:  change("disable"),
+			After: `systemctl is-enabled -q winch-tpl@one && ! systemctl is-enabled -q winch-tpl@two`,
 		},
 		{
 			Name: "ok when disabled",

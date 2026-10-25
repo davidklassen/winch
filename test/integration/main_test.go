@@ -11,9 +11,9 @@ import (
 
 var lab *vmtest.Lab
 
-// oddDir is a path with spaces and shell characters. A shell of root that
-// runs it creates /tmp/pwn: ${HOME%%r*} is "/".
-const oddDir = "/tmp/w/a b;$(touch ${HOME%%r*}tmp${HOME%%r*}pwn)'\"`*"
+// oddDir is a path with spaces, shell characters, and UTF-8. A shell of root
+// that runs it creates /tmp/pwn: ${HOME%%r*} is "/".
+const oddDir = "/tmp/w/Grüße a b;$(touch ${HOME%%r*}tmp${HOME%%r*}pwn)'\"`*日本"
 
 const mksock = `python3 -c 'import socket; socket.socket(socket.AF_UNIX).bind("/tmp/w/s")'`
 

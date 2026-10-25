@@ -118,6 +118,22 @@ func TestFileModule(t *testing.T) {
 			After: `[ -f /tmp/w/link ] && [ ! -L /tmp/w/link ] && [ "$(cat /tmp/w/target)" = target ]`,
 		},
 		{
+			Name:      "a mode change reaches both names of a hard link",
+			Setup:     `printf 'x\n' > /tmp/w/f && chmod 600 /tmp/w/f && ln /tmp/w/f /tmp/w/h`,
+			Args:      &module.File{Path: "/tmp/w/f", Data: []byte("x\n")},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"mode 0600 → 0644"}},
+			Unchanged: `[ "$(stat -c %a /tmp/w/h)" = 600 ]`,
+			After:     `[ /tmp/w/f -ef /tmp/w/h ] && [ "$(stat -c '%a %h' /tmp/w/h)" = "644 2" ]`,
+		},
+		{
+			Name:      "new content breaks a hard link",
+			Setup:     `printf 'hello\n' > /tmp/w/f && ln /tmp/w/f /tmp/w/h`,
+			Args:      &module.File{Path: "/tmp/w/f", Data: []byte("bye\n")},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Old: new("hello\n")},
+			Unchanged: `[ "$(stat -c %h /tmp/w/h)" = 2 ]`,
+			After:     `[ "$(cat /tmp/w/f)" = bye ] && [ "$(cat /tmp/w/h)" = hello ]`,
+		},
+		{
 			Name:      "absent removes",
 			Setup:     `printf 'x\n' > /tmp/w/f`,
 			Args:      &module.File{Path: "/tmp/w/f", Absent: true},
@@ -323,7 +339,7 @@ func TestFileModule(t *testing.T) {
 			WantErr: "/tmp/w/d/x/b is immutable; chattr -i changes it",
 		},
 		{
-			Name:  "a path with spaces and shell characters",
+			Name:  "a path with spaces, shell characters, and UTF-8",
 			Args:  &module.File{Path: oddDir + "/f $x", Data: []byte("x\n")},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory " + oddDir + " (owner root, group root, mode 0755)", attrs}, Old: new("")},
 			After: "[ -f " + vmtest.Quote(oddDir+"/f $x") + " ] && [ ! -e /tmp/pwn ]",

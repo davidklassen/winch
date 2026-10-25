@@ -68,6 +68,12 @@ func TestLinkModule(t *testing.T) {
 			Want: module.Result{Status: module.OK},
 		},
 		{
+			Name:  "absent when a parent is a file is ok",
+			Setup: `touch /tmp/w/f`,
+			Args:  &module.Link{Path: "/tmp/w/f/l", Absent: true},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
 			Name:    "absent on a file fails",
 			Setup:   `touch /tmp/w/f`,
 			Args:    &module.Link{Path: "/tmp/w/f", Absent: true},
@@ -235,7 +241,7 @@ func TestLinkModule(t *testing.T) {
 			WantErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
 		},
 		{
-			Name:  "a path with spaces and shell characters",
+			Name:  "a path with spaces, shell characters, and UTF-8",
 			Args:  &module.Link{Path: oddDir, Target: new(oddDir + " $x")},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"target " + oddDir + " $x"}},
 			After: `[ "$(readlink ` + vmtest.Quote(oddDir) + `)" = ` + vmtest.Quote(oddDir+" $x") + " ] && [ ! -e /tmp/pwn ]",

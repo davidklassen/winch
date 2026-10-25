@@ -223,6 +223,45 @@ func TestWinch(t *testing.T) {
 		}
 	})
 
+	t.Run("a run as root", func(t *testing.T) {
+		vm.MustRun(t, "cp /home/admin/.ssh/authorized_keys /root/.ssh/authorized_keys")
+		defer vm.MustRun(t, ": > /root/.ssh/authorized_keys")
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n    user: root\n",
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /root/root-mark
+          content: "x\n"
+        then: "pwd > /root/pwd.out"
+      - pkg:
+          name: figlet
+`,
+		})
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "+ file /root/root-mark") || !strings.Contains(r.Stdout, "+ pkg figlet") {
+			t.Fatalf("plan: exit %d", r.Code)
+		}
+		if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+			t.Fatalf("apply: exit %d", r.Code)
+		}
+		if out := vm.MustRun(t, "cat /root/pwd.out; dpkg-query -W -f='${db:Status-Abbrev}' figlet"); out != "/\nii " {
+			t.Errorf("after apply: %q, want the then in / and figlet installed", out)
+		}
+		// sudo logs "root : ..." for a command that root runs through it.
+		out := strings.Fields(vm.MustRun(t, "journalctl -q -o cat -u ssh | grep -c 'Accepted publickey for root' || true; journalctl -q -o cat -t sudo | grep -c '^ *root : ' || true"))
+		if len(out) != 2 || out[0] == "0" || out[1] != "0" {
+			t.Errorf("root logins and sudo calls of root: %q, want some logins and no sudo", out)
+		}
+		r = lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || r.Stdout != "1 host: 0 to change, 1 unchanged, 0 unknown\n" {
+			t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+		}
+	})
+
 	t.Run("text from the login shell fails with its cause", func(t *testing.T) {
 		vm.MustRun(t, "sed -i '1i echo Welcome' /home/nosudo/.bashrc")
 		dir := project(t, "hosts:\n  winch:\n    address: 127.0.0.1\n    user: nosudo\n")

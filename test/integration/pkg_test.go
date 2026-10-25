@@ -48,21 +48,27 @@ func TestPkgModule(t *testing.T) {
 	// winch-mta-b, and winch-mta-c for armhf, which provide winch-mta. The
 	// provides of a foreign package with Multi-Arch: foreign count for the
 	// native architecture too.
-	// winch-mta-a also provides winch-fragile.
+	// winch-mta-a also provides winch-fragile. winch-conflict conflicts with
+	// hello.
+	deb := func(name, arch, fields string) string {
+		return fmt.Sprintf("mkdir -p /root/%[1]s/DEBIAN && printf 'Package: %[1]s\\nVersion: 1\\nArchitecture: %[2]s\\n%[3]s\\nMaintainer: winch\\nDescription: test\\n' > /root/%[1]s/DEBIAN/control && "+
+			"dpkg-deb -b /root/%[1]s /root/repo/%[1]s_1_%[2]s.deb >/dev/null && ", name, arch, fields)
+	}
 	mta := func(name, arch, provides string) string {
-		return fmt.Sprintf("mkdir -p /root/%[1]s/DEBIAN && printf 'Package: %[1]s\\nVersion: 1\\nArchitecture: %[2]s\\nProvides: %[3]s\\nMulti-Arch: foreign\\nMaintainer: winch\\nDescription: test\\n' > /root/%[1]s/DEBIAN/control && "+
-			"dpkg-deb -b /root/%[1]s /root/repo/%[1]s_1_%[2]s.deb >/dev/null && ", name, arch, provides)
+		return deb(name, arch, "Provides: "+provides+"\\nMulti-Arch: foreign")
 	}
 	vm.MustRun(t, fragileDeb+" && mkdir -p /root/repo && cp -r /root/fragile /root/fragile2 && sed -i 's/^Version: 1/Version: 2/' /root/fragile2/DEBIAN/control && "+
 		"dpkg-deb -b /root/fragile2 /root/repo/winch-fragile_2_all.deb >/dev/null && "+
 		mta("winch-mta-a", "all", "winch-mta, winch-fragile")+mta("winch-mta-b", "all", "winch-mta")+mta("winch-mta-c", "armhf", "winch-mta")+
+		deb("winch-conflict", "all", "Conflicts: hello")+
 		"cd /root/repo && apt-ftparchive packages . > Packages")
 	const localRepo = "echo 'deb [trusted=yes] file:/root/repo ./' > /etc/apt/sources.list.d/winch-local.list && apt-get update -q >/dev/null"
-	// localArmhf adds armhf and refreshes only the local repository.
-	const localArmhf = "dpkg --add-architecture armhf && echo 'deb [trusted=yes] file:/root/repo ./' > /etc/apt/sources.list.d/winch-local.list && " +
+	// localOnly adds the local repository and refreshes only its index.
+	const localOnly = "echo 'deb [trusted=yes] file:/root/repo ./' > /etc/apt/sources.list.d/winch-local.list && " +
 		"apt-get update -q -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/winch-local.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 >/dev/null"
+	const localArmhf = "dpkg --add-architecture armhf && " + localOnly
 	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /etc/apt/sources.list.d/winch-local.list /var/lib/apt/lists/_root_repo_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --purge winch-mta-c:armhf >/dev/null 2>&1; dpkg --remove-architecture armhf 2>/dev/null; " +
-		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-fragile hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
+		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-fragile winch-conflict hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
 		{
 			Name:      "the first install of a run refreshes the index",
@@ -238,6 +244,16 @@ func TestPkgModule(t *testing.T) {
 			WantState:   module.State{IndexFresh: true},
 			BeforeApply: "touch /etc/winch-fragile.ok",
 			After:       "[ \"$(dpkg-query -W -f='${db:Status-Abbrev}${Version}' winch-fragile)\" = 'ii 1' ]",
+		},
+		{
+			Name:         "an install that would remove a conflicting package fails",
+			State:        module.State{IndexFresh: true},
+			Setup:        localOnly + " && " + install + " hello",
+			Args:         &module.Pkg{Name: []string{"winch-conflict"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install winch-conflict"}},
+			WantState:    module.State{IndexFresh: true},
+			WantApplyErr: "Packages need to be removed but remove is disabled",
+			After:        "dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii' && ! dpkg -s winch-conflict >/dev/null 2>&1",
 		},
 		{
 			Name:    "a step that names a package of an interrupted dpkg fails",
