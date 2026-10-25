@@ -24,10 +24,13 @@ import (
 type Recipe struct {
 	Name string
 	// Dir is relative to the project.
-	Dir       string
-	Require   []Require
-	Vars      []*Var
-	Steps     []Step
+	Dir     string
+	Require []Require
+	Vars    []*Var
+	Steps   []Step
+	// needs are the variables of the recipe and the variables that its
+	// steps and templates read by name.
+	needs     []string
 	root      string
 	templates map[string]*tmplFile
 }
@@ -123,6 +126,15 @@ func (l *loader) loadRecipes() error {
 		if err := errors.Join(rerrs...); err != nil {
 			errs = append(errs, err)
 			continue
+		}
+		for _, v := range r.Vars {
+			r.needs = append(r.needs, v.Name)
+		}
+		for _, st := range r.Steps {
+			r.needs = append(r.needs, st.reads()...)
+		}
+		for _, t := range r.templates {
+			r.needs = append(r.needs, t.reads...)
 		}
 		l.recipes[name] = r
 	}

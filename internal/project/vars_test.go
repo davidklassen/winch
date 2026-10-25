@@ -564,3 +564,84 @@ func TestStartRecipeWhen(t *testing.T) {
 		t.Errorf("web2: got %v, want %s", err, want)
 	}
 }
+
+// spec: Variables ("A host evaluates the defaults of `winch.yaml`, the defaults of the recipes that run on it, and the defaults that those read.")
+func TestStartOnlyRunningDefaults(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml": "name: acme\ninventory: inventories/test.yaml\nvars:\n  site_title: !expr 'upper(vars.tools_a)'\n",
+		"inventories/test.yaml": `hosts:
+  web1: {}
+  mail1:
+    vars:
+      postfix_domain: acme.com
+`,
+		"recipes/web/recipe.yaml":         "vars:\n  web_name: !expr host.name\nsteps:\n  - file:\n      path: !expr '\"/etc/motd-\" + vars.tools_suffix'\n      template: motd.tmpl\n",
+		"recipes/web/templates/motd.tmpl": "{{ .vars.tools_motd }}\n",
+		"recipes/tools/recipe.yaml":       "vars:\n  tools_motd: !tpl \"hi {{ .host.name }}\"\n  tools_path: !expr '\"/etc/\" + host.name'\n  tools_a: !expr 'vars.tools_name + \"!\"'\n  tools_name: !expr host.name\n  tools_on: true\n  tools_list: [a]\n  tools_suffix: x\nsteps: []\n",
+		"recipes/postfix/recipe.yaml":     "vars:\n  postfix_domain:\n  postfix_mailname: !tpl \"mail.{{ .vars.postfix_domain }}\"\nsteps: []\n",
+	}
+	want := map[string]string{
+		"web1":  `{"site_title":"WEB1!","tools_a":"web1!","tools_list":["a"],"tools_motd":"hi web1","tools_name":"web1","tools_on":true,"tools_path":"/etc/web1","tools_suffix":"x","web_name":"web1"}`,
+		"mail1": `{"postfix_domain":"acme.com","postfix_mailname":"mail.acme.com","site_title":"MAIL1!","tools_a":"mail1!","tools_list":["a"],"tools_motd":"hi mail1","tools_name":"mail1","tools_on":true,"tools_path":"/etc/mail1","tools_suffix":"x","web_name":"mail1"}`,
+	}
+	tests := []struct {
+		name     string
+		pipeline string
+	}{
+		{name: "hosts", pipeline: `stages:
+  - name: web
+    hosts: all
+    steps:
+      - recipe: web
+        when: !expr vars.tools_on
+      - file:
+          path: !expr 'vars.tools_path + "/" + item'
+          content: ""
+        loop: !expr vars.tools_list
+  - name: mail
+    hosts: mail1
+    steps:
+      - recipe: postfix
+`},
+		{name: "when", pipeline: `stages:
+  - name: web
+    hosts: all
+    steps:
+      - recipe: web
+        when: !expr vars.tools_on
+      - file:
+          path: !expr 'vars.tools_path + "/" + item'
+          content: ""
+        loop: !expr vars.tools_list
+  - name: mail
+    hosts: all
+    steps:
+      - recipe: postfix
+        when: !expr 'host.name == "mail1"'
+      - file:
+          path: /etc/mailname
+          content: !expr vars.postfix_mailname
+        when: !expr 'host.name == "mail1"'
+`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files["pipelines/site.yaml"] = tt.pipeline
+			p, err := Load(writeProject(t, files), "", "site", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, h := range p.Inventory.Hosts {
+				env, err := p.Start(h, debian13)
+				if err != nil {
+					t.Errorf("%s: %v", h.Name, err)
+					continue
+				}
+				got, _ := json.Marshal(env.vars)
+				if string(got) != want[h.Name] {
+					t.Errorf("%s: got  %s\nwant %s", h.Name, got, want[h.Name])
+				}
+			}
+		})
+	}
+}

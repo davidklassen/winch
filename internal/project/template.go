@@ -23,7 +23,8 @@ var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": 
 type tmplFile struct {
 	t *template.Template
 	// item is true when the template reads .item.
-	item bool
+	item  bool
+	reads []string
 }
 
 // parseTemplate parses the template text of file and checks the names it
@@ -41,7 +42,7 @@ func parseTemplate(file string, text []byte, sc scope) (*tmplFile, error) {
 	if err := errors.Join(c.errs...); err != nil {
 		return nil, err
 	}
-	return &tmplFile{t: t, item: c.item}, nil
+	return &tmplFile{t: t, item: c.item, reads: c.reads}, nil
 }
 
 // parseInline parses the text of a !tpl value at pos. It returns the

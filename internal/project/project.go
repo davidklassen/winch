@@ -449,6 +449,21 @@ func (l *loader) compileLoop(n *yamlx.Node) (*value, error) {
 	return v, err
 }
 
+// reads returns the variables that the step reads by name.
+func (st Step) reads() []string {
+	var out []string
+	if st.when != nil {
+		out = append(out, st.when.reads...)
+	}
+	if st.loop != nil {
+		out = append(out, st.loop.reads()...)
+	}
+	if st.args != nil {
+		out = append(out, st.args.reads()...)
+	}
+	return out
+}
+
 // Runs reports whether the step runs on the host of e: when is true or not
 // set.
 func (st Step) Runs(e *Env) (bool, error) {
