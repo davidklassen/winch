@@ -29,12 +29,14 @@ const (
 )
 
 // Result is the outcome of a check. Changes are lines for the plan. Old is
-// the current text content when the content changes, for the diff.
+// the current text content when the content changes, for the diff. Link is
+// the target of the symbolic link at the path that the step follows.
 type Result struct {
 	Status  Status   `json:"status"`
 	Action  Action   `json:"action,omitempty"`
 	Changes []string `json:"changes,omitempty"`
 	Old     *string  `json:"old,omitempty"`
+	Link    string   `json:"link,omitempty"`
 }
 
 // State is what earlier steps of the run did on the host. The controller

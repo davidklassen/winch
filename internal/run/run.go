@@ -459,7 +459,11 @@ func recipeLabel(st *project.Step) string {
 }
 
 func writeStep(w io.Writer, indent string, st project.Step, res module.Result) {
-	fmt.Fprintf(w, "%s%s %s\n", indent, marks[res.Action], label(st))
+	l := label(st)
+	if res.Link != "" {
+		l += " (link to " + secret.Printable(res.Link) + ")"
+	}
+	fmt.Fprintf(w, "%s%s %s\n", indent, marks[res.Action], l)
 	for _, c := range res.Changes {
 		fmt.Fprintf(w, "%s    %s\n", indent, secret.Printable(c))
 	}

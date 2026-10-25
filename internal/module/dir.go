@@ -79,6 +79,20 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 		return Result{}, err
 	}
 	want := attrLine(owner, group, mode) + userNote(owner, group)
+	link := ""
+	if exists && fi.Mode()&fs.ModeSymlink != 0 && !d.Replace {
+		if link, err = dir.Readlink(name); err != nil {
+			return Result{}, err
+		}
+		behind, err := openLinked(d.Path)
+		if err != nil {
+			return Result{}, err
+		}
+		defer behind.Close()
+		if fi, err = behind.Stat("."); err != nil {
+			return Result{}, err
+		}
+	}
 	switch {
 	case !exists:
 		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), want)}, nil
@@ -98,7 +112,7 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 	if err != nil || len(changes) == 0 {
 		return Result{Status: OK}, err
 	}
-	return Result{Status: Change, Action: Modify, Changes: changes}, nil
+	return Result{Status: Change, Action: Modify, Changes: changes, Link: link}, nil
 }
 
 func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
@@ -140,7 +154,21 @@ func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
 	if err != nil {
 		return err
 	}
-	if exists && (fi.Mode()&fs.ModeSymlink != 0 || d.Replace && fi.Mode().IsRegular()) {
+	switch {
+	case !exists:
+	case fi.Mode()&fs.ModeSymlink != 0 && !d.Replace:
+		behind, err := openLinked(d.Path)
+		if err != nil {
+			return err
+		}
+		defer behind.Close()
+		f, err := behind.Open(".")
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return setAttrs(f, uid, gid, mode)
+	case d.Replace && (fi.Mode()&fs.ModeSymlink != 0 || fi.Mode().IsRegular()):
 		if err := sub.Remove(name); err != nil {
 			return err
 		}
@@ -161,6 +189,16 @@ func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
 	}
 	defer f.Close()
 	return setAttrs(f, uid, gid, mode)
+}
+
+// openLinked opens the directory behind the symbolic link at p.
+func openLinked(p string) (*os.Root, error) {
+	dir, missing, err := openPath(p, p)
+	if err == nil && len(missing) > 0 {
+		dir.Close()
+		return nil, fmt.Errorf("%s does not exist", missing[0])
+	}
+	return dir, err
 }
 
 func isEmpty(dir *os.Root, name string, fi fs.FileInfo) (bool, error) {

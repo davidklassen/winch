@@ -429,10 +429,16 @@ func (e *noPathError) Error() string { return e.msg }
 
 // openParent opens the parent directory of p. When parents are missing, it
 // opens the deepest one that exists and also returns the missing ones, from
-// the top. It follows a symbolic link only in a directory that only root can
-// write. Each part opens relative to the directory before it, so a user cannot
-// swap in a link while the helper works.
+// the top.
 func openParent(p string) (*os.Root, []string, error) {
+	return openPath(path.Dir(p), p)
+}
+
+// openPath opens the directory d for the step on path p, as openParent does.
+// It follows a symbolic link only in a directory that only root can write.
+// Each part opens relative to the directory before it, so a user cannot swap
+// in a link while the helper works.
+func openPath(d, p string) (*os.Root, []string, error) {
 	dir, err := os.OpenRoot("/")
 	if err != nil {
 		return nil, nil, err
@@ -441,7 +447,7 @@ func openParent(p string) (*os.Root, []string, error) {
 		dir.Close()
 		return nil, nil, err
 	}
-	todo := parts(path.Dir(p))
+	todo := parts(d)
 	// The last tail parts of todo come from p, the others from link targets.
 	tail := len(todo)
 	link := ""
@@ -467,7 +473,6 @@ func openParent(p string) (*os.Root, []string, error) {
 			return fail(&noPathError{link + " is a symbolic link to a missing target"})
 		case errors.Is(err, fs.ErrNotExist):
 			missing := make([]string, len(todo))
-			d := path.Dir(p)
 			for i := len(missing) - 1; i >= 0; i-- {
 				missing[i], d = d, path.Dir(d)
 			}
