@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -32,9 +33,11 @@ type Env struct {
 	// Terminal is true when stdin and stderr are terminals.
 	Terminal bool
 	Connect  run.Connect
-	// Identity is the path of the age identity file.
-	Identity string
-	Filter   *secret.Filter
+	// Home is the home directory, or empty when it is not known.
+	Home string
+	// AgeKey is the value of WINCH_AGE_KEY.
+	AgeKey string
+	Filter *secret.Filter
 }
 
 const mainHelp = `Examples:
@@ -217,12 +220,25 @@ func validate(ctx context.Context, env Env, f *flags, args []string) int {
 	return exitOK
 }
 
+// identity returns the path of the age identity file.
+func (env Env) identity() string {
+	switch {
+	case filepath.IsAbs(env.AgeKey):
+		return env.AgeKey
+	case env.AgeKey != "":
+		return filepath.Join(env.Dir, env.AgeKey)
+	case env.Home != "":
+		return filepath.Join(env.Home, ".config", "winch", "age.key")
+	}
+	return ""
+}
+
 func load(env Env, f *flags, cmd string, args []string) (*project.Project, bool) {
 	if len(args) != 1 {
 		fmt.Fprintf(env.Err, "winch: %s needs one pipeline\n", cmd)
 		return nil, false
 	}
-	p, err := project.Load(env.Dir, f.inventory, args[0], f.set, project.Keys{Identity: env.Identity, Filter: env.Filter})
+	p, err := project.Load(env.Dir, f.inventory, args[0], f.set, project.Keys{Identity: env.identity(), Filter: env.Filter})
 	if err != nil {
 		fmt.Fprintln(env.Err, err)
 		return nil, false

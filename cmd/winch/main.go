@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/user"
-	"path/filepath"
 	"time"
 
 	"github.com/davidklassen/winch/internal/cli"
@@ -21,12 +20,9 @@ import (
 
 func main() {
 	filter := secret.NewFilter()
-	// Without a home directory, only a project with secrets fails: it
-	// cannot read the identity.
-	identity := ""
-	if home, err := os.UserHomeDir(); err == nil {
-		identity = filepath.Join(home, ".config", "winch", "age.key")
-	}
+	// Without a home directory and WINCH_AGE_KEY, only a project with
+	// secrets fails: it cannot read the identity.
+	home, _ := os.UserHomeDir()
 	os.Exit(cli.Main(context.Background(), os.Args[1:], cli.Env{
 		Dir:      ".",
 		In:       os.Stdin,
@@ -34,7 +30,8 @@ func main() {
 		Err:      os.Stderr,
 		Terminal: cli.IsTerminal(os.Stdin) && cli.IsTerminal(os.Stderr),
 		Connect:  connect(filter.Writer(os.Stderr)),
-		Identity: identity,
+		Home:     home,
+		AgeKey:   os.Getenv("WINCH_AGE_KEY"),
 		Filter:   filter,
 	}))
 }

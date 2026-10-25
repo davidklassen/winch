@@ -37,11 +37,12 @@ type result struct {
 
 func winch(t *testing.T, dir string, h *fakehost.Hosts, terminal bool, stdin string, args ...string) result {
 	t.Helper()
-	return winchWith(t, dir, "", h, terminal, stdin, args...)
+	return winchWith(t, dir, "", "", h, terminal, stdin, args...)
 }
 
-// winchWith runs winch with the age identity file in identity.
-func winchWith(t *testing.T, dir, identity string, h *fakehost.Hosts, terminal bool, stdin string, args ...string) result {
+// winchWith runs winch with the home directory home and WINCH_AGE_KEY set to
+// ageKey.
+func winchWith(t *testing.T, dir, home, ageKey string, h *fakehost.Hosts, terminal bool, stdin string, args ...string) result {
 	t.Helper()
 	var out, errOut bytes.Buffer
 	code := Main(context.Background(), args, Env{
@@ -51,7 +52,8 @@ func winchWith(t *testing.T, dir, identity string, h *fakehost.Hosts, terminal b
 		Err:      &errOut,
 		Terminal: terminal,
 		Connect:  h.Connector(),
-		Identity: identity,
+		Home:     home,
+		AgeKey:   ageKey,
 		Filter:   secret.NewFilter(),
 	})
 	return result{code, out.String(), errOut.String()}

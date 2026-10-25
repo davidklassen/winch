@@ -16,23 +16,6 @@ const (
 	demoKeyLine  = "NgIwR5awfpE4iT1Unnu1//QmYhkacu6TnHyKGfvka4F2JwTfnhnweU3GQIKDcKAj"
 )
 
-// demoHome returns a HOME directory with the identity of the demo secrets.
-func demoHome(t *testing.T, dir string) string {
-	t.Helper()
-	home := t.TempDir()
-	key, err := os.ReadFile(filepath.Join(dir, "age.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(home, ".config/winch"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".config/winch/age.key"), key, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return home
-}
-
 func noSecrets(t *testing.T, what, out string, secrets ...string) {
 	t.Helper()
 	for _, s := range secrets {
@@ -47,7 +30,7 @@ func TestDemo(t *testing.T) {
 	vm := lab.StartVM(t, "demo")
 	vm.MustRun(t, quietApt)
 	dir := "../../examples/demo"
-	env := []string{"HOME=" + demoHome(t, dir)}
+	env := []string{"WINCH_AGE_KEY=age.key", "HOME=" + t.TempDir()}
 
 	r := lab.WinchEnv(t, dir, env, "apply", "site", "--yes")
 	if r.Code != 0 {

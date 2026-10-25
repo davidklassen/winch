@@ -22,7 +22,8 @@ Commands:
   encrypt   Encrypt a value from stdin, and print it as a !secret value.
   rekey     Encrypt all secrets in the project again for the recipients.
 
-winch reads the age identity from ~/.config/winch/age.key.
+winch reads the age identity from the file that WINCH_AGE_KEY names, or
+else from ~/.config/winch/age.key.
 `
 
 const encryptHelp = `Examples:
@@ -46,8 +47,9 @@ for the recipients in winch.yaml. Run it after a change of the recipients.
 
 Usage: winch secret rekey
 
-winch reads the age identity from ~/.config/winch/age.key. When a secret
-does not decrypt, rekey changes no file.
+winch reads the age identity from the file that WINCH_AGE_KEY names, or
+else from ~/.config/winch/age.key. When a secret does not decrypt, rekey
+changes no file.
 `
 
 func secretUsage(ctx context.Context, env Env, f *flags, args []string) int {
@@ -89,7 +91,7 @@ func secretRekey(ctx context.Context, env Env, f *flags, args []string) int {
 		fmt.Fprintln(env.Err, "winch: secret rekey takes no arguments")
 		return exitInvalid
 	}
-	n, files, err := project.Rekey(env.Dir, env.Identity)
+	n, files, err := project.Rekey(env.Dir, env.identity())
 	if err != nil {
 		fmt.Fprintln(env.Err, err)
 		return exitInvalid

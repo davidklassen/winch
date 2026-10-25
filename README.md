@@ -32,10 +32,13 @@ that `make vm` prints, then:
 
 ```
 cd examples/demo
-../../bin/winch plan site
-../../bin/winch apply site
-ssh demo "curl -s -H 'Host: example.com' http://localhost/about"
+WINCH_AGE_KEY=age.key ../../bin/winch plan site
+WINCH_AGE_KEY=age.key ../../bin/winch apply site
+ssh demo "curl -s http://localhost/about"
 ```
+
+`age.key` decrypts the demo secrets. It is for the demo only: keep the
+age identity of a real project out of the project directory.
 
 ## License
 
