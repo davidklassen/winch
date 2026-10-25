@@ -86,7 +86,7 @@ func (f *Filter) Text(s string) string {
 		}
 	}
 	for _, p := range patterns {
-		for _, m := range p.re.FindAllStringIndex(s, -1) {
+		for _, m := range p.find(s) {
 			set(m[0], m[1])
 		}
 	}
@@ -163,11 +163,12 @@ func (w writer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Printable replaces control characters in text from a host, so the text
-// cannot move the cursor or change the terminal.
+// Printable replaces control and format characters in text from a host, so
+// the text cannot move the cursor, change the terminal, or show its
+// characters in another order.
 func Printable(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r != '\t' && (unicode.IsControl(r) || r == '\u2028' || r == '\u2029') {
+		if r != '\t' && unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
 			return '?'
 		}
 		return r

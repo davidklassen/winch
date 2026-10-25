@@ -21,7 +21,8 @@ var (
 )
 
 // pattern is a kind of token. The load warning skips a match for which skip
-// returns true; the filter masks every match.
+// returns true; the filter masks every match. When re has a group, the
+// group is the secret part of the match.
 type pattern struct {
 	what string
 	re   *regexp.Regexp
@@ -38,6 +39,9 @@ var patterns = []pattern{
 	{"a Slack token", regexp.MustCompile(`\bxox[baprs]-[0-9]+-[A-Za-z0-9-]{10,}`), nil},
 	{"an age identity", regexp.MustCompile(`\bAGE-SECRET-KEY-1[0-9A-Z]{58}\b`), nil},
 	{"a Slack webhook URL", regexp.MustCompile(`https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/+]{40,}`), nil},
+	{"a password in a URL", regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#@:"<>]*:([^\s/?#"<>]+)@`), func(m string) bool {
+		return strings.HasPrefix(m, "$") || strings.Contains(m, "{{")
+	}},
 }
 
 // Finding is text that looks like a private key or a token, at an offset.
@@ -64,7 +68,7 @@ func Scan(data []byte) []Finding {
 		}
 	}
 	for _, p := range patterns {
-		for _, m := range p.re.FindAllStringIndex(s, -1) {
+		for _, m := range p.find(s) {
 			if p.skip == nil || !p.skip(s[m[0]:m[1]]) {
 				add(m[0], p.what)
 			}
@@ -72,4 +76,13 @@ func Scan(data []byte) []Finding {
 	}
 	slices.SortStableFunc(out, func(a, b Finding) int { return a.Offset - b.Offset })
 	return out
+}
+
+// find returns the secret parts of the matches in s.
+func (p pattern) find(s string) [][]int {
+	ms := p.re.FindAllStringSubmatchIndex(s, -1)
+	for i, m := range ms {
+		ms[i] = m[len(m)-2:]
+	}
+	return ms
 }

@@ -99,6 +99,17 @@ func TestFilter(t *testing.T) {
 		{"no secret", []string{"hunter2"}, "nothing here", "nothing here"},
 		{"age identity", nil, "key: " + fake("age_identity.txt") + " end", "key: (secret) end"},
 		{"control characters as winch prints them", []string{"pass\x07word"}, "echo pass?word", "echo (secret)"},
+		{"format characters as winch prints them", []string{"pass\u200bword"}, "echo pass?word", "echo (secret)"},
+		{"url password", nil, "git clone " + fake("url_password.txt") + "/app", "git clone https://deploy:(secret)@git.example.com/app"},
+		{"url password without a user", nil, fake("url_password_no_user.txt"), "redis://:(secret)@cache:6379"},
+		{"two url passwords", nil, "a=" + fake("url_password.txt") + " b=" + fake("url_password_no_user.txt"), "a=https://deploy:(secret)@git.example.com b=redis://:(secret)@cache:6379"},
+		{"url password with an at sign", nil, fake("url_password_at.txt") + "/x", "postgres://app:(secret)@db/x"},
+		{"url password with a quote", nil, fake("url_password_quote.txt"), "mysql://app:(secret)@db"},
+		{"url password in json", nil, `{"url":"` + fake("url_password.txt") + `","x":"a@b"}`, `{"url":"https://deploy:(secret)@git.example.com","x":"a@b"}`},
+		{"url without a password", nil, "https://deploy@git.example.com https://git.example.com:8443/x", "https://deploy@git.example.com https://git.example.com:8443/x"},
+		{"url password with an at sign", nil, "postgres://app:p@ss@db/x", "postgres://app:(secret)@db/x"},
+		{"url password in json", nil, `{"url":"https://u:pw@h","x":"a@b"}`, `{"url":"https://u:(secret)@h","x":"a@b"}`},
+		{"url with a port and an at sign later", nil, "https://h:8443/a@b", "https://h:8443/a@b"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -147,5 +158,23 @@ func TestFilterWriter(t *testing.T) {
 	}
 	if strings.Contains(b.String(), "hunter2") {
 		t.Error("the secret was written")
+	}
+}
+
+// spec: CLI/Output
+func TestPrintable(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"web\u202Eevil", "web?evil"},
+		{"a\u200Bb", "a?b"},
+		{"bell\x07 tab\tline\u2028", "bell? tab\tline?"},
+		{"Zürich café", "Zürich café"},
+	}
+	for _, tt := range tests {
+		if got := Printable(tt.in); got != tt.want {
+			t.Errorf("Printable(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }

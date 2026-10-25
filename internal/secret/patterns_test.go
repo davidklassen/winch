@@ -34,6 +34,11 @@ func TestScan(t *testing.T) {
 		{"slack negatives", "xoxb-my-bot-token xoxb-12345-abcd234 XOxE-RROAmw", nil},
 		{"a secret value", "pw: !secret YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBBS0lBUVlMUE1ONUhISEZQWkFNMg==\nother: !secret '" + fake("aws.txt") + "'\n", nil},
 		{"age identity", fake("age_identity.txt") + "\n", []Finding{{0, "an age identity"}}},
+		{"url password", "repo: " + fake("url_password.txt") + "/app\n", []Finding{{21, "a password in a URL"}}},
+		{"url password with a dollar", fake("url_password_dollar.txt"), []Finding{{15, "a password in a URL"}}},
+		{"url password from a template", "repo: https://deploy:{{vars.pw}}@git.example.com\n", nil},
+		{"url password from a shell variable", "a: https://deploy:$PW@h\nb: https://deploy:${PW}@h\n", nil},
+		{"url without a password", "repo: https://deploy@git.example.com\nweb: https://h:8443/a@b\n", nil},
 		{"after a secret value", "pw: !secret YWdl\nid: " + fake("aws.txt") + "\n", []Finding{{21, "an AWS access key ID"}}},
 	}
 	for _, tt := range tests {
