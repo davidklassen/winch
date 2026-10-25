@@ -320,6 +320,14 @@ func TestPlanRecipes(t *testing.T) {
 			setup: func(h *fakehost.Hosts) {
 				h.SetFacts("web1", facts.Facts{OS: facts.OS{ID: "debian", Codename: "forky"}})
 			}},
+		{name: "recipes-name-control-characters", failed: nil,
+			files: map[string]string{"pipelines/site.yaml": `stages:
+  - name: web
+    hosts: all
+    steps:
+      - name: "x\e]0;owned\a"
+        recipe: nginx
+`}},
 		{name: "recipes-change", failed: []string{"web2"}, setup: func(h *fakehost.Hosts) {
 			for _, host := range []string{"web1", "web2"} {
 				h.SetFile(host, "/etc/nginx/site", "server_name "+host+";\n")

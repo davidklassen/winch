@@ -1,7 +1,7 @@
 stdout:
 web2
   web
-    Web server
+    nginx: Web server
       + Site: file /etc/nginx/site
           owner root, group root, mode 0644
           @@ -0,0 +1,1 @@

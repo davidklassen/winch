@@ -254,10 +254,11 @@ func (p *Plan) Write(out, errOut io.Writer) {
 }
 
 func recipeLabel(st *project.Step) string {
+	l := st.Recipe.Name
 	if st.Name != "" {
-		return printable(st.Name)
+		l += ": " + st.Name
 	}
-	return st.Recipe.Name
+	return printable(l)
 }
 
 func writeStep(w io.Writer, indent string, st project.Step, res module.Result) {
