@@ -40,6 +40,7 @@ type File struct {
 	Mode       string         `yaml:"mode" json:"mode,omitempty"`
 	Validation *string        `yaml:"validate" json:"validate,omitempty"`
 	Absent     bool           `yaml:"absent" json:"absent,omitempty"`
+	Replace    bool           `yaml:"replace" json:"replace,omitempty"`
 }
 
 func (f *File) Main() string { return f.Path }
@@ -50,7 +51,7 @@ func (f *File) Validate() error {
 	}
 	sources := []arg{{"content", f.Content != nil}, {"template", f.Template != ""}, {"source", f.Source != ""}}
 	if f.Absent {
-		return absentTakesNone(append(sources, arg{"owner", f.Owner != ""}, arg{"group", f.Group != ""}, arg{"mode", f.Mode != ""}, arg{"validate", f.Validation != nil})...)
+		return absentTakesNone(append(sources, arg{"owner", f.Owner != ""}, arg{"group", f.Group != ""}, arg{"mode", f.Mode != ""}, arg{"validate", f.Validation != nil}, arg{"replace", f.Replace})...)
 	}
 	if err := checkCommand("validate", f.Validation); err != nil {
 		return err
@@ -240,6 +241,13 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 		target, _ := dir.Readlink(name)
 		changes := []string{"replace the symbolic link to " + target, attrLine(owner, group, mode) + userNote(owner, group)}
 		return Result{Status: Change, Action: Modify, Changes: changes, Old: new("")}, nil
+	case fi.IsDir():
+		line, err := checkReplace(dir, name, f.Path, fi, f.Replace)
+		if err != nil {
+			return Result{}, err
+		}
+		changes := []string{line, attrLine(owner, group, mode) + userNote(owner, group)}
+		return Result{Status: Change, Action: Modify, Changes: changes, Old: new("")}, nil
 	case !fi.Mode().IsRegular():
 		return Result{}, fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
 	}
@@ -339,6 +347,11 @@ func (f *File) Apply(ctx context.Context, _ func(string)) error {
 	}
 	if f.Data == nil {
 		return ErrNeedContent
+	}
+	if exists && fi.IsDir() {
+		if err := noMount(dir, name, fi, f.Path); err != nil {
+			return err
+		}
 	}
 	sub, err := mkdirs(dir, missing)
 	if err != nil {

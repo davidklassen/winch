@@ -17,6 +17,7 @@ type Link struct {
 	Target     *string `yaml:"target" json:"target,omitempty"`
 	Validation *string `yaml:"validate" json:"validate,omitempty"`
 	Absent     bool    `yaml:"absent" json:"absent,omitempty"`
+	Replace    bool    `yaml:"replace" json:"replace,omitempty"`
 }
 
 func (l *Link) Main() string { return l.Path }
@@ -27,7 +28,7 @@ func (l *Link) Validate() error {
 	}
 	switch {
 	case l.Absent:
-		return absentTakesNone(arg{"target", l.Target != nil}, arg{"validate", l.Validation != nil})
+		return absentTakesNone(arg{"target", l.Target != nil}, arg{"validate", l.Validation != nil}, arg{"replace", l.Replace})
 	case l.Target == nil:
 		return &yamlx.FieldError{Field: "target", Msg: "a link needs a target, or absent: true"}
 	case *l.Target == "":
@@ -74,7 +75,14 @@ func (l *Link) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 		return Result{}, err
 	}
 	if exists && fi.Mode()&fs.ModeSymlink == 0 {
-		return Result{}, fmt.Errorf("%s is %s, not a symbolic link", l.Path, kind(fi))
+		if l.Absent || !fi.IsDir() && !fi.Mode().IsRegular() {
+			return Result{}, fmt.Errorf("%s is %s, not a symbolic link", l.Path, kind(fi))
+		}
+		line, err := checkReplace(dir, name, l.Path, fi, l.Replace)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Status: Change, Action: Modify, Changes: []string{line, "target " + *l.Target}}, nil
 	}
 	switch {
 	case l.Absent && !exists:
@@ -109,6 +117,15 @@ func (l *Link) Apply(ctx context.Context, _ func(string)) error {
 		return err
 	}
 	defer dir.Close()
+	fi, exists, err := lstat(dir, name, missing)
+	if err != nil {
+		return err
+	}
+	if exists && fi.IsDir() {
+		if err := noMount(dir, name, fi, l.Path); err != nil {
+			return err
+		}
+	}
 	sub, err := mkdirs(dir, missing)
 	if err != nil {
 		return err

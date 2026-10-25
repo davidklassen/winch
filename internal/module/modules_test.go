@@ -72,6 +72,8 @@ func TestDirValidate(t *testing.T) {
 		{"owner ID too large", "path: /x\nowner: \"4294967296\"\n", `t.yaml:2:8: owner: an ID must be below 4294967295`},
 		{"group ID too large", "path: /x\ngroup: 4294967295\n", `t.yaml:2:8: group: an ID must be below 4294967295`},
 		{"purge", "path: /x\npurge: true\n", `t.yaml:2:1: unknown key "purge"`},
+		{"replace", "path: /x\nreplace: true\n", ""},
+		{"replace and absent", "path: /x\nabsent: true\nreplace: true\n", `t.yaml:3:10: replace: absent: true takes no replace`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Dir{}, tt.yaml, tt.want) })
@@ -108,6 +110,8 @@ func TestLinkValidate(t *testing.T) {
 		{"validate", "path: /a\ntarget: /b\nvalidate: nginx -t\n", ""},
 		{"validate and absent", "path: /a\nabsent: true\nvalidate: nginx -t\n", `t.yaml:3:11: validate: absent: true takes no validate`},
 		{"empty validate", "path: /a\ntarget: /b\nvalidate: \"\"\n", `t.yaml:3:11: validate: must not be empty`},
+		{"replace", "path: /a\ntarget: /b\nreplace: true\n", ""},
+		{"replace and absent", "path: /a\nabsent: true\nreplace: true\n", `t.yaml:3:10: replace: absent: true takes no replace`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Link{}, tt.yaml, tt.want) })
@@ -180,5 +184,38 @@ func TestParseShow(t *testing.T) {
 	want := unitState{id: "nginx.service", load: "loaded", active: "activating", sub: "auto-restart", file: "enabled", reload: true}
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+// spec: Modules/file, dir, link
+func TestTreeCheck(t *testing.T) {
+	tests := []struct {
+		name    string
+		tree    tree
+		replace bool
+		want    string
+		wantErr string
+	}{
+		{"file", tree{}, true, "remove file /srv/k", ""},
+		{"empty directory", tree{dir: true}, true, "remove directory /srv/k: 0 files, 0 directories", ""},
+		{"one of each", tree{dir: true, files: 1, dirs: 1}, true, "remove directory /srv/k: 1 file, 1 directory", ""},
+		{"many", tree{dir: true, files: 40000, dirs: 12}, true, "remove directory /srv/k: 40000 files, 12 directories", ""},
+		{"file without replace", tree{}, false, "", "/srv/k is a file; add replace: true to remove it"},
+		{"empty directory without replace", tree{dir: true}, false, "", "/srv/k is an empty directory; add replace: true to remove it"},
+		{"files without replace", tree{dir: true, files: 3}, false, "", "/srv/k is a directory with 3 files; add replace: true to remove it"},
+		{"directories without replace", tree{dir: true, dirs: 1}, false, "", "/srv/k is a directory with 1 directory; add replace: true to remove it"},
+		{"both without replace", tree{dir: true, files: 1, dirs: 2}, false, "", "/srv/k is a directory with 1 file and 2 directories; add replace: true to remove it"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.tree.check("/srv/k", tt.replace)
+			gotErr := ""
+			if err != nil {
+				gotErr = err.Error()
+			}
+			if got != tt.want || gotErr != tt.wantErr {
+				t.Errorf("got %q, %q; want %q, %q", got, gotErr, tt.want, tt.wantErr)
+			}
+		})
 	}
 }

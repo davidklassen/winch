@@ -11,7 +11,8 @@ import (
 func TestLinkModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "link")
-	vmtest.RunCases(t, vm, "link", "rm -rf /tmp/w && mkdir /tmp/w", []vmtest.Case{
+	reset := "grep -o ' /tmp/w/[^ ]*' /proc/self/mounts | sort -r | xargs -r umount\nrm -rf /tmp/w /tmp/wsrc && mkdir /tmp/w"
+	vmtest.RunCases(t, vm, "link", reset, []vmtest.Case{
 		{
 			Name:      "create with parents",
 			Args:      &module.Link{Path: "/tmp/w/a/l", Target: new("/etc/hostname")},
@@ -73,10 +74,18 @@ func TestLinkModule(t *testing.T) {
 			WantErr: "/tmp/w/f is a file, not a symbolic link",
 		},
 		{
-			Name:    "a file at path fails",
+			Name:    "a file at path fails and names replace",
 			Setup:   `echo keep > /tmp/w/f`,
 			Args:    &module.Link{Path: "/tmp/w/f", Target: new("/etc/hostname")},
-			WantErr: "/tmp/w/f is a file, not a symbolic link",
+			WantErr: "/tmp/w/f is a file; add replace: true to remove it",
+		},
+		{
+			Name:      "replace a file",
+			Setup:     `echo keep > /tmp/w/f`,
+			Args:      &module.Link{Path: "/tmp/w/f", Target: new("/etc/hostname"), Replace: true},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove file /tmp/w/f", "target /etc/hostname"}},
+			Unchanged: `[ "$(cat /tmp/w/f)" = keep ]`,
+			After:     `[ "$(readlink /tmp/w/f)" = /etc/hostname ]`,
 		},
 		{
 			Name:    "absent on a directory fails",
@@ -85,10 +94,81 @@ func TestLinkModule(t *testing.T) {
 			WantErr: "/tmp/w/d is a directory, not a symbolic link",
 		},
 		{
-			Name:    "a directory at path fails",
-			Setup:   `mkdir /tmp/w/d`,
+			Name:    "a directory at path fails and names replace",
+			Setup:   `mkdir /tmp/w/d && touch /tmp/w/d/a /tmp/w/d/b /tmp/w/d/c`,
 			Args:    &module.Link{Path: "/tmp/w/d", Target: new("/etc/hostname")},
-			WantErr: "/tmp/w/d is a directory, not a symbolic link",
+			WantErr: "/tmp/w/d is a directory with 3 files; add replace: true to remove it",
+		},
+		{
+			Name:      "replace a directory with files",
+			Setup:     `mkdir -p /tmp/w/d/x && touch /tmp/w/d/a /tmp/w/d/x/b && ln -s /etc /tmp/w/d/l`,
+			Args:      &module.Link{Path: "/tmp/w/d", Target: new("/tmp"), Replace: true},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 3 files, 1 directory", "target /tmp"}},
+			Unchanged: `[ -f /tmp/w/d/x/b ]`,
+			After:     `[ "$(readlink /tmp/w/d)" = /tmp ] && [ -d /etc/apt ]`,
+		},
+		{
+			Name:  "replace an empty directory",
+			Setup: `mkdir /tmp/w/d`,
+			Args:  &module.Link{Path: "/tmp/w/d", Target: new("/tmp"), Replace: true},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 0 files, 0 directories", "target /tmp"}},
+			After: `[ "$(readlink /tmp/w/d)" = /tmp ]`,
+		},
+		{
+			Name:    "replace a tree with a mount point fails",
+			Setup:   `mkdir -p /tmp/w/d/x/m && mount -t tmpfs tmpfs /tmp/w/d/x/m && touch /tmp/w/d/x/m/f`,
+			Args:    &module.Link{Path: "/tmp/w/d", Target: new("/tmp"), Replace: true},
+			WantErr: "/tmp/w/d/x/m is a mount point",
+		},
+		{
+			Name:         "replace keeps a mount put in the tree before apply",
+			Setup:        `mkdir -p /tmp/w/d/m`,
+			Args:         &module.Link{Path: "/tmp/w/d", Target: new("/tmp"), Replace: true},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 0 files, 1 directory", "target /tmp"}},
+			BeforeApply:  `mount -t tmpfs tmpfs /tmp/w/d/m && touch /tmp/w/d/m/f`,
+			WantApplyErr: "/tmp/w/d/m is a mount point",
+			After:        `[ -f /tmp/w/d/m/f ]`,
+		},
+		{
+			Name:    "a directory with a mount point fails without replace",
+			Setup:   `mkdir -p /tmp/w/d/m && mount -t tmpfs tmpfs /tmp/w/d/m && touch /tmp/w/d/m/f`,
+			Args:    &module.Link{Path: "/tmp/w/d", Target: new("/tmp")},
+			WantErr: "/tmp/w/d/m is a mount point",
+		},
+		{
+			Name:    "replace a file that is a mount point fails",
+			Setup:   `echo keep > /tmp/w/f && echo src > /tmp/wsrc && mount --bind /tmp/wsrc /tmp/w/f`,
+			Args:    &module.Link{Path: "/tmp/w/f", Target: new("/tmp"), Replace: true},
+			WantErr: "/tmp/w/f is a mount point",
+		},
+		{
+			Name:         "replace a file keeps it when validate fails",
+			Setup:        `echo keep > /tmp/w/f`,
+			Args:         &module.Link{Path: "/tmp/w/f", Target: new("/etc/hostname"), Replace: true, Validation: new("false")},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove file /tmp/w/f", "target /etc/hostname"}},
+			WantApplyErr: "validate",
+			After:        `[ ! -L /tmp/w/f ] && [ "$(cat /tmp/w/f)" = keep ] && [ -z "$(ls -A /tmp/w | grep -v '^f$')" ]`,
+		},
+		{
+			Name:         "replace a directory keeps it when validate fails",
+			Setup:        `mkdir -p /tmp/w/d/x && echo keep > /tmp/w/d/x/f`,
+			Args:         &module.Link{Path: "/tmp/w/d", Target: new("/tmp"), Replace: true, Validation: new("false")},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 1 file, 1 directory", "target /tmp"}},
+			WantApplyErr: "validate",
+			After:        `[ ! -L /tmp/w/d ] && [ "$(cat /tmp/w/d/x/f)" = keep ] && [ -z "$(ls -A /tmp/w | grep -v '^d$')" ]`,
+		},
+		{
+			Name:  "replace a directory with validate",
+			Setup: `mkdir -p /tmp/w/d/x && echo keep > /tmp/w/d/x/f`,
+			Args:  &module.Link{Path: "/tmp/w/d", Target: new("/tmp"), Replace: true, Validation: new("[ -L /tmp/w/d ]")},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 1 file, 1 directory", "target /tmp"}},
+			After: `[ "$(readlink /tmp/w/d)" = /tmp ] && [ -z "$(ls -A /tmp/w | grep -v '^d$')" ]`,
+		},
+		{
+			Name:    "replace on a FIFO fails",
+			Setup:   "mkfifo /tmp/w/p",
+			Args:    &module.Link{Path: "/tmp/w/p", Target: new("/etc/hostname"), Replace: true},
+			WantErr: "/tmp/w/p is a named pipe, not a symbolic link",
 		},
 		{
 			Name:    "a FIFO at path fails",

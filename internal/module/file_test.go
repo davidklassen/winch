@@ -58,6 +58,8 @@ func TestFileValidate(t *testing.T) {
 		{"long mode", "path: /x\ncontent: hi\nmode: \"07777\"\n", `t.yaml:3:7: mode: must be an octal mode such as "0644"`},
 		{"validate", "path: /x\ncontent: hi\nvalidate: nginx -t\n", ""},
 		{"validate and absent", "path: /x\nabsent: true\nvalidate: nginx -t\n", `t.yaml:3:11: validate: absent: true takes no validate`},
+		{"replace", "path: /x\ncontent: hi\nreplace: true\n", ""},
+		{"replace and absent", "path: /x\nabsent: true\nreplace: true\n", `t.yaml:3:10: replace: absent: true takes no replace`},
 		{"empty validate", "path: /x\ncontent: hi\nvalidate: \"\"\n", `t.yaml:3:11: validate: must not be empty`},
 		{"unknown key", "path: /x\ncontnet: hi\n", `t.yaml:2:1: unknown key "contnet"; did you mean "content"?`},
 	}

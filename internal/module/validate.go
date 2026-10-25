@@ -10,37 +10,56 @@ import (
 	"path"
 )
 
-// put renames tmp to name in dir. With a validate command, it keeps the old
-// entry at name as a hard link, runs the command, and puts the old state back
-// when the command fails: the old entry, or no entry and none of the missing
-// parents that it created below top.
+// put renames tmp to name in dir. A directory at name, which a rename cannot
+// replace, moves aside first and is removed after. With a validate command,
+// it keeps the old entry at name as a hard link, runs the command, and puts
+// the old state back when the command fails: the old entry, or no entry and
+// none of the missing parents that it created below top.
 func put(ctx context.Context, top *os.Root, missing []string, dir *os.Root, tmp, name string, validate *string) error {
-	if validate == nil {
-		return dir.Rename(tmp, name)
-	}
-	_, err := dir.Lstat(name)
+	fi, err := dir.Lstat(name)
 	exists := err == nil
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
+	isDir := exists && fi.IsDir()
+	if validate == nil && !isDir {
+		return dir.Rename(tmp, name)
+	}
 	backup := ".winch-old-" + rand.Text()
 	if exists {
-		if err := dir.Link(name, backup); err != nil {
+		keep := dir.Link
+		if isDir {
+			keep = dir.Rename
+		}
+		if err := keep(name, backup); err != nil {
 			return fmt.Errorf("keep the old %s: %w", name, err)
 		}
 	}
 	if err := dir.Rename(tmp, name); err != nil {
+		if isDir {
+			return errors.Join(err, dir.Rename(backup, name))
+		}
 		dir.Remove(backup)
 		return err
 	}
-	verr := Shell(ctx, *validate)
+	var verr error
+	if validate != nil {
+		verr = Shell(ctx, *validate)
+	}
 	if verr == nil {
 		if exists {
-			dir.Remove(backup)
+			if err := dir.RemoveAll(backup); err != nil {
+				return fmt.Errorf("remove the old %s, kept as %s: %w", name, backup, err)
+			}
 		}
 		return nil
 	}
 	if exists {
+		if isDir {
+			if err := dir.Remove(name); err != nil {
+				return errors.Join(fmt.Errorf("validate: %w", verr), fmt.Errorf("put back the old %s, kept as %s: %w", name, backup, err))
+			}
+		}
 		// A failed restore keeps the backup: it is the only copy of the old
 		// entry.
 		if err := dir.Rename(backup, name); err != nil {

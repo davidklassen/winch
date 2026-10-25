@@ -14,11 +14,12 @@ import (
 )
 
 type Dir struct {
-	Path   string         `yaml:"path,required" json:"path"`
-	Owner  yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
-	Group  yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
-	Mode   string         `yaml:"mode" json:"mode,omitempty"`
-	Absent bool           `yaml:"absent" json:"absent,omitempty"`
+	Path    string         `yaml:"path,required" json:"path"`
+	Owner   yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
+	Group   yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
+	Mode    string         `yaml:"mode" json:"mode,omitempty"`
+	Absent  bool           `yaml:"absent" json:"absent,omitempty"`
+	Replace bool           `yaml:"replace" json:"replace,omitempty"`
 }
 
 func (d *Dir) Main() string { return d.Path }
@@ -28,7 +29,7 @@ func (d *Dir) Validate() error {
 		return err
 	}
 	if d.Absent {
-		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""})
+		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"replace", d.Replace})
 	}
 	if err := checkID("owner", d.Owner); err != nil {
 		return err
@@ -53,12 +54,12 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
-	if exists && !fi.IsDir() {
-		return Result{}, fmt.Errorf("%s is %s, not a directory", d.Path, kind(fi))
-	}
 	if d.Absent {
 		if !exists {
 			return Result{Status: OK}, nil
+		}
+		if !fi.IsDir() {
+			return Result{}, fmt.Errorf("%s is %s, not a directory", d.Path, kind(fi))
 		}
 		if err := noMount(dir, name, fi, d.Path); err != nil {
 			return Result{}, err
@@ -77,9 +78,21 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
-	if !exists {
-		changes := append(parentChanges(missing), attrLine(owner, group, mode)+userNote(owner, group))
-		return Result{Status: Change, Action: Create, Changes: changes}, nil
+	want := attrLine(owner, group, mode) + userNote(owner, group)
+	switch {
+	case !exists:
+		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), want)}, nil
+	case fi.Mode()&fs.ModeSymlink != 0:
+		target, _ := dir.Readlink(name)
+		return Result{Status: Change, Action: Modify, Changes: []string{"replace the symbolic link to " + target, want}}, nil
+	case fi.Mode().IsRegular():
+		line, err := checkReplace(dir, name, d.Path, fi, d.Replace)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Status: Change, Action: Modify, Changes: []string{line, want}}, nil
+	case !fi.IsDir():
+		return Result{}, fmt.Errorf("%s is %s, not a directory", d.Path, kind(fi))
 	}
 	changes, err := attrChanges(fi, owner, group, mode)
 	if err != nil || len(changes) == 0 {
@@ -123,10 +136,19 @@ func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
 		return err
 	}
 	defer sub.Close()
+	fi, exists, err := lstat(sub, name, nil)
+	if err != nil {
+		return err
+	}
+	if exists && (fi.Mode()&fs.ModeSymlink != 0 || d.Replace && fi.Mode().IsRegular()) {
+		if err := sub.Remove(name); err != nil {
+			return err
+		}
+	}
 	if err := sub.Mkdir(name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return err
 	}
-	fi, err := sub.Lstat(name)
+	fi, err = sub.Lstat(name)
 	if err != nil {
 		return err
 	}
