@@ -65,6 +65,20 @@ ExecStart=/bin/sleep infinity
 [Install]
 WantedBy=multi-user.target
 U
+cat > /opt/winch/winch-noinstall.service <<'U'
+[Service]
+ExecStart=/bin/sleep infinity
+U
+cat > /opt/winch/winch-dropin.service <<'U'
+[Service]
+ExecStart=/bin/sleep infinity
+U
+cat > /opt/winch/winch-ltpl@.service <<'U'
+[Service]
+ExecStart=/bin/sleep infinity
+[Install]
+WantedBy=multi-user.target
+U
 cat > /usr/lib/systemd/system/winch-vendor.service <<'U'
 [Service]
 ExecStart=/bin/sleep infinity
@@ -83,7 +97,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service; rm -f /tmp/boom; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ]; then systemctl disable winch-linked.service; rm -f /etc/systemd/system/winch-linked.service; systemctl daemon-reload; fi; true"
+	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service; rm -f /tmp/boom; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -238,7 +252,7 @@ systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
 		{
 			Name:    "enable a static unit fails",
 			Args:    &module.Service{Name: "winch-static", Enabled: new(true)},
-			WantErr: `winch-static.service has the unit file state "static"; enabled: true needs an enabled or disabled unit`,
+			WantErr: `winch-static.service has the unit file state "static"; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit`,
 		},
 		{
 			Name: "a static unit is not enabled",
@@ -437,6 +451,42 @@ systemctl daemon-reload && systemctl start winch-reload && systemctl show -P Inv
 			Want:      change("enable"),
 			Unchanged: `systemctl is-enabled winch-linked | grep -qx linked`,
 			After:     `test -L /etc/systemd/system/multi-user.target.wants/winch-linked.service`,
+		},
+		{
+			Name:  "disable a linked unit keeps its link",
+			Setup: `systemctl link /opt/winch/winch-linked.service && systemctl enable winch-linked && systemctl is-enabled winch-linked | grep -qx enabled`,
+			Args:  &module.Service{Name: "winch-linked", Enabled: new(false)},
+			Want:  change("disable"),
+			After: `test -L /etc/systemd/system/winch-linked.service && test ! -e /etc/systemd/system/multi-user.target.wants/winch-linked.service && systemctl show -P LoadState winch-linked | grep -qx loaded && systemctl is-enabled winch-linked | grep -qx linked && ! systemctl show -P Wants multi-user.target | grep -qw winch-linked.service`,
+		},
+		{
+			Name:  "disable and stop a running linked unit",
+			Setup: `systemctl link /opt/winch/winch-linked.service && systemctl enable --now winch-linked`,
+			Args:  &module.Service{Name: "winch-linked", Enabled: new(false), Running: new(false)},
+			Want:  change("disable", "stop"),
+			After: `test -L /etc/systemd/system/winch-linked.service && ! systemctl is-active -q winch-linked && systemctl show -P LoadState winch-linked | grep -qx loaded`,
+		},
+		{
+			Name:  "disable an instance of a linked template keeps the template link",
+			Setup: `systemctl link /opt/winch/winch-ltpl@.service && systemctl enable winch-ltpl@one && systemctl is-enabled winch-ltpl@one | grep -qx enabled`,
+			Args:  &module.Service{Name: "winch-ltpl@one", Enabled: new(false)},
+			Want:  change("disable"),
+			After: `test -L /etc/systemd/system/winch-ltpl@.service && test ! -e /etc/systemd/system/winch-ltpl@one.service && systemctl is-enabled winch-ltpl@one | grep -qx disabled`,
+		},
+		{
+			Name: "enable a linked unit with [Install] in a drop-in",
+			Setup: `systemctl link /opt/winch/winch-dropin.service && mkdir /etc/systemd/system/winch-dropin.service.d
+printf '[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/winch-dropin.service.d/install.conf
+systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
+			Args:  &module.Service{Name: "winch-dropin", Enabled: new(true)},
+			Want:  change("enable"),
+			After: `test -L /etc/systemd/system/multi-user.target.wants/winch-dropin.service`,
+		},
+		{
+			Name:    "enable a linked unit without an [Install] section fails",
+			Setup:   `systemctl link /opt/winch/winch-noinstall.service && systemctl is-enabled winch-noinstall | grep -qx linked`,
+			Args:    &module.Service{Name: "winch-noinstall", Enabled: new(true)},
+			WantErr: `winch-noinstall.service has no [Install] section with WantedBy, RequiredBy, UpheldBy, or Alias; enabled: true cannot enable it`,
 		},
 		{
 			Name:         "a failed start shows the journal",

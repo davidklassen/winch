@@ -69,7 +69,7 @@ func (s *Service) Validate() error {
 }
 
 func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,NeedDaemonReload,Type,RemainAfterExit", "--", s.Name)
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,FragmentPath,DropInPaths,NeedDaemonReload,Type,RemainAfterExit", "--", s.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -98,16 +98,21 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		s.todo = append(s.todo, "try-reload-or-restart")
 	}
 	if s.Enabled != nil {
+		// systemctl disable ignores a masked unit: when the mask goes away,
+		// the enable links start the unit. It also removes the link that
+		// systemctl link made, and the unit is gone. For an instance, that
+		// link is the template's, and systemctl disable keeps it.
+		var linked bool
+		if !*s.Enabled && u.file == "enabled" && !strings.Contains(u.id, "@") {
+			fi, err := os.Lstat(filepath.Join(unitDir, u.id))
+			linked = err == nil && fi.Mode().Type() == fs.ModeSymlink
+		}
 		switch {
 		case missing:
 			if *s.Enabled {
 				s.todo = append(s.todo, "enable")
 			}
-		case !*s.Enabled && u.file == "enabled":
-			s.todo = append(s.todo, "disable")
-		case !*s.Enabled && u.load == "masked":
-			// systemctl disable ignores a masked unit. When the mask goes
-			// away, the enable links start the unit.
+		case !*s.Enabled && (u.load == "masked" || linked):
 			s.links, err = enableLinks(u.id)
 			if err != nil {
 				return Result{}, err
@@ -115,11 +120,24 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 			if len(s.links) > 0 {
 				s.todo = append(s.todo, "disable")
 			}
+		case !*s.Enabled && u.file == "enabled":
+			s.todo = append(s.todo, "disable")
 		case !*s.Enabled, u.file == "enabled":
-		case u.file == "disabled", u.file == "enabled-runtime", u.file == "linked":
+		case u.file == "disabled", u.file == "enabled-runtime":
+			s.todo = append(s.todo, "enable")
+		case u.file == "linked":
+			// systemd reports a unit without [Install] as static, but not
+			// a linked one.
+			ok, err := hasInstall(append([]string{u.fragment}, strings.Fields(u.dropIns)...))
+			if err != nil {
+				return Result{}, err
+			}
+			if !ok {
+				return Result{}, fmt.Errorf("%s has no [Install] section with WantedBy, RequiredBy, UpheldBy, or Alias; enabled: true cannot enable it", u.id)
+			}
 			s.todo = append(s.todo, "enable")
 		default:
-			return Result{}, fmt.Errorf("%s has the unit file state %q; enabled: true needs an enabled or disabled unit", u.id, u.file)
+			return Result{}, fmt.Errorf("%s has the unit file state %q; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit", u.id, u.file)
 		}
 	}
 	if s.Running != nil {
@@ -184,15 +202,16 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 	return nil
 }
 
+const unitDir = "/etc/systemd/system"
+
 // enableLinks returns the links in /etc/systemd/system that systemctl
 // disable removes: the ones with the unit's name, and the ones to the unit.
 // The link at the unit's own path is the mask or the unit file.
 func enableLinks(id string) ([]string, error) {
-	const dir = "/etc/systemd/system"
-	mask := filepath.Join(dir, id)
+	own := filepath.Join(unitDir, id)
 	var links []string
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.Type() != fs.ModeSymlink || p == mask {
+	err := filepath.WalkDir(unitDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.Type() != fs.ModeSymlink || p == own {
 			return err
 		}
 		if d.Name() == id {
@@ -211,9 +230,35 @@ func enableLinks(id string) ([]string, error) {
 	return links, nil
 }
 
+// hasInstall reports whether the unit files at paths, read in order, have
+// an [Install] key that systemctl enable acts on. An empty value clears the
+// earlier ones.
+func hasInstall(paths []string) (bool, error) {
+	set := map[string]bool{}
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return false, fmt.Errorf("read the unit file: %w", err)
+		}
+		var section string
+		for line := range strings.SplitSeq(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "[") {
+				section = line
+				continue
+			}
+			k, v, ok := strings.Cut(line, "=")
+			if ok && section == "[Install]" {
+				set[strings.TrimSpace(k)] = strings.TrimSpace(v) != ""
+			}
+		}
+	}
+	return set["WantedBy"] || set["RequiredBy"] || set["UpheldBy"] || set["Alias"], nil
+}
+
 type unitState struct {
-	id, load, active, sub, file string
-	reload, oneshot, remain     bool
+	id, load, active, sub, file, fragment, dropIns string
+	reload, oneshot, remain                        bool
 }
 
 func parseShow(out string) unitState {
@@ -231,6 +276,10 @@ func parseShow(out string) unitState {
 			u.sub = v
 		case "UnitFileState":
 			u.file = v
+		case "FragmentPath":
+			u.fragment = v
+		case "DropInPaths":
+			u.dropIns = v
 		case "NeedDaemonReload":
 			u.reload = v == "yes"
 		case "Type":

@@ -1,6 +1,9 @@
 package module
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -233,6 +236,42 @@ func TestParseShow(t *testing.T) {
 	want := unitState{id: "nginx.service", load: "loaded", active: "activating", sub: "auto-restart", file: "enabled", reload: true}
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+// spec: Modules/service and unit
+func TestHasInstall(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		units []string
+		want  bool
+	}{
+		{"no section", []string{"[Service]\nExecStart=/bin/true\n"}, false},
+		{"WantedBy", []string{"[Install]\nWantedBy=multi-user.target\n"}, true},
+		{"Alias with spaces", []string{"[Install]\n  Alias = app2.service\n"}, true},
+		{"only Also", []string{"[Install]\nAlso=other.service\n"}, false},
+		{"key in another section", []string{"[Unit]\nWantedBy=multi-user.target\n[Install]\n"}, false},
+		{"comment", []string{"[Install]\n#WantedBy=multi-user.target\n;RequiredBy=a.target\n"}, false},
+		{"empty value clears", []string{"[Install]\nUpheldBy=a.target\nUpheldBy=\n"}, false},
+		{"a drop-in adds a key", []string{"[Service]\n", "[Install]\nWantedBy=a.target\n"}, true},
+		{"a drop-in keeps a key", []string{"[Install]\nWantedBy=a.target\n", "[Service]\nNice=5\n"}, true},
+		{"a drop-in clears a key", []string{"[Install]\nWantedBy=a.target\n", "[Install]\nWantedBy=\n"}, false},
+		{"value after an empty one", []string{"[Install]\nRequiredBy=\nRequiredBy=a.target\n"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var paths []string
+			for i, u := range tc.units {
+				p := filepath.Join(t.TempDir(), fmt.Sprint(i, ".conf"))
+				if err := os.WriteFile(p, []byte(u), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				paths = append(paths, p)
+			}
+			got, err := hasInstall(paths)
+			if err != nil || got != tc.want {
+				t.Errorf("hasInstall = %v, %v, want %v", got, err, tc.want)
+			}
+		})
 	}
 }
 
