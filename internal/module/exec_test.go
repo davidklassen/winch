@@ -1,6 +1,7 @@
 package module
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -44,30 +45,55 @@ func TestShell(t *testing.T) {
 }
 
 // spec: Modules
-func TestShellTimeLimit(t *testing.T) {
-	pidFile := filepath.Join(t.TempDir(), "pid")
-	start := time.Now()
-	err := shell(t.Context(), "echo waiting; sleep 60 & echo $! > '"+pidFile+"'; wait", time.Second)
-	if err == nil || !strings.HasSuffix(err.Error(), "no result after 1s: waiting") {
-		t.Fatalf("error = %v, want the time limit", err)
+func TestTimeLimit(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(ctx context.Context, command string) error
+	}{
+		{"module command", func(ctx context.Context, command string) error {
+			_, err := runLimited(ctx, time.Second, time.Second, nil, "sh", "-c", command)
+			return err
+		}},
+		{"project command", func(ctx context.Context, command string) error {
+			return shell(ctx, command, time.Second, time.Second)
+		}},
 	}
-	if d := time.Since(start); d > 10*time.Second {
-		t.Errorf("shell returned after %s", d)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			// The command stops on SIGTERM. Its child records SIGTERM and keeps
+			// running and the output open, so only SIGKILL stops it.
+			command := "trap 'echo TERM > " + dir + "/term; exit 0' TERM; seq 20; echo waiting; " +
+				"sh -c 'trap \"echo TERM > " + dir + "/child-term\" TERM; for i in $(seq 30); do sleep 1; done' 2>/dev/null & " +
+				"echo $! > " + dir + "/pid; wait"
+			start := time.Now()
+			err := tt.run(t.Context(), command)
+			if err == nil || !strings.HasSuffix(err.Error(), "no result after 1s: 12\n13\n14\n15\n16\n17\n18\n19\n20\nwaiting") {
+				t.Fatalf("error = %v, want the time limit", err)
+			}
+			if d := time.Since(start); d < 2*time.Second || d > 4*time.Second {
+				t.Errorf("returned after %s, want the limit and the kill delay", d)
+			}
+			for _, f := range []string{"term", "child-term"} {
+				if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+					t.Errorf("no SIGTERM: %v", err)
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "pid"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+			// The child is killed, but it can stay a zombie for a moment.
+			for range 50 {
+				if syscall.Kill(pid, 0) != nil {
+					return
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			t.Errorf("the child %d of the command still runs", pid)
+		})
 	}
-	data, err := os.ReadFile(pidFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
-	// The child is killed, but it can stay a zombie of the killed shell for a
-	// moment.
-	for range 50 {
-		if syscall.Kill(pid, 0) != nil {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	t.Errorf("the child %d of the command still runs", pid)
 }
 
 func TestTailBuffer(t *testing.T) {
@@ -79,5 +105,18 @@ func TestTailBuffer(t *testing.T) {
 	}
 	if string(b.b) != "cdef" {
 		t.Errorf("tail = %q, want cdef", b.b)
+	}
+}
+
+// spec: Modules
+func TestTimeLimitAfterExit(t *testing.T) {
+	// The command exits before the limit, but its background child keeps the
+	// output open past the limit.
+	command := "sleep 3 & echo done"
+	if _, err := runLimited(t.Context(), time.Second, 2*time.Second, nil, "sh", "-c", command); err != nil && strings.Contains(err.Error(), "no result") {
+		t.Errorf("module command: error = %v, want no time limit", err)
+	}
+	if err := shell(t.Context(), command, time.Second, 2*time.Second); err != nil {
+		t.Errorf("project command: error = %v, want nil", err)
 	}
 }

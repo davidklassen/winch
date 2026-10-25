@@ -11,16 +11,25 @@ import (
 	"time"
 )
 
+const (
+	commandLimit = 10 * time.Minute
+	killDelay    = 10 * time.Second
+)
+
 // run runs a command and returns its output. On a failure, the error holds
 // the end of the output.
 func run(ctx context.Context, env []string, name string, args ...string) (string, error) {
+	return runLimited(ctx, commandLimit, killDelay, env, name, args...)
+}
+
+func runLimited(ctx context.Context, limit, killDelay time.Duration, env []string, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
+	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(cmd.Environ(), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	// A daemon that a package script starts can keep the output open.
-	cmd.WaitDelay = 10 * time.Second
-	if err := cmd.Run(); err != nil {
+	if err := wait(ctx, cmd, killDelay); err != nil {
 		return stdout.String(), fmt.Errorf("%s %s: %w: %s", name, args[0], err, tail(stdout.String()+stderr.String(), 10))
 	}
 	return stdout.String(), nil
@@ -31,39 +40,50 @@ func tail(s string, n int) string {
 	return strings.Join(lines[max(0, len(lines)-n):], "\n")
 }
 
-// commandLimit is the time that a command of the project can run.
-const commandLimit = 10 * time.Minute
-
 // Shell runs a command of the project through sh -c, in / and with stdin
-// from /dev/null. After the time limit, it kills the process group of the
-// command. On a failure, the error holds the end of the output.
+// from /dev/null. On a failure, the error holds the end of the output.
 func Shell(ctx context.Context, command string) error {
-	return shell(ctx, command, commandLimit)
+	return shell(ctx, command, commandLimit, killDelay)
 }
 
-func shell(ctx context.Context, command string, limit time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, limit)
+func shell(ctx context.Context, command string, limit, killDelay time.Duration) error {
+	ctx, cancel := context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = "/"
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	// The error shows only the end of the output.
 	out := &tailBuffer{max: 64 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
-	cmd.WaitDelay = 10 * time.Second
-	err := cmd.Run()
+	err := wait(ctx, cmd, killDelay)
 	switch {
 	// A daemon that the command starts can keep the output open; the command
 	// itself succeeded.
 	case err == nil, errors.Is(err, exec.ErrWaitDelay):
 		return nil
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		return fmt.Errorf("%s: no result after %s: %s", command, limit, tail(string(out.b), 10))
 	case len(out.b) == 0:
 		return fmt.Errorf("%s: %w", command, err)
 	}
 	return fmt.Errorf("%s: %w: %s", command, err, tail(string(out.b), 10))
+}
+
+// wait runs cmd in its own process group. When ctx ends, the group gets
+// SIGTERM, and SIGKILL after killDelay.
+func wait(ctx context.Context, cmd *exec.Cmd, killDelay time.Duration) error {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var stopped bool
+	cmd.Cancel = func() error {
+		stopped = true
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		time.Sleep(killDelay)
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	// A daemon that the command starts can keep the output open.
+	cmd.WaitDelay = killDelay
+	err := cmd.Run()
+	if stopped {
+		return context.Cause(ctx)
+	}
+	return err
 }
 
 // tailBuffer keeps the last max bytes written to it.
