@@ -7,8 +7,10 @@ stages:
           content: !tpl "{{ .host.name }} is managed by winch.\n"
       - pkg:
           name: curl
+      - recipe: unbound
 
   - name: web
     hosts: web
     steps:
+      - recipe: nginx
       - recipe: website

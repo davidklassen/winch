@@ -1,0 +1,8 @@
+stdout:
+web1
+  web
+    nginx
+      ! handler nginx.reload
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+stderr:

@@ -1,0 +1,16 @@
+stdout:
+web1
+  web
+    site
+      ~ file /var/www/about.html
+          @@ -1,1 +1,1 @@
+          -old
+          +hi
+    nginx
+      ! handler nginx.reload
+  apps
+    app
+      ! handler app.restart
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+stderr:

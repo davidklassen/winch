@@ -1,0 +1,18 @@
+# A validating resolver on every node, in place of systemd-resolved.
+steps:
+  - pkg:
+      name: [unbound, dns-root-data]
+  - service:
+      name: unbound
+      enabled: true
+      running: true
+  - pkg:
+      name: [systemd-resolved, libnss-resolve]
+      absent: true
+      purge: true
+  - dir:
+      path: /etc/systemd/resolved.conf.d
+      absent: true
+  - file:
+      path: /etc/resolv.conf
+      content: "nameserver 127.0.0.1\n"

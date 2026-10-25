@@ -269,7 +269,7 @@ func TestContentOnlyWhenNeeded(t *testing.T) {
 	if _, err := s.Check(context.Background(), "file", f, &module.State{}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := s.Apply(context.Background(), "file", f, &module.State{})
+	res, err := s.Apply(context.Background(), "file", f, &module.State{}, nil)
 	if err != nil || res.Action != module.Create {
 		t.Fatalf("apply = %+v, %v", res, err)
 	}

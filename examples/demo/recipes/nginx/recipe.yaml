@@ -1,0 +1,19 @@
+# nginx serves only the sites of the project.
+steps:
+  - pkg:
+      name: nginx
+  - name: Only our sites (removes Debian's default)
+    link:
+      path: /etc/nginx/sites-enabled/default
+      absent: true
+    notify: reload
+  - service:
+      name: nginx
+      enabled: true
+      running: true
+
+handlers:
+  reload:
+    - service:
+        name: nginx
+        reloaded: true

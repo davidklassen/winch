@@ -189,7 +189,13 @@ type Env struct {
 	// item is the current element of a loop when hasItem is true.
 	item    any
 	hasItem bool
+	// runs are the recipes that run on the host in the pipeline.
+	runs map[string]bool
 }
+
+// Runs reports whether the recipe runs on the host in the pipeline: a stage
+// of the host has a step for it whose when is true.
+func (e *Env) Runs(recipe string) bool { return e.runs[recipe] }
 
 func (e *Env) with(item any) *Env {
 	c := *e
@@ -226,7 +232,7 @@ func (e *Env) exprEnv() exprEnv {
 // recipe that runs on h in the pipeline, also in later stages.
 func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
 	short, _, _ := strings.Cut(h.Name, ".")
-	e := &Env{host: h, short: short, facts: f, vars: maps.Clone(h.Vars)}
+	e := &Env{host: h, short: short, facts: f, vars: maps.Clone(h.Vars), runs: map[string]bool{}}
 	for _, s := range p.Pipeline.Stages {
 		if !slices.ContainsFunc(s.Targets, func(t Host) bool { return t.Name == h.Name }) {
 			continue
@@ -258,9 +264,17 @@ func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
 					return nil, err
 				}
 			}
+			e.runs[st.Recipe.Name] = true
 			for _, rs := range st.Recipe.Steps {
 				if err := p.use(e, rs); err != nil {
 					return nil, err
+				}
+			}
+			for _, hd := range st.Recipe.Handlers {
+				for _, hs := range hd.Steps {
+					if err := p.use(e, hs); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}

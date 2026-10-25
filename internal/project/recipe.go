@@ -24,13 +24,25 @@ import (
 type Recipe struct {
 	Name string
 	// Dir is relative to the project.
-	Dir       string
-	Require   []Require
-	Vars      []*Var
-	Steps     []Step
+	Dir     string
+	Require []Require
+	Vars    []*Var
+	Steps   []Step
+	// Handlers are in declared order.
+	Handlers  []*Handler
 	root      string
 	templates map[string]*tmplFile
 }
+
+type Handler struct {
+	Name   string
+	Recipe *Recipe
+	Steps  []Step
+	Pos    yamlx.Pos
+}
+
+// FullName is <recipe>.<handler>.
+func (h *Handler) FullName() string { return h.Recipe.Name + "." + h.Name }
 
 // Require is one requirement of a recipe: an expression on facts.
 type Require struct {
@@ -44,9 +56,10 @@ type requireEnv struct {
 }
 
 type recipeFile struct {
-	Require []*yamlx.Node `yaml:"require"`
-	Vars    *yamlx.Node   `yaml:"vars"`
-	Steps   []*yamlx.Node `yaml:"steps,required"`
+	Require  []*yamlx.Node `yaml:"require"`
+	Vars     *yamlx.Node   `yaml:"vars"`
+	Steps    []*yamlx.Node `yaml:"steps,required"`
+	Handlers *yamlx.Node   `yaml:"handlers"`
 }
 
 var recipeNameRe = regexp.MustCompile(`^[a-z0-9_]+$`)
@@ -116,15 +129,49 @@ func (l *loader) loadRecipes() error {
 			r.Require = append(r.Require, req)
 		}
 		for _, sn := range rf.Steps {
-			st, err := l.loadStep(sn, r)
+			st, err := l.loadStep(sn, r, false)
 			rerrs = append(rerrs, err)
 			r.Steps = append(r.Steps, st)
 		}
+		rerrs = append(rerrs, l.loadHandlers(rf.Handlers, r))
 		if err := errors.Join(rerrs...); err != nil {
 			errs = append(errs, err)
 			continue
 		}
 		l.recipes[name] = r
+	}
+	return errors.Join(errs...)
+}
+
+// loadHandlers loads the handlers of r from n, a map of names to lists of
+// steps.
+func (l *loader) loadHandlers(n *yamlx.Node, r *Recipe) error {
+	if n == nil || n.Kind == yamlx.Null {
+		return nil
+	}
+	if n.Kind != yamlx.Map {
+		return yamlx.Errorf(n.Pos, "handlers: expected a map, got %s", yamlx.Describe(n))
+	}
+	var errs []error
+	for _, p := range n.Pairs {
+		switch {
+		case !varNameRe.MatchString(p.Key):
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "handler %q: a handler name has only lowercase letters, digits, and _", p.Key))
+			continue
+		case p.Value.Kind != yamlx.List:
+			errs = append(errs, yamlx.Errorf(p.Value.Pos, "handler %q: expected a list of steps, got %s", p.Key, yamlx.Describe(p.Value)))
+			continue
+		case len(p.Value.Items) == 0:
+			errs = append(errs, yamlx.Errorf(p.Value.Pos, "handler %q: a handler needs at least one step", p.Key))
+			continue
+		}
+		h := &Handler{Name: p.Key, Recipe: r, Pos: p.KeyPos}
+		for _, sn := range p.Value.Items {
+			st, err := l.loadStep(sn, r, true)
+			errs = append(errs, err)
+			h.Steps = append(h.Steps, st)
+		}
+		r.Handlers = append(r.Handlers, h)
 	}
 	return errors.Join(errs...)
 }

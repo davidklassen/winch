@@ -1,6 +1,7 @@
 package module
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
@@ -14,9 +15,11 @@ import (
 )
 
 type Service struct {
-	Name    string `yaml:"name,required" json:"name"`
-	Running *bool  `yaml:"running" json:"running,omitempty"`
-	Enabled *bool  `yaml:"enabled" json:"enabled,omitempty"`
+	Name      string `yaml:"name,required" json:"name"`
+	Running   *bool  `yaml:"running" json:"running,omitempty"`
+	Enabled   *bool  `yaml:"enabled" json:"enabled,omitempty"`
+	Reloaded  bool   `yaml:"reloaded" json:"reloaded,omitempty"`
+	Restarted bool   `yaml:"restarted" json:"restarted,omitempty"`
 
 	// Check sets these for Apply: the systemctl commands, in order.
 	todo  []string
@@ -50,6 +53,14 @@ func (s *Service) Validate() error {
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters with .service added; a unit name has at most 255", n)}
 	case n > 255:
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters; a unit name has at most 255", n)}
+	case s.Reloaded && s.Restarted:
+		return &yamlx.FieldError{Field: "restarted", Msg: "a service step has one of reloaded and restarted"}
+	case s.Reloaded || s.Restarted:
+		action := "reloaded"
+		if s.Restarted {
+			action = "restarted"
+		}
+		return takesNone(action, arg{"running", s.Running != nil}, arg{"enabled", s.Enabled != nil})
 	case s.Running == nil && s.Enabled == nil:
 		return &yamlx.FieldError{Msg: "a service step needs running or enabled"}
 	}
@@ -74,6 +85,13 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	}
 	if u.reload {
 		s.todo = append(s.todo, "daemon-reload")
+	}
+	// try-restart and try-reload-or-restart leave a stopped unit stopped.
+	switch {
+	case s.Restarted:
+		s.todo = append(s.todo, "try-restart")
+	case s.Reloaded:
+		s.todo = append(s.todo, "try-reload-or-restart")
 	}
 	if s.Enabled != nil {
 		switch {
@@ -115,12 +133,19 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	if len(s.todo) == 0 {
 		return Result{Status: OK}, nil
 	}
-	changes := s.todo
+	var changes []string
+	for _, c := range s.todo {
+		changes = append(changes, cmp.Or(planLabels[c], c))
+	}
 	if missing {
 		changes = append([]string{u.id + " does not exist yet"}, changes...)
 	}
 	return Result{Status: Change, Action: Modify, Changes: changes}, nil
 }
+
+// planLabels are the plan lines of the commands that differ from the
+// command.
+var planLabels = map[string]string{"try-restart": "restart", "try-reload-or-restart": "reload"}
 
 func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 	for _, c := range s.todo {

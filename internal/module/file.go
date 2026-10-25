@@ -38,6 +38,7 @@ type File struct {
 	Owner      yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
 	Group      yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
 	Mode       string         `yaml:"mode" json:"mode,omitempty"`
+	Validation *string        `yaml:"validate" json:"validate,omitempty"`
 	Absent     bool           `yaml:"absent" json:"absent,omitempty"`
 }
 
@@ -49,7 +50,10 @@ func (f *File) Validate() error {
 	}
 	sources := []arg{{"content", f.Content != nil}, {"template", f.Template != ""}, {"source", f.Source != ""}}
 	if f.Absent {
-		return absentTakesNone(append(sources, arg{"owner", f.Owner != ""}, arg{"group", f.Group != ""}, arg{"mode", f.Mode != ""})...)
+		return absentTakesNone(append(sources, arg{"owner", f.Owner != ""}, arg{"group", f.Group != ""}, arg{"mode", f.Mode != ""}, arg{"validate", f.Validation != nil})...)
+	}
+	if err := checkCommand("validate", f.Validation); err != nil {
+		return err
 	}
 	set := 0
 	for _, a := range sources {
@@ -76,6 +80,13 @@ func (f *File) Validate() error {
 		return err
 	}
 	return checkMode(f.Mode, "0644")
+}
+
+func checkCommand(field string, c *string) error {
+	if c != nil && *c == "" {
+		return &yamlx.FieldError{Field: field, Msg: "must not be empty"}
+	}
+	return nil
 }
 
 var numberRe = regexp.MustCompile(`^[0-9]+$`)
@@ -128,9 +139,14 @@ type arg struct {
 }
 
 func absentTakesNone(args ...arg) error {
+	return takesNone("absent: true", args...)
+}
+
+// takesNone fails for the first of args that is set: what takes none of them.
+func takesNone(what string, args ...arg) error {
 	for _, a := range args {
 		if a.set {
-			return &yamlx.FieldError{Field: a.name, Msg: "absent: true takes no " + a.name}
+			return &yamlx.FieldError{Field: a.name, Msg: what + " takes no " + a.name}
 		}
 	}
 	return nil
@@ -329,7 +345,9 @@ func (f *File) Apply(ctx context.Context, _ func(string)) error {
 		return err
 	}
 	defer sub.Close()
-	return writeFile(sub, name, f.Data, uid, gid, mode)
+	return writeFile(sub, name, f.Data, uid, gid, mode, func(tmp string) error {
+		return put(ctx, dir, missing, sub, tmp, name, f.Validation)
+	})
 }
 
 func (f *File) sum() string {
@@ -625,7 +643,9 @@ func ParentChange(dir string) string {
 	return "create directory " + dir + " (" + attrLine("root", "root", 0o755) + ")"
 }
 
-func writeFile(dir *os.Root, name string, content []byte, uid, gid, mode uint32) error {
+// writeFile writes content to a temporary file in dir, and calls put to move
+// it to name.
+func writeFile(dir *os.Root, name string, content []byte, uid, gid, mode uint32, put func(tmp string) error) error {
 	tmpName := ".winch-" + rand.Text()
 	tmp, err := dir.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -648,7 +668,7 @@ func writeFile(dir *os.Root, name string, content []byte, uid, gid, mode uint32)
 	if err != nil {
 		return err
 	}
-	return dir.Rename(tmpName, name)
+	return put(tmpName)
 }
 
 // fileMode converts a numeric mode such as 04755 to a Go file mode.

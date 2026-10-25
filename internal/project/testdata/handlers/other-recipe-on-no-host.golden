@@ -1,0 +1,1 @@
+recipes/db/recipe.yaml:6:13: notify: recipe nginx runs on no host of stage db in pipeline site

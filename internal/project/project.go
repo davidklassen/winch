@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"text/template"
@@ -29,6 +31,16 @@ type Config struct {
 	Inventory    string `yaml:"inventory"`
 	InventoryPos yamlx.Pos
 	Vars         *yamlx.Node `yaml:"vars"`
+}
+
+var projectNameRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
+
+// Validate checks the project name, which names a file on each host.
+func (c *Config) Validate() error {
+	if !projectNameRe.MatchString(c.Name) {
+		return &yamlx.FieldError{Field: "name", Msg: `a project name has only letters, digits, ".", "_", and "-", and does not start with "."`}
+	}
+	return nil
 }
 
 type Pipeline struct {
@@ -54,15 +66,30 @@ type Step struct {
 	Args   module.Module
 	Pos    yamlx.Pos
 	Recipe *Recipe
+	// Notify are the handlers that the step notifies.
+	Notify []*Handler
+	// Then is the command of then, after Eval.
+	Then string
 	// in is the recipe that holds the step, or nil in a stage.
 	in   *Recipe
 	args *value
 	when *computed
 	loop *value
-	tmpl *template.Template
+	// then is the command of then, or nil.
+	then *value
+	// notifyNames are the handler names as written.
+	notifyNames []nameAt
+	tmpl        *template.Template
 	// tmplReads are the variables that the template file of the step reads
 	// by name. A computed file name reads those of all templates of the recipe.
 	tmplReads []string
+}
+
+// nameAt is a handler name of notify, with the handler after the load.
+type nameAt struct {
+	name    string
+	pos     yamlx.Pos
+	handler *Handler
 }
 
 // Load reads the project in dir with one inventory and one pipeline. The
@@ -132,7 +159,7 @@ type loader struct {
 func newLoader(dir string, cfg *Config) (*loader, error) {
 	l := &loader{dir: dir, vars: map[string]*Var{}, files: map[string]*recipeFile{}, recipes: map[string]*Recipe{}}
 	errs := l.declare(cfg.Vars, "")
-	errs = append(errs, l.readRecipes(), l.compileDefaults(), l.loadRecipes())
+	errs = append(errs, l.readRecipes(), l.compileDefaults(), l.loadRecipes(), l.resolveRecipeNotify())
 	return l, errors.Join(errs...)
 }
 
@@ -204,6 +231,58 @@ func resolve(inv *Inventory, pl *Pipeline) error {
 				}
 				first[key] = st.Pos
 			}
+		}
+	}
+	return errors.Join(append(errs, notifyHosts(pl))...)
+}
+
+// notifyHosts checks that the recipe of each handler that a step notifies
+// runs on a host of the step's stage. A stage without hosts runs nothing.
+func notifyHosts(pl *Pipeline) error {
+	runs := map[*Recipe]map[string]bool{}
+	for _, s := range pl.Stages {
+		for _, st := range s.Steps {
+			if st.Recipe == nil {
+				continue
+			}
+			if runs[st.Recipe] == nil {
+				runs[st.Recipe] = map[string]bool{}
+			}
+			for _, h := range s.Targets {
+				runs[st.Recipe][h.Name] = true
+			}
+		}
+	}
+	var errs []error
+	for _, s := range pl.Stages {
+		if len(s.Targets) == 0 {
+			continue
+		}
+		for _, st := range s.Steps {
+			todo := []Step{st}
+			if st.Recipe != nil {
+				todo = st.Recipe.Steps
+			}
+			for _, ts := range todo {
+				errs = append(errs, notifyStage(ts, s, runs, pl.Name))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// notifyStage checks the handlers of other recipes that st in stage s
+// notifies. runs holds the hosts of each recipe.
+func notifyStage(st Step, s Stage, runs map[*Recipe]map[string]bool, pipeline string) error {
+	var errs []error
+	for _, n := range st.notifyNames {
+		r := n.handler.Recipe
+		if r == st.in {
+			continue
+		}
+		onStageHost := slices.ContainsFunc(s.Targets, func(t Host) bool { return runs[r][t.Name] })
+		if !onStageHost {
+			errs = append(errs, yamlx.Errorf(n.pos, "notify: recipe %s runs on no host of stage %s in pipeline %s", r.Name, s.Name, pipeline))
 		}
 	}
 	return errors.Join(errs...)
@@ -310,7 +389,10 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 		seen[sf.Name] = true
 		s := Stage{Name: sf.Name, Hosts: sf.Hosts, HostsPos: sf.HostsPos}
 		for _, sn := range sf.Steps {
-			st, err := l.loadStep(sn, nil)
+			st, err := l.loadStep(sn, nil, false)
+			if err == nil {
+				err = l.resolveNotify(&st)
+			}
 			switch {
 			case errors.Is(err, errReported):
 			case err != nil:
@@ -327,10 +409,13 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 	return pl, nil
 }
 
-var stepFields = []string{"name", "recipe", "when", "loop"}
+var stepFields = []string{"name", "recipe", "when", "loop", "then", "notify"}
 
-// loadStep loads a step of a stage, or of the recipe r.
-func (l *loader) loadStep(n *yamlx.Node, r *Recipe) (Step, error) {
+const thenInLoop = "then runs once after the last element; it cannot use item"
+
+// loadStep loads a step of a stage, or of the recipe r. handler is true for a
+// step of a handler.
+func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) {
 	if n.Kind != yamlx.Map {
 		return Step{}, yamlx.Errorf(n.Pos, "a step must be a map, got %s", yamlx.Describe(n))
 	}
@@ -338,8 +423,10 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe) (Step, error) {
 	isRecipe := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "recipe" })
 	hasLoop := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "loop" })
 	sc := scope{vars: l.vars}
+	thenScope := scope{vars: l.vars, noItem: thenInLoop}
 	if !hasLoop {
 		sc.noItem = itemOutsideLoop
+		thenScope.noItem = itemOutsideLoop
 	}
 	var recipe string
 	var recipePos yamlx.Pos
@@ -370,6 +457,19 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe) (Step, error) {
 			st.loop, err = l.compileLoop(p.Value)
 			errs = append(errs, err)
 			continue
+		case p.Key == "then":
+			var err error
+			st.then, err = compileThen(p.Value, thenScope)
+			errs = append(errs, err)
+			continue
+		case p.Key == "notify" && handler:
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "a handler step cannot notify"))
+			continue
+		case p.Key == "notify":
+			var err error
+			st.notifyNames, err = notifyNames(p.Value)
+			errs = append(errs, err)
+			continue
 		}
 		m, ok := module.New(p.Key)
 		if !ok {
@@ -387,6 +487,13 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe) (Step, error) {
 		st.Module, argsNode = p.Key, p.Value
 		if err := l.loadArgs(&st, m, p.Value, sc); err != nil {
 			errs = append(errs, err)
+		}
+		if p.Key == "service" && !handler {
+			for _, a := range p.Value.Pairs {
+				if a.Key == "restarted" || a.Key == "reloaded" {
+					errs = append(errs, yamlx.Errorf(a.KeyPos, "%s: only handler steps can use %s", a.Key, a.Key))
+				}
+			}
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
@@ -438,6 +545,106 @@ func (l *loader) loadArgs(st *Step, m module.Module, n *yamlx.Node, sc scope) er
 	return yamlx.DecodeLazy(n, m)
 }
 
+func compileThen(n *yamlx.Node, sc scope) (*value, error) {
+	if n.Tag != "" {
+		return compileValue(n, sc)
+	}
+	if _, err := thenText(n); err != nil {
+		return nil, err
+	}
+	return &value{node: n}, nil
+}
+
+// thenText returns the command of a then node without tags.
+func thenText(n *yamlx.Node) (string, error) {
+	text, ok := n.Value.(string)
+	switch {
+	case n.Kind != yamlx.Scalar || !ok:
+		return "", yamlx.Errorf(n.Pos, "then: expected a string, got %s", yamlx.Describe(n))
+	case text == "":
+		return "", yamlx.Errorf(n.Pos, "then: must not be empty")
+	}
+	return text, nil
+}
+
+// notifyNames returns the handler names of notify: a string or a list.
+func notifyNames(n *yamlx.Node) ([]nameAt, error) {
+	items := []*yamlx.Node{n}
+	if n.Kind == yamlx.List {
+		items = n.Items
+	}
+	var out []nameAt
+	for _, it := range items {
+		name, ok := it.Value.(string)
+		switch {
+		case it.Tag != "":
+			return nil, yamlx.Errorf(it.Pos, "notify: %s is not allowed here", it.Tag)
+		case it.Kind != yamlx.Scalar || !ok:
+			return nil, yamlx.Errorf(it.Pos, "notify: expected a string or a list of strings, got %s", yamlx.Describe(it))
+		}
+		out = append(out, nameAt{name: name, pos: it.Pos})
+	}
+	return out, nil
+}
+
+// resolveRecipeNotify resolves the notify names of the steps of every recipe
+// that loaded.
+func (l *loader) resolveRecipeNotify() error {
+	var errs []error
+	for _, name := range slices.Sorted(maps.Keys(l.recipes)) {
+		r := l.recipes[name]
+		if r == nil {
+			continue
+		}
+		for i := range r.Steps {
+			errs = append(errs, l.resolveNotify(&r.Steps[i]))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// resolveNotify finds the handlers that st names: <handler> of its own
+// recipe, or <recipe>.<handler>.
+func (l *loader) resolveNotify(st *Step) error {
+	var errs []error
+	for j := range st.notifyNames {
+		n := &st.notifyNames[j]
+		recipe, handler, cross := strings.Cut(n.name, ".")
+		r := st.in
+		switch {
+		case !cross && r == nil:
+			errs = append(errs, yamlx.Errorf(n.pos, "notify: a step in a stage names a handler as <recipe>.<handler>, such as nginx.reload"))
+			continue
+		case !cross:
+			handler = recipe
+		default:
+			var ok bool
+			if r, ok = l.recipes[recipe]; !ok {
+				errs = append(errs, yamlx.Errorf(n.pos, "notify: unknown recipe %q%s", recipe, yamlx.Suggest(recipe, slices.Sorted(maps.Keys(l.recipes)))))
+				continue
+			}
+			if r == nil {
+				// Its load error is reported.
+				continue
+			}
+		}
+		i := slices.IndexFunc(r.Handlers, func(h *Handler) bool { return h.Name == handler })
+		if i < 0 {
+			var names []string
+			for _, h := range r.Handlers {
+				names = append(names, h.Name)
+			}
+			errs = append(errs, yamlx.Errorf(n.pos, "notify: recipe %s has no handler %q%s", r.Name, handler, yamlx.Suggest(handler, names)))
+			continue
+		}
+		n.handler = r.Handlers[i]
+		if !slices.Contains(st.Notify, n.handler) {
+			st.Notify = append(st.Notify, n.handler)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (l *loader) compileWhen(n *yamlx.Node) (*computed, error) {
 	if n.Tag != "!expr" {
 		return nil, yamlx.Errorf(n.Pos, "when: use an expression with the !expr tag, such as when: !expr vars.mail_server")
@@ -472,6 +679,9 @@ func (st Step) reads() []string {
 	if st.args != nil {
 		out = append(out, st.args.reads()...)
 	}
+	if st.then != nil {
+		out = append(out, st.then.reads()...)
+	}
 	out = append(out, st.tmplReads...)
 	return out
 }
@@ -501,6 +711,9 @@ func (st Step) Eval(e *Env) ([]Step, error) {
 		return nil, err
 	}
 	if st.loop == nil {
+		if st.Then, err = st.thenFor(e); err != nil {
+			return nil, err
+		}
 		s, err := st.instance(e)
 		if err != nil {
 			return nil, err
@@ -514,6 +727,12 @@ func (st Step) Eval(e *Env) ([]Step, error) {
 	if n.Kind != yamlx.List {
 		return nil, yamlx.Errorf(n.Pos, "loop: must be a list, got %s", yamlx.Describe(n))
 	}
+	if len(n.Items) == 0 {
+		return nil, nil
+	}
+	if st.Then, err = st.thenFor(e); err != nil {
+		return nil, err
+	}
 	var out []Step
 	for _, item := range n.Items {
 		s, err := st.instance(e.with(yamlx.Value(item)))
@@ -523,6 +742,18 @@ func (st Step) Eval(e *Env) ([]Step, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// thenFor returns the command of then for e, or "".
+func (st Step) thenFor(e *Env) (string, error) {
+	if st.then == nil {
+		return "", nil
+	}
+	n, err := st.then.eval(e, "then")
+	if err != nil {
+		return "", err
+	}
+	return thenText(n)
 }
 
 // instance returns the step with its arguments and content for e.

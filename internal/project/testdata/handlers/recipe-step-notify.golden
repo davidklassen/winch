@@ -1,0 +1,1 @@
+pipelines/site.yaml:7:9: a recipe step has only name, recipe, and when, not "notify"

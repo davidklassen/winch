@@ -1,5 +1,6 @@
 // Package fakehost is a test double for hosts: it keeps files, packages, and
-// facts in memory and checks and applies file, dir, and pkg steps against them.
+// facts in memory and checks and applies file, dir, pkg, and service steps
+// against them. It keeps pending handlers and runs commands as records.
 package fakehost
 
 import (
@@ -30,6 +31,10 @@ type Hosts struct {
 	Refreshes  map[string]int
 	FactsReads map[string]int
 	facts      map[string]facts.Facts
+	pending    map[string][]string
+	failCmd    map[string]bool
+	// Log lists the service actions and the commands per host, in order.
+	Log map[string][]string
 	// Open is the number of open connections.
 	Open int
 }
@@ -45,8 +50,25 @@ func New() *Hosts {
 		Refreshes:  map[string]int{},
 		FactsReads: map[string]int{},
 		facts:      map[string]facts.Facts{},
+		pending:    map[string][]string{},
+		failCmd:    map[string]bool{},
+		Log:        map[string][]string{},
 	}
 }
+
+func (h *Hosts) SetPending(host string, names ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.pending[host] = names
+}
+
+func (h *Hosts) PendingOf(host string) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.pending[host])
+}
+
+func (h *Hosts) FailCommand(host, command string) { h.failCmd[host+" "+command] = true }
 
 func (h *Hosts) SetFile(host, path, content string) {
 	h.mu.Lock()
@@ -119,6 +141,12 @@ func (h *Hosts) File(host, path string) (string, bool) {
 func (h *Hosts) FailCheck(key string) { h.failCheck[key] = true }
 func (h *Hosts) FailApply(key string) { h.failApply[key] = true }
 
+// Fix ends the failures that FailCheck and FailApply set for key.
+func (h *Hosts) Fix(key string) {
+	delete(h.failCheck, key)
+	delete(h.failApply, key)
+}
+
 func (h *Hosts) Connect(ctx context.Context, host project.Host) (*Conn, error) {
 	if host.Address == "unreachable" {
 		return nil, errors.New("ssh: connect to host unreachable: Connection refused")
@@ -135,7 +163,7 @@ func (h *Hosts) fails(m map[string]bool, host, path string) bool {
 
 // Connector returns Connect as a run.Connect.
 func (h *Hosts) Connector() run.Connect {
-	return func(ctx context.Context, host project.Host) (run.Conn, error) {
+	return func(ctx context.Context, proj string, host project.Host) (run.Conn, error) {
 		c, err := h.Connect(ctx, host)
 		if err != nil {
 			return nil, err
@@ -155,6 +183,15 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	}
 	if d, ok := m.(*module.Dir); ok {
 		return c.checkDir(d), nil
+	}
+	if sv, ok := m.(*module.Service); ok {
+		if !sv.Reloaded && !sv.Restarted {
+			return module.Result{}, errors.New("fakehost: a service step needs reloaded or restarted")
+		}
+		if c.hosts.fails(c.hosts.failCheck, c.host, sv.Name) {
+			return module.Result{}, errors.New("permission denied")
+		}
+		return module.Result{Status: module.Change, Action: module.Modify, Changes: []string{serviceAction(sv)}}, nil
 	}
 	f := m.(*module.File)
 	if c.hosts.fails(c.hosts.failCheck, c.host, f.Path) {
@@ -211,11 +248,37 @@ func (c *Conn) checkPkg(p *module.Pkg, st *module.State) module.Result {
 	return module.Result{Status: module.Change, Action: module.Create, Changes: changes}
 }
 
-func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
+// serviceAction is the action of a service step: only reloaded and
+// restarted.
+func serviceAction(s *module.Service) string {
+	if s.Reloaded {
+		return "reload"
+	}
+	return "restart"
+}
+
+func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string) (module.Result, error) {
 	fresh := st.IndexFresh
 	res, err := c.Check(ctx, name, m, st)
 	if err != nil || res.Status == module.OK {
 		return res, err
+	}
+	c.hosts.mu.Lock()
+	for _, n := range notify {
+		if !slices.Contains(c.hosts.pending[c.host], n) {
+			c.hosts.pending[c.host] = append(c.hosts.pending[c.host], n)
+		}
+	}
+	c.hosts.mu.Unlock()
+	if sv, ok := m.(*module.Service); ok {
+		if c.hosts.fails(c.hosts.failApply, c.host, sv.Name) {
+			return module.Result{}, fmt.Errorf("systemctl: %s failed", sv.Name)
+		}
+		c.hosts.mu.Lock()
+		defer c.hosts.mu.Unlock()
+		key := sv.Name + " " + serviceAction(sv)
+		c.hosts.Log[c.host] = append(c.hosts.Log[c.host], key)
+		return res, nil
 	}
 	if p, ok := m.(*module.Pkg); ok {
 		c.hosts.mu.Lock()
@@ -270,6 +333,27 @@ func (c *Conn) Facts(ctx context.Context) (facts.Facts, error) {
 		return f, nil
 	}
 	return facts.Facts{OS: facts.OS{ID: "debian", Version: "13", Codename: "trixie"}}, nil
+}
+
+func (c *Conn) Pending(ctx context.Context) ([]string, error) {
+	return c.hosts.PendingOf(c.host), nil
+}
+
+func (c *Conn) Handled(ctx context.Context, handler string) error {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	c.hosts.pending[c.host] = slices.DeleteFunc(c.hosts.pending[c.host], func(n string) bool { return n == handler })
+	return nil
+}
+
+func (c *Conn) Command(ctx context.Context, command string) error {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "command "+command)
+	if c.hosts.failCmd[c.host+" "+command] {
+		return fmt.Errorf("%s: exit status 1", command)
+	}
+	return nil
 }
 
 func (c *Conn) Close() error {

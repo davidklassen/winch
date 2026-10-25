@@ -19,18 +19,30 @@ import (
 // Conn is a session with one host.
 type Conn interface {
 	Facts(ctx context.Context) (facts.Facts, error)
+	Pending(ctx context.Context) ([]string, error)
 	Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
-	Apply(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
+	// Apply records the handlers in notify on the host before it changes
+	// something.
+	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string) (module.Result, error)
+	// Handled removes the record of a handler that succeeded.
+	Handled(ctx context.Context, handler string) error
+	Command(ctx context.Context, command string) error
 	Close() error
 }
 
-type Connect func(ctx context.Context, h project.Host) (Conn, error)
+// Connect opens a session with a host for the project named proj.
+type Connect func(ctx context.Context, proj string, h project.Host) (Conn, error)
 
 type Plan struct {
-	Stages []StagePlan
+	// Project is the name of the project.
+	Project string
+	Stages  []StagePlan
 	// Hosts are all hosts of the pipeline, in inventory order.
 	Hosts  []project.Host
 	Failed map[string]error
+	// Pending are the pending handlers of each host, as the host reported
+	// them.
+	Pending map[string][]string
 }
 
 type StagePlan struct {
@@ -44,16 +56,39 @@ type HostPlan struct {
 	Steps []Planned
 }
 
-// Planned is a module step for one host. In is the recipe step that the step
-// belongs to, or nil for a module step of the stage.
+// Planned is a module step for one host, or a slot for a handler. In is the
+// recipe step that the step or slot belongs to, or nil for a module step of
+// the stage.
 type Planned struct {
 	Step   project.Step
 	In     *project.Step
 	Result module.Result
+	// Last is true on the last element of a step with loop, and on a step
+	// without loop.
+	Last bool
+	// Notify are the handlers that the step notifies on the host, as
+	// <recipe>.<handler>.
+	Notify []string
+	// Handler is set on a slot. A slot has no step of its own.
+	Handler *Slot
+}
+
+// Slot is a place where a handler runs when a step notified it, or when it is
+// pending on the host.
+type Slot struct {
+	Handler *project.Handler
+	Steps   []Planned
+	// Runs is true when the plan expects the handler to run.
+	Runs bool
+}
+
+// shows reports whether the plan shows p.
+func (p Planned) shows() bool {
+	return p.Result.Status == module.Change || p.Handler != nil && p.Handler.Runs
 }
 
 func (h HostPlan) changes() bool {
-	return slices.ContainsFunc(h.Steps, func(p Planned) bool { return p.Result.Status == module.Change })
+	return slices.ContainsFunc(h.Steps, Planned.shows)
 }
 
 // hostRun is what the plan keeps about a host between its stages.
@@ -64,13 +99,17 @@ type hostRun struct {
 	// dirs are the directories that checked steps create, and the parents of
 	// the paths they create.
 	dirs map[string]bool
+	// ran are the recipe steps that ran on the host, in order.
+	ran []*project.Step
+	// notified are the handlers that the plan expects to run later.
+	notified map[string]bool
 }
 
 // MakePlan checks every step on every host, stage by stage. At the first
 // contact with a host, it reads the facts and starts the host's evaluation.
 // A host that fails stops there.
 func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
-	plan := &Plan{Failed: map[string]error{}}
+	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string][]string{}}
 	inStages := map[string]bool{}
 	runs := map[string]*hostRun{}
 	for i := range p.Pipeline.Stages {
@@ -82,9 +121,9 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 				continue
 			}
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}}
 			}
-			steps, err := check(ctx, connect, p, h, stage, runs[h.Name])
+			steps, err := check(ctx, connect, p, h, stage, runs[h.Name], plan.Pending)
 			if err != nil {
 				plan.Failed[h.Name] = err
 				continue
@@ -102,9 +141,10 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 }
 
 // check checks the steps of a stage on one host. At the first contact, it
-// reads the facts and starts the host's evaluation.
-func check(ctx context.Context, connect Connect, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun) (steps []Planned, err error) {
-	conn, err := connect(ctx, h)
+// reads the facts and the pending handlers, and starts the host's
+// evaluation.
+func check(ctx context.Context, connect Connect, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun, pending map[string][]string) (steps []Planned, err error) {
+	conn, err := connect(ctx, p.Name, h)
 	if err != nil {
 		return nil, err
 	}
@@ -121,17 +161,34 @@ func check(ctx context.Context, connect Connect, p *project.Project, h project.H
 		if hr.env, err = p.Start(h, f); err != nil {
 			return nil, err
 		}
+		if pending[h.Name], err = conn.Pending(ctx); err != nil {
+			return nil, err
+		}
+		for _, n := range pending[h.Name] {
+			hr.notified[n] = true
+		}
 	}
-	steps, err = evaluate(stage, hr.env)
+	steps, err = evaluate(stage, hr)
 	if err != nil {
 		return nil, err
 	}
 	for i, p := range steps {
+		if s := p.Handler; s != nil {
+			name := s.Handler.FullName()
+			s.Runs = hr.notified[name]
+			delete(hr.notified, name)
+			continue
+		}
 		steps[i].Result, err = conn.Check(ctx, p.Step.Module, p.Step.Args, &hr.state)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %s: %w", scope(stage, p), label(p.Step), err)
 		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
+		if steps[i].Result.Status == module.Change {
+			for _, n := range p.Notify {
+				hr.notified[n] = true
+			}
+		}
 	}
 	return steps, nil
 }
@@ -167,34 +224,90 @@ func (hr *hostRun) dropCreatedParents(m module.Module, res *module.Result) {
 }
 
 // evaluate returns the module steps of a stage for one host, with recipe
-// steps, when, and loop applied.
-func evaluate(stage *project.Stage, env *project.Env) ([]Planned, error) {
+// steps, when, and loop applied. A slot for each handler of a recipe follows
+// the recipe's steps. A handler of a recipe that ran before a step of the
+// stage notifies it gets a slot at the end of the stage.
+func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 	var out []Planned
-	for i := range stage.Steps {
-		var in *project.Step
-		todo := stage.Steps[i : i+1]
-		if stage.Steps[i].Recipe != nil {
-			in = &stage.Steps[i]
-			ok, err := in.Runs(env)
-			if err != nil {
-				return nil, err
-			}
-			if !ok {
+	late := map[*project.Handler]bool{}
+	add := func(st project.Step, in *project.Step) error {
+		steps, err := st.Eval(hr.env)
+		if err != nil {
+			return err
+		}
+		var notify []string
+		for _, h := range st.Notify {
+			// A recipe that does not run on the host never runs its handler.
+			if !hr.env.Runs(h.Recipe.Name) {
 				continue
 			}
-			todo = in.Recipe.Steps
+			notify = append(notify, h.FullName())
+			if slices.ContainsFunc(hr.ran, func(r *project.Step) bool { return r.Recipe == h.Recipe }) {
+				late[h] = true
+			}
 		}
-		for _, st := range todo {
-			steps, err := st.Eval(env)
+		for i, s := range steps {
+			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify})
+		}
+		return nil
+	}
+	for i := range stage.Steps {
+		st := &stage.Steps[i]
+		if st.Recipe == nil {
+			if err := add(*st, nil); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		ok, err := st.Runs(hr.env)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		for _, rs := range st.Recipe.Steps {
+			if err := add(rs, st); err != nil {
+				return nil, err
+			}
+		}
+		for _, h := range st.Recipe.Handlers {
+			slot, err := handlerSlot(h, hr.env, st)
 			if err != nil {
 				return nil, err
 			}
-			for _, s := range steps {
-				out = append(out, Planned{Step: s, In: in})
+			out = append(out, Planned{In: st, Handler: slot})
+		}
+		hr.ran = append(hr.ran, st)
+	}
+	for _, r := range hr.ran {
+		for _, h := range r.Recipe.Handlers {
+			if !late[h] {
+				continue
 			}
+			slot, err := handlerSlot(h, hr.env, r)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, Planned{In: r, Handler: slot})
 		}
 	}
 	return out, nil
+}
+
+// handlerSlot evaluates the steps of a handler for a host.
+func handlerSlot(h *project.Handler, env *project.Env, in *project.Step) (*Slot, error) {
+	slot := &Slot{Handler: h}
+	for _, hs := range h.Steps {
+		steps, err := hs.Eval(env)
+		if err != nil {
+			return nil, err
+		}
+		for i, s := range steps {
+			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1})
+		}
+	}
+	return slot, nil
 }
 
 // HasChanges reports whether a host that did not fail has changes.
@@ -245,7 +358,7 @@ func (p *Plan) Write(out, errOut io.Writer) {
 			fmt.Fprintf(b, "  %s\n", printable(sp.Stage.Name))
 			var in *project.Step
 			for _, p := range hp.Steps {
-				if p.Result.Status != module.Change {
+				if !p.shows() {
 					continue
 				}
 				indent := "    "
@@ -256,6 +369,10 @@ func (p *Plan) Write(out, errOut io.Writer) {
 					indent = "      "
 				}
 				in = p.In
+				if p.Handler != nil {
+					fmt.Fprintf(b, "%s! handler %s\n", indent, printable(p.Handler.Handler.FullName()))
+					continue
+				}
 				writeStep(b, indent, p.Step, p.Result)
 			}
 		}
@@ -353,9 +470,9 @@ func failures(n int) string {
 
 // Apply applies every stage of a plan on the hosts with a change in the plan.
 // A stage can undo what an earlier stage does, so a stage without a change
-// runs too. Each step is checked again right before it is applied. Failures
-// go to errOut. It returns false when a host failed, in the plan or in the
-// apply.
+// runs too. Each step is checked again right before it is applied, and the
+// handlers follow what apply changes. Failures go to errOut. It returns false
+// when a host failed, in the plan or in the apply.
 func Apply(ctx context.Context, plan *Plan, connect Connect, out, errOut io.Writer) bool {
 	failed := map[string]bool{}
 	for name := range plan.Failed {
@@ -370,24 +487,28 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, out, errOut io.Writ
 		}
 	}
 	changed := map[string]bool{}
-	states := map[string]*module.State{}
+	runs := map[string]*hostApply{}
 	for _, sp := range plan.Stages {
 		for _, hp := range sp.Hosts {
-			if !toApply[hp.Host.Name] || failed[hp.Host.Name] {
+			name := hp.Host.Name
+			if !toApply[name] || failed[name] {
 				continue
 			}
-			if states[hp.Host.Name] == nil {
-				states[hp.Host.Name] = &module.State{}
+			if runs[name] == nil {
+				runs[name] = &hostApply{host: name, out: out, notified: map[string]bool{}}
+				for _, n := range plan.Pending[name] {
+					runs[name].notified[n] = true
+				}
 			}
-			ok, err := apply(ctx, connect, sp.Stage, hp, states[hp.Host.Name], out)
+			ok, err := runs[name].apply(ctx, connect, plan.Project, sp.Stage, hp)
 			if err != nil {
-				fmt.Fprintf(errOut, "%s: %v\n", hp.Host.Name, err)
-				failed[hp.Host.Name] = true
-				delete(changed, hp.Host.Name)
+				fmt.Fprintf(errOut, "%s: %v\n", name, err)
+				failed[name] = true
+				delete(changed, name)
 				continue
 			}
 			if ok {
-				changed[hp.Host.Name] = true
+				changed[name] = true
 			}
 		}
 	}
@@ -396,27 +517,102 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, out, errOut io.Writ
 	return len(failed) == 0
 }
 
-// apply runs the steps of a stage on one host. It reports whether a
-// step changed something.
-func apply(ctx context.Context, connect Connect, stage *project.Stage, hp HostPlan, state *module.State, out io.Writer) (changed bool, err error) {
-	conn, err := connect(ctx, hp.Host)
+// hostApply is what apply keeps about a host between its stages.
+type hostApply struct {
+	host  string
+	out   io.Writer
+	state module.State
+	// notified are the handlers that wait for their slot: notified in this
+	// run, or pending on the host.
+	notified map[string]bool
+	conn     Conn
+}
+
+// apply runs the steps and the handlers of a stage on one host. It reports
+// whether a step changed something.
+func (a *hostApply) apply(ctx context.Context, connect Connect, proj string, stage *project.Stage, hp HostPlan) (changed bool, err error) {
+	a.conn, err = connect(ctx, proj, hp.Host)
 	if err != nil {
 		return false, fmt.Errorf("failed: %w", err)
 	}
 	defer func() {
-		if cerr := conn.Close(); err == nil && cerr != nil {
+		if cerr := a.conn.Close(); err == nil && cerr != nil {
 			err = fmt.Errorf("failed: %w", cerr)
 		}
 	}()
-	for _, p := range hp.Steps {
-		res, err := conn.Apply(ctx, p.Step.Module, p.Step.Args, state)
-		if err != nil {
-			return changed, fmt.Errorf("%s: failed: %s: %w", scope(stage, p), label(p.Step), err)
+	return a.steps(ctx, func(p Planned) string { return scope(stage, p) }, "", hp.Steps)
+}
+
+// steps applies steps and runs the handlers of their slots. A step runs its
+// then after its last element when an element changed something.
+func (a *hostApply) steps(ctx context.Context, scope func(Planned) string, prefix string, steps []Planned) (changed bool, err error) {
+	// changedLabel is the label of the last element of the current step that
+	// changed something, or "".
+	changedLabel := ""
+	for _, p := range steps {
+		if p.Handler != nil {
+			c, err := a.handler(ctx, p.Handler)
+			changed = changed || c
+			if err != nil {
+				return changed, err
+			}
+			continue
 		}
-		if res.Status == module.Change {
-			changed = true
-			fmt.Fprintf(out, "%s: %s: %s %s\n", hp.Host.Name, scope(stage, p), marks[res.Action], label(p.Step))
+		l := prefix + label(p.Step)
+		c, err := a.step(ctx, scope(p), l, p)
+		changed = changed || c
+		if err != nil {
+			return changed, err
+		}
+		if c {
+			changedLabel = l
+		}
+		if !p.Last {
+			continue
+		}
+		run := changedLabel != "" && p.Step.Then != ""
+		failLabel := changedLabel
+		changedLabel = ""
+		if run {
+			if err := a.conn.Command(ctx, p.Step.Then); err != nil {
+				return changed, fmt.Errorf("%s: failed: %s: then: %w", scope(p), failLabel, err)
+			}
 		}
 	}
 	return changed, nil
+}
+
+// handler runs the steps of a slot's handler when it was notified, and then
+// removes its record on the host.
+func (a *hostApply) handler(ctx context.Context, s *Slot) (bool, error) {
+	name := s.Handler.FullName()
+	if !a.notified[name] {
+		return false, nil
+	}
+	recipe := printable(s.Handler.Recipe.Name)
+	changed, err := a.steps(ctx, func(Planned) string { return recipe }, "handler "+printable(name)+": ", s.Steps)
+	if err != nil {
+		return changed, err
+	}
+	if err := a.conn.Handled(ctx, name); err != nil {
+		return changed, fmt.Errorf("%s: failed: handler %s: %w", recipe, printable(name), err)
+	}
+	delete(a.notified, name)
+	return changed, nil
+}
+
+// step applies one element of a step with the label l. It reports a change.
+func (a *hostApply) step(ctx context.Context, scope, l string, p Planned) (bool, error) {
+	res, err := a.conn.Apply(ctx, p.Step.Module, p.Step.Args, &a.state, p.Notify)
+	if err != nil {
+		return false, fmt.Errorf("%s: failed: %s: %w", scope, l, err)
+	}
+	if res.Status != module.Change {
+		return false, nil
+	}
+	fmt.Fprintf(a.out, "%s: %s: %s %s\n", a.host, scope, marks[res.Action], l)
+	for _, n := range p.Notify {
+		a.notified[n] = true
+	}
+	return true, nil
 }

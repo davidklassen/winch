@@ -1,0 +1,1 @@
+recipes/db/recipe.yaml:2:11: handlers: expected a map, got a list

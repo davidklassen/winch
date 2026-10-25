@@ -105,7 +105,9 @@ func TestLinkValidate(t *testing.T) {
 		{"dot dot after a double slash", "path: /a\ntarget: a//../b\n", `t.yaml:2:9: target: ".." after another part is not allowed; write the target without it`},
 		{"trailing dot dot", "path: /a\ntarget: a/..\n", `t.yaml:2:9: target: ".." after another part is not allowed; write the target without it`},
 		{"target and absent", "path: /a\ntarget: /b\nabsent: true\n", `t.yaml:2:9: target: absent: true takes no target`},
-		{"validate", "path: /a\ntarget: /b\nvalidate: nginx -t\n", `t.yaml:3:1: unknown key "validate"`},
+		{"validate", "path: /a\ntarget: /b\nvalidate: nginx -t\n", ""},
+		{"validate and absent", "path: /a\nabsent: true\nvalidate: nginx -t\n", `t.yaml:3:11: validate: absent: true takes no validate`},
+		{"empty validate", "path: /a\ntarget: /b\nvalidate: \"\"\n", `t.yaml:3:11: validate: must not be empty`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Link{}, tt.yaml, tt.want) })
@@ -141,7 +143,12 @@ func TestServiceValidate(t *testing.T) {
 		{"too long with suffix", "name: " + strings.Repeat("a", 250) + ".timer\nrunning: true\n", `t.yaml:1:7: name: has 256 characters; a unit name has at most 255`},
 		{"too long with unknown suffix", "name: " + strings.Repeat("a", 244) + ".bar\nrunning: true\n", `t.yaml:1:7: name: has 256 characters with .service added; a unit name has at most 255`},
 		{"nothing to do", "name: nginx\n", `t.yaml:1:1: a service step needs running or enabled`},
-		{"restarted", "name: nginx\nrestarted: true\n", `t.yaml:2:1: unknown key "restarted"`},
+		{"restarted", "name: nginx\nrestarted: true\n", ""},
+		{"reloaded", "name: nginx\nreloaded: true\n", ""},
+		{"reloaded and restarted", "name: nginx\nreloaded: true\nrestarted: true\n", `t.yaml:3:12: restarted: a service step has one of reloaded and restarted`},
+		{"reloaded with running", "name: nginx\nreloaded: true\nrunning: true\n", `t.yaml:3:10: running: reloaded takes no running`},
+		{"restarted with enabled", "name: nginx\nrestarted: true\nenabled: true\n", `t.yaml:3:10: enabled: restarted takes no enabled`},
+		{"restarted false", "name: nginx\nrestarted: false\n", `t.yaml:1:1: a service step needs running or enabled`},
 		{"yes", "name: nginx\nrunning: yes\n", `t.yaml:2:10: running: expected true or false, got the string "yes"`},
 	}
 	for _, tt := range tests {

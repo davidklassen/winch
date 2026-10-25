@@ -1,0 +1,1 @@
+recipes/unused/recipe.yaml:5:13: notify: recipe nginx has no handler "nope"

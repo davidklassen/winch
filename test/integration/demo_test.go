@@ -21,7 +21,9 @@ func TestDemo(t *testing.T) {
 		"/contact":    "webmaster@example.com",
 		"/robots.txt": "Disallow: /",
 	} {
-		if out := vm.MustRun(t, "curl -s -H 'Host: example.com' http://localhost"+path); !strings.Contains(out, want) {
+		// Without Debian's default site, a request without a Host header
+		// reaches the site.
+		if out := vm.MustRun(t, "curl -s http://localhost"+path); !strings.Contains(out, want) {
 			t.Errorf("page %s = %q, want %q in it", path, out, want)
 		}
 	}

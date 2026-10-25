@@ -29,6 +29,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) e
 			lock.Close()
 		}
 	}()
+	var pending handlers
 	for {
 		var req protocol.Request
 		if err := dec.Decode(&req); err != nil {
@@ -47,15 +48,23 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) e
 		case req.Method == "hello" && lock != nil:
 			err = errors.New("hello was already sent")
 		case req.Method == "hello":
-			lock, err = takeLock(req.Params, dir, self)
+			var project string
+			lock, project, err = takeLock(req.Params, dir, self)
+			pending = handlers{dir: filepath.Join(dir, "handlers"), project: project}
 		case lock == nil:
 			err = errors.New("the first request must be hello")
 		case req.Method == "facts":
 			result, err = facts.Read("/etc/os-release")
+		case req.Method == "pending":
+			result, err = pending.read()
+		case req.Method == "handled":
+			err = handled(req.Params, pending)
+		case req.Method == "command":
+			err = command(ctx, req.Params)
 		case req.Method == "check":
-			result, err = step(ctx, req.Params, false, note)
+			result, err = step(ctx, req.Params, false, pending, note)
 		case req.Method == "apply":
-			result, err = step(ctx, req.Params, true, note)
+			result, err = step(ctx, req.Params, true, pending, note)
 		default:
 			err = fmt.Errorf("unknown method %q", req.Method)
 		}
@@ -77,17 +86,19 @@ type lockRecord struct {
 	PID int `json:"pid"`
 }
 
-func takeLock(params json.RawMessage, dir, self string) (_ *os.File, err error) {
+// takeLock takes the lock of the state directory, and returns it with the
+// project of the session.
+func takeLock(params json.RawMessage, dir, self string) (_ *os.File, project string, err error) {
 	var h protocol.Hello
 	if err := json.Unmarshal(params, &h); err != nil {
-		return nil, fmt.Errorf("decode hello: %w", err)
+		return nil, "", fmt.Errorf("decode hello: %w", err)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create state directory: %w", err)
+		return nil, "", fmt.Errorf("create state directory: %w", err)
 	}
 	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("open lock: %w", err)
+		return nil, "", fmt.Errorf("open lock: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -103,27 +114,27 @@ func takeLock(params json.RawMessage, dir, self string) (_ *os.File, err error) 
 			// A new lock file is empty until its holder writes it. A kill with
 			// a PID below 2 signals a process group or init, not one helper.
 			if held.PID <= 1 {
-				return nil, errors.New(msg + ")")
+				return nil, "", errors.New(msg + ")")
 			}
-			return nil, fmt.Errorf("%s, helper process %d); if that run is gone, end it with: sudo kill %d", msg, held.PID, held.PID)
+			return nil, "", fmt.Errorf("%s, helper process %d); if that run is gone, end it with: sudo kill %d", msg, held.PID, held.PID)
 		}
-		return nil, fmt.Errorf("lock: %w", err)
+		return nil, "", fmt.Errorf("lock: %w", err)
 	}
 	data, err := json.Marshal(lockRecord{Hello: h, PID: os.Getpid()})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	// Write before truncate, so a reader never sees an empty file.
 	if _, err := f.WriteAt(data, 0); err != nil {
-		return nil, fmt.Errorf("write lock: %w", err)
+		return nil, "", fmt.Errorf("write lock: %w", err)
 	}
 	if err := f.Truncate(int64(len(data))); err != nil {
-		return nil, fmt.Errorf("write lock: %w", err)
+		return nil, "", fmt.Errorf("write lock: %w", err)
 	}
 	if err := deleteOthers(filepath.Join(dir, "bin"), self); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return f, nil
+	return f, h.Project, nil
 }
 
 func deleteOthers(bin, self string) error {
@@ -145,8 +156,9 @@ func deleteOthers(bin, self string) error {
 	return nil
 }
 
-// step checks a step. With apply, it then makes the changes the check found.
-func step(ctx context.Context, params json.RawMessage, apply bool, note func(string)) (protocol.StepResult, error) {
+// step checks a step. With apply, it then records the handlers that the step
+// notifies in pending, and makes the changes the check found.
+func step(ctx context.Context, params json.RawMessage, apply bool, pending handlers, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
@@ -165,5 +177,24 @@ func step(ctx context.Context, params json.RawMessage, apply bool, note func(str
 	}
 	// The plan has shown the diff already.
 	out.Old = nil
+	if err := pending.add(s.Notify); err != nil {
+		return out, err
+	}
 	return out, m.Apply(ctx, note)
+}
+
+func handled(params json.RawMessage, pending handlers) error {
+	var h protocol.Handled
+	if err := json.Unmarshal(params, &h); err != nil {
+		return fmt.Errorf("decode handled: %w", err)
+	}
+	return pending.remove(h.Name)
+}
+
+func command(ctx context.Context, params json.RawMessage) error {
+	var c protocol.Command
+	if err := json.Unmarshal(params, &c); err != nil {
+		return fmt.Errorf("decode command: %w", err)
+	}
+	return module.Shell(ctx, c.Command)
 }

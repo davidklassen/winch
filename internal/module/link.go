@@ -13,9 +13,10 @@ import (
 )
 
 type Link struct {
-	Path   string  `yaml:"path,required" json:"path"`
-	Target *string `yaml:"target" json:"target,omitempty"`
-	Absent bool    `yaml:"absent" json:"absent,omitempty"`
+	Path       string  `yaml:"path,required" json:"path"`
+	Target     *string `yaml:"target" json:"target,omitempty"`
+	Validation *string `yaml:"validate" json:"validate,omitempty"`
+	Absent     bool    `yaml:"absent" json:"absent,omitempty"`
 }
 
 func (l *Link) Main() string { return l.Path }
@@ -26,7 +27,7 @@ func (l *Link) Validate() error {
 	}
 	switch {
 	case l.Absent:
-		return absentTakesNone(arg{"target", l.Target != nil})
+		return absentTakesNone(arg{"target", l.Target != nil}, arg{"validate", l.Validation != nil})
 	case l.Target == nil:
 		return &yamlx.FieldError{Field: "target", Msg: "a link needs a target, or absent: true"}
 	case *l.Target == "":
@@ -36,7 +37,7 @@ func (l *Link) Validate() error {
 	case path.Clean(*l.Target) != *l.Target:
 		return &yamlx.FieldError{Field: "target", Msg: fmt.Sprintf("must be a clean path, such as %q", path.Clean(*l.Target))}
 	}
-	return nil
+	return checkCommand("validate", l.Validation)
 }
 
 // dotDotAfterPart reports a ".." that follows a name. The host resolves
@@ -118,9 +119,6 @@ func (l *Link) Apply(ctx context.Context, _ func(string)) error {
 	if err := sub.Symlink(*l.Target, tmp); err != nil {
 		return err
 	}
-	if err := sub.Rename(tmp, name); err != nil {
-		sub.Remove(tmp)
-		return err
-	}
-	return nil
+	defer sub.Remove(tmp)
+	return put(ctx, dir, missing, sub, tmp, name, l.Validation)
 }

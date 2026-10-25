@@ -1,0 +1,1 @@
+recipes/nginx/recipe.yaml:8:13: notify: expected a string or a list of strings, got a map

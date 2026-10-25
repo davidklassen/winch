@@ -29,6 +29,8 @@ type Response struct {
 // Hello is the first request of a session. The helper writes it into the
 // lock file, so a second session can name the run that holds the lock.
 type Hello struct {
+	// Project names the file of the pending handlers.
+	Project string    `json:"project"`
 	Run     string    `json:"run"`
 	User    string    `json:"user"`
 	Machine string    `json:"machine"`
@@ -40,6 +42,20 @@ type Step struct {
 	Module string          `json:"module"`
 	Args   json.RawMessage `json:"args"`
 	State  module.State    `json:"state"`
+	// Notify are the handlers, as <recipe>.<handler>, that the helper records
+	// before an apply changes something.
+	Notify []string `json:"notify,omitempty"`
+}
+
+// Handled is the params of handled: the handler whose record the helper
+// removes.
+type Handled struct {
+	Name string `json:"name"`
+}
+
+// Command is the params of command.
+type Command struct {
+	Command string `json:"command"`
 }
 
 // StepResult is the result of check and apply, with the new state.

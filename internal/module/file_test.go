@@ -56,6 +56,9 @@ func TestFileValidate(t *testing.T) {
 		{"group ID too large", "path: /x\ncontent: hi\ngroup: \"4294967296\"\n", `t.yaml:3:8: group: an ID must be below 4294967295`},
 		{"bad mode", "path: /x\ncontent: hi\nmode: \"644x\"\n", `t.yaml:3:7: mode: must be an octal mode such as "0644"`},
 		{"long mode", "path: /x\ncontent: hi\nmode: \"07777\"\n", `t.yaml:3:7: mode: must be an octal mode such as "0644"`},
+		{"validate", "path: /x\ncontent: hi\nvalidate: nginx -t\n", ""},
+		{"validate and absent", "path: /x\nabsent: true\nvalidate: nginx -t\n", `t.yaml:3:11: validate: absent: true takes no validate`},
+		{"empty validate", "path: /x\ncontent: hi\nvalidate: \"\"\n", `t.yaml:3:11: validate: must not be empty`},
 		{"unknown key", "path: /x\ncontnet: hi\n", `t.yaml:2:1: unknown key "contnet"; did you mean "content"?`},
 	}
 	for _, tt := range tests {

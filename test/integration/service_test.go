@@ -297,6 +297,58 @@ systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
 			Want:  module.Result{Status: module.OK},
 		},
 		{
+			Name:       "restarted restarts a running unit",
+			Setup:      `systemctl start winch-test && systemctl show -P InvocationID winch-test > /tmp/inv`,
+			Args:       &module.Service{Name: "winch-test", Restarted: true},
+			Want:       change("restart"),
+			NoConverge: true,
+			Unchanged:  `[ "$(systemctl show -P InvocationID winch-test)" = "$(cat /tmp/inv)" ]`,
+			After:      `systemctl is-active -q winch-test && [ "$(systemctl show -P InvocationID winch-test)" != "$(cat /tmp/inv)" ]`,
+		},
+		{
+			Name:       "restarted keeps a stopped unit stopped",
+			Args:       &module.Service{Name: "winch-test", Restarted: true},
+			Want:       change("restart"),
+			NoConverge: true,
+			After:      `! systemctl is-active -q winch-test`,
+		},
+		{
+			Name:       "reloaded keeps a stopped unit stopped",
+			Args:       &module.Service{Name: "winch-test", Reloaded: true},
+			Want:       change("reload"),
+			NoConverge: true,
+			After:      `! systemctl is-active -q winch-test`,
+		},
+		{
+			Name: "restarted after a unit change reloads systemd first",
+			Setup: `systemctl start winch-test
+mkdir /etc/systemd/system/winch-test.service.d
+printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service.d/limits.conf`,
+			Args:       &module.Service{Name: "winch-test", Restarted: true},
+			Want:       change("daemon-reload", "restart"),
+			NoConverge: true,
+			// The second check needs daemon-reload again.
+			After: `grep -q '^Max open files  *12345 ' /proc/$(systemctl show -P MainPID winch-test)/limits && printf '[Service]\nLimitNOFILE=12346\n' > /etc/systemd/system/winch-test.service.d/limits.conf`,
+		},
+		{
+			Name:       "reloaded restarts a unit without ExecReload",
+			Setup:      `systemctl start winch-test && systemctl show -P InvocationID winch-test > /tmp/inv`,
+			Args:       &module.Service{Name: "winch-test", Reloaded: true},
+			Want:       change("reload"),
+			NoConverge: true,
+			After:      `systemctl is-active -q winch-test && [ "$(systemctl show -P InvocationID winch-test)" != "$(cat /tmp/inv)" ]`,
+		},
+		{
+			Name: "reloaded reloads a unit with ExecReload",
+			Setup: `rm -f /tmp/reloads
+printf '[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/sh -c "echo x >> /tmp/reloads"\n' > /etc/systemd/system/winch-reload.service
+systemctl daemon-reload && systemctl start winch-reload && systemctl show -P InvocationID winch-reload > /tmp/inv`,
+			Args:       &module.Service{Name: "winch-reload", Reloaded: true},
+			Want:       change("reload"),
+			NoConverge: true,
+			After:      `[ -s /tmp/reloads ] && [ "$(systemctl show -P InvocationID winch-reload)" = "$(cat /tmp/inv)" ]`,
+		},
+		{
 			Name: "a missing unit that must not run is ok",
 			Args: &module.Service{Name: "winch-nope", Enabled: new(false), Running: new(false)},
 			Want: module.Result{Status: module.OK},

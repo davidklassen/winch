@@ -1,0 +1,27 @@
+stdout:
+web1
+  web
+    nginx
+      ! handler nginx.restart
+      ! handler nginx.reload
+    site
+      + file /var/www/index.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+      + file /var/www/about.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+    nginx
+      ! handler nginx.reload
+  apps
+    app
+      + file /etc/app.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +app
+      ! handler app.restart
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+stderr:

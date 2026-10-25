@@ -1,0 +1,8 @@
+stdout:
+web1: nginx: + file /etc/nginx/a.conf
+web1: nginx: + file /etc/nginx/b.conf
+web1: nginx: + file /etc/nginx/c.conf
+
+2 hosts: 0 changed, 1 unchanged, 1 failed
+stderr:
+web1: nginx: failed: handler nginx.restart: service nginx: systemctl: nginx failed

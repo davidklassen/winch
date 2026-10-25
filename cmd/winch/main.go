@@ -34,7 +34,9 @@ func connect() run.Connect {
 	}
 	hello.Machine, _ = os.Hostname()
 	bins := helperbin.Binaries()
-	return func(ctx context.Context, h project.Host) (run.Conn, error) {
+	return func(ctx context.Context, proj string, h project.Host) (run.Conn, error) {
+		hello := hello
+		hello.Project = proj
 		s, err := session.Open(ctx, session.Config{
 			Host:     h.Name,
 			Address:  h.Address,
