@@ -70,6 +70,11 @@ func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) 
 		return nil, err
 	}
 	var errs []error
+	if i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "hosts" }); i >= 0 {
+		for _, p := range n.Pairs[i].Value.Pairs {
+			errs = append(errs, numberName(p.KeyValue, p.Key, p.KeyPos))
+		}
+	}
 	hostNames := map[string]bool{}
 	var names []string
 	for _, h := range inv.Hosts {
@@ -139,6 +144,16 @@ func (l *loader) values(n *yamlx.Node) ([]source, []error) {
 	return out, errs
 }
 
+// numberName returns the load error for a host name that YAML reads as a
+// number, such as 1234.
+func numberName(v any, text string, pos yamlx.Pos) error {
+	switch v.(type) {
+	case int64, float64:
+		return yamlx.Errorf(pos, "host name %s reads as a number; quote it: %q", text, text)
+	}
+	return nil
+}
+
 func members(g *Group, hostNames map[string]bool, names []string) ([]string, error) {
 	if g.HostsNode == nil || g.HostsNode.Kind == yamlx.Null {
 		return nil, nil
@@ -150,6 +165,10 @@ func members(g *Group, hostNames map[string]bool, names []string) ([]string, err
 	var errs []error
 	for _, item := range g.HostsNode.Items {
 		name, ok := item.Value.(string)
+		if err := numberName(item.Value, item.Text, item.Pos); err != nil {
+			errs = append(errs, err)
+			continue
+		}
 		switch {
 		case !ok || item.Tag != "":
 			errs = append(errs, yamlx.Errorf(item.Pos, "hosts: expected a host name, got %s", yamlx.Describe(item)))

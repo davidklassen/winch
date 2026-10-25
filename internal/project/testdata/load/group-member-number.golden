@@ -1,0 +1,3 @@
+inventories/test.yaml:6:13: host name 1234 reads as a number; quote it: "1234"
+inventories/test.yaml:6:19: host name 0x1F reads as a number; quote it: "0x1F"
+inventories/test.yaml:6:25: host name 1.5 reads as a number; quote it: "1.5"

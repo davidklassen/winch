@@ -40,9 +40,12 @@ type Node struct {
 }
 
 type Pair struct {
-	Key    string
-	KeyPos Pos
-	Value  *Node
+	Key string
+	// KeyValue is the key resolved as a scalar value, so a plain 1234 is an
+	// int64 and a quoted "1234" is a string.
+	KeyValue any
+	KeyPos   Pos
+	Value    *Node
 }
 
 // Parse reads one YAML document. An empty file is a Null node.
@@ -156,7 +159,8 @@ func (c *converter) convert(n *yaml.Node) *Node {
 				continue
 			}
 			first[k.Value] = c.pos(k)
-			out.Pairs = append(out.Pairs, Pair{Key: k.Value, KeyPos: c.pos(k), Value: c.convert(v)})
+			_, kv := scalar(k)
+			out.Pairs = append(out.Pairs, Pair{Key: k.Value, KeyValue: kv, KeyPos: c.pos(k), Value: c.convert(v)})
 		}
 	case yaml.SequenceNode:
 		out.Kind = List

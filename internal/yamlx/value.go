@@ -72,7 +72,7 @@ func FromValue(v any, pos Pos) (*Node, error) {
 			if err != nil {
 				return nil, err
 			}
-			n.Pairs = append(n.Pairs, Pair{Key: k.String(), KeyPos: pos, Value: item})
+			n.Pairs = append(n.Pairs, Pair{Key: k.String(), KeyValue: k.String(), KeyPos: pos, Value: item})
 		}
 	case reflect.Pointer, reflect.Interface:
 		if rv.IsNil() {

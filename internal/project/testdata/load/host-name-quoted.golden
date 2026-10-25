@@ -1,0 +1,8 @@
+project acme, inventory inventories/test.yaml
+host 1234 address=1234 user=
+host web2 address=web2 user=
+pipeline site
+stage base hosts=all targets=1234,web2
+  file {"path":"/etc/motd"} data="hi" at pipelines/site.yaml:5:9
+stage one hosts=web2 targets=web2
+  file {"path":"/etc/issue","absent":true} at pipelines/site.yaml:11:9
