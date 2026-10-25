@@ -336,8 +336,8 @@ func TestPendingThen(t *testing.T) {
 		args, _ := json.Marshal(module.File{Path: p, Absent: true})
 		return args
 	}
-	postmap := protocol.Then{Recipe: "postfix", Command: "postmap /etc/postfix/virtual"}
-	reload := protocol.Then{Stage: "postfix", Command: "systemctl daemon-reload\necho 'a b'"}
+	postmap := protocol.Then{Recipe: "postfix", SHA256: "1f"}
+	reload := protocol.Then{Stage: "postfix", SHA256: "2f"}
 
 	if r := c.call(t, "check", protocol.Step{Module: "file", Args: remove("a"), Then: &postmap}); r.Error != "" {
 		t.Fatal(r.Error)
@@ -367,24 +367,32 @@ func TestPendingThen(t *testing.T) {
 	}
 
 	// A failed command keeps its record; a command that succeeds removes it.
-	failing := protocol.Then{Recipe: "postfix", Command: "false"}
-	done := protocol.Then{Recipe: "postfix", Command: "true\necho '<a &b>' >/dev/null"}
+	failing := protocol.Then{Recipe: "postfix", SHA256: "3f"}
+	done := protocol.Then{Recipe: "postfix", SHA256: "4f"}
 	for _, th := range []protocol.Then{failing, done} {
 		if r := c.call(t, "apply", protocol.Step{Module: "file", Args: remove("e"), Then: &th}); r.Error != "" {
 			t.Fatal(r.Error)
 		}
 	}
-	if r := c.call(t, "command", failing); r.Error == "" {
+	if r := c.call(t, "command", protocol.Command{Command: "false", Then: failing}); r.Error == "" {
 		t.Fatal("command false succeeded")
 	}
-	if r := c.call(t, "command", done); r.Error != "" {
+	if r := c.call(t, "command", protocol.Command{Command: "true\necho '<a &b>' >/dev/null", Then: done}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	if got, want := pendingAll(t, c).Then, []protocol.Then{postmap, reload, failing}; !slices.Equal(got, want) {
 		t.Errorf("then records after the commands = %v, want %v", got, want)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "then", "acme")); err != nil {
-		t.Errorf("then/acme: %v", err)
+	b, err := os.ReadFile(filepath.Join(dir, "then", "acme"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"recipe":"postfix","sha256":"1f"}
+{"stage":"postfix","sha256":"2f"}
+{"recipe":"postfix","sha256":"3f"}
+`
+	if string(b) != want {
+		t.Errorf("then/acme = %q, want %q", b, want)
 	}
 }
 
@@ -392,10 +400,10 @@ func TestPendingThen(t *testing.T) {
 func TestCommand(t *testing.T) {
 	c := start(t, t.TempDir(), "")
 	c.call(t, "hello", hello("r1"))
-	if r := c.call(t, "command", protocol.Then{Command: "true"}); r.Error != "" {
+	if r := c.call(t, "command", protocol.Command{Command: "true"}); r.Error != "" {
 		t.Errorf("true: %s", r.Error)
 	}
-	r := c.call(t, "command", protocol.Then{Command: "echo broken; exit 3"})
+	r := c.call(t, "command", protocol.Command{Command: "echo broken; exit 3"})
 	if !strings.Contains(r.Error, "exit status 3") || !strings.Contains(r.Error, "broken") {
 		t.Errorf("error = %q, want the exit status and the output", r.Error)
 	}

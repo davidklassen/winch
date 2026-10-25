@@ -265,8 +265,8 @@ func (s *Session) Handled(ctx context.Context, handler string) error {
 
 // Command runs the command of a then as root on the host, and then removes
 // its record.
-func (s *Session) Command(ctx context.Context, then protocol.Then) error {
-	return s.call("command", then, nil)
+func (s *Session) Command(ctx context.Context, command string, then protocol.Then) error {
+	return s.call("command", protocol.Command{Command: command, Then: then}, nil)
 }
 
 func (s *Session) step(method, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {

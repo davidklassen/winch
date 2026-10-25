@@ -368,12 +368,12 @@ func (c *Conn) Handled(ctx context.Context, handler string) error {
 	return nil
 }
 
-func (c *Conn) Command(ctx context.Context, then protocol.Then) error {
+func (c *Conn) Command(ctx context.Context, command string, then protocol.Then) error {
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
-	c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "command "+then.Command)
-	if c.hosts.failCmd[c.host+" "+then.Command] {
-		return fmt.Errorf("%s: exit status 1", then.Command)
+	c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "command "+command)
+	if c.hosts.failCmd[c.host+" "+command] {
+		return fmt.Errorf("%s: exit status 1", command)
 	}
 	c.hosts.thens[c.host] = slices.DeleteFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return t == then })
 	return nil

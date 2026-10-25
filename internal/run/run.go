@@ -4,6 +4,8 @@ package run
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"path"
@@ -29,7 +31,7 @@ type Conn interface {
 	// Handled removes the record of a handler that succeeded.
 	Handled(ctx context.Context, handler string) error
 	// Command runs the command of a then, and then removes its record.
-	Command(ctx context.Context, then protocol.Then) error
+	Command(ctx context.Context, command string, then protocol.Then) error
 	Close() error
 }
 
@@ -352,10 +354,12 @@ func thenRecord(stage *project.Stage, in *project.Step, st project.Step) *protoc
 	if st.Then == "" {
 		return nil
 	}
+	b := sha256.Sum256([]byte(st.Then))
+	sum := hex.EncodeToString(b[:])
 	if in != nil {
-		return &protocol.Then{Recipe: in.Recipe.Name, Command: st.Then}
+		return &protocol.Then{Recipe: in.Recipe.Name, SHA256: sum}
 	}
-	return &protocol.Then{Stage: stage.Name, Command: st.Then}
+	return &protocol.Then{Stage: stage.Name, SHA256: sum}
 }
 
 // label is the text of a step in the plan and the logs.
@@ -616,11 +620,11 @@ func (a *hostApply) steps(ctx context.Context, scope func(Planned) string, prefi
 		if !run {
 			continue
 		}
-		if err := a.conn.Command(ctx, *t); err != nil {
+		if err := a.conn.Command(ctx, p.Step.Then, *t); err != nil {
 			return changed, fmt.Errorf("%s: failed: %s: then: %w", scope(p), failLabel, err)
 		}
 		if a.thens[*t] {
-			fmt.Fprintf(a.out, "%s: %s: ! then: %s\n", a.host, scope(p), printable(t.Command))
+			fmt.Fprintf(a.out, "%s: %s: ! then: %s\n", a.host, scope(p), printable(p.Step.Then))
 			delete(a.thens, *t)
 			changed = true
 		}

@@ -183,6 +183,9 @@ func TestHandlers(t *testing.T) {
 		if r.Code != 1 || !strings.Contains(r.Stderr, "then: "+then+": exit status 3") {
 			t.Fatalf("apply: exit %d, want the then error\n%s", r.Code, r.Stderr)
 		}
+		if out := vm.MustRun(t, "cat /var/lib/winch/then/hdemo"); out == "" || strings.Contains(out, "then-failed") {
+			t.Errorf("then record = %q, want a record without the command", out)
+		}
 		r = lab.Winch(t, dir, append([]string{"plan", "site"}, set...)...)
 		if r.Code != 0 || !strings.Contains(r.Stdout, "! then: "+then) || strings.Contains(r.Stdout, "file") {
 			t.Fatalf("plan after the failure: exit %d, want the pending then\n%s", r.Code, r.Stdout)

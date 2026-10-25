@@ -221,14 +221,14 @@ func handled(params json.RawMessage, handlers records) error {
 
 // command runs the command of a then, and then removes its record.
 func command(ctx context.Context, params json.RawMessage, thens records) error {
-	var t protocol.Then
-	if err := json.Unmarshal(params, &t); err != nil {
+	var c protocol.Command
+	if err := json.Unmarshal(params, &c); err != nil {
 		return fmt.Errorf("decode command: %w", err)
 	}
-	if err := module.Shell(ctx, t.Command); err != nil {
+	if err := module.Shell(ctx, c.Command); err != nil {
 		return err
 	}
-	line, err := json.Marshal(t)
+	line, err := json.Marshal(c.Then)
 	if err != nil {
 		return err
 	}

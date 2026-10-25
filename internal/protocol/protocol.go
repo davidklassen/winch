@@ -50,13 +50,19 @@ type Step struct {
 	Then *Then `json:"then,omitempty"`
 }
 
-// Then is a record of a then: the command, under the recipe, or the stage for
-// a step of a stage. It is also the params of command, which runs the command
-// and then removes the record.
+// Then is a record of a then: the hex SHA-256 of the command text, under the
+// recipe, or the stage for a step of a stage.
 type Then struct {
-	Recipe  string `json:"recipe,omitempty"`
-	Stage   string `json:"stage,omitempty"`
+	Recipe string `json:"recipe,omitempty"`
+	Stage  string `json:"stage,omitempty"`
+	SHA256 string `json:"sha256"`
+}
+
+// Command is the params of command, which runs the command and then removes
+// the record of its then.
+type Command struct {
 	Command string `json:"command"`
+	Then    Then   `json:"then"`
 }
 
 // Pending is the result of pending: the records of the project.

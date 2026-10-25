@@ -3,6 +3,8 @@ package run_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -15,6 +17,12 @@ import (
 	"github.com/davidklassen/winch/internal/run"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
+
+// sum is the record key of a then command.
+func sum(command string) string {
+	b := sha256.Sum256([]byte(command))
+	return hex.EncodeToString(b[:])
+}
 
 var handlerFiles = map[string]string{
 	"winch.yaml": "name: acme\ninventory: inventories/test.yaml\n",
@@ -327,7 +335,7 @@ func TestThen(t *testing.T) {
 			t.Fatalf("apply succeeded with a failing then:\n%s", got)
 		}
 		// Both elements change, and one record stays.
-		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Command: "reindex"}}; !slices.Equal(got, want) {
+		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", SHA256: sum("reindex")}}; !slices.Equal(got, want) {
 			t.Fatalf("then records = %v, want %v", got, want)
 		}
 		h.Fix("web1 reindex")
@@ -358,7 +366,7 @@ func TestThen(t *testing.T) {
 		if slices.Contains(h.Log["web1"], "command reindex") {
 			t.Error("then ran after a failed element")
 		}
-		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Command: "reindex"}}; !slices.Equal(got, want) {
+		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", SHA256: sum("reindex")}}; !slices.Equal(got, want) {
 			t.Errorf("then records = %v, want %v", got, want)
 		}
 		got := h.PendingOf("web1")
@@ -447,14 +455,14 @@ func TestPendingThen(t *testing.T) {
 	present(h, "web1", "web2")
 	h.SetFile("web1", "/etc/motd", "hi\n")
 	h.SetFile("web2", "/etc/motd", "hi\n")
-	h.SetThen("web1", protocol.Then{Recipe: "site", Command: "reindex"}, protocol.Then{Stage: "apps", Command: "newaliases"})
+	h.SetThen("web1", protocol.Then{Recipe: "site", SHA256: sum("reindex")}, protocol.Then{Stage: "apps", SHA256: sum("newaliases")})
 	// No step matches these: another recipe, the stage of a recipe, another
 	// command, a recipe named like the stage.
 	other := []protocol.Then{
-		{Recipe: "nginx", Command: "reindex"},
-		{Stage: "web", Command: "reindex"},
-		{Recipe: "site", Command: "other"},
-		{Recipe: "apps", Command: "newaliases"},
+		{Recipe: "nginx", SHA256: sum("reindex")},
+		{Stage: "web", SHA256: sum("reindex")},
+		{Recipe: "site", SHA256: sum("other")},
+		{Recipe: "apps", SHA256: sum("newaliases")},
 	}
 	h.SetThen("web2", other...)
 	plan := run.MakePlan(context.Background(), p, h.Connector())
@@ -490,7 +498,7 @@ func TestPendingThenOfAChangedStep(t *testing.T) {
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetFile("web1", "/var/www/about.html", "old\n")
-	h.SetThen("web1", protocol.Then{Recipe: "site", Command: "reindex"})
+	h.SetThen("web1", protocol.Then{Recipe: "site", SHA256: sum("reindex")})
 	p := handlerProject(t)
 	plan := run.MakePlan(context.Background(), p, h.Connector())
 	var out, errOut bytes.Buffer
@@ -521,7 +529,7 @@ func TestPendingThenOfAHandlerStep(t *testing.T) {
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetPending("web1", "app.restart")
-	h.SetThen("web1", protocol.Then{Recipe: "app", Command: "app-check"})
+	h.SetThen("web1", protocol.Then{Recipe: "app", SHA256: sum("app-check")})
 	if ok, got := applyAll(t, p, h); !ok {
 		t.Fatal(string(got))
 	}
