@@ -116,6 +116,32 @@ func TestWinch(t *testing.T) {
 		}
 	})
 
+	t.Run("plan and apply name a followed link", func(t *testing.T) {
+		vm.MustRun(t, "rm -rf /srv/linked && mkdir -p /srv/linked/t && chmod 700 /srv/linked/t && ln -s t /srv/linked/l")
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - dir:
+          path: /srv/linked/l
+`,
+		})
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "~ dir /srv/linked/l (link to t)\n") {
+			t.Fatalf("plan: exit %d, stdout %q", r.Code, r.Stdout)
+		}
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "winch: base: ~ dir /srv/linked/l (link to t)\n") {
+			t.Fatalf("apply: exit %d, stdout %q", r.Code, r.Stdout)
+		}
+		if out := vm.MustRun(t, "readlink /srv/linked/l; stat -c %a /srv/linked/t"); out != "t\n755\n" {
+			t.Errorf("after apply: %q", out)
+		}
+	})
+
 	t.Run("a second session fails on the lock", func(t *testing.T) {
 		vm.Session(t)
 		r := lab.Winch(t, dir, "plan", "site")

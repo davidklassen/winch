@@ -458,12 +458,16 @@ func recipeLabel(st *project.Step) string {
 	return secret.Printable(l)
 }
 
-func writeStep(w io.Writer, indent string, st project.Step, res module.Result) {
-	l := label(st)
-	if res.Link != "" {
-		l += " (link to " + secret.Printable(res.Link) + ")"
+// linkNote names the symbolic link that the step of res follows.
+func linkNote(res module.Result) string {
+	if res.Link == "" {
+		return ""
 	}
-	fmt.Fprintf(w, "%s%s %s\n", indent, marks[res.Action], l)
+	return " (link to " + secret.Printable(res.Link) + ")"
+}
+
+func writeStep(w io.Writer, indent string, st project.Step, res module.Result) {
+	fmt.Fprintf(w, "%s%s %s%s\n", indent, marks[res.Action], label(st), linkNote(res))
 	for _, c := range res.Changes {
 		fmt.Fprintf(w, "%s    %s\n", indent, secret.Printable(c))
 	}
@@ -660,7 +664,7 @@ func (a *hostApply) step(ctx context.Context, scope, l string, p Planned) (bool,
 	if res.Status != module.Change {
 		return false, nil
 	}
-	fmt.Fprintf(a.out, "%s: %s: %s %s\n", a.host, scope, marks[res.Action], l)
+	fmt.Fprintf(a.out, "%s: %s: %s %s%s\n", a.host, scope, marks[res.Action], l, linkNote(res))
 	for _, n := range p.Notify {
 		a.notified[n] = true
 	}

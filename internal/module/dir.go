@@ -1,6 +1,7 @@
 package module
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -194,6 +195,12 @@ func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
 // openLinked opens the directory behind the symbolic link at p.
 func openLinked(p string) (*os.Root, error) {
 	dir, missing, err := openPath(p, p)
+	if errors.Is(err, errLinkLevels) {
+		return nil, fmt.Errorf("%s is a symbolic link with %w; add replace: true to remove it", p, errLinkLevels)
+	}
+	if e, ok := errors.AsType[*noPathError](err); ok {
+		return nil, fmt.Errorf("%s is a symbolic link to %s; add replace: true to remove it", p, cmp.Or(e.kind, "a missing target"))
+	}
 	if err == nil && len(missing) > 0 {
 		dir.Close()
 		return nil, fmt.Errorf("%s does not exist", missing[0])

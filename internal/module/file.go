@@ -422,10 +422,13 @@ func kind(fi fs.FileInfo) string {
 }
 
 // noPathError is a parent of a path that is not a directory or a link to a
-// missing target, so the path cannot exist.
-type noPathError struct{ msg string }
+// missing target, so the path cannot exist. Kind is the kind of the last part,
+// when that part exists and is not a directory.
+type noPathError struct{ msg, kind string }
 
 func (e *noPathError) Error() string { return e.msg }
+
+var errLinkLevels = errors.New("too many levels of symbolic links")
 
 // openParent opens the parent directory of p. When parents are missing, it
 // opens the deepest one that exists and also returns the missing ones, from
@@ -470,7 +473,7 @@ func openPath(d, p string) (*os.Root, []string, error) {
 		fi, err := dir.Lstat(name)
 		switch {
 		case errors.Is(err, fs.ErrNotExist) && len(todo) > tail:
-			return fail(&noPathError{link + " is a symbolic link to a missing target"})
+			return fail(&noPathError{msg: link + " is a symbolic link to a missing target"})
 		case errors.Is(err, fs.ErrNotExist):
 			missing := make([]string, len(todo))
 			for i := len(missing) - 1; i >= 0; i-- {
@@ -488,7 +491,7 @@ func openPath(d, p string) (*os.Root, []string, error) {
 				return fail(fmt.Errorf("%s is a symbolic link in %s, which a user other than root can write", full, dir.Name()))
 			}
 			if links++; links > 40 {
-				return fail(fmt.Errorf("%s: too many levels of symbolic links", p))
+				return fail(fmt.Errorf("%s: %w", p, errLinkLevels))
 			}
 			target, err := dir.Readlink(name)
 			if err != nil {
@@ -506,7 +509,11 @@ func openPath(d, p string) (*os.Root, []string, error) {
 				dir = next
 			}
 		case !fi.IsDir():
-			return fail(&noPathError{fmt.Sprintf("%s is %s, not a directory", full, kind(fi))})
+			e := &noPathError{msg: fmt.Sprintf("%s is %s, not a directory", full, kind(fi))}
+			if !slices.ContainsFunc(todo[1:], func(s string) bool { return s != "" && s != "." }) {
+				e.kind = kind(fi)
+			}
+			return fail(e)
 		default:
 			next, err := openRoot(dir, name, fi)
 			if err != nil {
