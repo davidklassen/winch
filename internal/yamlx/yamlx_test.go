@@ -285,12 +285,55 @@ func TestNameOrID(t *testing.T) {
 		{"name", "owner: www-data\n", `"www-data"`},
 		{"integer", "owner: 999\n", `"999"`},
 		{"quoted integer", "owner: \"0999\"\n", `"0999"`},
-		{"negative", "owner: -1\n", `t.yaml:1:8: owner: expected a string, got the integer -1; quote the value to make it a string`},
-		{"float", "owner: 1.5\n", `t.yaml:1:8: owner: expected a string, got the number 1.5; quote the value to make it a string`},
+		{"quoted", "owner: \"999\"\n", `"999"`},
+		{"leading zero", "owner: 0999\n", `"999"`},
+		{"map", "owner: {a: b}\n", `t.yaml:1:8: owner: expected a string, got a map`},
+		{"null", "owner:\n", `t.yaml:1:7: owner: expected a string, got null`},
+		{"negative", "owner: -1\n", `t.yaml:1:8: owner: must be a name or a numeric ID, such as "www-data" or "999"`},
+		{"float", "owner: 1.5\n", `t.yaml:1:8: owner: must be a name or a numeric ID, such as "www-data" or "999"`},
+		{"hex", "owner: 0x3e7\n", `t.yaml:1:8: owner: must be a name or a numeric ID, such as "www-data" or "999"`},
+		{"octal", "owner: 0o750\n", `t.yaml:1:8: owner: must be a name or a numeric ID, such as "www-data" or "999"`},
+		{"plus sign", "owner: +999\n", `t.yaml:1:8: owner: must be a name or a numeric ID, such as "www-data" or "999"`},
+		{"boolean", "owner: true\n", `t.yaml:1:8: owner: must be a name or a numeric ID, such as "www-data" or "999"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			n, err := Parse("t.yaml", []byte(tt.yaml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var d struct {
+				Owner NameOrID `yaml:"owner"`
+			}
+			got := ""
+			if err := Decode(n, &d); err != nil {
+				got = err.Error()
+			} else {
+				got = fmt.Sprintf("%q", d.Owner)
+			}
+			if got != tt.want {
+				t.Errorf("got  %s\nwant %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Modules/file, dir, link
+func TestNameOrIDFromValue(t *testing.T) {
+	msg := `t.yaml:1:1: owner: must be a name or a numeric ID, such as "www-data" or "999"`
+	tests := []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"integer", 999, `"999"`},
+		{"negative", -1, msg},
+		{"float", 1.5, msg},
+		{"boolean", true, msg},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := FromValue(map[string]any{"owner": tt.value}, Pos{File: "t.yaml", Line: 1, Col: 1})
 			if err != nil {
 				t.Fatal(err)
 			}

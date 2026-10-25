@@ -79,7 +79,12 @@ func (d *decoder) value(n *Node, v reflect.Value, name string) {
 		}
 		return
 	}
-	if i, ok := n.Value.(int64); ok && i >= 0 && v.Type() == nameOrIDType {
+	if _, ok := n.Value.(string); v.Type() == nameOrIDType && n.Kind == Scalar && !ok {
+		i, ok := n.Value.(int64)
+		if !ok || i < 0 || n.Text != "" && !digitsRe.MatchString(n.Text) {
+			d.errorf(n.Pos, name, `must be a name or a numeric ID, such as "www-data" or "999"`)
+			return
+		}
 		v.SetString(strconv.FormatInt(i, 10))
 		return
 	}
@@ -247,5 +252,6 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 type Strings []string
 
 // NameOrID decodes from a string, or from an integer that is not negative.
-// The integer gives its decimal digits.
+// The integer gives its decimal digits. An integer from a file must be written
+// as plain digits.
 type NameOrID string

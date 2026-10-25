@@ -173,6 +173,13 @@ func TestLoad(t *testing.T) {
 				"      - service: {name: getty@tty1, running: true}\n" +
 				"      - service: {name: a@b@c, running: true}\n" +
 				"      - service: {name: nginx, running: true}\n")}},
+		{name: "owner-group-numbers", files: map[string]string{"pipelines/site.yaml": stage(
+			"      - file: {path: /a, content: a, owner: -1}\n" +
+				"      - file: {path: /b, content: a, owner: 1.5}\n" +
+				"      - dir: {path: /c, owner: 0x3e7}\n" +
+				"      - dir: {path: /d, group: 0o750}\n" +
+				"      - dir: {path: /e, owner: +999}\n" +
+				"      - dir: {path: /f, owner: 999, group: \"999\"}\n")}},
 		{name: "file-bad-mode", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: a\n          mode: 0644\n"}},
 		{name: "modules", files: map[string]string{"pipelines/site.yaml": `stages:
   - name: web

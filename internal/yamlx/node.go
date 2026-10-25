@@ -34,6 +34,8 @@ type Node struct {
 	Pos   Pos
 	// Tag is "!expr" for an expression, "!tpl" for a template, else empty.
 	Tag string
+	// Text is the source text of a scalar from a file.
+	Text string
 }
 
 type Pair struct {
@@ -126,6 +128,7 @@ func (c *converter) convert(n *yaml.Node) *Node {
 	switch n.Kind {
 	case yaml.ScalarNode:
 		out.Kind, out.Value = scalar(n)
+		out.Text = n.Value
 	case yaml.MappingNode:
 		out.Kind = Map
 		first := map[string]Pos{}
@@ -160,10 +163,11 @@ func (c *converter) convert(n *yaml.Node) *Node {
 }
 
 var (
-	decRe   = regexp.MustCompile(`^[-+]?[0-9]+$`)
-	octRe   = regexp.MustCompile(`^0o[0-7]+$`)
-	hexRe   = regexp.MustCompile(`^0x[0-9a-fA-F]+$`)
-	floatRe = regexp.MustCompile(`^[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?$`)
+	decRe    = regexp.MustCompile(`^[-+]?[0-9]+$`)
+	digitsRe = regexp.MustCompile(`^[0-9]+$`)
+	octRe    = regexp.MustCompile(`^0o[0-7]+$`)
+	hexRe    = regexp.MustCompile(`^0x[0-9a-fA-F]+$`)
+	floatRe  = regexp.MustCompile(`^[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?$`)
 )
 
 // scalar resolves a scalar by the YAML 1.2 core schema, with one change: only
