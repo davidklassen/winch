@@ -157,6 +157,14 @@ func TestLoad(t *testing.T) {
 		{name: "file-content-and-absent", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: a\n          absent: true\n"}},
 		{name: "file-relative-path", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: x\n          content: a\n"}},
 		{name: "link-dot-dot-target", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - link: {path: /srv/x, target: a/../b}\n      - link: {path: /srv/y, target: ../a/../b}\n      - link: {path: /srv/z, target: ../lib/x}\n"}},
+		{name: "service-unit-names", files: map[string]string{"pipelines/site.yaml": stage(
+			"      - service: {name: \"nginx@\", running: true}\n" +
+				"      - service: {name: \"@foo\", running: true}\n" +
+				"      - service: {name: getty@.service, enabled: true}\n" +
+				"      - service: {name: " + strings.Repeat("a", 248) + ", running: true}\n" +
+				"      - service: {name: getty@tty1, running: true}\n" +
+				"      - service: {name: a@b@c, running: true}\n" +
+				"      - service: {name: nginx, running: true}\n")}},
 		{name: "file-bad-mode", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: a\n          mode: 0644\n"}},
 		{name: "modules", files: map[string]string{"pipelines/site.yaml": `stages:
   - name: web

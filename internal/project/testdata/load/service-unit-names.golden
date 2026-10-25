@@ -1,0 +1,4 @@
+pipelines/site.yaml:5:25: name: "nginx@" needs an instance name after "@"
+pipelines/site.yaml:6:25: name: "@foo" needs a name before "@"
+pipelines/site.yaml:7:25: name: "getty@.service" needs an instance name after "@"
+pipelines/site.yaml:8:25: name: has 256 characters with .service added; a unit name has at most 255

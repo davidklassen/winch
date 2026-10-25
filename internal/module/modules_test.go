@@ -1,6 +1,7 @@
 package module
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -127,6 +128,18 @@ func TestServiceValidate(t *testing.T) {
 		{"shell characters", "name: \"a b;$(id)\"\nrunning: true\n", `t.yaml:1:7: name: "a b;$(id)" is not a unit name`},
 		{"escaped instance", "name: \"winch@a\\\\x20b\"\nrunning: true\n", ""},
 		{"instance", "name: getty@tty1.service\nrunning: true\n", ""},
+		{"instance without suffix", "name: getty@tty1\nrunning: true\n", ""},
+		{"two ats", "name: a@b@c\nrunning: true\n", ""},
+		{"no instance", "name: nginx@\nrunning: true\n", `t.yaml:1:7: name: "nginx@" needs an instance name after "@"`},
+		{"template", "name: getty@.service\nenabled: true\n", `t.yaml:1:7: name: "getty@.service" needs an instance name after "@"`},
+		{"nothing before at", "name: \"@foo\"\nrunning: true\n", `t.yaml:1:7: name: "@foo" needs a name before "@"`},
+		{"only a suffix", "name: .timer\nrunning: true\n", `t.yaml:1:7: name: ".timer" needs a name before the suffix`},
+		{"unknown suffix", "name: \"a@.bar\"\nrunning: true\n", ""},
+		{"longest", "name: " + strings.Repeat("a", 247) + "\nrunning: true\n", ""},
+		{"too long", "name: " + strings.Repeat("a", 248) + "\nrunning: true\n", `t.yaml:1:7: name: has 256 characters with .service added; a unit name has at most 255`},
+		{"longest with suffix", "name: " + strings.Repeat("a", 249) + ".timer\nrunning: true\n", ""},
+		{"too long with suffix", "name: " + strings.Repeat("a", 250) + ".timer\nrunning: true\n", `t.yaml:1:7: name: has 256 characters; a unit name has at most 255`},
+		{"too long with unknown suffix", "name: " + strings.Repeat("a", 244) + ".bar\nrunning: true\n", `t.yaml:1:7: name: has 256 characters with .service added; a unit name has at most 255`},
 		{"nothing to do", "name: nginx\n", `t.yaml:1:1: a service step needs running or enabled`},
 		{"restarted", "name: nginx\nrestarted: true\n", `t.yaml:2:1: unknown key "restarted"`},
 		{"yes", "name: nginx\nrunning: yes\n", `t.yaml:2:10: running: expected true or false, got the string "yes"`},

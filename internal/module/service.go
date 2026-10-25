@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -26,10 +27,29 @@ func (s *Service) Main() string { return s.Name }
 
 var unitRe = regexp.MustCompile(`^[A-Za-z0-9:_.\\@-]+$`)
 
+var unitTypes = []string{"service", "socket", "device", "mount", "automount", "swap", "target", "path", "timer", "slice", "scope"}
+
 func (s *Service) Validate() error {
+	// systemctl adds .service to a name without a unit-type suffix.
+	stem, suffix := s.Name, ".service"
+	if i := strings.LastIndexByte(s.Name, '.'); i >= 0 && slices.Contains(unitTypes, s.Name[i+1:]) {
+		stem, suffix = s.Name[:i], ""
+	}
+	prefix, instance, at := strings.Cut(stem, "@")
+	n := len(s.Name) + len(suffix)
 	switch {
 	case !unitRe.MatchString(s.Name):
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q is not a unit name", s.Name)}
+	case at && prefix == "":
+		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs a name before \"@\"", s.Name)}
+	case at && instance == "":
+		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs an instance name after \"@\"", s.Name)}
+	case stem == "":
+		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs a name before the suffix", s.Name)}
+	case n > 255 && suffix != "":
+		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters with .service added; a unit name has at most 255", n)}
+	case n > 255:
+		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters; a unit name has at most 255", n)}
 	case s.Running == nil && s.Enabled == nil:
 		return &yamlx.FieldError{Msg: "a service step needs running or enabled"}
 	}
