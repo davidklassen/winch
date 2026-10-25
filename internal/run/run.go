@@ -242,7 +242,7 @@ func (p *Plan) Write(out, errOut io.Writer) {
 				b = &strings.Builder{}
 				bodies[hp.Host.Name] = b
 			}
-			fmt.Fprintf(b, "  %s\n", sp.Stage.Name)
+			fmt.Fprintf(b, "  %s\n", printable(sp.Stage.Name))
 			var in *project.Step
 			for _, p := range hp.Steps {
 				if p.Result.Status != module.Change {

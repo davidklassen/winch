@@ -559,6 +559,28 @@ func TestPlanVars(t *testing.T) {
 }
 
 // spec: CLI/Output
+func TestPlanStageNameControlCharacters(t *testing.T) {
+	h := fakehost.New()
+	p := loadFiles(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: "x\e]0;owned\a"
+    hosts: all
+    steps:
+      - file:
+          path: /etc/motd
+          content: "x\n"
+`,
+	})
+	plan := run.MakePlan(context.Background(), p, h.Connector())
+	var out, errOut bytes.Buffer
+	plan.Write(&out, &errOut)
+	golden.Assert(t, filepath.Join("testdata", "plan", "stage-name-control-characters.golden"),
+		[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
+}
+
+// spec: CLI/Output
 func TestApplyStageNameControlCharacters(t *testing.T) {
 	h := fakehost.New()
 	h.FailApply("web2")
