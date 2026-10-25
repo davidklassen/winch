@@ -65,11 +65,7 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 		if err != nil {
 			return Result{}, err
 		}
-		res := Result{Status: Change, Action: Remove}
-		if t.files+t.dirs > 0 {
-			res.Changes = []string{"remove its content"}
-		}
-		return res, nil
+		return Result{Status: Change, Action: Remove, Changes: []string{"remove its content: " + t.counts()}}, nil
 	}
 	owner, group, mode, err := attrs(d.Owner, d.Group, d.Mode, "0755")
 	if err != nil {

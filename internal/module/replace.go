@@ -24,7 +24,11 @@ func (t tree) check(p string, replace bool) (string, error) {
 	if !t.dir {
 		return "remove file " + p, nil
 	}
-	return fmt.Sprintf("remove directory %s: %s, %s", p, count(t.files, "file", "files"), count(t.dirs, "directory", "directories")), nil
+	return "remove directory " + p + ": " + t.counts(), nil
+}
+
+func (t tree) counts() string {
+	return count(t.files, "file", "files") + ", " + count(t.dirs, "directory", "directories")
 }
 
 func (t tree) String() string {
