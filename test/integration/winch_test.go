@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -140,8 +141,7 @@ func TestWinch(t *testing.T) {
 			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
 			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - pkg:\n          name: hello\n",
 		})
-		// The fcntl lock of apt, held for 10 s. /root/locked gets the PID.
-		pid := strings.TrimSpace(vm.MustRun(t, quietApt+` && (python3 -c 'import fcntl, os, time; f = open("/var/lib/dpkg/lock-frontend", "w"); fcntl.lockf(f, fcntl.LOCK_EX); open("/root/locked.tmp", "w").write(str(os.getpid())); os.rename("/root/locked.tmp", "/root/locked"); time.sleep(10)' >/dev/null 2>&1 &) && `+
+		pid := strings.TrimSpace(vm.MustRun(t, quietApt+" && (python3 -c '"+lockHolder("/var/lib/dpkg/lock-frontend", 10)+"' >/dev/null 2>&1 &) && "+
 			"timeout 10 sh -c 'until [ -e /root/locked ]; do sleep 0.1; done' && cat /root/locked && rm /root/locked"))
 		r := lab.Winch(t, dir, "plan", "site")
 		if r.Code != 0 || !strings.Contains(r.Stdout, "+ pkg hello") {
@@ -153,9 +153,7 @@ func TestWinch(t *testing.T) {
 
 		// The refresh of apply starts the lock holder, after the check of the
 		// step and before the install.
-		vm.MustRun(t, `rm -f /root/locked && printf '#!/bin/sh\n(python3 -c '"'"'`+
-			`import fcntl, os, time; f = open("/var/lib/dpkg/lock-frontend", "w"); fcntl.lockf(f, fcntl.LOCK_EX); open("/root/locked.tmp", "w").write(str(os.getpid())); os.rename("/root/locked.tmp", "/root/locked"); time.sleep(10)`+
-			`'"'"' >/dev/null 2>&1 &)\ntimeout 10 sh -c "until [ -e /root/locked ]; do sleep 0.1; done"\n' > /root/hold-lock && chmod 755 /root/hold-lock && `+
+		vm.MustRun(t, `rm -f /root/locked && printf '#!/bin/sh\n(python3 -c '"'"'`+lockHolder("/var/lib/dpkg/lock-frontend", 10)+`'"'"' >/dev/null 2>&1 &)\ntimeout 10 sh -c "until [ -e /root/locked ]; do sleep 0.1; done"\n' > /root/hold-lock && chmod 755 /root/hold-lock && `+
 			`echo 'APT::Update::Post-Invoke {"/root/hold-lock";};' > /etc/apt/apt.conf.d/99hold`)
 		defer vm.MustRun(t, "rm -f /etc/apt/apt.conf.d/99hold /root/hold-lock /root/locked")
 		r = lab.Winch(t, dir, "apply", "site", "--yes")
@@ -165,6 +163,28 @@ func TestWinch(t *testing.T) {
 		pid = strings.TrimSpace(vm.MustRun(t, "cat /root/locked"))
 		if n := strings.Count(r.Stderr, "winch: waiting for another apt run (pid "+pid+")\n"); n != 1 {
 			t.Errorf("apply stderr has the wait message for pid %s %d times, want once", pid, n)
+		}
+	})
+
+	t.Run("the refresh waits for another apt run that holds the index lock", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
+			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - pkg:\n          name: sl\n",
+		})
+		// Nothing before the refresh waits for the index lock, so the hold
+		// covers the connect and the check.
+		pid := strings.TrimSpace(vm.MustRun(t, quietApt+" && (python3 -c '"+lockHolder("/var/lib/apt/lists/lock", 30)+"' >/dev/null 2>&1 &) && "+
+			"timeout 10 sh -c 'until [ -e /root/locked ]; do sleep 0.1; done' && cat /root/locked && rm /root/locked"))
+		r := lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 {
+			t.Fatalf("apply: exit %d, stderr %q", r.Code, r.Stderr)
+		}
+		if n := strings.Count(r.Stderr, "winch: waiting for another apt run (pid "+pid+")\n"); n != 1 {
+			t.Errorf("stderr has the wait message for pid %s %d times, want once", pid, n)
+		}
+		if out, err := vm.Run(t.Context(), "dpkg-query -W -f='${db:Status-Abbrev}' sl"); err != nil || out != "ii " {
+			t.Errorf("sl is %q, %v; want installed", out, err)
 		}
 	})
 
@@ -213,4 +233,10 @@ func TestWinch(t *testing.T) {
 			t.Errorf("no ssh master runs: %v: %s", err, out)
 		}
 	})
+}
+
+// lockHolder is a Python program that holds the fcntl lock of path. It writes
+// its PID to /root/locked when it has the lock.
+func lockHolder(path string, seconds int) string {
+	return `import fcntl, os, time; f = open("` + path + `", "w"); fcntl.lockf(f, fcntl.LOCK_EX); open("/root/locked.tmp", "w").write(str(os.getpid())); os.rename("/root/locked.tmp", "/root/locked"); time.sleep(` + strconv.Itoa(seconds) + `)`
 }

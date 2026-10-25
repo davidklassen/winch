@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -145,7 +146,7 @@ func (p *Pkg) dependents(ctx context.Context) ([]string, error) {
 
 func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 	if len(p.auto) > 0 {
-		if err := waitDpkg(ctx, note); err != nil {
+		if err := waitLocks(ctx, dpkgLocks, note); err != nil {
 			return err
 		}
 		if _, err := run(ctx, nil, "apt-mark", append([]string{"manual", "-o", aptLock}, p.auto...)...); err != nil {
@@ -156,6 +157,10 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 		return nil
 	}
 	if p.refresh {
+		// apt-get update does not wait for the index lock.
+		if err := waitLocks(ctx, []string{indexLock}, note); err != nil {
+			return err
+		}
 		if _, err := run(ctx, aptEnv, "apt-get", "update", "-q", "--error-on=any", "-o", aptLock); err != nil {
 			return err
 		}
@@ -173,17 +178,17 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 			args = append(args, "--no-install-recommends")
 		}
 	}
-	if err := waitDpkg(ctx, note); err != nil {
+	if err := waitLocks(ctx, dpkgLocks, note); err != nil {
 		return err
 	}
 	_, err := run(ctx, aptEnv, "apt-get", append(args, p.todo...)...)
 	return err
 }
 
-// waitDpkg waits until no other apt or dpkg run holds the locks. apt waits
-// for them too, but prints nothing while it waits.
-func waitDpkg(ctx context.Context, note func(string)) error {
-	unlock, err := lockFiles(ctx, dpkgLocks, note)
+// waitLocks waits until no other apt or dpkg run holds the locks. apt waits
+// for the dpkg locks too, but prints nothing while it waits.
+func waitLocks(ctx context.Context, names []string, note func(string)) error {
+	unlock, err := lockFiles(ctx, names, note)
 	if err != nil {
 		return err
 	}
@@ -206,6 +211,9 @@ type dpkgPkg struct {
 
 // dpkgLocks are the fcntl locks that apt and dpkg use.
 var dpkgLocks = []string{"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock"}
+
+// indexLock is the fcntl lock of the package index.
+const indexLock = "/var/lib/apt/lists/lock"
 
 // readDpkg holds the locks of apt and dpkg while it reads, so it does not see
 // the half-done packages of a running apt.
@@ -235,22 +243,22 @@ func readDpkg(ctx context.Context, names []string, note func(string)) (map[strin
 // locks.
 func lockFiles(ctx context.Context, names []string, note func(string)) (unlock func(), err error) {
 	var files []*os.File
-	unlock = func() {
+	release := func() {
 		for _, f := range files {
 			f.Close()
 		}
 	}
 	defer func() {
 		if err != nil {
-			unlock()
+			release()
 		}
 	}()
 	deadline := time.Now().Add(300 * time.Second)
-	waiting := ""
+	holder := ""
 	for _, name := range names {
 		f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE, 0o640)
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, errors.New("/var/lib/dpkg not found: the host needs dpkg")
+			return nil, fmt.Errorf("%s not found: the host needs apt and dpkg", filepath.Dir(name))
 		}
 		if err != nil {
 			return nil, err
@@ -264,7 +272,7 @@ func lockFiles(ctx context.Context, names []string, note func(string)) (unlock f
 			if !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EACCES) {
 				return nil, fmt.Errorf("lock %s: %w", name, err)
 			}
-			if waiting == "" {
+			if holder == "" {
 				lk := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: io.SeekStart}
 				if err := syscall.FcntlFlock(f.Fd(), syscall.F_GETLK, &lk); err != nil {
 					return nil, fmt.Errorf("lock %s: %w", name, err)
@@ -273,11 +281,11 @@ func lockFiles(ctx context.Context, names []string, note func(string)) (unlock f
 				if lk.Type == syscall.F_UNLCK {
 					continue
 				}
-				waiting = fmt.Sprintf("waiting for another apt run (pid %d)", lk.Pid)
-				note(waiting)
+				holder = fmt.Sprintf("another apt run (pid %d)", lk.Pid)
+				note("waiting for " + holder)
 			}
 			if time.Now().After(deadline) {
-				return nil, errors.New(waiting)
+				return nil, errors.New(holder + " held the package locks for 5 minutes")
 			}
 			select {
 			case <-ctx.Done():
@@ -286,7 +294,7 @@ func lockFiles(ctx context.Context, names []string, note func(string)) (unlock f
 			}
 		}
 	}
-	return unlock, nil
+	return release, nil
 }
 
 // dpkgStates returns each named package that dpkg knows.
