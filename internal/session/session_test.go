@@ -28,12 +28,15 @@ func fakeHelper(arch string) helperbin.Binary {
 // $SSH_BANNER_CMD when they are set, and runs its last argument with sh, on
 // this machine. When $SSH_FAIL_ONCE is a missing file, ssh creates it
 // and fails once at the point that $SSH_FAIL names: "before" the script
-// prints, or after the script prints "have" or "need arm64".
+// prints, "timeout" before it with a connect timeout, or after the
+// script prints "have" or "need arm64". A later start creates
+// $SSH_FAIL_ONCE.again.
 func fakeBin(t *testing.T, arch, uid, sudo string) {
 	t.Helper()
 	bin := t.TempDir()
 	scripts := map[string]string{
-		"ssh": "#!/bin/sh\nif [ -n \"$SSH_FAIL_ONCE\" ] && [ ! -e \"$SSH_FAIL_ONCE\" ]; then : > \"$SSH_FAIL_ONCE\"; case \"$SSH_FAIL\" in have) echo have ;; need) echo need arm64 ;; esac; echo 'Connection closed by remote host' >&2; exit 255; fi\n" +
+		"ssh": "#!/bin/sh\n[ -z \"$SSH_FAIL_ONCE\" ] || [ ! -e \"$SSH_FAIL_ONCE\" ] || : > \"$SSH_FAIL_ONCE.again\"\n" +
+			"if [ -n \"$SSH_FAIL_ONCE\" ] && [ ! -e \"$SSH_FAIL_ONCE\" ]; then : > \"$SSH_FAIL_ONCE\"; case \"$SSH_FAIL\" in have) echo have ;; need) echo need arm64 ;; timeout) echo 'ssh: connect to host web1 port 22: Connection timed out' >&2; exit 255 ;; esac; echo 'Connection closed by remote host' >&2; exit 255; fi\n" +
 			"[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
 		"uname": "#!/bin/sh\necho " + arch + "\n",
 		"id":    "#!/bin/sh\necho " + uid + "\n",
@@ -63,12 +66,13 @@ func open(t *testing.T, dir string, bins []helperbin.Binary) (string, error) {
 	t.Helper()
 	var progress bytes.Buffer
 	s, err := Open(context.Background(), Config{
-		Host:     "web1",
-		Address:  "web1",
-		Dir:      dir,
-		Binaries: bins,
-		Hello:    protocol.Hello{Run: "r1"},
-		Progress: &progress,
+		Host:       "web1",
+		Address:    "web1",
+		Dir:        dir,
+		Binaries:   bins,
+		Hello:      protocol.Hello{Run: "r1"},
+		Progress:   &progress,
+		RetryDelay: retryDelay,
 	})
 	if s != nil {
 		s.Close()
@@ -395,24 +399,68 @@ cat >/dev/null
 	}
 }
 
+const retryDelay = 300 * time.Millisecond
+
 // spec: Remote execution/Sessions
 func TestOpenRetry(t *testing.T) {
 	// ssh fails only its first start, so a retry ends without an error.
 	tests := []struct{ fail, wantErr string }{
 		{"before", ""},
+		{"timeout", "Connection timed out"},
 		{"have", "Connection closed by remote host"},
 		{"need", "Connection closed by remote host"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.fail, func(t *testing.T) {
 			fakeBin(t, "aarch64", "0", goodSudo)
-			t.Setenv("SSH_FAIL_ONCE", filepath.Join(t.TempDir(), "failed"))
+			failed := filepath.Join(t.TempDir(), "failed")
+			t.Setenv("SSH_FAIL_ONCE", failed)
 			t.Setenv("SSH_FAIL", tt.fail)
 			dir := t.TempDir()
 			_, err := open(t, dir, []helperbin.Binary{recordingHelper("arm64", filepath.Join(dir, "requests"))})
 			if got := fmt.Sprint(err); (tt.wantErr == "" && err != nil) || !strings.Contains(got, tt.wantErr) {
 				t.Errorf("error = %v, want %q", err, tt.wantErr)
 			}
+			if tt.wantErr != "" {
+				return
+			}
+			first, err1 := os.Stat(failed)
+			second, err2 := os.Stat(failed + ".again")
+			if err1 != nil || err2 != nil {
+				t.Fatalf("ssh starts: %v, %v", err1, err2)
+			}
+			if gap := second.ModTime().Sub(first.ModTime()); gap < retryDelay {
+				t.Errorf("second start %s after the first, want at least %s", gap, retryDelay)
+			}
 		})
+	}
+}
+
+// spec: Remote execution/Sessions
+func TestOpenRetryCancelled(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	failed := filepath.Join(t.TempDir(), "failed")
+	t.Setenv("SSH_FAIL_ONCE", failed)
+	t.Setenv("SSH_FAIL", "before")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	s, err := Open(ctx, Config{
+		Host: "web1", Address: "web1", Dir: t.TempDir(),
+		Binaries: []helperbin.Binary{fakeHelper("arm64")},
+		Hello:    protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
+		RetryDelay: time.Minute,
+	})
+	if s != nil {
+		s.Close()
+	}
+	if err == nil {
+		t.Error("Open succeeded after the context ended")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("Open ended after %s, want right after the context ended", elapsed)
+	}
+	if _, err := os.Stat(failed + ".again"); err == nil {
+		t.Error("ssh started again after the context ended")
 	}
 }

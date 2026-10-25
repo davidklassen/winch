@@ -33,6 +33,8 @@ type Config struct {
 	Binaries []helperbin.Binary
 	Hello    protocol.Hello
 	Progress io.Writer
+	// RetryDelay is the wait before the second ssh start. Zero means 2s.
+	RetryDelay time.Duration
 }
 
 // Session is one ssh process with the helper at the other end.
@@ -101,17 +103,29 @@ func command(script string) string {
 }
 
 // Open starts ssh and the helper. When ssh fails before the script prints
-// its first line, Open starts it once more: sshd can drop a new connection,
-// for example at its MaxStartups limit.
+// its first line, and not by the connect timeout, Open starts it once more
+// after RetryDelay: a busy sshd, for example at its MaxStartups limit, drops
+// new connections.
 func Open(ctx context.Context, cfg Config) (*Session, error) {
-	s, early, err := dial(ctx, cfg)
-	if early && ctx.Err() == nil {
-		s, _, err = dial(ctx, cfg)
+	s, retry, err := dial(ctx, cfg)
+	if !retry {
+		return s, err
 	}
+	delay := cfg.RetryDelay
+	if delay == 0 {
+		delay = 2 * time.Second
+	}
+	select {
+	case <-ctx.Done():
+		return nil, err
+	case <-time.After(delay):
+	}
+	s, _, err = dial(ctx, cfg)
 	return s, err
 }
 
-// dial reports whether ssh ended before the script printed its first line.
+// dial reports whether a second start can help: ssh ended before the script
+// printed its first line, and not by the connect timeout.
 func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	dir := cfg.Dir
 	if dir == "" {
@@ -145,7 +159,8 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	}
 	line, err := s.stdout.ReadString('\n')
 	if err != nil {
-		return nil, true, s.fail(err)
+		err = s.fail(err)
+		return nil, !strings.Contains(s.stderr.String(), "timed out"), err
 	}
 	if err := s.start(cfg, strings.TrimSpace(line)); err != nil {
 		// ssh can block on a full pipe, or the host can print without end.

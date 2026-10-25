@@ -67,9 +67,8 @@ func TestSilentAddressFails(t *testing.T) {
 	if !strings.Contains(string(out), "silent:") || !strings.Contains(string(out), "timed out") {
 		t.Errorf("output does not name the host and the timeout")
 	}
-	// ssh times out twice: winch tries once more before the script answers.
-	if elapsed < 25*time.Second || elapsed > 45*time.Second {
-		t.Errorf("winch ended after %s, want about 30s", elapsed)
+	if elapsed < 10*time.Second || elapsed > 25*time.Second {
+		t.Errorf("winch ended after %s, want about 15s", elapsed)
 	}
 }
 
