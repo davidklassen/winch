@@ -1,0 +1,2 @@
+pipelines/site.yaml:5:38: target: ".." after another part is not allowed; write the target without it
+pipelines/site.yaml:6:38: target: ".." after another part is not allowed; write the target without it

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"strings"
 
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -30,10 +31,31 @@ func (l *Link) Validate() error {
 		return &yamlx.FieldError{Field: "target", Msg: "a link needs a target, or absent: true"}
 	case *l.Target == "":
 		return &yamlx.FieldError{Field: "target", Msg: "must not be empty"}
+	case dotDotAfterPart(*l.Target):
+		return &yamlx.FieldError{Field: "target", Msg: `".." after another part is not allowed; write the target without it`}
 	case path.Clean(*l.Target) != *l.Target:
 		return &yamlx.FieldError{Field: "target", Msg: fmt.Sprintf("must be a clean path, such as %q", path.Clean(*l.Target))}
 	}
 	return nil
+}
+
+// dotDotAfterPart reports a ".." that follows a name. The host resolves
+// "a/.." through "a", so when "a" is a link, the clean form names
+// another place.
+func dotDotAfterPart(target string) bool {
+	named := false
+	for part := range strings.SplitSeq(target, "/") {
+		switch part {
+		case "", ".":
+		case "..":
+			if named {
+				return true
+			}
+		default:
+			named = true
+		}
+	}
+	return false
 }
 
 func (l *Link) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
