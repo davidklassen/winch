@@ -157,19 +157,19 @@ func TestFileModule(t *testing.T) {
 			Name:    "a FIFO at path fails",
 			Setup:   "mkfifo /tmp/w/p",
 			Args:    &module.File{Path: "/tmp/w/p", Data: []byte("x\n")},
-			WantErr: "/tmp/w/p is a special file, not a file",
+			WantErr: "/tmp/w/p is a named pipe, not a file",
 		},
 		{
 			Name:    "absent on a FIFO fails",
 			Setup:   "mkfifo /tmp/w/p",
 			Args:    &module.File{Path: "/tmp/w/p", Absent: true},
-			WantErr: "/tmp/w/p is a special file, not a file",
+			WantErr: "/tmp/w/p is a named pipe, not a file",
 		},
 		{
 			Name:    "a socket at path fails",
 			Setup:   mksock,
 			Args:    &module.File{Path: "/tmp/w/s", Data: []byte("x\n")},
-			WantErr: "/tmp/w/s is a special file, not a file",
+			WantErr: "/tmp/w/s is a socket, not a file",
 		},
 		{
 			Name:    "a file as parent fails",

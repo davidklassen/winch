@@ -178,13 +178,13 @@ func TestDirModule(t *testing.T) {
 			Name:    "a FIFO at path fails",
 			Setup:   "mkfifo /tmp/w/p",
 			Args:    &module.Dir{Path: "/tmp/w/p"},
-			WantErr: "/tmp/w/p is a special file, not a directory",
+			WantErr: "/tmp/w/p is a named pipe, not a directory",
 		},
 		{
 			Name:    "a socket at path fails",
 			Setup:   mksock,
 			Args:    &module.Dir{Path: "/tmp/w/s", Absent: true},
-			WantErr: "/tmp/w/s is a special file, not a directory",
+			WantErr: "/tmp/w/s is a socket, not a directory",
 		},
 		{
 			Name:    "/var/run fails because it is a link",

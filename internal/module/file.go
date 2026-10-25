@@ -375,6 +375,14 @@ func kind(fi fs.FileInfo) string {
 		return "a symbolic link"
 	case m.IsRegular():
 		return "a file"
+	case m&fs.ModeNamedPipe != 0:
+		return "a named pipe"
+	case m&fs.ModeSocket != 0:
+		return "a socket"
+	case m&fs.ModeCharDevice != 0:
+		return "a character device"
+	case m&fs.ModeDevice != 0:
+		return "a block device"
 	}
 	return "a special file"
 }

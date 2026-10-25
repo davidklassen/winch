@@ -94,13 +94,13 @@ func TestLinkModule(t *testing.T) {
 			Name:    "a FIFO at path fails",
 			Setup:   "mkfifo /tmp/w/p",
 			Args:    &module.Link{Path: "/tmp/w/p", Target: new("/etc/hostname")},
-			WantErr: "/tmp/w/p is a special file, not a symbolic link",
+			WantErr: "/tmp/w/p is a named pipe, not a symbolic link",
 		},
 		{
 			Name:    "a socket at path fails",
 			Setup:   mksock,
 			Args:    &module.Link{Path: "/tmp/w/s", Absent: true},
-			WantErr: "/tmp/w/s is a special file, not a symbolic link",
+			WantErr: "/tmp/w/s is a socket, not a symbolic link",
 		},
 		{
 			Name:    "a link in a user's home fails",

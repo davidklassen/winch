@@ -3,6 +3,10 @@ package module
 import (
 	"bytes"
 	"encoding/json"
+	"net"
+	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -132,6 +136,39 @@ func TestLookupNumericID(t *testing.T) {
 		id, ok, err := lookup("4242")
 		if id != 4242 || !ok || err != nil {
 			t.Errorf("lookup(%q) = %d, %t, %v; want 4242, true, nil", "4242", id, ok, err)
+		}
+	}
+}
+
+// spec: Modules/file, dir, link
+func TestCheckNamesSpecialKind(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "p")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A socket path has a short length limit, which t.TempDir can pass on macOS.
+	short, err := os.MkdirTemp("/tmp", "w")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(short) })
+	sock := filepath.Join(short, "s")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	tests := []struct {
+		path, want string
+	}{
+		{fifo, fifo + " is a named pipe, not a file"},
+		{sock, sock + " is a socket, not a file"},
+		{"/dev/null", "/dev/null is a character device, not a file"},
+	}
+	for _, tt := range tests {
+		_, err := (&File{Path: tt.path, Absent: true}).Check(t.Context(), nil, nil)
+		if err == nil || err.Error() != tt.want {
+			t.Errorf("Check(%s) error = %v, want %q", tt.path, err, tt.want)
 		}
 	}
 }
