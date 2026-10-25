@@ -162,14 +162,20 @@ func TestServiceValidate(t *testing.T) {
 
 // spec: Modules/pkg
 func TestParseDpkg(t *testing.T) {
-	out := "bash\tii \t5.2\nexim4\trc \t4.98\nheld\thi \t1\nheldrc\thc \t1\npurged\tun \t\n" +
-		"libc6\tii \t2.41\nlibc6\trc \t2.40\nlibfoo\trc \t1\nlibfoo\tii \t1\nheld2\thi \t1\nheld2\trc \t1\n" +
-		"nginx\tiF \t1.26.3-3\nlibbar\tii \t2\nlibbar\tiU \t3\n"
-	got := parseDpkg(out)
+	out := "bash\tamd64\tii \t5.2\nexim4\tamd64\trc \t4.98\nheld\tamd64\thi \t1\nheldrc\tamd64\thc \t1\npurged\tamd64\tun \t\n" +
+		"libc6\tamd64\tii \t2.41\nlibc6\ti386\trc \t2.40\nlibfoo\tamd64\trc \t1\nlibfoo\tall\tii \t1\nheld2\tamd64\thi \t1\nheld2\ti386\trc \t1\n" +
+		"nginx\tamd64\tiF \t1.26.3-3\nlibbar\tall\tii \t2\nlibbar\tamd64\tiU \t3\n" +
+		"libz\tamd64\trc \t1\nlibz\ti386\tii \t1\nwine32\ti386\tii \t9\nlibheld\tamd64\tii \t1\nlibheld\ti386\thi \t1\nlibhalf\ti386\tiF \t4\n" +
+		"heldnone\t\thn \t\n"
+	got := parseDpkg(out, "amd64")
 	want := map[string]dpkgPkg{"bash": {state: installed}, "exim4": {state: configFiles},
 		"held": {state: installed, held: true}, "heldrc": {state: configFiles, held: true}, "purged": {state: notInstalled},
 		"libc6": {state: installed}, "libfoo": {state: installed}, "held2": {state: installed, held: true},
-		"nginx": {half: 'F', version: "1.26.3-3"}, "libbar": {state: installed, half: 'U', version: "3"}}
+		"nginx": {half: 'F', version: "1.26.3-3"}, "libbar": {state: installed, half: 'U', version: "3"},
+		"libz": {state: configFiles}, "libz:i386": {state: installed}, "wine32": {state: notInstalled}, "wine32:i386": {state: installed},
+		"libheld": {state: installed}, "libheld:i386": {state: installed, held: true},
+		"libhalf": {state: notInstalled}, "libhalf:i386": {half: 'F', version: "4"},
+		"heldnone": {held: true}}
 	for name, w := range want {
 		if got[name] != w {
 			t.Errorf("%s = %+v, want %+v", name, got[name], w)
@@ -182,7 +188,7 @@ func TestParseDpkg(t *testing.T) {
 
 // spec: Modules/pkg
 func TestOthersHalfDone(t *testing.T) {
-	pkgs := parseDpkg("bash\tii \t5.2\nnginx\tiF \t1.26\nlibfoo\tiU \t1\nlibbar\tiHR\t1\nlibbaz\tit \t1\nlibqux\tiW \t1\n")
+	pkgs := parseDpkg("bash\tamd64\tii \t5.2\nnginx\tamd64\tiF \t1.26\nlibfoo\tall\tiU \t1\nlibbar\tamd64\tiHR\t1\nlibbaz\tamd64\tit \t1\nlibqux\tamd64\tiW \t1\n", "amd64")
 	tests := []struct {
 		name  string
 		names []string
@@ -208,6 +214,16 @@ func TestOthersHalfDone(t *testing.T) {
 				t.Errorf("err = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// spec: Modules/pkg
+func TestOthersHalfDoneNamesTheArchitecture(t *testing.T) {
+	pkgs := parseDpkg("libc6\tamd64\tii \t2.41\nlibc6\ti386\tiH \t2.41\n", "amd64")
+	err := othersHalfDone(pkgs, []string{"libc6"})
+	want := "libc6:i386 is half installed: its installation failed; fix the cause, then run apt-get install --reinstall libc6:i386"
+	if err == nil || err.Error() != want {
+		t.Errorf("err = %v, want %q", err, want)
 	}
 }
 

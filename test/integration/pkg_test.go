@@ -61,7 +61,7 @@ func TestPkgModule(t *testing.T) {
 	// localArmhf adds armhf and refreshes only the local repository.
 	const localArmhf = "dpkg --add-architecture armhf && echo 'deb [trusted=yes] file:/root/repo ./' > /etc/apt/sources.list.d/winch-local.list && " +
 		"apt-get update -q -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/winch-local.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 >/dev/null"
-	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /etc/apt/sources.list.d/winch-local.list /var/lib/apt/lists/_root_repo_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --remove-architecture armhf 2>/dev/null; " +
+	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /etc/apt/sources.list.d/winch-local.list /var/lib/apt/lists/_root_repo_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --purge winch-mta-c:armhf >/dev/null 2>&1; dpkg --remove-architecture armhf 2>/dev/null; " +
 		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-fragile hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
 		{
@@ -72,6 +72,15 @@ func TestPkgModule(t *testing.T) {
 			WantState: module.State{IndexFresh: true},
 			Unchanged: same + " && ! dpkg -s hello >/dev/null 2>&1",
 			After:     `[ "$(wc -l < /root/updates)" = $(( $(cat /root/before) + 1 )) ] && dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii'`,
+		},
+		{
+			Name:      "the refresh creates a missing index directory",
+			Setup:     "rm -rf /var/lib/apt/lists",
+			Args:      &module.Pkg{Name: []string{"hello"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello"}},
+			WantState: module.State{IndexFresh: true},
+			Unchanged: "[ ! -e /var/lib/apt/lists ]",
+			After:     "[ -d /var/lib/apt/lists/partial ] && dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii'",
 		},
 		{
 			Name: "a refresh fails when apt cannot fetch a source",
@@ -343,6 +352,22 @@ func TestPkgModule(t *testing.T) {
 			WantState:   module.State{IndexFresh: true},
 			BeforeApply: "touch /etc/winch-fragile.ok",
 			After:       "[ \"$(dpkg-query -W -f='${db:Status-Abbrev}${Version}' winch-fragile)\" = 'ii 2' ]",
+		},
+		{
+			Name:      "a name with only a foreign package installs that package",
+			State:     module.State{IndexFresh: true},
+			Setup:     localArmhf,
+			Args:      &module.Pkg{Name: []string{"winch-mta-c"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install winch-mta-c:armhf"}},
+			WantState: module.State{IndexFresh: true},
+			After:     "dpkg-query -W -f='${db:Status-Abbrev}' winch-mta-c:armhf | grep -q '^ii'",
+		},
+		{
+			Name:  "absent removes the foreign package of a name",
+			Setup: localArmhf + " && " + install + " winch-mta-c",
+			Args:  &module.Pkg{Name: []string{"winch-mta-c"}, Absent: true},
+			Want:  module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove winch-mta-c:armhf"}},
+			After: "! dpkg-query -W -f='${db:Status-Abbrev}' winch-mta-c:armhf | grep -q '^ii'",
 		},
 		{
 			Name:    "a list names the provided name after a real package",

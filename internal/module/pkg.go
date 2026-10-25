@@ -55,7 +55,7 @@ func (p *Pkg) Validate() error {
 	return nil
 }
 
-var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive"}
+var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "APT_LISTBUGS_FRONTEND=none", "UCF_FORCE_CONFFOLD=1"}
 
 // aptLock makes apt wait for another apt, such as unattended-upgrades.
 const aptLock = "DPkg::Lock::Timeout=300"
@@ -65,15 +65,28 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
-	if err := othersHalfDone(pkgs, p.Name); err != nil {
-		return Result{}, err
-	}
-	var inst, conf, missing []string
+	var missing []string
 	for _, n := range p.Name {
-		pkg := pkgs[n]
-		if pkg.state != installed && pkg.half == 0 {
+		if pkg := pkgs[n]; pkg.state != installed && pkg.half == 0 {
 			missing = append(missing, n)
 		}
+	}
+	providers, foreign, err := showpkg(ctx, missing)
+	if err != nil {
+		return Result{}, err
+	}
+	names := slices.Clone(p.Name)
+	for i, n := range names {
+		if _, ok := pkgs[n]; !ok && foreign[n] != "" {
+			names[i] = foreign[n]
+		}
+	}
+	if err := othersHalfDone(pkgs, names); err != nil {
+		return Result{}, err
+	}
+	var inst, conf []string
+	for _, n := range names {
+		pkg := pkgs[n]
 		switch {
 		case !p.Absent && pkg.half != 0:
 			conf = append(conf, n)
@@ -89,7 +102,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 			inst = append(inst, n)
 		}
 	}
-	if err := providedOnly(ctx, missing); err != nil {
+	if err := providedOnly(missing, providers); err != nil {
 		return Result{}, err
 	}
 	// apt-mark showauto with no names lists every automatic package.
@@ -136,18 +149,26 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	return Result{Status: Change, Action: action, Changes: changes}, nil
 }
 
-// providedOnly fails on each name that apt knows only as provided by other
-// packages. apt installs a sole provider under its own name, so the step never
-// converges, and fails when there are several.
-func providedOnly(ctx context.Context, names []string) error {
+// showpkg reads the package index for names. providers holds the sorted
+// native providers of each name that has no version of its own. apt takes a
+// name without a package of the native architecture or all as the foreign
+// package that it knows, and foreign maps such a name to that package.
+func showpkg(ctx context.Context, names []string) (providers map[string][]string, foreign map[string]string, err error) {
 	if len(names) == 0 {
-		return nil
+		return nil, nil, nil
 	}
 	out, err := run(ctx, nil, "apt-cache", append([]string{"showpkg"}, names...)...)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	providers := parseShowpkg(out)
+	providers, foreign = parseShowpkg(out)
+	return providers, foreign, nil
+}
+
+// providedOnly fails on each name that apt knows only as provided by other
+// packages. apt installs a sole provider under its own name, so the step never
+// converges, and fails when there are several.
+func providedOnly(names []string, providers map[string][]string) error {
 	var errs []error
 	for _, n := range names {
 		switch ps := providers[n]; len(ps) {
@@ -161,15 +182,18 @@ func providedOnly(ctx context.Context, names []string) error {
 	return errors.Join(errs...)
 }
 
-// parseShowpkg returns the sorted native providers of each package in the
-// output of apt-cache showpkg that has no version of its own.
-func parseShowpkg(out string) map[string][]string {
-	providers := map[string][]string{}
+// parseShowpkg reads the output of apt-cache showpkg. It returns the providers
+// and the foreign packages of showpkg.
+func parseShowpkg(out string) (providers map[string][]string, foreign map[string]string) {
+	providers, foreign = map[string][]string{}, map[string]string{}
 	var name, section string
 	hasVersion := false
 	for line := range strings.SplitSeq(out, "\n") {
 		if n, ok := strings.CutPrefix(line, "Package: "); ok {
 			name, section, hasVersion = n, "", false
+			if bare, _, ok := strings.Cut(n, ":"); ok {
+				foreign[bare] = n
+			}
 			continue
 		}
 		switch strings.TrimSpace(line) {
@@ -192,7 +216,7 @@ func parseShowpkg(out string) map[string][]string {
 		slices.Sort(ps)
 		providers[n] = slices.Compact(ps)
 	}
-	return providers
+	return providers, foreign
 }
 
 func (p *Pkg) verb() string {
@@ -235,9 +259,16 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 		return nil
 	}
 	if p.refresh {
-		// apt-get update does not wait for the index lock.
-		if err := waitLocks(ctx, []string{indexLock}, note); err != nil {
+		// apt-get update does not wait for the index lock. It creates a missing
+		// index directory, where no other run holds the lock.
+		_, err := os.Stat(filepath.Dir(indexLock))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
+		}
+		if err == nil {
+			if err := waitLocks(ctx, []string{indexLock}, note); err != nil {
+				return err
+			}
 		}
 		if _, err := run(ctx, aptEnv, "apt-get", "update", "-q", "--error-on=any"); err != nil {
 			return err
@@ -311,6 +342,10 @@ const indexLock = "/var/lib/apt/lists/lock"
 // and dpkg while it reads, so it does not see the half-done packages of a
 // running apt.
 func readDpkg(ctx context.Context, note func(string)) (map[string]dpkgPkg, error) {
+	native, err := run(ctx, nil, "dpkg", "--print-architecture")
+	if err != nil {
+		return nil, err
+	}
 	unlock, err := lockFiles(ctx, dpkgLocks, note)
 	if err != nil {
 		return nil, err
@@ -328,11 +363,11 @@ func readDpkg(ctx context.Context, note func(string)) (map[string]dpkgPkg, error
 			return nil, errors.New("dpkg was interrupted; run dpkg --configure -a")
 		}
 	}
-	out, err := run(ctx, nil, "dpkg-query", "-W", "-f=${Package}\t${db:Status-Abbrev}\t${Version}\n", "*")
+	out, err := run(ctx, nil, "dpkg-query", "-W", "-f=${Package}\t${Architecture}\t${db:Status-Abbrev}\t${Version}\n", "*")
 	if err != nil {
 		return nil, err
 	}
-	return parseDpkg(out), nil
+	return parseDpkg(out, strings.TrimSpace(native)), nil
 }
 
 // othersHalfDone fails on each half-done package that names does not hold.
@@ -415,17 +450,23 @@ func lockFiles(ctx context.Context, names []string, note func(string)) (unlock f
 	return release, nil
 }
 
-// parseDpkg reads lines of a package name, its status abbreviation, such as
-// "ii " or "hi ", and its version. The first letter is the selection, the
-// second the state of the package.
-func parseDpkg(out string) map[string]dpkgPkg {
+// parseDpkg reads lines of a package name, its architecture, its status
+// abbreviation, such as "ii " or "hi ", and its version. The first letter is
+// the selection, the second the state of the package.
+func parseDpkg(out, native string) map[string]dpkgPkg {
 	pkgs := map[string]dpkgPkg{}
 	for line := range strings.SplitSeq(out, "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) != 3 || len(f[1]) < 2 {
+		if len(f) != 4 || len(f[2]) < 2 {
 			continue
 		}
-		name, abbrev := f[0], f[1]
+		name, abbrev, version := f[0], f[2], f[3]
+		// A step names packages of the native architecture or all. A foreign
+		// package keeps the :arch suffix, as apt names it. A package that was
+		// never installed can have no architecture.
+		if arch := f[1]; arch != native && arch != "all" && arch != "" {
+			name += ":" + arch
+		}
 		s := notInstalled
 		switch abbrev[1] {
 		case 'i':
@@ -433,13 +474,14 @@ func parseDpkg(out string) map[string]dpkgPkg {
 		case 'c':
 			s = configFiles
 		}
-		// One line per architecture: the most installed one counts, and a
-		// half-done one makes the package half done.
+		// The lines of the native architecture and all merge: the most
+		// installed one counts, and a half-done one makes the package half
+		// done.
 		pkg := pkgs[name]
 		pkg.state = max(pkg.state, s)
 		pkg.held = pkg.held || abbrev[0] == 'h'
 		if _, ok := halfDoneReasons[abbrev[1]]; ok && pkg.half == 0 {
-			pkg.half, pkg.version = abbrev[1], f[2]
+			pkg.half, pkg.version = abbrev[1], version
 		}
 		pkgs[name] = pkg
 	}

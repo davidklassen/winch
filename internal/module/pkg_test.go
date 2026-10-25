@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,5 +70,22 @@ func TestLockFilesNamesAMissingDirectory(t *testing.T) {
 	_, err := lockFiles(t.Context(), []string{filepath.Join(dir, "lock")}, nil)
 	if want := dir + " not found: the host needs apt and dpkg"; err == nil || err.Error() != want {
 		t.Errorf("err = %v, want %q", err, want)
+	}
+}
+
+// spec: Modules/pkg
+func TestAptEnvStopsEveryPrompt(t *testing.T) {
+	want := []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "APT_LISTBUGS_FRONTEND=none", "UCF_FORCE_CONFFOLD=1"}
+	if !slices.Equal(aptEnv, want) {
+		t.Errorf("aptEnv = %q, want %q", aptEnv, want)
+	}
+}
+
+// spec: Modules/pkg
+func TestParseShowpkgForeign(t *testing.T) {
+	out := "Package: winch-mta-c:armhf\nVersions: \n1 (/var/lib/dpkg/status)\n\nPackage: libc6\nVersions: \n2.41 (/var/lib/dpkg/status)\n"
+	_, foreign := parseShowpkg(out)
+	if want := map[string]string{"winch-mta-c": "winch-mta-c:armhf"}; !maps.Equal(foreign, want) {
+		t.Errorf("foreign = %q, want %q", foreign, want)
 	}
 }
