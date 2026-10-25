@@ -1,0 +1,16 @@
+stdout:
+web1, web2 (2 hosts)
+  base
+    + file /srv/www/index.html
+        create directory /srv (owner root, group root, mode 0755)
+        create directory /srv/www (owner root, group root, mode 0755)
+        owner root, group root, mode 0644
+        @@ -0,0 +1,1 @@
+        +hello
+    + file /srv/www/about.html
+        owner root, group root, mode 0644
+        @@ -0,0 +1,1 @@
+        +about
+
+2 hosts: 2 to change, 0 unchanged, 0 unknown
+stderr:

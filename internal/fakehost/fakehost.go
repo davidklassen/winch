@@ -1,11 +1,14 @@
 // Package fakehost is a test double for hosts: it keeps files, packages, and
-// facts in memory and checks and applies file and pkg steps against them.
+// facts in memory and checks and applies file, dir, and pkg steps against them.
 package fakehost
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"path"
+	"slices"
 	"strings"
 	"sync"
 
@@ -18,6 +21,7 @@ import (
 type Hosts struct {
 	mu         sync.Mutex
 	files      map[string]map[string]string
+	noDirs     map[string]map[string]bool
 	pkgs       map[string]map[string]bool
 	pkgFiles   map[string]map[string]string
 	failCheck  map[string]bool
@@ -33,6 +37,7 @@ type Hosts struct {
 func New() *Hosts {
 	return &Hosts{
 		files:      map[string]map[string]string{},
+		noDirs:     map[string]map[string]bool{},
 		pkgs:       map[string]map[string]bool{},
 		pkgFiles:   map[string]map[string]string{},
 		failCheck:  map[string]bool{},
@@ -50,6 +55,39 @@ func (h *Hosts) SetFile(host, path, content string) {
 		h.files[host] = map[string]string{}
 	}
 	h.files[host][path] = content
+}
+
+// RemoveDir makes the directory dir missing on a host. Every other directory
+// exists.
+func (h *Hosts) RemoveDir(host, dir string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.noDirs[host] == nil {
+		h.noDirs[host] = map[string]bool{}
+	}
+	h.noDirs[host][dir] = true
+}
+
+// missingParents returns the parent lines of the missing parents of p, from
+// the top.
+func (c *Conn) missingParents(p string) []string {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	var changes []string
+	for d := path.Dir(p); d != "/"; d = path.Dir(d) {
+		if c.hosts.noDirs[c.host][d] {
+			changes = append(changes, module.ParentChange(d))
+		}
+	}
+	slices.Reverse(changes)
+	return changes
+}
+
+// makeDirs creates p and its parents. The caller holds the lock.
+func (c *Conn) makeDirs(p string) {
+	for d := p; d != "/"; d = path.Dir(d) {
+		delete(c.hosts.noDirs[c.host], d)
+	}
 }
 
 // SetPkgFile makes an install of the package pkg write a file.
@@ -115,6 +153,9 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if p, ok := m.(*module.Pkg); ok {
 		return c.checkPkg(p, st), nil
 	}
+	if d, ok := m.(*module.Dir); ok {
+		return c.checkDir(d), nil
+	}
 	f := m.(*module.File)
 	if c.hosts.fails(c.hosts.failCheck, c.host, f.Path) {
 		return module.Result{}, errors.New("permission denied")
@@ -127,11 +168,24 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		return module.Result{Status: module.Change, Action: module.Remove}, nil
 	case !ok:
 		return module.Result{Status: module.Change, Action: module.Create, Old: new(""),
-			Changes: []string{"owner root, group root, mode 0644"}}, nil
+			Changes: append(c.missingParents(f.Path), "owner root, group root, mode 0644")}, nil
 	case cur != string(f.Data):
 		return module.Result{Status: module.Change, Action: module.Modify, Old: &cur}, nil
 	}
 	return module.Result{Status: module.OK}, nil
+}
+
+// checkDir creates only.
+func (c *Conn) checkDir(d *module.Dir) module.Result {
+	c.hosts.mu.Lock()
+	missing := c.hosts.noDirs[c.host][d.Path]
+	c.hosts.mu.Unlock()
+	if !missing {
+		return module.Result{Status: module.OK}
+	}
+	group, mode := cmp.Or(string(d.Group), "root"), cmp.Or(d.Mode, "0755")
+	return module.Result{Status: module.Change, Action: module.Create,
+		Changes: append(c.missingParents(d.Path), "owner root, group "+group+", mode "+mode)}
 }
 
 // checkPkg installs only. The first install with a state that is not fresh
@@ -183,6 +237,12 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 		}
 		return res, nil
 	}
+	if d, ok := m.(*module.Dir); ok {
+		c.hosts.mu.Lock()
+		defer c.hosts.mu.Unlock()
+		c.makeDirs(d.Path)
+		return res, nil
+	}
 	f := m.(*module.File)
 	if c.hosts.fails(c.hosts.failApply, c.host, f.Path) {
 		return module.Result{}, fmt.Errorf("write %s: read-only file system", f.Path)
@@ -198,6 +258,7 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 		c.hosts.files[c.host] = map[string]string{}
 	}
 	c.hosts.files[c.host][f.Path] = string(f.Data)
+	c.makeDirs(path.Dir(f.Path))
 	return res, nil
 }
 

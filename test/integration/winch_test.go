@@ -79,6 +79,42 @@ func TestWinch(t *testing.T) {
 		}
 	})
 
+	t.Run("the plan leaves out a parent that an earlier step creates", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - dir:
+          path: /srv/www
+          group: www-data
+          mode: "0750"
+      - file:
+          path: /srv/www/index.html
+          content: "hello\n"
+`,
+		})
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "+ file /srv/www/index.html") {
+			t.Fatalf("plan: exit %d", r.Code)
+		}
+		if strings.Contains(r.Stdout, "create directory /srv/www") {
+			t.Errorf("the plan lists /srv/www as a parent:\n%s", r.Stdout)
+		}
+		if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+			t.Fatalf("apply: exit %d", r.Code)
+		}
+		if out := vm.MustRun(t, "stat -c '%U:%G %a' /srv/www"); out != "root:www-data 750\n" {
+			t.Errorf("/srv/www is %q", out)
+		}
+		r = lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || r.Stdout != "1 host: 0 to change, 1 unchanged, 0 unknown\n" {
+			t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+		}
+	})
+
 	t.Run("a second session fails on the lock", func(t *testing.T) {
 		vm.Session(t)
 		r := lab.Winch(t, dir, "plan", "site")

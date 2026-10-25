@@ -192,6 +192,83 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
 	}
 }
 
+// spec: Modules/file, dir, link; Running a pipeline/Plan
+func TestPlanParents(t *testing.T) {
+	tests := []struct {
+		name     string
+		pipeline string
+	}{
+		{name: "parents-dir-then-file", pipeline: `stages:
+  - name: base
+    hosts: all
+    steps:
+      - dir:
+          path: /srv/www
+          group: www-data
+          mode: "0750"
+  - name: site
+    hosts: all
+    steps:
+      - file:
+          path: /srv/www/index.html
+          content: "hello\n"
+`},
+		{name: "parents-two-files", pipeline: `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /srv/www/index.html
+          content: "hello\n"
+      - file:
+          path: /srv/www/about.html
+          content: "about\n"
+`},
+		{name: "parents-siblings", pipeline: `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /srv/www/index.html
+          content: "hello\n"
+      - dir:
+          path: /srv/static/img
+`},
+		{name: "parents-absent-then-file", pipeline: `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /srv/www/old.html
+          absent: true
+      - file:
+          path: /srv/www/index.html
+          content: "hello\n"
+`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := loadFiles(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
+				"pipelines/site.yaml":   tt.pipeline,
+			})
+			h := fakehost.New()
+			for _, host := range []string{"web1", "web2"} {
+				h.RemoveDir(host, "/srv")
+				h.RemoveDir(host, "/srv/www")
+				h.RemoveDir(host, "/srv/static")
+				h.RemoveDir(host, "/srv/static/img")
+			}
+			plan := run.MakePlan(context.Background(), p, h.Connector())
+			var out, errOut bytes.Buffer
+			plan.Write(&out, &errOut)
+			golden.Assert(t, filepath.Join("testdata", "plan", tt.name+".golden"),
+				[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
+		})
+	}
+}
+
 // spec: Running a pipeline/Apply
 func TestApplyChecksStagesWithoutChange(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{

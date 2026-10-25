@@ -611,9 +611,15 @@ func attrLine(owner, group string, mode uint32) string {
 func parentChanges(missing []string) []string {
 	var changes []string
 	for _, d := range missing {
-		changes = append(changes, "create directory "+d+" ("+attrLine("root", "root", 0o755)+")")
+		changes = append(changes, ParentChange(d))
 	}
 	return changes
+}
+
+// ParentChange is the change of a step that creates the missing parent
+// directory dir.
+func ParentChange(dir string) string {
+	return "create directory " + dir + " (" + attrLine("root", "root", 0o755) + ")"
 }
 
 func writeFile(dir *os.Root, name string, content []byte, uid, gid, mode uint32) error {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path"
 	"slices"
 	"strings"
 	"unicode"
@@ -60,6 +61,9 @@ type hostRun struct {
 	state module.State
 	// env is nil until the first contact with the host.
 	env *project.Env
+	// dirs are the directories that checked steps create, and the parents of
+	// the paths they create.
+	dirs map[string]bool
 }
 
 // MakePlan checks every step on every host, stage by stage. At the first
@@ -78,7 +82,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 				continue
 			}
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}}
 			}
 			steps, err := check(ctx, connect, p, h, stage, runs[h.Name])
 			if err != nil {
@@ -127,8 +131,39 @@ func check(ctx context.Context, connect Connect, p *project.Project, h project.H
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", label(p.Step), err)
 		}
+		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
 	}
 	return steps, nil
+}
+
+// dropCreatedParents removes the parent lines of directories that an earlier
+// step creates. Each check sees the host as it is before the run, and apply
+// creates a directory once.
+func (hr *hostRun) dropCreatedParents(m module.Module, res *module.Result) {
+	if res.Action != module.Create {
+		return
+	}
+	var p string
+	switch m := m.(type) {
+	case *module.File:
+		p = m.Path
+	case *module.Dir:
+		p = m.Path
+	case *module.Link:
+		p = m.Path
+	default:
+		return
+	}
+	for d := path.Dir(p); d != "/"; d = path.Dir(d) {
+		if hr.dirs[d] {
+			line := module.ParentChange(d)
+			res.Changes = slices.DeleteFunc(res.Changes, func(c string) bool { return c == line })
+		}
+		hr.dirs[d] = true
+	}
+	if _, ok := m.(*module.Dir); ok {
+		hr.dirs[p] = true
+	}
 }
 
 // evaluate returns the module steps of a stage for one host, with recipe
