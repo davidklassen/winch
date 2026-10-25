@@ -60,6 +60,9 @@ type Step struct {
 	when *computed
 	loop *value
 	tmpl *template.Template
+	// tmplReads are the variables that the template file of the step reads
+	// by name. A computed file name reads those of all templates of the recipe.
+	tmplReads []string
 }
 
 // Load reads the project in dir with one inventory and one pipeline. The
@@ -410,6 +413,9 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe) (Step, error) {
 			return Step{}, err
 		}
 	}
+	if st.Module == "file" {
+		st.tmplReads = r.templateReads(argsNode)
+	}
 	return st, nil
 }
 
@@ -462,6 +468,7 @@ func (st Step) reads() []string {
 	if st.args != nil {
 		out = append(out, st.args.reads()...)
 	}
+	out = append(out, st.tmplReads...)
 	return out
 }
 

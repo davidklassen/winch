@@ -218,62 +218,65 @@ func (e *Env) exprEnv() exprEnv {
 }
 
 // Start returns the data of host h with facts f: it evaluates the defaults
-// that h needs. It checks the requirements and the required variables of each
+// that h uses. It checks the requirements and the required variables of each
 // recipe that runs on h in the pipeline, also in later stages.
 func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
 	short, _, _ := strings.Cut(h.Name, ".")
 	e := &Env{host: h, short: short, facts: f, vars: maps.Clone(h.Vars)}
-	var names []string
-	for _, v := range p.vars {
-		if v.Recipe == "" {
-			names = append(names, v.Name)
-		}
-	}
-	var steps []Step
 	for _, s := range p.Pipeline.Stages {
 		if !slices.ContainsFunc(s.Targets, func(t Host) bool { return t.Name == h.Name }) {
 			continue
 		}
 		for _, st := range s.Steps {
+			if st.Recipe == nil {
+				if err := p.use(e, st); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			if st.when != nil {
-				names = append(names, st.when.reads...)
+				if err := p.evalDefaults(e, st.when.reads); err != nil {
+					return nil, err
+				}
 			}
-			steps = append(steps, st)
-		}
-	}
-	if err := p.evalDefaults(e, names); err != nil {
-		return nil, err
-	}
-	names = nil
-	for _, st := range steps {
-		ok, err := st.Runs(e)
-		if st.Recipe == nil {
-			// The step reports an error of its when when it runs.
-			if ok || err != nil {
-				names = append(names, st.reads()...)
-			}
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-		if err := st.Recipe.Check(f); err != nil {
-			return nil, err
-		}
-		if st.when != nil {
-			if err := st.missing([]Host{h}); err != nil {
+			ok, err := st.Runs(e)
+			if err != nil {
 				return nil, err
 			}
+			if !ok {
+				continue
+			}
+			if err := st.Recipe.Check(f); err != nil {
+				return nil, err
+			}
+			if st.when != nil {
+				if err := st.missing([]Host{h}); err != nil {
+					return nil, err
+				}
+			}
+			for _, rs := range st.Recipe.Steps {
+				if err := p.use(e, rs); err != nil {
+					return nil, err
+				}
+			}
 		}
-		names = append(names, st.Recipe.needs...)
-	}
-	if err := p.evalDefaults(e, names); err != nil {
-		return nil, err
 	}
 	return e, nil
+}
+
+// use evaluates the defaults that the when of module step st reads, and,
+// when st runs, the defaults that the rest of st reads. A step whose when
+// fails reports the error when it evaluates, before it reads anything else.
+func (p *Project) use(e *Env, st Step) error {
+	if st.when != nil {
+		if err := p.evalDefaults(e, st.when.reads); err != nil {
+			return err
+		}
+	}
+	if ok, err := st.Runs(e); !ok || err != nil {
+		return nil
+	}
+	return p.evalDefaults(e, st.reads())
 }
 
 // evalDefaults evaluates the defaults of names and of the variables that

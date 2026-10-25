@@ -24,13 +24,10 @@ import (
 type Recipe struct {
 	Name string
 	// Dir is relative to the project.
-	Dir     string
-	Require []Require
-	Vars    []*Var
-	Steps   []Step
-	// needs are the variables of the recipe and the variables that its
-	// steps and templates read by name.
-	needs     []string
+	Dir       string
+	Require   []Require
+	Vars      []*Var
+	Steps     []Step
 	root      string
 	templates map[string]*tmplFile
 }
@@ -127,15 +124,6 @@ func (l *loader) loadRecipes() error {
 			errs = append(errs, err)
 			continue
 		}
-		for _, v := range r.Vars {
-			r.needs = append(r.needs, v.Name)
-		}
-		for _, st := range r.Steps {
-			r.needs = append(r.needs, st.reads()...)
-		}
-		for _, t := range r.templates {
-			r.needs = append(r.needs, t.reads...)
-		}
 		l.recipes[name] = r
 	}
 	return errors.Join(errs...)
@@ -215,6 +203,29 @@ func (r *Recipe) content(f *module.File, loops bool) (*template.Template, error)
 		return t.t, nil
 	}
 	return nil, nil
+}
+
+// templateReads returns the variables that the template of the file
+// arguments n read by name.
+func (r *Recipe) templateReads(n *yamlx.Node) []string {
+	i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "template" })
+	if i < 0 {
+		return nil
+	}
+	if v := n.Pairs[i].Value; v.Tag == "" {
+		name, _ := v.Value.(string)
+		if t := r.templates[name]; t != nil {
+			return t.reads
+		}
+		return nil
+	}
+	var out []string
+	for _, t := range r.templates {
+		if t != nil {
+			out = append(out, t.reads...)
+		}
+	}
+	return out
 }
 
 // readFile reads name in the directory sub of r. It does not follow a

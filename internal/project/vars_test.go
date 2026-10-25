@@ -500,8 +500,10 @@ func TestEvalErrors(t *testing.T) {
 			want: "error: recipes/r/recipe.yaml:4:16: content: expected a string, got a list"},
 		{name: "expression fails", step: "  - file:\n      path: /a\n      content: !expr 1 + vars.s\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: invalid operation: int + string\n | 1 + vars.s\n | ..^"},
-		{name: "default fails", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: x\n",
+		{name: "default fails", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n",
 			want: "error: winch.yaml:15:8: variable \"bad\": invalid operation: int + string\n | 1 + vars.s\n | ..^"},
+		{name: "when fails before a default", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n    when: !expr 'vars.l[5] == \"x\"'\n",
+			want: "error: recipes/r/recipe.yaml:5:11: when: index out of range: 5 (array length is 2)\n | vars.l[5] == \"x\"\n | ......^"},
 		{name: "computed template", step: "  - file:\n      path: /a\n      template: !tpl '{{ .vars.s }}.tmpl'\n",
 			files: map[string]string{"recipes/r/templates/yes.tmpl": "{{ .vars.i }}"},
 			want:  "80"},
@@ -565,7 +567,7 @@ func TestStartRecipeWhen(t *testing.T) {
 	}
 }
 
-// spec: Variables ("A host evaluates the defaults of `winch.yaml`, the defaults of the recipes that run on it, and the defaults that those read.")
+// spec: Variables ("A host evaluates only the defaults that it uses")
 func TestStartOnlyRunningDefaults(t *testing.T) {
 	files := map[string]string{
 		"winch.yaml": "name: acme\ninventory: inventories/test.yaml\nvars:\n  site_title: !expr 'upper(vars.tools_a)'\n",
@@ -576,9 +578,9 @@ func TestStartOnlyRunningDefaults(t *testing.T) {
       postfix_domain: acme.com
 `,
 		"recipes/web/recipe.yaml":         "vars:\n  web_name: !expr host.name\nsteps:\n  - file:\n      path: !expr '\"/etc/motd-\" + vars.tools_suffix'\n      template: motd.tmpl\n",
-		"recipes/web/templates/motd.tmpl": "{{ .vars.tools_motd }}\n",
+		"recipes/web/templates/motd.tmpl": "{{ .vars.tools_motd }} {{ .vars.site_title }} {{ .vars.web_name }}\n",
 		"recipes/tools/recipe.yaml":       "vars:\n  tools_motd: !tpl \"hi {{ .host.name }}\"\n  tools_path: !expr '\"/etc/\" + host.name'\n  tools_a: !expr 'vars.tools_name + \"!\"'\n  tools_name: !expr host.name\n  tools_on: true\n  tools_list: [a]\n  tools_suffix: x\nsteps: []\n",
-		"recipes/postfix/recipe.yaml":     "vars:\n  postfix_domain:\n  postfix_mailname: !tpl \"mail.{{ .vars.postfix_domain }}\"\nsteps: []\n",
+		"recipes/postfix/recipe.yaml":     "vars:\n  postfix_domain:\n  postfix_mailname: !tpl \"mail.{{ .vars.postfix_domain }}\"\nsteps:\n  - file:\n      path: /etc/mailname\n      content: !expr vars.postfix_mailname\n",
 	}
 	want := map[string]string{
 		"web1":  `{"site_title":"WEB1!","tools_a":"web1!","tools_list":["a"],"tools_motd":"hi web1","tools_name":"web1","tools_on":true,"tools_path":"/etc/web1","tools_suffix":"x","web_name":"web1"}`,
@@ -640,6 +642,94 @@ func TestStartOnlyRunningDefaults(t *testing.T) {
 				got, _ := json.Marshal(env.vars)
 				if string(got) != want[h.Name] {
 					t.Errorf("%s: got  %s\nwant %s", h.Name, got, want[h.Name])
+				}
+			}
+		})
+	}
+}
+
+// spec: Variables ("A host evaluates only the defaults that it uses: the defaults that the `when` of each step reads, the defaults that the steps which run on it read, and the defaults that those read.")
+func TestStartUsedDefaults(t *testing.T) {
+	base := map[string]string{
+		"winch.yaml": "name: acme\ninventory: inventories/test.yaml\nvars:\n  admins: []\n  first_admin: !expr 'vars.admins[0]'\n",
+		"inventories/test.yaml": `hosts:
+  web1:
+    vars:
+      nginx_tls: true
+      nginx_domains: [example.com]
+  web2: {}
+`,
+		"pipelines/site.yaml":            stage("      - recipe: nginx\n"),
+		"recipes/nginx/templates/a.tmpl": "{{ .vars.nginx_a }}\n",
+		"recipes/nginx/templates/b.tmpl": "{{ .vars.nginx_b }}\n",
+	}
+	const recipeVars = `vars:
+  nginx_tls: false
+  nginx_domains: []
+  nginx_cert_path: !expr '"/etc/letsencrypt/live/" + vars.nginx_domains[0] + "/fullchain.pem"'
+  nginx_first: !expr 'vars.nginx_domains[0]'
+  nginx_a: a
+  nginx_b: b
+`
+	const tlsStep = `  - name: TLS config
+    file:
+      path: /etc/nginx/tls.conf
+      content: !tpl "ssl_certificate {{ .vars.nginx_cert_path }};\n"
+    when: !expr vars.nginx_tls
+`
+	tests := []struct {
+		name  string
+		steps string
+		files map[string]string
+		want  map[string]string
+	}{
+		{name: "when", steps: tlsStep, want: map[string]string{
+			"web1": `{"nginx_cert_path":"/etc/letsencrypt/live/example.com/fullchain.pem","nginx_domains":["example.com"],"nginx_tls":true}`,
+			"web2": `{"nginx_tls":false}`,
+		}},
+		{name: "template", steps: tlsStep + "  - file:\n      path: /etc/a\n      template: a.tmpl\n", want: map[string]string{
+			"web1": `{"nginx_a":"a","nginx_cert_path":"/etc/letsencrypt/live/example.com/fullchain.pem","nginx_domains":["example.com"],"nginx_tls":true}`,
+			"web2": `{"nginx_a":"a","nginx_tls":false}`,
+		}},
+		{name: "skipped-template", steps: tlsStep + "  - file:\n      path: /etc/nginx/tls2.conf\n      template: tls.tmpl\n    when: !expr vars.nginx_tls\n",
+			files: map[string]string{"recipes/nginx/templates/tls.tmpl": "{{ .vars.nginx_cert_path }}\n"}, want: map[string]string{
+				"web1": `{"nginx_cert_path":"/etc/letsencrypt/live/example.com/fullchain.pem","nginx_domains":["example.com"],"nginx_tls":true}`,
+				"web2": `{"nginx_tls":false}`,
+			}},
+		{name: "template-expr", steps: tlsStep + "  - file:\n      path: /etc/a\n      template: !expr '\"a.tmpl\"'\n", want: map[string]string{
+			"web1": `{"nginx_a":"a","nginx_b":"b","nginx_cert_path":"/etc/letsencrypt/live/example.com/fullchain.pem","nginx_domains":["example.com"],"nginx_tls":true}`,
+			"web2": `{"nginx_a":"a","nginx_b":"b","nginx_tls":false}`,
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := with(base, tt.files)
+			files["recipes/nginx/recipe.yaml"] = recipeVars + "steps:\n" + tt.steps
+			p, err := Load(writeProject(t, files), "", "site", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, h := range p.Inventory.Hosts {
+				env, err := p.Start(h, debian13)
+				if err != nil {
+					t.Errorf("%s: %v", h.Name, err)
+					continue
+				}
+				got, _ := json.Marshal(env.vars)
+				if string(got) != tt.want[h.Name] {
+					t.Errorf("%s: got  %s\nwant %s", h.Name, got, tt.want[h.Name])
+				}
+				steps, err := p.Pipeline.Stages[0].Steps[0].Recipe.Steps[0].Eval(env)
+				var data []string
+				for _, s := range steps {
+					data = append(data, string(s.Args.(*module.File).Data))
+				}
+				var want []string
+				if h.Name == "web1" {
+					want = []string{"ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;\n"}
+				}
+				if err != nil || !slices.Equal(data, want) {
+					t.Errorf("%s: TLS config: got %q, %v; want %q", h.Name, data, err, want)
 				}
 			}
 		})
