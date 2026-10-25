@@ -41,6 +41,30 @@ ExecStart=/bin/sleep infinity
 [Install]
 WantedBy=multi-user.target
 U
+cat > /etc/systemd/system/winch-oneshot.service <<'U'
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo x >> /tmp/oneshot'
+U
+cat > /etc/systemd/system/winch-remain.service <<'U'
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+U
+cat > /etc/systemd/system/winch-boom.service <<'U'
+[Service]
+ExecStartPre=/bin/sh -c 'if [ -e /tmp/boom ]; then cat /tmp/boom; exit 1; fi'
+ExecStart=/bin/sleep infinity
+ExecReload=/bin/sh -c 'echo boom on reload; exit 1'
+U
+mkdir -p /opt/winch
+cat > /opt/winch/winch-linked.service <<'U'
+[Service]
+ExecStart=/bin/sleep infinity
+[Install]
+WantedBy=multi-user.target
+U
 cat > /usr/lib/systemd/system/winch-vendor.service <<'U'
 [Service]
 ExecStart=/bin/sleep infinity
@@ -59,7 +83,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service 2>/dev/null; true"
+	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service; rm -f /tmp/boom; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ]; then systemctl disable winch-linked.service; rm -f /etc/systemd/system/winch-linked.service; systemctl daemon-reload; fi; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -347,6 +371,69 @@ systemctl daemon-reload && systemctl start winch-reload && systemctl show -P Inv
 			Want:       change("reload"),
 			NoConverge: true,
 			After:      `[ -s /tmp/reloads ] && [ "$(systemctl show -P InvocationID winch-reload)" = "$(cat /tmp/inv)" ]`,
+		},
+		{
+			Name:    "a oneshot unit that must run fails",
+			Args:    &module.Service{Name: "winch-oneshot", Running: new(true)},
+			WantErr: "winch-oneshot.service is a oneshot unit without RemainAfterExit=yes, so it is never running after its job; start its timer, or use cmd",
+		},
+		{
+			Name: "a oneshot unit that must not run is ok",
+			Args: &module.Service{Name: "winch-oneshot", Running: new(false)},
+			Want: module.Result{Status: module.OK},
+		},
+		{
+			Name:  "start a oneshot unit with RemainAfterExit",
+			Args:  &module.Service{Name: "winch-remain", Running: new(true)},
+			Want:  change("start"),
+			After: `systemctl is-active -q winch-remain`,
+		},
+		{
+			Name:      "enable a unit that is enabled only at runtime",
+			Setup:     `systemctl enable --runtime winch-test && systemctl is-enabled winch-test | grep -qx enabled-runtime`,
+			Args:      &module.Service{Name: "winch-test", Enabled: new(true)},
+			Want:      change("enable"),
+			Unchanged: `systemctl is-enabled winch-test | grep -qx enabled-runtime`,
+			After:     `test -L /etc/systemd/system/multi-user.target.wants/winch-test.service`,
+		},
+		{
+			Name:      "enable a linked unit",
+			Setup:     `systemctl link /opt/winch/winch-linked.service && systemctl is-enabled winch-linked | grep -qx linked`,
+			Args:      &module.Service{Name: "winch-linked", Enabled: new(true)},
+			Want:      change("enable"),
+			Unchanged: `systemctl is-enabled winch-linked | grep -qx linked`,
+			After:     `test -L /etc/systemd/system/multi-user.target.wants/winch-linked.service`,
+		},
+		{
+			Name:         "a failed start shows the journal",
+			Setup:        `echo boom on start > /tmp/boom`,
+			Args:         &module.Service{Name: "winch-boom", Running: new(true)},
+			Want:         change("start"),
+			WantApplyErr: "\nboom on start",
+		},
+		{
+			Name:         "a failed restart shows the journal",
+			Setup:        `systemctl start winch-boom && echo boom on restart > /tmp/boom`,
+			Args:         &module.Service{Name: "winch-boom", Restarted: true},
+			Want:         change("restart"),
+			WantApplyErr: "\nboom on restart",
+		},
+		{
+			Name:         "a failed reload shows the journal",
+			Setup:        `systemctl start winch-boom`,
+			Args:         &module.Service{Name: "winch-boom", Reloaded: true},
+			Want:         change("reload"),
+			WantApplyErr: "\nboom on reload",
+		},
+		{
+			Name: "restarted on a missing unit is ok",
+			Args: &module.Service{Name: "winch-nope", Restarted: true},
+			Want: module.Result{Status: module.OK},
+		},
+		{
+			Name: "reloaded on a missing unit is ok",
+			Args: &module.Service{Name: "winch-nope", Reloaded: true},
+			Want: module.Result{Status: module.OK},
 		},
 		{
 			Name: "a missing unit that must not run is ok",

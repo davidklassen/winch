@@ -3,6 +3,7 @@ package module
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -68,7 +69,7 @@ func (s *Service) Validate() error {
 }
 
 func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,NeedDaemonReload", "--", s.Name)
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,NeedDaemonReload,Type,RemainAfterExit", "--", s.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -77,6 +78,9 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		return Result{}, fmt.Errorf("%s is an alias of %s; use %s", s.Name, u.id, strings.TrimSuffix(u.id, ".service"))
 	}
 	missing := u.load == "not-found"
+	if missing && (s.Restarted || s.Reloaded) {
+		return Result{Status: OK}, nil
+	}
 	switch {
 	case missing, u.load == "loaded":
 	case u.load == "masked" && (s.Enabled == nil || !*s.Enabled) && (s.Running == nil || !*s.Running):
@@ -112,13 +116,16 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 				s.todo = append(s.todo, "disable")
 			}
 		case !*s.Enabled, u.file == "enabled":
-		case u.file == "disabled":
+		case u.file == "disabled", u.file == "enabled-runtime", u.file == "linked":
 			s.todo = append(s.todo, "enable")
 		default:
 			return Result{}, fmt.Errorf("%s has the unit file state %q; enabled: true needs an enabled or disabled unit", u.id, u.file)
 		}
 	}
 	if s.Running != nil {
+		if *s.Running && u.oneshot && !u.remain {
+			return Result{}, fmt.Errorf("%s is a oneshot unit without RemainAfterExit=yes, so it is never running after its job; start its timer, or use cmd", u.id)
+		}
 		up := u.active == "active" || u.active == "activating" || u.active == "reloading"
 		// A unit that waits to restart is down, but systemd starts it again
 		// unless a stop cancels the restart.
@@ -161,7 +168,16 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 		if c != "daemon-reload" {
 			args = append(args, "--", s.Name)
 		}
-		if _, err := run(ctx, nil, "systemctl", args...); err != nil {
+		_, err := run(ctx, nil, "systemctl", args...)
+		switch {
+		case err == nil:
+		case c == "start", c == "try-restart", c == "try-reload-or-restart":
+			journal, jerr := run(ctx, nil, "journalctl", "--unit="+s.Name, "-n", "10", "--no-pager", "-o", "cat")
+			if jerr != nil {
+				return errors.Join(err, jerr)
+			}
+			return fmt.Errorf("%w\n%s", err, strings.TrimSpace(journal))
+		default:
 			return err
 		}
 	}
@@ -197,7 +213,7 @@ func enableLinks(id string) ([]string, error) {
 
 type unitState struct {
 	id, load, active, sub, file string
-	reload                      bool
+	reload, oneshot, remain     bool
 }
 
 func parseShow(out string) unitState {
@@ -217,6 +233,10 @@ func parseShow(out string) unitState {
 			u.file = v
 		case "NeedDaemonReload":
 			u.reload = v == "yes"
+		case "Type":
+			u.oneshot = v == "oneshot"
+		case "RemainAfterExit":
+			u.remain = v == "yes"
 		}
 	}
 	return u
