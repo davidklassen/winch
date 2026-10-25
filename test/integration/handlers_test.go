@@ -175,4 +175,28 @@ func TestHandlers(t *testing.T) {
 			t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 		}
 	})
+
+	t.Run("a then that fails once runs at the next run", func(t *testing.T) {
+		const then = "if [ -e /root/then-failed ]; then echo x >> /root/then-runs; else touch /root/then-failed; exit 3; fi"
+		set := []string{"--set", "vars.app_value=four", "--set", "vars.app_then=" + then}
+		r := lab.Winch(t, dir, append([]string{"apply", "site", "--yes"}, set...)...)
+		if r.Code != 1 || !strings.Contains(r.Stderr, "then: "+then+": exit status 3") {
+			t.Fatalf("apply: exit %d, want the then error\n%s", r.Code, r.Stderr)
+		}
+		r = lab.Winch(t, dir, append([]string{"plan", "site"}, set...)...)
+		if r.Code != 0 || !strings.Contains(r.Stdout, "! then: "+then) || strings.Contains(r.Stdout, "file") {
+			t.Fatalf("plan after the failure: exit %d, want the pending then\n%s", r.Code, r.Stdout)
+		}
+		r = lab.Winch(t, dir, append([]string{"apply", "site", "--yes"}, set...)...)
+		if r.Code != 0 || !strings.Contains(r.Stdout, "handlers: app: ! then: "+then) {
+			t.Fatalf("apply after the failure: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if out := vm.MustRun(t, "cat /root/then-runs"); out != "x\n" {
+			t.Errorf("then ran %q times, want once", out)
+		}
+		r = lab.Winch(t, dir, append([]string{"plan", "site"}, set...)...)
+		if r.Code != 0 || r.Stdout != "2 hosts: 0 to change, 2 unchanged, 0 unknown\n" {
+			t.Errorf("third plan: exit %d, stdout %q", r.Code, r.Stdout)
+		}
+	})
 }

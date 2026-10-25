@@ -29,7 +29,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) e
 			lock.Close()
 		}
 	}()
-	var pending handlers
+	var handlers, thens records
 	for {
 		var req protocol.Request
 		if err := dec.Decode(&req); err != nil {
@@ -50,21 +50,22 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) e
 		case req.Method == "hello":
 			var project string
 			lock, project, err = takeLock(req.Params, dir, self)
-			pending = handlers{dir: filepath.Join(dir, "handlers"), project: project}
+			handlers = records{dir: filepath.Join(dir, "handlers"), project: project, what: "pending handlers"}
+			thens = records{dir: filepath.Join(dir, "then"), project: project, what: "pending then records"}
 		case lock == nil:
 			err = errors.New("the first request must be hello")
 		case req.Method == "facts":
 			result, err = facts.Read("/etc/os-release")
 		case req.Method == "pending":
-			result, err = pending.read()
+			result, err = readPending(handlers, thens)
 		case req.Method == "handled":
-			err = handled(req.Params, pending)
+			err = handled(req.Params, handlers)
 		case req.Method == "command":
-			err = command(ctx, req.Params)
+			err = command(ctx, req.Params, thens)
 		case req.Method == "check":
-			result, err = step(ctx, req.Params, false, pending, note)
+			result, err = step(ctx, req.Params, false, handlers, thens, note)
 		case req.Method == "apply":
-			result, err = step(ctx, req.Params, true, pending, note)
+			result, err = step(ctx, req.Params, true, handlers, thens, note)
 		default:
 			err = fmt.Errorf("unknown method %q", req.Method)
 		}
@@ -157,8 +158,8 @@ func deleteOthers(bin, self string) error {
 }
 
 // step checks a step. With apply, it then records the handlers that the step
-// notifies in pending, and makes the changes the check found.
-func step(ctx context.Context, params json.RawMessage, apply bool, pending handlers, note func(string)) (protocol.StepResult, error) {
+// notifies and its then, and makes the changes the check found.
+func step(ctx context.Context, params json.RawMessage, apply bool, handlers, thens records, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
@@ -177,24 +178,59 @@ func step(ctx context.Context, params json.RawMessage, apply bool, pending handl
 	}
 	// The plan has shown the diff already.
 	out.Old = nil
-	if err := pending.add(s.Notify); err != nil {
+	if err := handlers.add(s.Notify); err != nil {
 		return out, err
+	}
+	if s.Then != nil {
+		line, err := json.Marshal(s.Then)
+		if err != nil {
+			return out, err
+		}
+		if err := thens.add([]string{string(line)}); err != nil {
+			return out, err
+		}
 	}
 	return out, m.Apply(ctx, note)
 }
 
-func handled(params json.RawMessage, pending handlers) error {
+func readPending(handlers, thens records) (protocol.Pending, error) {
+	names, err := handlers.read()
+	if err != nil {
+		return protocol.Pending{}, err
+	}
+	lines, err := thens.read()
+	if err != nil {
+		return protocol.Pending{}, err
+	}
+	p := protocol.Pending{Handlers: names, Then: make([]protocol.Then, len(lines))}
+	for i, l := range lines {
+		if err := json.Unmarshal([]byte(l), &p.Then[i]); err != nil {
+			return protocol.Pending{}, fmt.Errorf("read the pending then records: %w", err)
+		}
+	}
+	return p, nil
+}
+
+func handled(params json.RawMessage, handlers records) error {
 	var h protocol.Handled
 	if err := json.Unmarshal(params, &h); err != nil {
 		return fmt.Errorf("decode handled: %w", err)
 	}
-	return pending.remove(h.Name)
+	return handlers.remove(h.Name)
 }
 
-func command(ctx context.Context, params json.RawMessage) error {
-	var c protocol.Command
-	if err := json.Unmarshal(params, &c); err != nil {
+// command runs the command of a then, and then removes its record.
+func command(ctx context.Context, params json.RawMessage, thens records) error {
+	var t protocol.Then
+	if err := json.Unmarshal(params, &t); err != nil {
 		return fmt.Errorf("decode command: %w", err)
 	}
-	return module.Shell(ctx, c.Command)
+	if err := module.Shell(ctx, t.Command); err != nil {
+		return err
+	}
+	line, err := json.Marshal(t)
+	if err != nil {
+		return err
+	}
+	return thens.remove(string(line))
 }

@@ -11,20 +11,22 @@ import (
 	"strings"
 )
 
-// handlers is the file of the pending handlers of a project: one
-// <recipe>.<handler> per line.
-type handlers struct {
+// records is a file of records of a project, one per line: the pending
+// handlers as <recipe>.<handler>, or the pending then records as JSON.
+type records struct {
 	dir     string
 	project string
+	// what names the records in errors.
+	what string
 }
 
-func (h handlers) read() ([]string, error) {
+func (h records) read() ([]string, error) {
 	f, err := os.OpenInRoot(h.dir, h.project)
 	if errors.Is(err, fs.ErrNotExist) {
 		return []string{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read the pending handlers: %w", err)
+		return nil, fmt.Errorf("read the %s: %w", h.what, err)
 	}
 	defer f.Close()
 	data, err := io.ReadAll(f)
@@ -32,12 +34,12 @@ func (h handlers) read() ([]string, error) {
 		return []string{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read the pending handlers: %w", err)
+		return nil, fmt.Errorf("read the %s: %w", h.what, err)
 	}
-	return strings.Fields(string(data)), nil
+	return strings.FieldsFunc(string(data), func(r rune) bool { return r == '\n' }), nil
 }
 
-func (h handlers) add(names []string) error {
+func (h records) add(names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
@@ -58,7 +60,7 @@ func (h handlers) add(names []string) error {
 	return h.write(cur)
 }
 
-func (h handlers) remove(name string) error {
+func (h records) remove(name string) error {
 	cur, err := h.read()
 	if err != nil {
 		return err
@@ -71,7 +73,7 @@ func (h handlers) remove(name string) error {
 }
 
 // write replaces the file in one rename, after the data is on disk.
-func (h handlers) write(names []string) error {
+func (h records) write(names []string) error {
 	if err := os.MkdirAll(h.dir, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", h.dir, err)
 	}
@@ -87,7 +89,7 @@ func (h handlers) write(names []string) error {
 	tmp := ".winch-" + rand.Text()
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return fmt.Errorf("record the pending handlers: %w", err)
+		return fmt.Errorf("record the %s: %w", h.what, err)
 	}
 	defer root.Remove(tmp)
 	_, err = f.WriteString(b.String())
@@ -104,7 +106,7 @@ func (h handlers) write(names []string) error {
 		err = syncDir(root)
 	}
 	if err != nil {
-		return fmt.Errorf("record the pending handlers: %w", err)
+		return fmt.Errorf("record the %s: %w", h.what, err)
 	}
 	return nil
 }

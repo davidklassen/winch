@@ -1,0 +1,8 @@
+stdout:
+web1: site: ~ file /var/www/about.html
+web1: site: ! then: reindex
+web1: nginx: ~ handler nginx.reload: service nginx
+web1: app: ~ handler app.restart: service app
+
+2 hosts: 1 changed, 1 unchanged
+stderr:

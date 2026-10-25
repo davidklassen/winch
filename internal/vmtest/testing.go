@@ -161,7 +161,7 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 				vm.MustRun(t, c.BeforeApply)
 			}
 			st = c.State
-			applied, err := s.Apply(ctx, name, c.Args, &st, nil)
+			applied, err := s.Apply(ctx, name, c.Args, &st, nil, nil)
 			if c.WantApplyErr != "" {
 				if err == nil || !strings.Contains(err.Error(), c.WantApplyErr) {
 					t.Fatalf("apply error = %v, want %q", err, c.WantApplyErr)

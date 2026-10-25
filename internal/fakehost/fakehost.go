@@ -1,6 +1,7 @@
 // Package fakehost is a test double for hosts: it keeps files, packages, and
 // facts in memory and checks and applies file, dir, pkg, and service steps
-// against them. It keeps pending handlers and runs commands as records.
+// against them. It keeps pending handlers and then records, and runs
+// commands as records.
 package fakehost
 
 import (
@@ -16,6 +17,7 @@ import (
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
 )
 
@@ -32,6 +34,7 @@ type Hosts struct {
 	FactsReads map[string]int
 	facts      map[string]facts.Facts
 	pending    map[string][]string
+	thens      map[string][]protocol.Then
 	failCmd    map[string]bool
 	// Log lists the service actions and the commands per host, in order.
 	Log map[string][]string
@@ -51,6 +54,7 @@ func New() *Hosts {
 		FactsReads: map[string]int{},
 		facts:      map[string]facts.Facts{},
 		pending:    map[string][]string{},
+		thens:      map[string][]protocol.Then{},
 		failCmd:    map[string]bool{},
 		Log:        map[string][]string{},
 	}
@@ -66,6 +70,19 @@ func (h *Hosts) PendingOf(host string) []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.pending[host])
+}
+
+func (h *Hosts) SetThen(host string, thens ...protocol.Then) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.thens[host] = thens
+}
+
+// ThenOf returns the pending then records of a host.
+func (h *Hosts) ThenOf(host string) []protocol.Then {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.thens[host])
 }
 
 func (h *Hosts) FailCommand(host, command string) { h.failCmd[host+" "+command] = true }
@@ -141,10 +158,12 @@ func (h *Hosts) File(host, path string) (string, bool) {
 func (h *Hosts) FailCheck(key string) { h.failCheck[key] = true }
 func (h *Hosts) FailApply(key string) { h.failApply[key] = true }
 
-// Fix ends the failures that FailCheck and FailApply set for key.
+// Fix ends the failures that FailCheck, FailApply, and FailCommand set for
+// key.
 func (h *Hosts) Fix(key string) {
 	delete(h.failCheck, key)
 	delete(h.failApply, key)
+	delete(h.failCmd, key)
 }
 
 func (h *Hosts) Connect(ctx context.Context, host project.Host) (*Conn, error) {
@@ -257,7 +276,7 @@ func serviceAction(s *module.Service) string {
 	return "restart"
 }
 
-func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string) (module.Result, error) {
+func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
 	fresh := st.IndexFresh
 	res, err := c.Check(ctx, name, m, st)
 	if err != nil || res.Status == module.OK {
@@ -268,6 +287,9 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 		if !slices.Contains(c.hosts.pending[c.host], n) {
 			c.hosts.pending[c.host] = append(c.hosts.pending[c.host], n)
 		}
+	}
+	if then != nil && !slices.Contains(c.hosts.thens[c.host], *then) {
+		c.hosts.thens[c.host] = append(c.hosts.thens[c.host], *then)
 	}
 	c.hosts.mu.Unlock()
 	if sv, ok := m.(*module.Service); ok {
@@ -335,8 +357,8 @@ func (c *Conn) Facts(ctx context.Context) (facts.Facts, error) {
 	return facts.Facts{OS: facts.OS{ID: "debian", Version: "13", Codename: "trixie"}}, nil
 }
 
-func (c *Conn) Pending(ctx context.Context) ([]string, error) {
-	return c.hosts.PendingOf(c.host), nil
+func (c *Conn) Pending(ctx context.Context) (protocol.Pending, error) {
+	return protocol.Pending{Handlers: c.hosts.PendingOf(c.host), Then: c.hosts.ThenOf(c.host)}, nil
 }
 
 func (c *Conn) Handled(ctx context.Context, handler string) error {
@@ -346,13 +368,14 @@ func (c *Conn) Handled(ctx context.Context, handler string) error {
 	return nil
 }
 
-func (c *Conn) Command(ctx context.Context, command string) error {
+func (c *Conn) Command(ctx context.Context, then protocol.Then) error {
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
-	c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "command "+command)
-	if c.hosts.failCmd[c.host+" "+command] {
-		return fmt.Errorf("%s: exit status 1", command)
+	c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "command "+then.Command)
+	if c.hosts.failCmd[c.host+" "+then.Command] {
+		return fmt.Errorf("%s: exit status 1", then.Command)
 	}
+	c.hosts.thens[c.host] = slices.DeleteFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return t == then })
 	return nil
 }
 

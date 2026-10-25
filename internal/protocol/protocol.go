@@ -45,17 +45,30 @@ type Step struct {
 	// Notify are the handlers, as <recipe>.<handler>, that the helper records
 	// before an apply changes something.
 	Notify []string `json:"notify,omitempty"`
+	// Then is the then of the step, which the helper records before an
+	// apply changes something.
+	Then *Then `json:"then,omitempty"`
+}
+
+// Then is a record of a then: the command, under the recipe, or the stage for
+// a step of a stage. It is also the params of command, which runs the command
+// and then removes the record.
+type Then struct {
+	Recipe  string `json:"recipe,omitempty"`
+	Stage   string `json:"stage,omitempty"`
+	Command string `json:"command"`
+}
+
+// Pending is the result of pending: the records of the project.
+type Pending struct {
+	Handlers []string `json:"handlers"`
+	Then     []Then   `json:"then"`
 }
 
 // Handled is the params of handled: the handler whose record the helper
 // removes.
 type Handled struct {
 	Name string `json:"name"`
-}
-
-// Command is the params of command.
-type Command struct {
-	Command string `json:"command"`
 }
 
 // StepResult is the result of check and apply, with the new state.

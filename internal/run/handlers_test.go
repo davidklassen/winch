@@ -11,6 +11,7 @@ import (
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -182,6 +183,9 @@ func TestApplyHandlers(t *testing.T) {
 		if p := h.PendingOf(host); len(p) != 0 {
 			t.Errorf("%s has pending handlers %v after the run", host, p)
 		}
+		if th := h.ThenOf(host); len(th) != 0 {
+			t.Errorf("%s has then records %v after the run", host, th)
+		}
 	}
 	if plan := run.MakePlan(context.Background(), p, h.Connector()); plan.HasChanges() {
 		t.Error("a second plan has changes")
@@ -310,6 +314,40 @@ func TestThen(t *testing.T) {
 			t.Errorf("pending = %v, want %v", got, want)
 		}
 	})
+	t.Run("then fails, the next run runs it", func(t *testing.T) {
+		h := fakehost.New()
+		present(h, "web2")
+		h.SetFile("web1", "/etc/nginx/a.conf", "a\n")
+		h.SetFile("web1", "/etc/nginx/b.conf", "b\n")
+		h.SetFile("web1", "/etc/nginx/c.conf", "c\n")
+		h.SetFile("web1", "/etc/app.conf", "app\n")
+		h.FailCommand("web1", "reindex")
+		p := handlerProject(t)
+		if ok, got := applyAll(t, p, h); ok {
+			t.Fatalf("apply succeeded with a failing then:\n%s", got)
+		}
+		// Both elements change, and one record stays.
+		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Command: "reindex"}}; !slices.Equal(got, want) {
+			t.Fatalf("then records = %v, want %v", got, want)
+		}
+		h.Fix("web1 reindex")
+		plan := run.MakePlan(context.Background(), p, h.Connector())
+		var out, errOut bytes.Buffer
+		plan.Write(&out, &errOut)
+		golden.Assert(t, filepath.Join("testdata", "handlers", "plan-after-failed-then.golden"), output(&out, &errOut))
+		if !run.Apply(context.Background(), plan, h.Connector(), &out, &errOut) {
+			t.Fatal(errOut.String())
+		}
+		if want := []string{"command reindex", "nginx reload", "command reindex", "app restart"}; !slices.Equal(h.Log["web1"], want) {
+			t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+		}
+		if got := h.ThenOf("web1"); len(got) != 0 {
+			t.Errorf("then records after the second run = %v", got)
+		}
+		if plan := run.MakePlan(context.Background(), p, h.Connector()); plan.HasChanges() {
+			t.Error("a third plan has changes")
+		}
+	})
 	t.Run("a later element fails", func(t *testing.T) {
 		h := fakehost.New()
 		h.FailApply("web1 /var/www/about.html")
@@ -319,6 +357,9 @@ func TestThen(t *testing.T) {
 		}
 		if slices.Contains(h.Log["web1"], "command reindex") {
 			t.Error("then ran after a failed element")
+		}
+		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Command: "reindex"}}; !slices.Equal(got, want) {
+			t.Errorf("then records = %v, want %v", got, want)
 		}
 		got := h.PendingOf("web1")
 		if !slices.Contains(got, "nginx.reload") || !slices.Contains(got, "app.restart") {
@@ -387,5 +428,110 @@ func TestStageStepNotifiesEarlierRecipe(t *testing.T) {
 	}
 	if want := []string{"nginx reload"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+	}
+}
+
+// spec: Steps; Running a pipeline/Plan; CLI/Output
+func TestPendingThen(t *testing.T) {
+	files := maps.Clone(handlerFiles)
+	files["pipelines/site.yaml"] += `      - file:
+          path: /etc/motd
+          content: "hi\n"
+        then: newaliases
+`
+	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	present(h, "web1", "web2")
+	h.SetFile("web1", "/etc/motd", "hi\n")
+	h.SetFile("web2", "/etc/motd", "hi\n")
+	h.SetThen("web1", protocol.Then{Recipe: "site", Command: "reindex"}, protocol.Then{Stage: "apps", Command: "newaliases"})
+	// No step matches these: another recipe, the stage of a recipe, another
+	// command, a recipe named like the stage.
+	other := []protocol.Then{
+		{Recipe: "nginx", Command: "reindex"},
+		{Stage: "web", Command: "reindex"},
+		{Recipe: "site", Command: "other"},
+		{Recipe: "apps", Command: "newaliases"},
+	}
+	h.SetThen("web2", other...)
+	plan := run.MakePlan(context.Background(), p, h.Connector())
+	var out, errOut bytes.Buffer
+	plan.Write(&out, &errOut)
+	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-pending-then.golden"), output(&out, &errOut))
+
+	out.Reset()
+	errOut.Reset()
+	if !run.Apply(context.Background(), plan, h.Connector(), &out, &errOut) {
+		t.Fatal(errOut.String())
+	}
+	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-pending-then.golden"), output(&out, &errOut))
+	if want := []string{"command reindex", "command newaliases"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+	}
+	if len(h.Log["web2"]) != 0 {
+		t.Errorf("web2 ran %q, want nothing", h.Log["web2"])
+	}
+	if got := h.ThenOf("web1"); len(got) != 0 {
+		t.Errorf("then records on web1 = %v, want none", got)
+	}
+	if got := h.ThenOf("web2"); !slices.Equal(got, other) {
+		t.Errorf("then records on web2 = %v, want %v", got, other)
+	}
+	if plan := run.MakePlan(context.Background(), p, h.Connector()); plan.HasChanges() {
+		t.Error("a second plan has changes")
+	}
+}
+
+// spec: Steps; CLI/Output
+func TestPendingThenOfAChangedStep(t *testing.T) {
+	h := fakehost.New()
+	present(h, "web1", "web2")
+	h.SetFile("web1", "/var/www/about.html", "old\n")
+	h.SetThen("web1", protocol.Then{Recipe: "site", Command: "reindex"})
+	p := handlerProject(t)
+	plan := run.MakePlan(context.Background(), p, h.Connector())
+	var out, errOut bytes.Buffer
+	plan.Write(&out, &errOut)
+	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-pending-then-change.golden"), output(&out, &errOut))
+	out.Reset()
+	errOut.Reset()
+	if !run.Apply(context.Background(), plan, h.Connector(), &out, &errOut) {
+		t.Fatal(errOut.String())
+	}
+	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-pending-then-change.golden"), output(&out, &errOut))
+	if want := []string{"command reindex", "nginx reload", "app restart"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+	}
+	if got := h.ThenOf("web1"); len(got) != 0 {
+		t.Errorf("then records = %v, want none", got)
+	}
+}
+
+// spec: Steps; Handlers
+func TestPendingThenOfAHandlerStep(t *testing.T) {
+	files := maps.Clone(handlerFiles)
+	files["recipes/app/recipe.yaml"] += "      then: app-check\n"
+	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	present(h, "web1", "web2")
+	h.SetPending("web1", "app.restart")
+	h.SetThen("web1", protocol.Then{Recipe: "app", Command: "app-check"})
+	if ok, got := applyAll(t, p, h); !ok {
+		t.Fatal(string(got))
+	}
+	if want := []string{"app restart", "command app-check"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+	}
+	if got := h.ThenOf("web1"); len(got) != 0 {
+		t.Errorf("then records = %v, want none", got)
+	}
+	if got := h.PendingOf("web1"); len(got) != 0 {
+		t.Errorf("pending handlers = %v, want none", got)
 	}
 }

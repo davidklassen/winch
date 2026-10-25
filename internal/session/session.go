@@ -240,41 +240,42 @@ func (s *Session) Facts(ctx context.Context) (facts.Facts, error) {
 
 // Check checks a step and updates st. It sends only the hash of the content.
 func (s *Session) Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
-	return s.step("check", name, withoutContent(m), st, nil)
+	return s.step("check", name, withoutContent(m), st, nil, nil)
 }
 
 // Apply checks a step again, makes its changes, and updates st. It sends the
 // content only when the helper must write it.
-func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string) (module.Result, error) {
-	res, err := s.step("apply", name, withoutContent(m), st, notify)
+func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
+	res, err := s.step("apply", name, withoutContent(m), st, notify, then)
 	if errors.Is(err, errNeedContent) {
-		return s.step("apply", name, m, st, notify)
+		return s.step("apply", name, m, st, notify, then)
 	}
 	return res, err
 }
 
-func (s *Session) Pending(ctx context.Context) ([]string, error) {
-	var names []string
-	err := s.call("pending", nil, &names)
-	return names, err
+func (s *Session) Pending(ctx context.Context) (protocol.Pending, error) {
+	var p protocol.Pending
+	err := s.call("pending", nil, &p)
+	return p, err
 }
 
 func (s *Session) Handled(ctx context.Context, handler string) error {
 	return s.call("handled", protocol.Handled{Name: handler}, nil)
 }
 
-// Command runs a command as root on the host.
-func (s *Session) Command(ctx context.Context, command string) error {
-	return s.call("command", protocol.Command{Command: command}, nil)
+// Command runs the command of a then as root on the host, and then removes
+// its record.
+func (s *Session) Command(ctx context.Context, then protocol.Then) error {
+	return s.call("command", then, nil)
 }
 
-func (s *Session) step(method, name string, m module.Module, st *module.State, notify []string) (module.Result, error) {
+func (s *Session) step(method, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
 	args, err := json.Marshal(m)
 	if err != nil {
 		return module.Result{}, err
 	}
 	var res protocol.StepResult
-	if err := s.call(method, protocol.Step{Module: name, Args: args, State: *st, Notify: notify}, &res); err != nil {
+	if err := s.call(method, protocol.Step{Module: name, Args: args, State: *st, Notify: notify, Then: then}, &res); err != nil {
 		return module.Result{}, err
 	}
 	*st = res.State

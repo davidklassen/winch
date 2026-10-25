@@ -210,17 +210,22 @@ func TestStateRoundTrip(t *testing.T) {
 	}
 }
 
-func pending(t *testing.T, c *client) []string {
+func pendingAll(t *testing.T, c *client) protocol.Pending {
 	t.Helper()
 	r := c.call(t, "pending", nil)
 	if r.Error != "" {
 		t.Fatalf("pending: %s", r.Error)
 	}
-	var names []string
-	if err := json.Unmarshal(r.Result, &names); err != nil {
+	var p protocol.Pending
+	if err := json.Unmarshal(r.Result, &p); err != nil {
 		t.Fatal(err)
 	}
-	return names
+	return p
+}
+
+func pending(t *testing.T, c *client) []string {
+	t.Helper()
+	return pendingAll(t, c).Handlers
 }
 
 // spec: Handlers; Remote execution/State on the host
@@ -313,14 +318,84 @@ func TestPendingHandlers(t *testing.T) {
 	}
 }
 
+// spec: Steps; Remote execution/State on the host
+func TestPendingThen(t *testing.T) {
+	dir := t.TempDir()
+	c := start(t, dir, "")
+	h := hello("r1")
+	h.Project = "acme"
+	if r := c.call(t, "hello", h); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	work := t.TempDir()
+	remove := func(name string) json.RawMessage {
+		p := filepath.Join(work, name)
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		args, _ := json.Marshal(module.File{Path: p, Absent: true})
+		return args
+	}
+	postmap := protocol.Then{Recipe: "postfix", Command: "postmap /etc/postfix/virtual"}
+	reload := protocol.Then{Stage: "postfix", Command: "systemctl daemon-reload\necho 'a b'"}
+
+	if r := c.call(t, "check", protocol.Step{Module: "file", Args: remove("a"), Then: &postmap}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	gone, _ := json.Marshal(module.File{Path: filepath.Join(work, "gone"), Absent: true})
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: gone, Then: &postmap}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if got := pendingAll(t, c).Then; len(got) != 0 {
+		t.Fatalf("then records after a check and an ok apply = %v, want none", got)
+	}
+
+	// Two elements of a loop record the then once.
+	for _, name := range []string{"b", "c"} {
+		if r := c.call(t, "apply", protocol.Step{Module: "file", Args: remove(name), Then: &postmap}); r.Error != "" {
+			t.Fatal(r.Error)
+		}
+	}
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: remove("d"), Then: &reload}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if got, want := pendingAll(t, c).Then, []protocol.Then{postmap, reload}; !slices.Equal(got, want) {
+		t.Fatalf("then records = %v, want %v", got, want)
+	}
+	if got := pending(t, c); len(got) != 0 {
+		t.Errorf("pending handlers = %v, want none", got)
+	}
+
+	// A failed command keeps its record; a command that succeeds removes it.
+	failing := protocol.Then{Recipe: "postfix", Command: "false"}
+	done := protocol.Then{Recipe: "postfix", Command: "true\necho '<a &b>' >/dev/null"}
+	for _, th := range []protocol.Then{failing, done} {
+		if r := c.call(t, "apply", protocol.Step{Module: "file", Args: remove("e"), Then: &th}); r.Error != "" {
+			t.Fatal(r.Error)
+		}
+	}
+	if r := c.call(t, "command", failing); r.Error == "" {
+		t.Fatal("command false succeeded")
+	}
+	if r := c.call(t, "command", done); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if got, want := pendingAll(t, c).Then, []protocol.Then{postmap, reload, failing}; !slices.Equal(got, want) {
+		t.Errorf("then records after the commands = %v, want %v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "then", "acme")); err != nil {
+		t.Errorf("then/acme: %v", err)
+	}
+}
+
 // spec: Modules; Steps
 func TestCommand(t *testing.T) {
 	c := start(t, t.TempDir(), "")
 	c.call(t, "hello", hello("r1"))
-	if r := c.call(t, "command", protocol.Command{Command: "true"}); r.Error != "" {
+	if r := c.call(t, "command", protocol.Then{Command: "true"}); r.Error != "" {
 		t.Errorf("true: %s", r.Error)
 	}
-	r := c.call(t, "command", protocol.Command{Command: "echo broken; exit 3"})
+	r := c.call(t, "command", protocol.Then{Command: "echo broken; exit 3"})
 	if !strings.Contains(r.Error, "exit status 3") || !strings.Contains(r.Error, "broken") {
 		t.Errorf("error = %q, want the exit status and the output", r.Error)
 	}

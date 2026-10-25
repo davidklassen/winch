@@ -1,0 +1,10 @@
+stdout:
+web1
+  web
+    site
+      ! then: reindex
+  apps
+    ! then: newaliases
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+stderr:

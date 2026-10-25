@@ -2,6 +2,7 @@
 package run
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -14,19 +15,21 @@ import (
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/protocol"
 )
 
 // Conn is a session with one host.
 type Conn interface {
 	Facts(ctx context.Context) (facts.Facts, error)
-	Pending(ctx context.Context) ([]string, error)
+	Pending(ctx context.Context) (protocol.Pending, error)
 	Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
-	// Apply records the handlers in notify on the host before it changes
-	// something.
-	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string) (module.Result, error)
+	// Apply records the handlers in notify and then on the host before it
+	// changes something.
+	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error)
 	// Handled removes the record of a handler that succeeded.
 	Handled(ctx context.Context, handler string) error
-	Command(ctx context.Context, command string) error
+	// Command runs the command of a then, and then removes its record.
+	Command(ctx context.Context, then protocol.Then) error
 	Close() error
 }
 
@@ -40,9 +43,8 @@ type Plan struct {
 	// Hosts are all hosts of the pipeline, in inventory order.
 	Hosts  []project.Host
 	Failed map[string]error
-	// Pending are the pending handlers of each host, as the host reported
-	// them.
-	Pending map[string][]string
+	// Pending are the records of each host, as the host reported them.
+	Pending map[string]protocol.Pending
 }
 
 type StagePlan struct {
@@ -71,6 +73,11 @@ type Planned struct {
 	Notify []string
 	// Handler is set on a slot. A slot has no step of its own.
 	Handler *Slot
+	// Then is the record of the step's then, or nil.
+	Then *protocol.Then
+	// PendingThen is true on the last element of a step whose then is
+	// pending on the host.
+	PendingThen bool
 }
 
 // Slot is a place where a handler runs when a step notified it, or when it is
@@ -84,7 +91,7 @@ type Slot struct {
 
 // shows reports whether the plan shows p.
 func (p Planned) shows() bool {
-	return p.Result.Status == module.Change || p.Handler != nil && p.Handler.Runs
+	return p.Result.Status == module.Change || p.Handler != nil && p.Handler.Runs || p.PendingThen
 }
 
 func (h HostPlan) changes() bool {
@@ -103,13 +110,15 @@ type hostRun struct {
 	ran []*project.Step
 	// notified are the handlers that the plan expects to run later.
 	notified map[string]bool
+	// thens are the pending then records that no step matched yet.
+	thens map[protocol.Then]bool
 }
 
 // MakePlan checks every step on every host, stage by stage. At the first
 // contact with a host, it reads the facts and starts the host's evaluation.
 // A host that fails stops there.
 func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
-	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string][]string{}}
+	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}}
 	inStages := map[string]bool{}
 	runs := map[string]*hostRun{}
 	for i := range p.Pipeline.Stages {
@@ -121,7 +130,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 				continue
 			}
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}}
 			}
 			steps, err := check(ctx, connect, p, h, stage, runs[h.Name], plan.Pending)
 			if err != nil {
@@ -143,7 +152,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 // check checks the steps of a stage on one host. At the first contact, it
 // reads the facts and the pending handlers, and starts the host's
 // evaluation.
-func check(ctx context.Context, connect Connect, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun, pending map[string][]string) (steps []Planned, err error) {
+func check(ctx context.Context, connect Connect, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun, pending map[string]protocol.Pending) (steps []Planned, err error) {
 	conn, err := connect(ctx, p.Name, h)
 	if err != nil {
 		return nil, err
@@ -164,8 +173,11 @@ func check(ctx context.Context, connect Connect, p *project.Project, h project.H
 		if pending[h.Name], err = conn.Pending(ctx); err != nil {
 			return nil, err
 		}
-		for _, n := range pending[h.Name] {
+		for _, n := range pending[h.Name].Handlers {
 			hr.notified[n] = true
+		}
+		for _, t := range pending[h.Name].Then {
+			hr.thens[t] = true
 		}
 	}
 	steps, err = evaluate(stage, hr)
@@ -188,6 +200,10 @@ func check(ctx context.Context, connect Connect, p *project.Project, h project.H
 			for _, n := range p.Notify {
 				hr.notified[n] = true
 			}
+		}
+		if p.Last && p.Then != nil && hr.thens[*p.Then] {
+			steps[i].PendingThen = true
+			delete(hr.thens, *p.Then)
 		}
 	}
 	return steps, nil
@@ -247,7 +263,7 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 			}
 		}
 		for i, s := range steps {
-			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify})
+			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify, Then: thenRecord(stage, in, s)})
 		}
 		return nil
 	}
@@ -272,7 +288,7 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 			}
 		}
 		for _, h := range st.Recipe.Handlers {
-			slot, err := handlerSlot(h, hr.env, st)
+			slot, err := handlerSlot(stage, h, hr.env, st)
 			if err != nil {
 				return nil, err
 			}
@@ -285,7 +301,7 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 			if !late[h] {
 				continue
 			}
-			slot, err := handlerSlot(h, hr.env, r)
+			slot, err := handlerSlot(stage, h, hr.env, r)
 			if err != nil {
 				return nil, err
 			}
@@ -296,7 +312,7 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 }
 
 // handlerSlot evaluates the steps of a handler for a host.
-func handlerSlot(h *project.Handler, env *project.Env, in *project.Step) (*Slot, error) {
+func handlerSlot(stage *project.Stage, h *project.Handler, env *project.Env, in *project.Step) (*Slot, error) {
 	slot := &Slot{Handler: h}
 	for _, hs := range h.Steps {
 		steps, err := hs.Eval(env)
@@ -304,7 +320,7 @@ func handlerSlot(h *project.Handler, env *project.Env, in *project.Step) (*Slot,
 			return nil, err
 		}
 		for i, s := range steps {
-			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1})
+			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1, Then: thenRecord(stage, in, s)})
 		}
 	}
 	return slot, nil
@@ -328,6 +344,18 @@ func scope(stage *project.Stage, p Planned) string {
 		return printable(p.In.Recipe.Name)
 	}
 	return printable(stage.Name)
+}
+
+// thenRecord is the record of the then of st in the recipe step in, or nil
+// for a step without then.
+func thenRecord(stage *project.Stage, in *project.Step, st project.Step) *protocol.Then {
+	if st.Then == "" {
+		return nil
+	}
+	if in != nil {
+		return &protocol.Then{Recipe: in.Recipe.Name, Command: st.Then}
+	}
+	return &protocol.Then{Stage: stage.Name, Command: st.Then}
 }
 
 // label is the text of a step in the plan and the logs.
@@ -373,7 +401,12 @@ func (p *Plan) Write(out, errOut io.Writer) {
 					fmt.Fprintf(b, "%s! handler %s\n", indent, printable(p.Handler.Handler.FullName()))
 					continue
 				}
-				writeStep(b, indent, p.Step, p.Result)
+				if p.Result.Status == module.Change {
+					writeStep(b, indent, p.Step, p.Result)
+				}
+				if p.PendingThen {
+					fmt.Fprintf(b, "%s! then: %s\n", indent, printable(p.Step.Then))
+				}
 			}
 		}
 	}
@@ -495,9 +528,12 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, out, errOut io.Writ
 				continue
 			}
 			if runs[name] == nil {
-				runs[name] = &hostApply{host: name, out: out, notified: map[string]bool{}}
-				for _, n := range plan.Pending[name] {
+				runs[name] = &hostApply{host: name, out: out, notified: map[string]bool{}, thens: map[protocol.Then]bool{}}
+				for _, n := range plan.Pending[name].Handlers {
 					runs[name].notified[n] = true
+				}
+				for _, t := range plan.Pending[name].Then {
+					runs[name].thens[t] = true
 				}
 			}
 			ok, err := runs[name].apply(ctx, connect, plan.Project, sp.Stage, hp)
@@ -525,7 +561,9 @@ type hostApply struct {
 	// notified are the handlers that wait for their slot: notified in this
 	// run, or pending on the host.
 	notified map[string]bool
-	conn     Conn
+	// thens are the pending then records that no step ran yet.
+	thens map[protocol.Then]bool
+	conn  Conn
 }
 
 // apply runs the steps and the handlers of a stage on one host. It reports
@@ -544,7 +582,8 @@ func (a *hostApply) apply(ctx context.Context, connect Connect, proj string, sta
 }
 
 // steps applies steps and runs the handlers of their slots. A step runs its
-// then after its last element when an element changed something.
+// then after its last element when an element changed something, or when its
+// then is pending on the host.
 func (a *hostApply) steps(ctx context.Context, scope func(Planned) string, prefix string, steps []Planned) (changed bool, err error) {
 	// changedLabel is the label of the last element of the current step that
 	// changed something, or "".
@@ -570,13 +609,20 @@ func (a *hostApply) steps(ctx context.Context, scope func(Planned) string, prefi
 		if !p.Last {
 			continue
 		}
-		run := changedLabel != "" && p.Step.Then != ""
-		failLabel := changedLabel
+		t := p.Then
+		failLabel := cmp.Or(changedLabel, l)
+		run := t != nil && (changedLabel != "" || a.thens[*t])
 		changedLabel = ""
-		if run {
-			if err := a.conn.Command(ctx, p.Step.Then); err != nil {
-				return changed, fmt.Errorf("%s: failed: %s: then: %w", scope(p), failLabel, err)
-			}
+		if !run {
+			continue
+		}
+		if err := a.conn.Command(ctx, *t); err != nil {
+			return changed, fmt.Errorf("%s: failed: %s: then: %w", scope(p), failLabel, err)
+		}
+		if a.thens[*t] {
+			fmt.Fprintf(a.out, "%s: %s: ! then: %s\n", a.host, scope(p), printable(t.Command))
+			delete(a.thens, *t)
+			changed = true
 		}
 	}
 	return changed, nil
@@ -603,7 +649,7 @@ func (a *hostApply) handler(ctx context.Context, s *Slot) (bool, error) {
 
 // step applies one element of a step with the label l. It reports a change.
 func (a *hostApply) step(ctx context.Context, scope, l string, p Planned) (bool, error) {
-	res, err := a.conn.Apply(ctx, p.Step.Module, p.Step.Args, &a.state, p.Notify)
+	res, err := a.conn.Apply(ctx, p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then)
 	if err != nil {
 		return false, fmt.Errorf("%s: failed: %s: %w", scope, l, err)
 	}
