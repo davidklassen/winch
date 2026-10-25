@@ -186,6 +186,51 @@ func TestLoadVars(t *testing.T) {
 		{name: "item-in-template-without-loop", files: map[string]string{
 			"recipes/web/recipe.yaml": web + "  - file:\n      path: /etc/web/x\n      template: site.tmpl\n",
 		}},
+		{name: "when-in-vars", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr '\"web_port\" in vars'", 1),
+		}},
+		{name: "when-vars-item", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'vars[item] != \"\"'", 1),
+		}},
+		{name: "when-keys-vars", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'len(keys(vars)) > 0'", 1),
+		}},
+		{name: "when-in-host-vars", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr '\"domain\" in host.vars'", 1),
+		}},
+		{name: "when-host-vars-by-name", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'host.vars[\"mail_server\"]'", 1),
+		}},
+		{name: "when-env", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr '$env.vars.mail_server'", 1),
+		}},
+		{name: "when-whole-host", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'toJSON(host) != \"\"'", 1),
+		}},
+		{name: "default-tpl-dot", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ . }}'", 1),
+		}},
+		{name: "default-tpl-dollar", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ $ }}'", 1),
+		}},
+		{name: "default-tpl-with-host", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ with .host }}{{ .vars.domain }}{{ end }}'", 1),
+		}},
+		{name: "loop-keys-vars", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "loop: !expr vars.web_sites", "loop: !expr keys(vars)", 1),
+		}},
+		{name: "default-len-vars", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !expr len(vars)", 1),
+		}},
+		{name: "default-tpl-range-vars", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ range .vars }}x{{ end }}'", 1),
+		}},
+		{name: "default-tpl-index-vars", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ index .vars \"domain\" }}'", 1),
+		}},
+		{name: "arg-vars-item", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "path: !tpl /etc/web/{{ .item }}.conf", "path: !expr '\"/etc/web/\" + vars[item]'", 1),
+		}},
 		{name: "when-untagged", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: vars.mail_server", 1),
 		}},

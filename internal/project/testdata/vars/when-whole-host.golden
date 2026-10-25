@@ -1,0 +1,3 @@
+recipes/web/recipe.yaml:15:11: a when reads vars only by name, such as vars.nginx_port
+ | toJSON(host) != ""
+ | .......^

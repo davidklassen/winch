@@ -65,7 +65,11 @@ func (l *loader) declare(n *yamlx.Node, recipe string) []error {
 // order in which defaults evaluate. A cycle between defaults is an error.
 func (l *loader) compileDefaults() error {
 	var errs []error
-	sc := scope{vars: l.vars, noItem: "a default cannot use item"}
+	sc := scope{
+		vars:   l.vars,
+		noItem: "a default cannot use item",
+		byName: "a default reads vars only by name, such as vars.nginx_port",
+	}
 	for _, v := range l.decls {
 		if v.node == nil {
 			continue

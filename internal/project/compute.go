@@ -35,6 +35,9 @@ type scope struct {
 	vars map[string]*Var
 	// noItem is the reason that item is not defined, or "" when it is.
 	noItem string
+	// byName is the error for a read of vars other than by name, or "" when
+	// such a read is allowed.
+	byName string
 }
 
 const itemOutsideLoop = "item is defined only in a step with loop"
@@ -96,8 +99,9 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 		return nil, yamlx.Errorf(n.Pos, "%s", exprMessage(err, exprNames))
 	}
 	c.prog = prog
-	check := &exprCheck{sc: sc, src: prog.Source()}
+	check := &exprCheck{sc: sc, src: prog.Source(), named: map[ast.Node]bool{}}
 	ast.Walk(new(prog.Node()), check)
+	check.checkByName()
 	if len(check.errs) > 0 {
 		var errs []error
 		for _, msg := range check.errs {
@@ -110,12 +114,17 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 }
 
 // exprCheck finds the variables that an expression reads by name, and
-// reports undeclared variables and an item that is not defined.
+// reports undeclared variables, an item that is not defined, and a read of
+// vars other than by name where the scope forbids it.
 type exprCheck struct {
 	sc    scope
 	src   file.Source
 	reads []string
 	errs  []string
+	// named are the nodes that a member access with a constant name reads.
+	named map[ast.Node]bool
+	// whole are the nodes that hold vars: vars, host, and host.vars.
+	whole []ast.Node
 }
 
 func (c *exprCheck) fail(n ast.Node, msg string) {
@@ -129,8 +138,20 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		if n.Value == "item" && c.sc.noItem != "" {
 			c.fail(n, c.sc.noItem)
 		}
+		if n.Value == "$env" && c.sc.byName != "" {
+			c.fail(n, c.sc.byName)
+		}
+		if isVars(n) || n.Value == "host" {
+			c.whole = append(c.whole, n)
+		}
 	case *ast.MemberNode:
+		if isVars(n) {
+			c.whole = append(c.whole, n)
+		}
 		name, ok := n.Property.(*ast.StringNode)
+		if ok {
+			c.named[n.Node] = true
+		}
 		if !ok || !isVars(n.Node) {
 			return
 		}
@@ -139,6 +160,19 @@ func (c *exprCheck) Visit(np *ast.Node) {
 			return
 		}
 		c.reads = append(c.reads, name.Value)
+	}
+}
+
+// checkByName reports each read of vars other than by name, when the scope
+// forbids it.
+func (c *exprCheck) checkByName() {
+	if c.sc.byName == "" {
+		return
+	}
+	for _, n := range c.whole {
+		if !c.named[n] {
+			c.fail(n, c.sc.byName)
+		}
 	}
 }
 

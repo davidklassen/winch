@@ -168,9 +168,23 @@ func (c *nameCheck) walk(n tparse.Node, top bool) {
 		}
 	case *tparse.VariableNode:
 		// The position of $.a is the position of .a.
-		if c.main && n.Ident[0] == "$" && len(n.Ident) > 1 {
-			c.field(n.Ident[1:], int(n.Pos), int(n.Pos)-1)
+		if c.main && n.Ident[0] == "$" {
+			if len(n.Ident) > 1 {
+				c.field(n.Ident[1:], int(n.Pos), int(n.Pos)-1)
+			} else {
+				c.notByName(int(n.Pos))
+			}
 		}
+	case *tparse.DotNode:
+		if top {
+			c.notByName(int(n.Pos))
+		}
+	}
+}
+
+func (c *nameCheck) notByName(off int) {
+	if c.sc.byName != "" {
+		c.errs = append(c.errs, yamlx.Errorf(c.at(off), "%s", c.sc.byName))
 	}
 }
 
@@ -204,6 +218,9 @@ func (c *nameCheck) field(ident []string, dot, first int) {
 		}
 		level = next
 		dot += len(id) + 1
+	}
+	if level == c.top.sub["vars"] || level == c.top.sub["host"] {
+		c.notByName(first)
 	}
 }
 

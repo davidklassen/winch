@@ -442,7 +442,11 @@ func (l *loader) compileWhen(n *yamlx.Node) (*computed, error) {
 	if n.Tag != "!expr" {
 		return nil, yamlx.Errorf(n.Pos, "when: use an expression with the !expr tag, such as when: !expr vars.mail_server")
 	}
-	return compile(n, scope{vars: l.vars, noItem: "when runs before loop; it cannot use item"})
+	return compile(n, scope{
+		vars:   l.vars,
+		noItem: "when runs before loop; it cannot use item",
+		byName: "a when reads vars only by name, such as vars.nginx_port",
+	})
 }
 
 func (l *loader) compileLoop(n *yamlx.Node) (*value, error) {
