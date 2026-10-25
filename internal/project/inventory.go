@@ -2,6 +2,7 @@ package project
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -78,7 +79,7 @@ func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) 
 	for i := range inv.Groups {
 		g := &inv.Groups[i]
 		var verrs []error
-		g.vars, verrs = values(g.VarsNode, l.vars)
+		g.vars, verrs = l.values(g.VarsNode)
 		errs = append(errs, verrs...)
 		switch {
 		case g.Name == "all" && g.HostsNode != nil:
@@ -103,7 +104,7 @@ func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) 
 		} else if !validAddress(h.Address) {
 			errs = append(errs, yamlx.Errorf(h.Pos, "host %q: address %q is not a host name or IP", h.Name, h.Address))
 		}
-		own, verrs := values(h.VarsNode, l.vars)
+		own, verrs := l.values(h.VarsNode)
 		errs = append(errs, verrs...)
 		errs = append(errs, inv.resolve(h, own, set))
 	}
@@ -115,7 +116,7 @@ func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) 
 }
 
 // values returns the variable values in n, a map of names to values.
-func values(n *yamlx.Node, vars map[string]*Var) ([]source, []error) {
+func (l *loader) values(n *yamlx.Node) ([]source, []error) {
 	if n == nil || n.Kind == yamlx.Null {
 		return nil, nil
 	}
@@ -126,13 +127,12 @@ func values(n *yamlx.Node, vars map[string]*Var) ([]source, []error) {
 	var errs []error
 	for _, p := range n.Pairs {
 		switch {
-		case vars[p.Key] == nil:
-			errs = append(errs, yamlx.Errorf(p.KeyPos, "%s", unknownVariable(p.Key, vars)))
+		case l.vars[p.Key] == nil:
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "%s", unknownVariable(p.Key, l.vars)))
 		case p.Value.Kind == yamlx.Null:
 			errs = append(errs, yamlx.Errorf(p.Value.Pos, "variable %q: null is not a value", p.Key))
-		case findTag(p.Value) != nil:
-			errs = append(errs, yamlx.Errorf(findTag(p.Value).Pos, "variable %q: an inventory holds no expressions or templates", p.Key))
 		default:
+			errs = append(errs, l.seal(p.Value, fmt.Sprintf("variable %q: an inventory holds no expressions or templates", p.Key))...)
 			out = append(out, source{name: p.Key, value: yamlx.Value(p.Value), pos: p.Value.Pos})
 		}
 	}

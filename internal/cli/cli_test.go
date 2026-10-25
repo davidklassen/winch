@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/davidklassen/winch/internal/fakehost"
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
@@ -36,6 +37,12 @@ type result struct {
 
 func winch(t *testing.T, dir string, h *fakehost.Hosts, terminal bool, stdin string, args ...string) result {
 	t.Helper()
+	return winchWith(t, dir, "", h, terminal, stdin, args...)
+}
+
+// winchWith runs winch with the age identity file in identity.
+func winchWith(t *testing.T, dir, identity string, h *fakehost.Hosts, terminal bool, stdin string, args ...string) result {
+	t.Helper()
 	var out, errOut bytes.Buffer
 	code := Main(context.Background(), args, Env{
 		Dir:      dir,
@@ -44,6 +51,8 @@ func winch(t *testing.T, dir string, h *fakehost.Hosts, terminal bool, stdin str
 		Err:      &errOut,
 		Terminal: terminal,
 		Connect:  h.Connector(),
+		Identity: identity,
+		Filter:   secret.NewFilter(),
 	})
 	return result{code, out.String(), errOut.String()}
 }
@@ -138,7 +147,7 @@ func TestExamples(t *testing.T) {
 
 // spec: CLI
 func TestHelp(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"plan", "--help"}, {"apply", "-h"}, {"validate", "--help"}} {
+	for _, args := range [][]string{{"--help"}, {"plan", "--help"}, {"apply", "-h"}, {"validate", "--help"}, {"secret", "--help"}, {"secret", "encrypt", "--help"}, {"secret", "rekey", "-h"}} {
 		r := winch(t, t.TempDir(), fakehost.New(), false, "", args...)
 		if r.code != exitOK {
 			t.Errorf("%v: exit %d", args, r.code)
@@ -207,7 +216,7 @@ func TestApply(t *testing.T) {
 		var out, errOut bytes.Buffer
 		code := Main(context.Background(), []string{"apply", "site"}, Env{
 			Dir: dir, In: in, Out: &out, Err: &errOut, Terminal: true,
-			Connect: h.Connector(),
+			Connect: h.Connector(), Filter: secret.NewFilter(),
 		})
 		if code != exitOK || h.Applies != 2 {
 			t.Errorf("exit %d, applies %d", code, h.Applies)

@@ -3,6 +3,7 @@
 package project
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -15,6 +16,7 @@ import (
 	"text/template"
 
 	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -22,23 +24,33 @@ type Project struct {
 	Name      string
 	Inventory *Inventory
 	Pipeline  *Pipeline
+	Warnings  []*yamlx.Error
 	// vars are the declarations in the order in which defaults evaluate.
 	vars []*Var
+	// filter learns the secret values that the evaluation derives.
+	filter *secret.Filter
+	// secrets is true when the inventory or a default holds a !secret.
+	secrets bool
 }
 
 type Config struct {
 	Name         string `yaml:"name,required"`
 	Inventory    string `yaml:"inventory"`
 	InventoryPos yamlx.Pos
+	Recipients   []string    `yaml:"recipients"`
 	Vars         *yamlx.Node `yaml:"vars"`
 }
 
 var projectNameRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
 
-// Validate checks the project name, which names a file on each host.
+// Validate checks the project name, which names a file on each host, and the
+// recipients.
 func (c *Config) Validate() error {
 	if !projectNameRe.MatchString(c.Name) {
 		return &yamlx.FieldError{Field: "name", Msg: `a project name has only letters, digits, ".", "_", and "-", and does not start with "."`}
+	}
+	if _, err := secret.ParseRecipients(c.Recipients); err != nil {
+		return &yamlx.FieldError{Field: "recipients", Msg: err.Error()}
 	}
 	return nil
 }
@@ -70,6 +82,8 @@ type Step struct {
 	Notify []*Handler
 	// Then is the command of then, after Eval.
 	Then string
+	// Shown is set after Eval when the step reads a secret.
+	Shown *Shown
 	// in is the recipe that holds the step, or nil in a stage.
 	in   *Recipe
 	args *value
@@ -95,7 +109,7 @@ type nameAt struct {
 // Load reads the project in dir with one inventory and one pipeline. The
 // inventory is the path in inventory, or the default from winch.yaml. set
 // holds the --set flags.
-func Load(dir, inventory, pipeline string, set []string) (*Project, error) {
+func Load(dir, inventory, pipeline string, set []string, keys Keys) (*Project, error) {
 	cfg, cfgErr := loadConfig(dir)
 	if cfg == nil {
 		return nil, cfgErr
@@ -110,16 +124,23 @@ func Load(dir, inventory, pipeline string, set []string) (*Project, error) {
 	if err := resolve(invs[0], pl); err != nil {
 		return nil, err
 	}
-	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, vars: l.order}, nil
+	if err := l.unsealAll(keys); err != nil {
+		return nil, err
+	}
+	warnings, err := scanProject(dir, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, Warnings: warnings, vars: l.order, filter: keys.Filter, secrets: len(l.sealed) > 0}, nil
 }
 
 // Validate loads every pipeline in dir against an inventory: the one in
 // inventory, the default from winch.yaml, or else every file in
 // inventories/. set holds the --set flags.
-func Validate(dir, inventory string, set []string) error {
+func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	cfg, cfgErr := loadConfig(dir)
 	if cfg == nil {
-		return cfgErr
+		return nil, cfgErr
 	}
 	l, lErr := newLoader(dir, cfg)
 	sets, setErr := l.parseSets(set)
@@ -127,7 +148,7 @@ func Validate(dir, inventory string, set []string) error {
 	errs := []error{cfgErr, lErr, setErr, invErr}
 	files, err := list(dir, "pipelines")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, file := range files {
 		pl, err := l.decodePipeline(file)
@@ -139,7 +160,10 @@ func Validate(dir, inventory string, set []string) error {
 			errs = append(errs, resolve(inv, pl))
 		}
 	}
-	return errors.Join(errs...)
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	return scanProject(dir, cfg)
 }
 
 type loader struct {
@@ -152,6 +176,8 @@ type loader struct {
 	files map[string]*recipeFile
 	// recipes holds nil for a recipe that failed to load.
 	recipes map[string]*Recipe
+	// sealed are the !secret values of the variables.
+	sealed []sealedAt
 }
 
 // newLoader declares the variables of winch.yaml and of every recipe, then
@@ -689,6 +715,14 @@ func (st Step) reads() []string {
 // Runs reports whether the step runs on the host of e: when is true or not
 // set.
 func (st Step) Runs(e *Env) (bool, error) {
+	ok, err := st.runs(e)
+	return ok, e.masked(err, func(v *Env) error {
+		_, err := st.runs(v)
+		return err
+	})
+}
+
+func (st Step) runs(e *Env) (bool, error) {
 	if st.when == nil {
 		return true, nil
 	}
@@ -704,22 +738,82 @@ func (st Step) Runs(e *Env) (bool, error) {
 }
 
 // Eval returns a module step for the host of e: none when when is false, one
-// per element with loop, else one.
+// per element with loop, else one. Each step that reads a secret gets Shown.
+// An error shows each part that comes from a secret as secret.Mark.
 func (st Step) Eval(e *Env) ([]Step, error) {
-	ok, err := st.Runs(e)
+	out, err := st.eval(e)
+	return out, e.masked(err, func(v *Env) error {
+		_, err := st.eval(v)
+		return err
+	})
+}
+
+// eval returns the steps for the variant of e. In the real variant of a
+// project with secrets, it also evaluates the placeholder variants for Shown.
+func (st Step) eval(e *Env) ([]Step, error) {
+	ok, err := st.runs(e)
 	if err != nil || !ok {
 		return nil, err
 	}
-	if st.loop == nil {
-		if st.Then, err = st.thenFor(e); err != nil {
+	count := 1
+	var lists [3][]any
+	if st.loop != nil {
+		if lists[e.n], err = st.items(e); err != nil || len(lists[e.n]) == 0 {
 			return nil, err
 		}
-		s, err := st.instance(e)
+		count = len(lists[e.n])
+	}
+	then, err := st.thenFor(e)
+	if err != nil {
+		return nil, err
+	}
+	var thens [3]string
+	variants := e.n == 0 && e.secrets
+	if variants {
+		thens[0] = then
+		for n := 1; n < 3; n++ {
+			if lists[0] != nil {
+				if l, err := st.items(e.variant(n)); err == nil && len(l) == count {
+					lists[n] = l
+				}
+			}
+			if thens[n], err = st.thenFor(e.variant(n)); err != nil {
+				thens[n] = secret.Placeholder(n)
+			}
+		}
+	}
+	var out []Step
+	for i := range count {
+		ie := e
+		if st.loop != nil {
+			// A variant whose loop differs uses its placeholder as item.
+			var items [3]any
+			for n := range items {
+				items[n] = secret.Placeholder(n)
+				if lists[n] != nil {
+					items[n] = lists[n][i]
+				}
+			}
+			ie = e.with(items)
+		}
+		s, args, err := st.instance(ie)
+		if c, ok := err.(errContent); ok {
+			err = c.error
+		}
 		if err != nil {
 			return nil, err
 		}
-		return []Step{s}, nil
+		s.Then = then
+		if variants {
+			s.Shown = st.shown(ie, s, args, thens)
+		}
+		out = append(out, s)
 	}
+	return out, nil
+}
+
+// items returns the elements of loop for e.
+func (st Step) items(e *Env) ([]any, error) {
 	n, err := st.loop.eval(e, "loop")
 	if err != nil {
 		return nil, err
@@ -727,19 +821,9 @@ func (st Step) Eval(e *Env) ([]Step, error) {
 	if n.Kind != yamlx.List {
 		return nil, yamlx.Errorf(n.Pos, "loop: must be a list, got %s", yamlx.Describe(n))
 	}
-	if len(n.Items) == 0 {
-		return nil, nil
-	}
-	if st.Then, err = st.thenFor(e); err != nil {
-		return nil, err
-	}
-	var out []Step
+	var out []any
 	for _, item := range n.Items {
-		s, err := st.instance(e.with(yamlx.Value(item)))
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, s)
+		out = append(out, yamlx.Value(item))
 	}
 	return out, nil
 }
@@ -756,34 +840,98 @@ func (st Step) thenFor(e *Env) (string, error) {
 	return thenText(n)
 }
 
-// instance returns the step with its arguments and content for e.
-func (st Step) instance(e *Env) (Step, error) {
+// errContent is the error of instance when only the content fails.
+type errContent struct{ error }
+
+// instance returns the step with its arguments and content for e, and the
+// computed arguments as a value, or nil. When only the content fails, the
+// step has its arguments.
+func (st Step) instance(e *Env) (Step, any, error) {
+	var args any
 	if st.args != nil {
 		n, err := st.args.eval(e, "")
 		if err != nil {
-			return Step{}, err
+			return Step{}, nil, err
 		}
 		m, _ := module.New(st.Module)
 		if err := yamlx.Decode(n, m); err != nil {
-			return Step{}, err
+			return Step{}, nil, err
 		}
 		st.Args = m
+		args = yamlx.Value(n)
 		if f, ok := m.(*module.File); ok {
 			if st.tmpl, err = st.in.content(f, st.loop != nil); err != nil {
-				return Step{}, err
+				return Step{}, nil, err
 			}
 		}
 	}
 	if st.tmpl == nil {
-		return st, nil
+		return st, args, nil
 	}
 	var b strings.Builder
 	if err := st.tmpl.Execute(&b, e.templateData()); err != nil {
-		return Step{}, templateError(st.tmpl.Name(), err)
+		return st, args, errContent{templateError(st.tmpl.Name(), err)}
 	}
 	f := *st.Args.(*module.File)
 	// Empty output is empty content, not missing content.
 	f.Data = append([]byte{}, b.String()...)
 	st.Args = &f
-	return st, nil
+	return st, args, nil
+}
+
+// shown returns how the output shows s, the step for the real variant of e,
+// or nil when no part of it comes from a secret. real are the computed
+// arguments of s, and thens the commands of then in the three variants. The
+// parts that come from a secret go to the filter.
+func (st Step) shown(e *Env, s Step, real any, thens [3]string) *Shown {
+	mods := [3]module.Module{s.Args}
+	args := [3]any{real}
+	argsOK, contentOK := true, true
+	for n := 1; n < 3; n++ {
+		ev := e.variant(n)
+		var failed bool
+		ev.failed = &failed
+		v, a, err := st.instance(ev)
+		if _, ok := err.(errContent); ok || failed {
+			contentOK = false
+		}
+		if _, ok := err.(errContent); !ok && err != nil {
+			argsOK, contentOK = false, false
+			continue
+		}
+		mods[n], args[n] = v.Args, a
+	}
+	sh := &Shown{Main: secret.Mark}
+	var parts []string
+	if argsOK {
+		sh.Main, _ = secret.Mask(mods[0].Main(), mods[1].Main(), mods[2].Main())
+		parts = secret.Parts(args[0], args[1], args[2])
+	}
+	var part string
+	sh.Then, part = secret.Mask(thens[0], thens[1], thens[2])
+	parts = append(parts, part)
+	if f, ok := s.Args.(*module.File); ok && f.Data != nil {
+		var data [3][]byte
+		for n := range mods {
+			if g, ok := mods[n].(*module.File); ok {
+				data[n] = g.Data
+			}
+		}
+		switch {
+		case !contentOK:
+			sh.Hidden = true
+		case !bytes.Equal(data[0], data[1]) || !bytes.Equal(data[0], data[2]):
+			lines, ok := secret.Lines(data[0], data[1], data[2])
+			sh.Hidden = !ok
+			sh.Lines = lines
+			for _, l := range lines {
+				parts = append(parts, l.Part())
+			}
+		}
+	}
+	e.learn(parts)
+	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Lines == nil && !sh.Hidden {
+		return nil
+	}
+	return sh
 }

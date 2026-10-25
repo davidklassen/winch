@@ -223,7 +223,7 @@ func TestLoad(t *testing.T) {
 			if pipeline == "" {
 				pipeline = "site"
 			}
-			p, err := Load(dir, tt.inventory, pipeline, nil)
+			p, err := Load(dir, tt.inventory, pipeline, nil, Keys{})
 			golden.Assert(t, filepath.Join("testdata", "load", tt.name+".golden"), result(p, err))
 		})
 	}
@@ -273,7 +273,7 @@ func TestValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, tt.files)
 			got := "ok\n"
-			if err := Validate(dir, tt.inventory, nil); err != nil {
+			if _, err := Validate(dir, tt.inventory, nil); err != nil {
 				got = err.Error() + "\n"
 			}
 			golden.Assert(t, filepath.Join("testdata", "validate", tt.name+".golden"), []byte(got))
@@ -426,7 +426,7 @@ func TestLoadRecipes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, with(nginx, tt.files))
-			p, err := Load(dir, "", "site", nil)
+			p, err := Load(dir, "", "site", nil, Keys{})
 			golden.Assert(t, filepath.Join("testdata", "load", tt.name+".golden"), result(p, err))
 		})
 	}
@@ -470,7 +470,7 @@ func TestRender(t *testing.T) {
 				"recipes/r/templates/t.tmpl": tt.template,
 				"recipes/r/files/s.bin":      binary,
 			})
-			p, err := Load(dir, "", "site", nil)
+			p, err := Load(dir, "", "site", nil, Keys{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -509,7 +509,7 @@ func TestSourceLinkOutOfRecipe(t *testing.T) {
 	if err := os.Symlink("../../../secret", filepath.Join(dir, "recipes/nginx/files/key")); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(dir, "", "site", nil)
+	_, err := Load(dir, "", "site", nil, Keys{})
 	if err == nil || !strings.Contains(err.Error(), "recipes/nginx/recipe.yaml:4:15: source: read recipes/nginx/files/key:") {
 		t.Errorf("a source link out of the recipe: %v", err)
 	}

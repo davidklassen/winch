@@ -11,13 +11,13 @@ import (
 	"path"
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/davidklassen/winch/internal/diff"
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
+	"github.com/davidklassen/winch/internal/secret"
 )
 
 // Conn is a session with one host.
@@ -343,9 +343,9 @@ func (p *Plan) HasChanges() bool {
 // scope is the recipe of a step, or the stage for a module step of a stage.
 func scope(stage *project.Stage, p Planned) string {
 	if p.In != nil {
-		return printable(p.In.Recipe.Name)
+		return secret.Printable(p.In.Recipe.Name)
 	}
-	return printable(stage.Name)
+	return secret.Printable(stage.Name)
 }
 
 // thenRecord is the record of the then of st in the recipe step in, or nil
@@ -364,11 +364,11 @@ func thenRecord(stage *project.Stage, in *project.Step, st project.Step) *protoc
 
 // label is the text of a step in the plan and the logs.
 func label(st project.Step) string {
-	l := st.Module + " " + st.Args.Main()
+	l := st.Module + " " + st.ShownMain()
 	if st.Name != "" {
 		l = st.Name + ": " + l
 	}
-	return printable(l)
+	return secret.Printable(l)
 }
 
 var marks = map[module.Action]string{module.Create: "+", module.Modify: "~", module.Remove: "-"}
@@ -387,7 +387,7 @@ func (p *Plan) Write(out, errOut io.Writer) {
 				b = &strings.Builder{}
 				bodies[hp.Host.Name] = b
 			}
-			fmt.Fprintf(b, "  %s\n", printable(sp.Stage.Name))
+			fmt.Fprintf(b, "  %s\n", secret.Printable(sp.Stage.Name))
 			var in *project.Step
 			for _, p := range hp.Steps {
 				if !p.shows() {
@@ -402,14 +402,14 @@ func (p *Plan) Write(out, errOut io.Writer) {
 				}
 				in = p.In
 				if p.Handler != nil {
-					fmt.Fprintf(b, "%s! handler %s\n", indent, printable(p.Handler.Handler.FullName()))
+					fmt.Fprintf(b, "%s! handler %s\n", indent, secret.Printable(p.Handler.Handler.FullName()))
 					continue
 				}
 				if p.Result.Status == module.Change {
 					writeStep(b, indent, p.Step, p.Result)
 				}
 				if p.PendingThen {
-					fmt.Fprintf(b, "%s! then: %s\n", indent, printable(p.Step.Then))
+					fmt.Fprintf(b, "%s! then: %s\n", indent, secret.Printable(p.Step.ShownThen()))
 				}
 			}
 		}
@@ -455,40 +455,36 @@ func recipeLabel(st *project.Step) string {
 	if st.Name != "" {
 		l += ": " + st.Name
 	}
-	return printable(l)
+	return secret.Printable(l)
 }
 
 func writeStep(w io.Writer, indent string, st project.Step, res module.Result) {
 	fmt.Fprintf(w, "%s%s %s\n", indent, marks[res.Action], label(st))
 	for _, c := range res.Changes {
-		fmt.Fprintf(w, "%s    %s\n", indent, printable(c))
+		fmt.Fprintf(w, "%s    %s\n", indent, secret.Printable(c))
 	}
 	t, ok := st.Args.(module.WithContent)
 	if res.Old == nil || !ok {
 		return
 	}
 	text := t.Text()
-	if text == nil {
+	var d []byte
+	switch {
+	case text == nil:
 		fmt.Fprintf(w, "%s    content (binary or larger than 1 MiB)\n", indent)
 		return
+	case st.Shown != nil && st.Shown.Hidden:
+		d = []byte(secret.Mark + "\n")
+	case st.Shown != nil && st.Shown.Lines != nil:
+		d = secret.Diff([]byte(*res.Old), st.Shown.Lines)
+	default:
+		d = diff.Diff([]byte(*res.Old), []byte(*text))
 	}
-	d := diff.Diff([]byte(*res.Old), []byte(*text))
 	for _, line := range strings.SplitAfter(string(d), "\n") {
 		if line != "" {
-			fmt.Fprintf(w, "%s    %s\n", indent, printable(strings.TrimSuffix(line, "\n")))
+			fmt.Fprintf(w, "%s    %s\n", indent, secret.Printable(strings.TrimSuffix(line, "\n")))
 		}
 	}
-}
-
-// printable replaces control characters in text from a host, so the text
-// cannot move the cursor or change the terminal.
-func printable(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r != '\t' && (unicode.IsControl(r) || r == '\u2028' || r == '\u2029') {
-			return '?'
-		}
-		return r
-	}, s)
 }
 
 func hosts(n int) string {
@@ -624,7 +620,7 @@ func (a *hostApply) steps(ctx context.Context, scope func(Planned) string, prefi
 			return changed, fmt.Errorf("%s: failed: %s: then: %w", scope(p), failLabel, err)
 		}
 		if a.thens[*t] {
-			fmt.Fprintf(a.out, "%s: %s: ! then: %s\n", a.host, scope(p), printable(p.Step.Then))
+			fmt.Fprintf(a.out, "%s: %s: ! then: %s\n", a.host, scope(p), secret.Printable(p.Step.ShownThen()))
 			delete(a.thens, *t)
 			changed = true
 		}
@@ -639,13 +635,13 @@ func (a *hostApply) handler(ctx context.Context, s *Slot) (bool, error) {
 	if !a.notified[name] {
 		return false, nil
 	}
-	recipe := printable(s.Handler.Recipe.Name)
-	changed, err := a.steps(ctx, func(Planned) string { return recipe }, "handler "+printable(name)+": ", s.Steps)
+	recipe := secret.Printable(s.Handler.Recipe.Name)
+	changed, err := a.steps(ctx, func(Planned) string { return recipe }, "handler "+secret.Printable(name)+": ", s.Steps)
 	if err != nil {
 		return changed, err
 	}
 	if err := a.conn.Handled(ctx, name); err != nil {
-		return changed, fmt.Errorf("%s: failed: handler %s: %w", recipe, printable(name), err)
+		return changed, fmt.Errorf("%s: failed: handler %s: %w", recipe, secret.Printable(name), err)
 	}
 	delete(a.notified, name)
 	return changed, nil

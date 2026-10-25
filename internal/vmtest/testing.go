@@ -59,13 +59,20 @@ type Result struct {
 // Winch runs the winch binary from WINCH_BIN in dir.
 func (l *Lab) Winch(t *testing.T, dir string, args ...string) Result {
 	t.Helper()
+	return l.WinchEnv(t, dir, nil, args...)
+}
+
+// WinchEnv runs the winch binary from WINCH_BIN in dir, with env added to the
+// environment.
+func (l *Lab) WinchEnv(t *testing.T, dir string, env []string, args ...string) Result {
+	t.Helper()
 	bin := os.Getenv("WINCH_BIN")
 	if bin == "" {
 		t.Fatal("WINCH_BIN is not set; run make test-integration")
 	}
 	cmd := exec.CommandContext(t.Context(), bin, args...)
 	cmd.Dir = dir
-	cmd.Env = l.Env()
+	cmd.Env = append(l.Env(), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

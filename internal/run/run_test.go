@@ -36,7 +36,7 @@ func load(t *testing.T, web3 string) *project.Project {
           absent: true
 `,
 	})
-	p, err := project.Load(dir, "", "site", nil)
+	p, err := project.Load(dir, "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
           name: jq
 `,
 	})
-	p, err := project.Load(dir, "", "site", nil)
+	p, err := project.Load(dir, "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func TestApplyChecksStagesWithoutChange(t *testing.T) {
           absent: true
 `,
 	})
-	p, err := project.Load(dir, "", "site", nil)
+	p, err := project.Load(dir, "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ steps:
 
 func loadFiles(t *testing.T, files map[string]string) *project.Project {
 	t.Helper()
-	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil)
+	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,14 @@
+# Debian's dkimpy-milter.conf, active lines only.
+Syslog yes
+UMask 007
+PidFile /run/dkimpy-milter/dkimpy-milter.pid
+UserID dkimpy-milter
+Canonicalization relaxed/simple
+
+Domain {{ .host.name }}
+KeyFile /etc/dkimpy-milter/dkim.key
+Selector dkim
+# TCP: Postfix's chrooted smtpd and cleanup cannot reach /run.
+Socket inet:8892@localhost
+# 1.2.3's built-in default is parsed as a string and matches nothing.
+InternalHosts 127.0.0.1

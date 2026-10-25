@@ -18,6 +18,7 @@ import (
 	"github.com/expr-lang/expr/vm"
 
 	"github.com/davidklassen/winch/internal/facts"
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -38,6 +39,8 @@ type scope struct {
 	// byName is the error for a read of vars other than by name, or "" when
 	// such a read is allowed.
 	byName string
+	// sealed is true where a !secret value is allowed: in a default.
+	sealed bool
 }
 
 const itemOutsideLoop = "item is defined only in a step with loop"
@@ -277,24 +280,27 @@ type value struct {
 func compileValue(n *yamlx.Node, sc scope) (*value, error) {
 	v := &value{node: n, computed: map[*yamlx.Node]*computed{}}
 	var errs []error
-	var walk func(n *yamlx.Node)
-	walk = func(n *yamlx.Node) {
+	var walk func(n *yamlx.Node, name string)
+	walk = func(n *yamlx.Node, name string) {
 		switch {
+		case n.Tag == "!secret" && !sc.sealed:
+			errs = append(errs, yamlx.Errorf(n.Pos, "%s!secret is allowed only in variable values; declare a variable", prefix(name)))
+		case n.Tag == "!secret":
 		case n.Tag != "":
 			c, err := compile(n, sc)
 			errs = append(errs, err)
 			v.computed[n] = c
 		case n.Kind == yamlx.Map:
 			for _, p := range n.Pairs {
-				walk(p.Value)
+				walk(p.Value, p.Key)
 			}
 		case n.Kind == yamlx.List:
 			for _, item := range n.Items {
-				walk(item)
+				walk(item, name)
 			}
 		}
 	}
-	walk(n)
+	walk(n, "")
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
@@ -322,6 +328,10 @@ func (v *value) eval(e *Env, name string) (*yamlx.Node, error) {
 func (v *value) evalNode(n *yamlx.Node, e *Env, name string) (*yamlx.Node, error) {
 	if c := v.computed[n]; c != nil {
 		out, err := c.eval(e)
+		if err != nil && e.failed != nil {
+			out, err = secret.Placeholder(e.n), nil
+			*e.failed = true
+		}
 		if err != nil {
 			return nil, yamlx.Errorf(n.Pos, "%s%s", prefix(name), err)
 		}

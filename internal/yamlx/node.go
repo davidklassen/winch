@@ -32,7 +32,8 @@ type Node struct {
 	Pairs []Pair
 	Items []*Node
 	Pos   Pos
-	// Tag is "!expr" for an expression, "!tpl" for a template, else empty.
+	// Tag is "!expr" for an expression, "!tpl" for a template, "!secret" for
+	// a secret, else empty.
 	Tag string
 	// Text is the source text of a scalar from a file.
 	Text string
@@ -85,6 +86,10 @@ type converter struct {
 	errs []error
 }
 
+func winchTag(tag string) bool {
+	return tag == "!expr" || tag == "!tpl" || tag == "!secret"
+}
+
 func (c *converter) pos(n *yaml.Node) Pos {
 	return Pos{File: c.file, Line: n.Line, Col: n.Column}
 }
@@ -110,10 +115,10 @@ func (c *converter) convert(n *yaml.Node) *Node {
 	defer delete(c.open, n)
 	if n.Style&yaml.TaggedStyle != 0 {
 		switch {
-		case (n.Tag == "!expr" || n.Tag == "!tpl") && n.Kind == yaml.ScalarNode:
+		case winchTag(n.Tag) && n.Kind == yaml.ScalarNode:
 			out.Kind, out.Value, out.Tag = Scalar, n.Value, n.Tag
 			return out
-		case n.Tag == "!expr" || n.Tag == "!tpl":
+		case winchTag(n.Tag):
 			kind := "a map"
 			if n.Kind == yaml.SequenceNode {
 				kind = "a list"

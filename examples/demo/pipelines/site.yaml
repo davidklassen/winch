@@ -8,6 +8,7 @@ stages:
       - pkg:
           name: curl
       - recipe: unbound
+      - recipe: dkimpy_milter
 
   - name: web
     hosts: web

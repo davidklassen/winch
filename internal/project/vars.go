@@ -3,12 +3,12 @@ package project
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/davidklassen/winch/internal/facts"
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -54,6 +54,7 @@ func (l *loader) declare(n *yamlx.Node, recipe string) []error {
 		v := &Var{Name: p.Key, Pos: p.KeyPos, Recipe: recipe}
 		if p.Value.Kind != yamlx.Null {
 			v.node = p.Value
+			errs = append(errs, l.seal(p.Value, "")...)
 		}
 		l.vars[p.Key] = v
 		l.decls = append(l.decls, v)
@@ -69,6 +70,7 @@ func (l *loader) compileDefaults() error {
 		vars:   l.vars,
 		noItem: "a default cannot use item",
 		byName: "a default reads vars only by name, such as vars.nginx_port",
+		sealed: true,
 	}
 	for _, v := range l.decls {
 		if v.node == nil {
@@ -161,69 +163,102 @@ func (l *loader) parseSets(set []string) ([]setValue, error) {
 
 // findTag returns the first tagged scalar in n, or nil.
 func findTag(n *yamlx.Node) *yamlx.Node {
-	switch {
-	case n.Tag != "":
-		return n
-	case n.Kind == yamlx.Map:
-		for _, p := range n.Pairs {
-			if t := findTag(p.Value); t != nil {
-				return t
-			}
+	var first *yamlx.Node
+	walkTags(n, func(t *yamlx.Node) {
+		if first == nil {
+			first = t
 		}
-	case n.Kind == yamlx.List:
-		for _, item := range n.Items {
-			if t := findTag(item); t != nil {
-				return t
-			}
-		}
-	}
-	return nil
+	})
+	return first
 }
 
-// Env is the data of one host for expressions and templates.
+// Env is the data of one host for expressions and templates, in three
+// variants: 0 has the real values, 1 and 2 have the placeholders of the
+// secrets. Expressions and templates read the variant n.
 type Env struct {
 	host  Host
 	short string
 	facts facts.Facts
-	vars  map[string]any
+	vars  [3]map[string]any
+	// secret holds the names of the secret variables.
+	secret map[string]bool
 	// item is the current element of a loop when hasItem is true.
-	item    any
+	item    [3]any
 	hasItem bool
+	n       int
+	// failed is set in a placeholder variant for the output: a computed
+	// value that fails gives the placeholder, so the other arguments still
+	// show, and failed becomes true.
+	failed *bool
+	// secrets is true when the project has secrets. Without them, the three
+	// variants are the same.
+	secrets bool
 	// runs are the recipes that run on the host in the pipeline.
-	runs map[string]bool
+	runs   map[string]bool
+	filter *secret.Filter
 }
 
 // Runs reports whether the recipe runs on the host in the pipeline: a stage
 // of the host has a step for it whose when is true.
 func (e *Env) Runs(recipe string) bool { return e.runs[recipe] }
 
-func (e *Env) with(item any) *Env {
+func (e *Env) with(items [3]any) *Env {
 	c := *e
-	c.item, c.hasItem = item, true
+	c.item, c.hasItem = items, true
 	return &c
+}
+
+// variant returns e for the variant n.
+func (e *Env) variant(n int) *Env {
+	c := *e
+	c.n = n
+	return &c
+}
+
+// masked returns err, an error of f for the real variant of e, with the
+// parts that come from a secret masked: it runs f for the placeholder
+// variants too.
+func (e *Env) masked(err error, f func(*Env) error) error {
+	if err == nil || e.n != 0 || !e.secrets {
+		return err
+	}
+	var alt [2]error
+	for i := range alt {
+		alt[i] = f(e.variant(i + 1))
+	}
+	return maskError(err, alt)
+}
+
+// learn adds the secret parts of an evaluation to the filter.
+func (e *Env) learn(parts []string) {
+	for _, p := range parts {
+		if p != "" {
+			e.filter.Add(p)
+		}
+	}
 }
 
 func (e *Env) templateData() map[string]any {
 	d := map[string]any{
-		"vars":  e.vars,
+		"vars":  e.vars[e.n],
 		"facts": e.facts.Map(),
 		"host": map[string]any{
 			"name": e.host.Name, "short": e.short, "address": e.host.Address,
-			"groups": e.host.Groups, "vars": e.vars,
+			"groups": e.host.Groups, "vars": e.vars[e.n],
 		},
 	}
 	if e.hasItem {
-		d["item"] = e.item
+		d["item"] = e.item[e.n]
 	}
 	return d
 }
 
 func (e *Env) exprEnv() exprEnv {
 	return exprEnv{
-		Vars:  e.vars,
+		Vars:  e.vars[e.n],
 		Facts: e.facts,
-		Host:  hostEnv{Name: e.host.Name, Short: e.short, Address: e.host.Address, Groups: e.host.Groups, Vars: e.vars},
-		Item:  e.item,
+		Host:  hostEnv{Name: e.host.Name, Short: e.short, Address: e.host.Address, Groups: e.host.Groups, Vars: e.vars[e.n]},
+		Item:  e.item[e.n],
 	}
 }
 
@@ -232,7 +267,17 @@ func (e *Env) exprEnv() exprEnv {
 // recipe that runs on h in the pipeline, also in later stages.
 func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
 	short, _, _ := strings.Cut(h.Name, ".")
-	e := &Env{host: h, short: short, facts: f, vars: maps.Clone(h.Vars), runs: map[string]bool{}}
+	e := &Env{host: h, short: short, facts: f, secret: map[string]bool{}, secrets: p.secrets, runs: map[string]bool{}, filter: p.filter}
+	for n := range e.vars {
+		e.vars[n] = unseal(h.Vars, n).(map[string]any)
+		if !e.secrets {
+			e.vars[1], e.vars[2] = e.vars[0], e.vars[0]
+			break
+		}
+	}
+	for name, v := range h.Vars {
+		e.secret[name] = hasSealed(v)
+	}
 	for _, s := range p.Pipeline.Stages {
 		if !slices.ContainsFunc(s.Targets, func(t Host) bool { return t.Name == h.Name }) {
 			continue
@@ -298,7 +343,9 @@ func (p *Project) use(e *Env, st Step) error {
 }
 
 // evalDefaults evaluates the defaults of names and of the variables that
-// those defaults read, unless e has a value for them.
+// those defaults read, unless e has a value for them. It evaluates each
+// default in the three variants. A default that reads a secret variable is
+// secret.
 func (p *Project) evalDefaults(e *Env, names []string) error {
 	need := map[string]bool{}
 	for _, name := range names {
@@ -307,7 +354,7 @@ func (p *Project) evalDefaults(e *Env, names []string) error {
 	// In reverse evaluation order, a default comes before the defaults that
 	// it reads.
 	for _, v := range slices.Backward(p.vars) {
-		if _, ok := e.vars[v.Name]; ok || !need[v.Name] || v.computed == nil {
+		if _, ok := e.vars[0][v.Name]; ok || !need[v.Name] || v.computed == nil {
 			continue
 		}
 		for _, name := range v.computed.reads() {
@@ -315,27 +362,77 @@ func (p *Project) evalDefaults(e *Env, names []string) error {
 		}
 	}
 	for _, v := range p.vars {
-		if _, ok := e.vars[v.Name]; ok || !need[v.Name] || v.required() {
+		if _, ok := e.vars[0][v.Name]; ok || !need[v.Name] || v.required() {
 			continue
 		}
-		var val any
-		if v.computed == nil {
-			val = yamlx.Value(v.node)
-		} else {
-			n, err := v.computed.eval(e, "")
-			if ye, ok := errors.AsType[*yamlx.Error](err); ok {
-				return yamlx.Errorf(ye.Pos, "variable %q: %s", v.Name, ye.Msg)
-			}
-			if err != nil {
-				return err
-			}
-			val = yamlx.Value(n)
+		vals, err := p.evalDefault(e, v)
+		if err != nil {
+			return err
 		}
-		if val != nil {
-			e.vars[v.Name] = val
+		if vals[0] == nil {
+			continue
+		}
+		for n := range vals {
+			e.vars[n][v.Name] = vals[n]
 		}
 	}
 	return nil
+}
+
+// evalDefault returns the default of v in the three variants.
+func (p *Project) evalDefault(e *Env, v *Var) ([3]any, error) {
+	var vals [3]any
+	if v.computed == nil {
+		val := yamlx.Value(v.node)
+		e.secret[v.Name] = hasSealed(val)
+		for n := range vals {
+			vals[n] = unseal(val, n)
+		}
+		return vals, nil
+	}
+	if !e.secrets {
+		node, err := v.computed.eval(e, "")
+		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
+			return vals, yamlx.Errorf(ye.Pos, "variable %q: %s", v.Name, ye.Msg)
+		}
+		if err != nil {
+			return vals, err
+		}
+		val := yamlx.Value(node)
+		return [3]any{val, val, val}, nil
+	}
+	var errs [3]error
+	for n := range vals {
+		node, err := v.computed.eval(e.variant(n), "")
+		if err != nil {
+			errs[n] = err
+			continue
+		}
+		val := yamlx.Value(node)
+		if n == 0 {
+			e.secret[v.Name] = hasSealed(val) || slices.ContainsFunc(v.computed.reads(), func(r string) bool { return e.secret[r] })
+		}
+		vals[n] = unseal(val, n)
+	}
+	if errs[0] != nil {
+		err := maskError(errs[0], [2]error{errs[1], errs[2]})
+		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
+			return vals, yamlx.Errorf(ye.Pos, "variable %q: %s", v.Name, ye.Msg)
+		}
+		return vals, err
+	}
+	for n := 1; n < 3; n++ {
+		switch {
+		case errs[n] != nil:
+			vals[n] = secret.Placeholder(n)
+		case e.secret[v.Name]:
+			vals[n] = force(vals[0], vals[n], n)
+		}
+	}
+	if e.secret[v.Name] {
+		e.learn(secret.Parts(vals[0], vals[1], vals[2]))
+	}
+	return vals, nil
 }
 
 // missing returns an error for each required variable of the recipe of st

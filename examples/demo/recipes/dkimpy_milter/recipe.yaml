@@ -1,0 +1,26 @@
+vars:
+  dkimpy_milter_key:
+
+steps:
+  - pkg:
+      name: dkimpy-milter
+  - name: DKIM key, RSA 2048 from dknewkey, selector "dkim"
+    file:
+      path: /etc/dkimpy-milter/dkim.key
+      content: !expr vars.dkimpy_milter_key
+      mode: "0600"
+    notify: restart
+  - file:
+      path: /etc/dkimpy-milter/dkimpy-milter.conf
+      template: dkimpy-milter.conf.tmpl
+    notify: restart
+  - service:
+      name: dkimpy-milter
+      enabled: true
+      running: true
+
+handlers:
+  restart:
+    - service:
+        name: dkimpy-milter
+        restarted: true

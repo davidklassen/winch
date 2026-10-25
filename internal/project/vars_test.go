@@ -328,7 +328,7 @@ func TestLoadVars(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, with(varsProject, tt.files))
-			p, err := Load(dir, "", "site", tt.set)
+			p, err := Load(dir, "", "site", tt.set, Keys{})
 			got := ""
 			if err != nil {
 				got = err.Error() + "\n"
@@ -408,7 +408,7 @@ func TestEval(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := Load(writeProject(t, with(varsProject, tt.files)), "", "site", tt.set)
+			p, err := Load(writeProject(t, with(varsProject, tt.files)), "", "site", tt.set, Keys{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -430,7 +430,7 @@ func evalOne(t *testing.T, vars, step string, files map[string]string) string {
 	for k, v := range files {
 		all[k] = v
 	}
-	p, err := Load(writeProject(t, all), "", "site", nil)
+	p, err := Load(writeProject(t, all), "", "site", nil, Keys{})
 	if err != nil {
 		return "load error: " + err.Error()
 	}
@@ -585,7 +585,7 @@ func TestStartRecipeWhen(t *testing.T) {
 `,
 		"recipes/r/recipe.yaml": "require:\n  - !expr 'facts.os.id == \"ubuntu\"'\nvars:\n  r_x:\nsteps: []\n",
 	}
-	p, err := Load(writeProject(t, files), "", "site", nil)
+	p, err := Load(writeProject(t, files), "", "site", nil, Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,7 +602,7 @@ func TestStartRecipeWhen(t *testing.T) {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
 	files["recipes/r/recipe.yaml"] = "vars:\n  r_x:\nsteps: []\n"
-	p, err = Load(writeProject(t, files), "", "site", nil)
+	p, err = Load(writeProject(t, files), "", "site", nil, Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -674,7 +674,7 @@ func TestStartOnlyRunningDefaults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			files["pipelines/site.yaml"] = tt.pipeline
-			p, err := Load(writeProject(t, files), "", "site", nil)
+			p, err := Load(writeProject(t, files), "", "site", nil, Keys{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -684,7 +684,7 @@ func TestStartOnlyRunningDefaults(t *testing.T) {
 					t.Errorf("%s: %v", h.Name, err)
 					continue
 				}
-				got, _ := json.Marshal(env.vars)
+				got, _ := json.Marshal(env.vars[0])
 				if string(got) != want[h.Name] {
 					t.Errorf("%s: got  %s\nwant %s", h.Name, got, want[h.Name])
 				}
@@ -750,7 +750,7 @@ func TestStartUsedDefaults(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			files := with(base, tt.files)
 			files["recipes/nginx/recipe.yaml"] = recipeVars + "steps:\n" + tt.steps
-			p, err := Load(writeProject(t, files), "", "site", nil)
+			p, err := Load(writeProject(t, files), "", "site", nil, Keys{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -760,7 +760,7 @@ func TestStartUsedDefaults(t *testing.T) {
 					t.Errorf("%s: %v", h.Name, err)
 					continue
 				}
-				got, _ := json.Marshal(env.vars)
+				got, _ := json.Marshal(env.vars[0])
 				if string(got) != tt.want[h.Name] {
 					t.Errorf("%s: got  %s\nwant %s", h.Name, got, tt.want[h.Name])
 				}

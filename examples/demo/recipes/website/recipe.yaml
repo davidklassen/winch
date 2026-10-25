@@ -6,6 +6,8 @@ vars:
   website_root: !tpl /var/www/{{ .vars.domain }}
   website_pages: []
   website_private: false
+  # The password of the user demo for the page /private.
+  website_password:
 
 steps:
   - name: Only nginx reads the site
@@ -25,6 +27,13 @@ steps:
       path: !tpl "{{ .vars.website_root }}/robots.txt"
       source: robots.txt
     when: !expr vars.website_private
+  - name: The user of /private
+    file:
+      path: !tpl /etc/nginx/htpasswd-{{ .vars.domain }}
+      # nginx reads {PLAIN} passwords. A real site keeps a hash here.
+      content: !tpl "demo:{PLAIN}{{ .vars.website_password }}\n"
+      group: www-data
+      mode: "0640"
   - file:
       path: !tpl /etc/nginx/sites-available/{{ .vars.domain }}
       template: site.tmpl

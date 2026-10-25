@@ -8,7 +8,7 @@ import (
 )
 
 // Value returns n as a Go value: nil, string, bool, int, float64, []any, or
-// map[string]any. A tagged scalar gives its text.
+// map[string]any. A tagged scalar gives its Value as it is.
 func Value(n *Node) any {
 	switch n.Kind {
 	case Scalar:

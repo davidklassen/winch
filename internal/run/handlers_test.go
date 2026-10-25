@@ -113,7 +113,7 @@ func present(h *fakehost.Hosts, hosts ...string) {
 
 func handlerProject(t *testing.T, set ...string) *project.Project {
 	t.Helper()
-	p, err := project.Load(vmtest.WriteProject(t, handlerFiles), "", "site", set)
+	p, err := project.Load(vmtest.WriteProject(t, handlerFiles), "", "site", set, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +421,7 @@ func TestStageStepNotifiesEarlierRecipe(t *testing.T) {
           content: "hi\n"
         notify: nginx.reload
 `
-	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil)
+	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestPendingThen(t *testing.T) {
           content: "hi\n"
         then: newaliases
 `
-	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil)
+	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +522,7 @@ func TestPendingThenOfAChangedStep(t *testing.T) {
 func TestPendingThenOfAHandlerStep(t *testing.T) {
 	files := maps.Clone(handlerFiles)
 	files["recipes/app/recipe.yaml"] += "      then: app-check\n"
-	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil)
+	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}

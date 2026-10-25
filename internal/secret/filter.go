@@ -1,0 +1,175 @@
+package secret
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"net/url"
+	"strings"
+	"sync"
+	"unicode"
+	"unicode/utf8"
+)
+
+// Filter replaces the secret values of a run, private key blocks, and tokens
+// in text with Mark.
+type Filter struct {
+	mu sync.Mutex
+	// values holds each value and its encoded forms.
+	values map[string]bool
+}
+
+func NewFilter() *Filter {
+	return &Filter{values: map[string]bool{}}
+}
+
+// Add adds a secret value: the value and each of its lines, in plain,
+// JSON-escaped, base64, and URL-encoded form, and as the output prints it. It skips text shorter than 4
+// characters, and true and false.
+func (f *Filter) Add(value string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, v := range append([]string{value}, strings.Split(value, "\n")...) {
+		v = strings.TrimSpace(v)
+		if utf8.RuneCountInString(v) < 4 || v == "true" || v == "false" {
+			continue
+		}
+		f.values[v] = true
+		f.values[Printable(v)] = true
+		j, _ := json.Marshal(v)
+		f.values[string(j[1:len(j)-1])] = true
+		f.values[base64.RawStdEncoding.EncodeToString([]byte(v))] = true
+		f.values[url.QueryEscape(v)] = true
+		f.values[url.PathEscape(v)] = true
+	}
+}
+
+// Text returns s with each match replaced by Mark. Overlapping and adjacent
+// matches give one Mark. A newline stays, and a match inside a Mark of s
+// does not count.
+func (f *Filter) Text(s string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	marked := make([]bool, len(s))
+	set := func(from, to int) {
+		for i := from; i < to; i++ {
+			marked[i] = true
+		}
+	}
+	var marks [][2]int
+	for i := 0; ; {
+		j := strings.Index(s[i:], Mark)
+		if j < 0 {
+			break
+		}
+		marks = append(marks, [2]int{i + j, i + j + len(Mark)})
+		i += j + len(Mark)
+	}
+	inMark := func(from, to int) bool {
+		for _, m := range marks {
+			if from >= m[0] && to <= m[1] {
+				return true
+			}
+		}
+		return false
+	}
+	for v := range f.values {
+		for i := 0; ; {
+			j := strings.Index(s[i:], v)
+			if j < 0 {
+				break
+			}
+			if from, to := i+j, i+j+len(v); !inMark(from, to) {
+				set(from, to)
+			}
+			i += j + 1
+		}
+	}
+	for _, p := range patterns {
+		for _, m := range p.re.FindAllStringIndex(s, -1) {
+			set(m[0], m[1])
+		}
+	}
+	keyBlocks(s, set)
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if !marked[i] || s[i] == '\n' {
+			b.WriteByte(s[i])
+			continue
+		}
+		b.WriteString(Mark)
+		for i+1 < len(s) && marked[i+1] && s[i+1] != '\n' {
+			i++
+		}
+	}
+	return b.String()
+}
+
+// keyBlocks marks each private key block: from its header to its footer, or
+// to the end of s. A line inside a block keeps its leading white space.
+func keyBlocks(s string, set func(from, to int)) {
+	inKey := false
+	for ls := 0; ls < len(s); {
+		le := strings.IndexByte(s[ls:], '\n')
+		if le < 0 {
+			le = len(s)
+		} else {
+			le += ls
+		}
+		pos := ls
+		if inKey {
+			start := ls + len(s[ls:le]) - len(strings.TrimLeft(s[ls:le], " \t"))
+			if e := keyEnd.FindStringIndex(s[ls:le]); e != nil {
+				set(start, ls+e[1])
+				pos, inKey = ls+e[1], false
+			} else {
+				set(start, le)
+				pos = le
+			}
+		}
+		for pos < le {
+			b := keyBegin.FindStringIndex(s[pos:le])
+			if b == nil {
+				break
+			}
+			from, after := pos+b[0], pos+b[1]
+			e := keyEnd.FindStringIndex(s[after:le])
+			if e == nil {
+				set(from, le)
+				inKey = true
+				break
+			}
+			set(from, after+e[1])
+			pos = after + e[1]
+		}
+		ls = le + 1
+	}
+}
+
+// Writer returns a writer that filters each write to w.
+func (f *Filter) Writer(w io.Writer) io.Writer {
+	return writer{f, w}
+}
+
+type writer struct {
+	f *Filter
+	w io.Writer
+}
+
+func (w writer) Write(p []byte) (int, error) {
+	if _, err := io.WriteString(w.w, w.f.Text(string(p))); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// Printable replaces control characters in text from a host, so the text
+// cannot move the cursor or change the terminal.
+func Printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\t' && (unicode.IsControl(r) || r == '\u2028' || r == '\u2029') {
+			return '?'
+		}
+		return r
+	}, s)
+}

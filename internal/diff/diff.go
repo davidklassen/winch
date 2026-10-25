@@ -49,10 +49,48 @@ func Diff(old, new []byte) []byte {
 	if bytes.Equal(old, new) {
 		return nil
 	}
-	x := lines(old)
-	y := lines(new)
-
+	x := Lines(old)
+	y := Lines(new)
 	var out bytes.Buffer
+	for _, h := range Hunks(x, y) {
+		out.WriteString(h.Header())
+		for _, op := range h.Ops {
+			switch op.Kind {
+			case ' ':
+				out.WriteString(" " + x[op.X])
+			case '-':
+				out.WriteString("-" + x[op.X])
+			default:
+				out.WriteString("+" + y[op.Y])
+			}
+		}
+	}
+	return out.Bytes()
+}
+
+// Op is one line of a hunk: ' ' for a line of both texts, '-' for a line of
+// x only, and '+' for a line of y only. X and Y are the indexes of the line.
+type Op struct {
+	Kind byte
+	X, Y int
+}
+
+// Hunk is a chunk of a unified diff. X and Y are the start lines of the
+// header, NX and NY its line counts.
+type Hunk struct {
+	X, Y, NX, NY int
+	Ops          []Op
+}
+
+// Header is the line "@@ -x,nx +y,ny @@" of the hunk.
+func (h Hunk) Header() string {
+	return fmt.Sprintf("@@ -%d,%d +%d,%d @@\n", h.X, h.NX, h.Y, h.NY)
+}
+
+// Hunks returns the chunks of the anchored diff of the lines x and y, with
+// three lines of context.
+func Hunks(x, y []string) []Hunk {
+	var out []Hunk
 
 	// Loop over matches to consider,
 	// expanding each match to include surrounding lines,
@@ -61,10 +99,10 @@ func Diff(old, new []byte) []byte {
 	// tgs returns a leading {0,0} and trailing {len(x), len(y)} pair
 	// in the sequence of matches.
 	var (
-		done  pair     // printed up to x[:done.x] and y[:done.y]
-		chunk pair     // start lines of current chunk
-		count pair     // number of lines from each side in current chunk
-		ctext []string // lines for current chunk
+		done  pair // printed up to x[:done.x] and y[:done.y]
+		chunk pair // start lines of current chunk
+		count pair // number of lines from each side in current chunk
+		ops   []Op // lines for current chunk
 	)
 	for _, m := range tgs(x, y) {
 		if m.x < done.x {
@@ -89,12 +127,12 @@ func Diff(old, new []byte) []byte {
 
 		// Emit the mismatched lines before start into this chunk.
 		// (No effect on first sentinel iteration, when start = {0,0}.)
-		for _, s := range x[done.x:start.x] {
-			ctext = append(ctext, "-"+s)
+		for i := done.x; i < start.x; i++ {
+			ops = append(ops, Op{'-', i, -1})
 			count.x++
 		}
-		for _, s := range y[done.y:start.y] {
-			ctext = append(ctext, "+"+s)
+		for j := done.y; j < start.y; j++ {
+			ops = append(ops, Op{'+', -1, j})
 			count.y++
 		}
 
@@ -102,9 +140,9 @@ func Diff(old, new []byte) []byte {
 		// the chunk includes all the common lines and continues.
 		const C = 3 // number of context lines
 		if (end.x < len(x) || end.y < len(y)) &&
-			(end.x-start.x < C || (len(ctext) > 0 && end.x-start.x < 2*C)) {
-			for _, s := range x[start.x:end.x] {
-				ctext = append(ctext, " "+s)
+			(end.x-start.x < C || (len(ops) > 0 && end.x-start.x < 2*C)) {
+			for i := start.x; i < end.x; i++ {
+				ops = append(ops, Op{' ', i, start.y + i - start.x})
 				count.x++
 				count.y++
 			}
@@ -113,13 +151,13 @@ func Diff(old, new []byte) []byte {
 		}
 
 		// End chunk with common lines for context.
-		if len(ctext) > 0 {
+		if len(ops) > 0 {
 			n := end.x - start.x
 			if n > C {
 				n = C
 			}
-			for _, s := range x[start.x : start.x+n] {
-				ctext = append(ctext, " "+s)
+			for i := start.x; i < start.x+n; i++ {
+				ops = append(ops, Op{' ', i, start.y + i - start.x})
 				count.x++
 				count.y++
 			}
@@ -134,13 +172,10 @@ func Diff(old, new []byte) []byte {
 			if count.y > 0 {
 				chunk.y++
 			}
-			fmt.Fprintf(&out, "@@ -%d,%d +%d,%d @@\n", chunk.x, count.x, chunk.y, count.y)
-			for _, s := range ctext {
-				out.WriteString(s)
-			}
+			out = append(out, Hunk{X: chunk.x, Y: chunk.y, NX: count.x, NY: count.y, Ops: ops})
 			count.x = 0
 			count.y = 0
-			ctext = ctext[:0]
+			ops = nil
 		}
 
 		// If we reached EOF, we're done.
@@ -150,21 +185,21 @@ func Diff(old, new []byte) []byte {
 
 		// Otherwise start a new chunk.
 		chunk = pair{end.x - C, end.y - C}
-		for _, s := range x[chunk.x:end.x] {
-			ctext = append(ctext, " "+s)
+		for i := chunk.x; i < end.x; i++ {
+			ops = append(ops, Op{' ', i, chunk.y + i - chunk.x})
 			count.x++
 			count.y++
 		}
 		done = end
 	}
 
-	return out.Bytes()
+	return out
 }
 
-// lines returns the lines in the file x, including newlines.
+// Lines returns the lines in the file x, including newlines.
 // If the file does not end in a newline, one is supplied
 // along with a warning about the missing newline.
-func lines(x []byte) []string {
+func Lines(x []byte) []string {
 	l := strings.SplitAfter(string(x), "\n")
 	if l[len(l)-1] == "" {
 		l = l[:len(l)-1]

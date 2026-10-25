@@ -8,4 +8,10 @@ server {
 	location / {
 		try_files $uri $uri.html $uri/ =404;
 	}
+
+	location /private {
+		auth_basic "private";
+		auth_basic_user_file /etc/nginx/htpasswd-{{ .vars.domain }};
+		try_files $uri $uri.html =404;
+	}
 }
