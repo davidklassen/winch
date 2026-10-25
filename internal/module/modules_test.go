@@ -162,19 +162,52 @@ func TestServiceValidate(t *testing.T) {
 
 // spec: Modules/pkg
 func TestParseDpkg(t *testing.T) {
-	out := "bash\tii \nexim4\trc \nheld\thi \nheldrc\thc \npurged\tun \n" +
-		"libc6\tii \nlibc6\trc \nlibfoo\trc \nlibfoo\tii \nheld2\thi \nheld2\trc \n"
+	out := "bash\tii \t5.2\nexim4\trc \t4.98\nheld\thi \t1\nheldrc\thc \t1\npurged\tun \t\n" +
+		"libc6\tii \t2.41\nlibc6\trc \t2.40\nlibfoo\trc \t1\nlibfoo\tii \t1\nheld2\thi \t1\nheld2\trc \t1\n" +
+		"nginx\tiF \t1.26.3-3\nlibbar\tii \t2\nlibbar\tiU \t3\n"
 	got := parseDpkg(out)
 	want := map[string]dpkgPkg{"bash": {state: installed}, "exim4": {state: configFiles},
 		"held": {state: installed, held: true}, "heldrc": {state: configFiles, held: true}, "purged": {state: notInstalled},
-		"libc6": {state: installed}, "libfoo": {state: installed}, "held2": {state: installed, held: true}}
+		"libc6": {state: installed}, "libfoo": {state: installed}, "held2": {state: installed, held: true},
+		"nginx": {half: 'F', version: "1.26.3-3"}, "libbar": {state: installed, half: 'U', version: "3"}}
 	for name, w := range want {
 		if got[name] != w {
 			t.Errorf("%s = %+v, want %+v", name, got[name], w)
 		}
 	}
-	if got["nginx"] != (dpkgPkg{}) {
-		t.Errorf("an unknown package = %+v, want not installed", got["nginx"])
+	if got["apache2"] != (dpkgPkg{}) {
+		t.Errorf("an unknown package = %+v, want not installed", got["apache2"])
+	}
+}
+
+// spec: Modules/pkg
+func TestOthersHalfDone(t *testing.T) {
+	pkgs := parseDpkg("bash\tii \t5.2\nnginx\tiF \t1.26\nlibfoo\tiU \t1\nlibbar\tiHR\t1\nlibbaz\tit \t1\nlibqux\tiW \t1\n")
+	tests := []struct {
+		name  string
+		names []string
+		want  string
+	}{
+		{"all named", []string{"nginx", "libfoo", "libbar", "libbaz", "libqux"}, ""},
+		{"half configured", []string{"libfoo", "libbar", "libbaz", "libqux"}, "nginx is half configured: its configuration failed; fix the cause, then run dpkg --configure -a"},
+		{"unpacked", []string{"nginx", "libbar", "libbaz", "libqux"}, "libfoo is unpacked: its configuration did not run; fix the cause, then run dpkg --configure -a"},
+		{"half installed", []string{"nginx", "libfoo", "libbaz", "libqux"}, "libbar is half installed: its installation failed; fix the cause, then run apt-get install --reinstall libbar"},
+		{"triggers pending", []string{"nginx", "libfoo", "libbar", "libqux"}, "libbaz is triggered: its trigger processing did not run; fix the cause, then run dpkg --configure -a"},
+		{"triggers awaited", []string{"nginx", "libfoo", "libbar", "libbaz"}, "libqux is awaiting triggers: the trigger processing of another package did not run; fix the cause, then run dpkg --configure -a"},
+		{"several, by name", []string{"bash", "libbaz", "libqux"}, "libbar is half installed: its installation failed; fix the cause, then run apt-get install --reinstall libbar\n" +
+			"libfoo is unpacked: its configuration did not run; fix the cause, then run dpkg --configure -a\n" +
+			"nginx is half configured: its configuration failed; fix the cause, then run dpkg --configure -a"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ""
+			if err := othersHalfDone(pkgs, tt.names); err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("err = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

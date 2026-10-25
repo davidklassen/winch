@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -26,8 +25,10 @@ type Pkg struct {
 
 	// Check sets these for Apply.
 	refresh bool
-	verb    string
 	todo    []string
+	// configure holds half-done packages as name=version. The install of the
+	// installed version finishes them and upgrades nothing.
+	configure []string
 	// auto holds installed packages that apt marked automatic.
 	auto []string
 }
@@ -60,18 +61,24 @@ var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive"}
 const aptLock = "DPkg::Lock::Timeout=300"
 
 func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, error) {
-	pkgs, err := readDpkg(ctx, p.Name, note)
+	pkgs, err := readDpkg(ctx, note)
 	if err != nil {
 		return Result{}, err
 	}
-	var inst []string
+	if err := othersHalfDone(pkgs, p.Name); err != nil {
+		return Result{}, err
+	}
+	var inst, conf []string
 	for _, n := range p.Name {
-		s := pkgs[n].state
+		pkg := pkgs[n]
 		switch {
-		case !p.Absent && s != installed,
-			p.Absent && s == installed,
-			p.Purge && s == configFiles:
-			if pkgs[n].held {
+		case !p.Absent && pkg.half != 0:
+			conf = append(conf, n)
+			p.configure = append(p.configure, n+"="+pkg.version)
+		case !p.Absent && pkg.state != installed,
+			p.Absent && (pkg.state == installed || pkg.half != 0),
+			p.Purge && pkg.state == configFiles:
+			if pkg.held {
 				return Result{}, fmt.Errorf("%s is held; apt-mark unhold %s changes it", n, n)
 			}
 			p.todo = append(p.todo, n)
@@ -87,27 +94,20 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 		}
 		p.auto = strings.Fields(out)
 	}
-	if len(p.todo) == 0 && len(p.auto) == 0 {
+	if len(p.todo) == 0 && len(p.configure) == 0 && len(p.auto) == 0 {
 		return Result{Status: OK}, nil
 	}
 	var changes []string
 	action := Modify
 	if len(p.todo) > 0 {
-		p.verb = "install"
-		switch {
-		case p.Purge:
-			p.verb = "purge"
-		case p.Absent:
-			p.verb = "remove"
-		}
-		changes = []string{p.verb + " " + strings.Join(p.todo, ", ")}
+		changes = []string{p.verb() + " " + strings.Join(p.todo, ", ")}
 		if p.Absent {
 			others, err := p.dependents(ctx)
 			if err != nil {
 				return Result{}, err
 			}
 			if len(others) > 0 {
-				changes = append(changes, "also "+p.verb+" "+strings.Join(others, ", "))
+				changes = append(changes, "also "+p.verb()+" "+strings.Join(others, ", "))
 			}
 			return Result{Status: Change, Action: Remove, Changes: changes}, nil
 		}
@@ -121,16 +121,29 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 		}
 		action = Create
 	}
+	if len(conf) > 0 {
+		changes = append(changes, "configure "+strings.Join(conf, ", "))
+	}
 	if len(p.auto) > 0 {
 		changes = append(changes, "mark "+strings.Join(p.auto, ", ")+" as manually installed")
 	}
 	return Result{Status: Change, Action: action, Changes: changes}, nil
 }
 
+func (p *Pkg) verb() string {
+	switch {
+	case p.Purge:
+		return "purge"
+	case p.Absent:
+		return "remove"
+	}
+	return "install"
+}
+
 // dependents returns the other packages that apt removes with the step's
 // packages.
 func (p *Pkg) dependents(ctx context.Context) ([]string, error) {
-	out, err := run(ctx, aptEnv, "apt-get", append([]string{"-s", "-q", p.verb}, p.todo...)...)
+	out, err := run(ctx, aptEnv, "apt-get", append([]string{"-s", "-q", p.verb()}, p.todo...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +166,7 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 			return err
 		}
 	}
-	if len(p.todo) == 0 {
+	if len(p.todo) == 0 && len(p.configure) == 0 {
 		return nil
 	}
 	if p.refresh {
@@ -165,9 +178,9 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 			return err
 		}
 	}
-	args := []string{p.verb, "-y", "-q", "-o", aptLock,
+	args := []string{p.verb(), "-y", "-q", "-o", aptLock,
 		"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold"}
-	if p.verb == "install" {
+	if p.verb() == "install" {
 		// An install that would remove a conflicting package fails.
 		args = append(args, "--no-remove")
 		switch {
@@ -181,7 +194,7 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 	if err := waitLocks(ctx, dpkgLocks, note); err != nil {
 		return err
 	}
-	_, err := run(ctx, aptEnv, "apt-get", append(args, p.todo...)...)
+	_, err := run(ctx, aptEnv, "apt-get", slices.Concat(args, p.todo, p.configure)...)
 	return err
 }
 
@@ -204,9 +217,23 @@ const (
 	installed
 )
 
+// halfDoneReasons maps the dpkg states of a package that dpkg did not fully
+// install or configure to the reason.
+var halfDoneReasons = map[byte]string{
+	'H': "half installed: its installation failed",
+	'U': "unpacked: its configuration did not run",
+	'F': "half configured: its configuration failed",
+	'W': "awaiting triggers: the trigger processing of another package did not run",
+	't': "triggered: its trigger processing did not run",
+}
+
 type dpkgPkg struct {
 	state pkgState
 	held  bool
+	// half is the dpkg state of a half-done package, or 0.
+	half byte
+	// version is the version of a half-done package.
+	version string
 }
 
 // dpkgLocks are the fcntl locks that apt and dpkg use.
@@ -215,27 +242,53 @@ var dpkgLocks = []string{"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock"}
 // indexLock is the fcntl lock of the package index.
 const indexLock = "/var/lib/apt/lists/lock"
 
-// readDpkg holds the locks of apt and dpkg while it reads, so it does not see
-// the half-done packages of a running apt.
-func readDpkg(ctx context.Context, names []string, note func(string)) (map[string]dpkgPkg, error) {
+// readDpkg returns every package that dpkg knows. It holds the locks of apt
+// and dpkg while it reads, so it does not see the half-done packages of a
+// running apt.
+func readDpkg(ctx context.Context, note func(string)) (map[string]dpkgPkg, error) {
 	unlock, err := lockFiles(ctx, dpkgLocks, note)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	pkgs, err := dpkgStates(ctx, names)
+	// Without a pattern, dpkg-query skips the packages that are not installed,
+	// also held ones.
+	// apt refuses to run while dpkg has journal entries that it did not merge.
+	journal, err := os.ReadDir("/var/lib/dpkg/updates")
 	if err != nil {
 		return nil, err
 	}
-	audit, err := run(ctx, nil, "dpkg", "--audit")
+	for _, e := range journal {
+		if strings.Trim(e.Name(), "0123456789") == "" {
+			return nil, errors.New("dpkg was interrupted; run dpkg --configure -a")
+		}
+	}
+	out, err := run(ctx, nil, "dpkg-query", "-W", "-f=${Package}\t${db:Status-Abbrev}\t${Version}\n", "*")
 	if err != nil {
 		return nil, err
 	}
-	// dpkg --audit exits 0 also when it lists half-installed packages.
-	if strings.TrimSpace(audit) != "" {
-		return nil, errors.New("dpkg was interrupted; run dpkg --configure -a")
+	return parseDpkg(out), nil
+}
+
+// othersHalfDone fails on each half-done package that names does not hold.
+func othersHalfDone(pkgs map[string]dpkgPkg, names []string) error {
+	var others []string
+	for n, pkg := range pkgs {
+		if pkg.half != 0 && !slices.Contains(names, n) {
+			others = append(others, n)
+		}
 	}
-	return pkgs, nil
+	slices.Sort(others)
+	var errs []error
+	for _, n := range others {
+		half := pkgs[n].half
+		hint := "dpkg --configure -a"
+		if half == 'H' {
+			hint = "apt-get install --reinstall " + n
+		}
+		errs = append(errs, fmt.Errorf("%s is %s; fix the cause, then run %s", n, halfDoneReasons[half], hint))
+	}
+	return errors.Join(errs...)
 }
 
 // lockFiles takes fcntl locks in order. It waits as long as aptLock for all of
@@ -297,39 +350,17 @@ func lockFiles(ctx context.Context, names []string, note func(string)) (unlock f
 	return release, nil
 }
 
-// dpkgStates returns each named package that dpkg knows.
-func dpkgStates(ctx context.Context, names []string) (map[string]dpkgPkg, error) {
-	args := append([]string{"-W", "-f=${Package}\t${db:Status-Abbrev}\n"}, names...)
-	out, err := exec.CommandContext(ctx, "dpkg-query", args...).Output()
-	// dpkg-query exits 1 when it does not know one of the packages.
-	if exit, ok := errors.AsType[*exec.ExitError](err); ok && exit.ExitCode() == 1 && unknownOnly(exit.Stderr) {
-		err = nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("dpkg-query: %w", err)
-	}
-	return parseDpkg(string(out)), nil
-}
-
-func unknownOnly(stderr []byte) bool {
-	for line := range strings.SplitSeq(strings.TrimSpace(string(stderr)), "\n") {
-		if !strings.HasPrefix(line, "dpkg-query: no packages found matching ") {
-			return false
-		}
-	}
-	return true
-}
-
-// parseDpkg reads lines of a package name and its status abbreviation, such
-// as "ii " or "hi ". The first letter is the selection, the second the state
-// of the package.
+// parseDpkg reads lines of a package name, its status abbreviation, such as
+// "ii " or "hi ", and its version. The first letter is the selection, the
+// second the state of the package.
 func parseDpkg(out string) map[string]dpkgPkg {
 	pkgs := map[string]dpkgPkg{}
 	for line := range strings.SplitSeq(out, "\n") {
-		name, abbrev, ok := strings.Cut(line, "\t")
-		if !ok || len(abbrev) < 2 {
+		f := strings.Split(line, "\t")
+		if len(f) != 3 || len(f[1]) < 2 {
 			continue
 		}
+		name, abbrev := f[0], f[1]
 		s := notInstalled
 		switch abbrev[1] {
 		case 'i':
@@ -337,9 +368,15 @@ func parseDpkg(out string) map[string]dpkgPkg {
 		case 'c':
 			s = configFiles
 		}
-		// One line per architecture: the most installed one counts.
+		// One line per architecture: the most installed one counts, and a
+		// half-done one makes the package half done.
 		pkg := pkgs[name]
-		pkgs[name] = dpkgPkg{state: max(pkg.state, s), held: pkg.held || abbrev[0] == 'h'}
+		pkg.state = max(pkg.state, s)
+		pkg.held = pkg.held || abbrev[0] == 'h'
+		if _, ok := halfDoneReasons[abbrev[1]]; ok && pkg.half == 0 {
+			pkg.half, pkg.version = abbrev[1], f[2]
+		}
+		pkgs[name] = pkg
 	}
 	return pkgs
 }

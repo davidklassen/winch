@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/module"
@@ -10,6 +11,15 @@ import (
 // quietApt stops the apt timers, so no other apt run holds the lock or
 // refreshes the index during a test.
 const quietApt = "systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service"
+
+// fragileDeb builds winch-fragile, a local package whose postinst fails
+// until /etc/winch-fragile.ok exists.
+const fragileDeb = `mkdir -p /root/fragile/DEBIAN && printf 'Package: winch-fragile\nVersion: 1\nArchitecture: all\nMaintainer: winch\nDescription: test\n' > /root/fragile/DEBIAN/control && ` +
+	`printf '#!/bin/sh\n[ -e /etc/winch-fragile.ok ]\n' > /root/fragile/DEBIAN/postinst && chmod 755 /root/fragile/DEBIAN/postinst && dpkg-deb -b /root/fragile /root/winch-fragile.deb >/dev/null`
+
+// halfConfigure installs winch-fragile without the marker, so dpkg keeps it
+// half configured.
+const halfConfigure = "! dpkg -i /root/winch-fragile.deb >/dev/null 2>&1 && dpkg-query -W -f='${db:Status-Abbrev}' winch-fragile | grep -q '^iF'"
 
 // spec: Modules/pkg
 func TestPkgModule(t *testing.T) {
@@ -33,8 +43,12 @@ func TestPkgModule(t *testing.T) {
 	// exists, so a test can kill its install.
 	vm.MustRun(t, `mkdir -p /root/slow-pkg/DEBIAN && printf 'Package: winch-slow\nVersion: 1\nArchitecture: all\nMaintainer: winch\nDescription: test\n' > /root/slow-pkg/DEBIAN/control && `+
 		`printf '#!/bin/sh\nwhile [ -e /root/slow ]; do sleep 1; done\n' > /root/slow-pkg/DEBIAN/postinst && chmod 755 /root/slow-pkg/DEBIAN/postinst && dpkg-deb -b /root/slow-pkg /root/winch-slow.deb >/dev/null`)
-	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; " +
-		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
+	// The local repository has version 2 of winch-fragile.
+	vm.MustRun(t, fragileDeb+" && mkdir -p /root/repo && cp -r /root/fragile /root/fragile2 && sed -i 's/^Version: 1/Version: 2/' /root/fragile2/DEBIAN/control && "+
+		"dpkg-deb -b /root/fragile2 /root/repo/winch-fragile_2_all.deb >/dev/null && cd /root/repo && apt-ftparchive packages . > Packages")
+	const localRepo = "echo 'deb [trusted=yes] file:/root/repo ./' > /etc/apt/sources.list.d/winch-local.list && apt-get update -q >/dev/null"
+	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /etc/apt/sources.list.d/winch-local.list /var/lib/apt/lists/_root_repo_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; " +
+		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-fragile hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
 		{
 			Name:      "the first install of a run refreshes the index",
@@ -177,6 +191,60 @@ func TestPkgModule(t *testing.T) {
 			WantErr: "dpkg was interrupted; run dpkg --configure -a",
 		},
 		{
+			Name:  "a half-configured package that the step names plans configure",
+			Setup: halfConfigure,
+			Args:  &module.Pkg{Name: []string{"winch-fragile"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"configure winch-fragile"}},
+			// The postinst passes once the marker exists.
+			BeforeApply: "touch /etc/winch-fragile.ok",
+			After:       "dpkg-query -W -f='${db:Status-Abbrev}' winch-fragile | grep -q '^ii'",
+		},
+		{
+			Name:         "configure fails while the cause stays",
+			Setup:        halfConfigure,
+			Args:         &module.Pkg{Name: []string{"winch-fragile"}},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"configure winch-fragile"}},
+			WantApplyErr: "post-installation script subprocess returned error exit status 1",
+		},
+		{
+			Name:        "configure keeps the installed version",
+			State:       module.State{IndexFresh: true},
+			Setup:       localRepo + " && " + halfConfigure,
+			Args:        &module.Pkg{Name: []string{"winch-fragile"}},
+			Want:        module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"configure winch-fragile"}},
+			WantState:   module.State{IndexFresh: true},
+			BeforeApply: "touch /etc/winch-fragile.ok",
+			After:       "[ \"$(dpkg-query -W -f='${db:Status-Abbrev}${Version}' winch-fragile)\" = 'ii 1' ]",
+		},
+		{
+			Name:    "a step that names a package of an interrupted dpkg fails",
+			Setup:   interrupted,
+			Args:    &module.Pkg{Name: []string{"winch-slow"}},
+			WantErr: "dpkg was interrupted; run dpkg --configure -a",
+		},
+		{
+			Name:      "a list installs a package and configures a half-configured one",
+			State:     module.State{IndexFresh: true},
+			Setup:     halfConfigure + " && touch /etc/winch-fragile.ok",
+			Args:      &module.Pkg{Name: []string{"hello", "winch-fragile"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install hello", "configure winch-fragile"}},
+			WantState: module.State{IndexFresh: true},
+			After:     "dpkg-query -W -f='${db:Status-Abbrev}\\n' hello winch-fragile | grep -c '^ii' | grep -qx 2",
+		},
+		{
+			Name:  "absent removes a half-configured package",
+			Setup: halfConfigure,
+			Args:  &module.Pkg{Name: []string{"winch-fragile"}, Absent: true},
+			Want:  module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove winch-fragile"}},
+			After: "! dpkg -s winch-fragile >/dev/null 2>&1",
+		},
+		{
+			Name:    "another half-configured package fails the check",
+			Setup:   halfConfigure,
+			Args:    &module.Pkg{Name: []string{"sl"}, Absent: true},
+			WantErr: "winch-fragile is half configured: its configuration failed; fix the cause, then run dpkg --configure -a",
+		},
+		{
 			Name: "a check waits for a running dpkg",
 			// dpkg holds its lock while the postinst runs, and ends 3 s later.
 			Setup:     startSlow + " && (sleep 3; rm /root/slow) >/dev/null 2>&1 &",
@@ -244,4 +312,38 @@ func TestPkgModule(t *testing.T) {
 			WantApplyErr: "Unable to locate package winch-no-such-package",
 		},
 	})
+}
+
+// spec: Modules/pkg; Running a pipeline/Apply
+func TestPkgConfiguresAfterAFix(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "fragile")
+	vm.MustRun(t, quietApt+" && "+fragileDeb+" && "+halfConfigure)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  fragile: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/winch-fragile.ok
+          content: "ok\n"
+      - pkg:
+          name: winch-fragile
+`,
+	})
+
+	r := lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "~ pkg winch-fragile") || !strings.Contains(r.Stdout, "configure winch-fragile") {
+		t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 0 {
+		t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || r.Stdout != "1 host: 0 to change, 1 unchanged, 0 unknown\n" {
+		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
 }
