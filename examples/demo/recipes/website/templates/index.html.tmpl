@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>{{ .vars.domain }}</title>
+  </head>
+  <body>
+    <h1>{{ .vars.domain }}</h1>
+    <ul>
+{{- range .vars.website_pages }}
+      <li><a href="/{{ . }}">{{ title . }}</a></li>
+{{- end }}
+    </ul>
+  </body>
+</html>

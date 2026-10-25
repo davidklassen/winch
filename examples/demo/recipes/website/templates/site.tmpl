@@ -1,0 +1,11 @@
+server {
+	listen 80;
+	listen [::]:80;
+	server_name {{ .vars.domain }} www.{{ .vars.domain }};
+
+	root {{ .vars.website_root }};
+
+	location / {
+		try_files $uri $uri.html $uri/ =404;
+	}
+}

@@ -24,6 +24,19 @@ make test-integration   # integration tests in Debian VMs (QEMU)
 The integration tests need QEMU. `make vm-image` downloads the Debian
 cloud image.
 
+## Demo
+
+`examples/demo` puts a small web site on one host, `demo`. `make vm`
+starts a VM with that name. In a second terminal, run the `export` line
+that `make vm` prints, then:
+
+```
+cd examples/demo
+../../bin/winch plan site
+../../bin/winch apply site
+ssh demo "curl -s -H 'Host: example.com' http://localhost/about"
+```
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).

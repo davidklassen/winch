@@ -118,6 +118,24 @@ func TestValidateSet(t *testing.T) {
 	}
 }
 
+func TestExamples(t *testing.T) {
+	entries, err := os.ReadDir("../../examples")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		t.Run(e.Name(), func(t *testing.T) {
+			r := winch(t, "../../examples/"+e.Name(), fakehost.New(), false, "", "validate")
+			if r.code != exitOK || r.out != "ok\n" {
+				t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+			}
+		})
+	}
+}
+
 // spec: CLI
 func TestHelp(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"plan", "--help"}, {"apply", "-h"}, {"validate", "--help"}} {

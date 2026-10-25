@@ -1,0 +1,40 @@
+# A static web site on nginx.
+require:
+  - !expr 'facts.os.id == "debian" and facts.os.version == "13"'
+
+vars:
+  website_root: !tpl /var/www/{{ .vars.domain }}
+  website_pages: []
+  website_private: false
+
+steps:
+  - name: Only nginx reads the site
+    dir:
+      path: !expr vars.website_root
+      group: www-data
+      mode: "0750"
+  - file:
+      path: !tpl "{{ .vars.website_root }}/index.html"
+      template: index.html.tmpl
+  - file:
+      path: !tpl "{{ .vars.website_root }}/{{ .item }}.html"
+      template: page.html.tmpl
+    loop: !expr vars.website_pages
+  - name: Keep search engines out
+    file:
+      path: !tpl "{{ .vars.website_root }}/robots.txt"
+      source: robots.txt
+    when: !expr vars.website_private
+  # The site comes before the package, so nginx starts with it.
+  - file:
+      path: !tpl /etc/nginx/sites-available/{{ .vars.domain }}
+      template: site.tmpl
+  - link:
+      path: !tpl /etc/nginx/sites-enabled/{{ .vars.domain }}
+      target: !tpl /etc/nginx/sites-available/{{ .vars.domain }}
+  - pkg:
+      name: nginx
+  - service:
+      name: nginx
+      running: true
+      enabled: true

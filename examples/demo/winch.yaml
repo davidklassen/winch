@@ -1,0 +1,5 @@
+name: demo
+inventory: inventories/demo.yaml
+vars:
+  domain:
+  admin_email: !expr '"webmaster@" + vars.domain'

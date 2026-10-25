@@ -1,0 +1,14 @@
+stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/motd
+          content: !tpl "{{ .host.name }} is managed by winch.\n"
+      - pkg:
+          name: curl
+
+  - name: web
+    hosts: web
+    steps:
+      - recipe: website

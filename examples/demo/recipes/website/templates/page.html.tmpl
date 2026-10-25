@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>{{ title .item }} - {{ .vars.domain }}</title>
+  </head>
+  <body>
+    <h1>{{ title .item }}</h1>
+    <p>Served by {{ .host.name }}. Mail: {{ .vars.admin_email }}</p>
+  </body>
+</html>

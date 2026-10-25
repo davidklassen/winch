@@ -1,0 +1,13 @@
+# The VM of make vm. Its SSH config gives the address and the user.
+hosts:
+  demo: {}
+
+groups:
+  all:
+    vars:
+      domain: example.com
+  web:
+    hosts: [demo]
+    vars:
+      website_pages: [about, contact]
+      website_private: true
