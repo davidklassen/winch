@@ -287,8 +287,20 @@ func TestFileModule(t *testing.T) {
 			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
 		},
 		{
-			Name:    "an immutable file with the wanted content fails",
-			Setup:   `printf 'hello\n' > /tmp/w/f && chattr +i /tmp/w/f`,
+			Name:  "an immutable file that is already right is ok",
+			Setup: `printf 'hello\n' > /tmp/w/f && chattr +i /tmp/w/f`,
+			Args:  &module.File{Path: "/tmp/w/f", Data: []byte("hello\n")},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "an append-only file that is already right is ok",
+			Setup: `printf 'hello\n' > /tmp/w/f && chattr +a /tmp/w/f`,
+			Args:  &module.File{Path: "/tmp/w/f", Data: []byte("hello\n")},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:    "an immutable file with a wrong mode fails",
+			Setup:   `printf 'hello\n' > /tmp/w/f && chmod 600 /tmp/w/f && chattr +i /tmp/w/f`,
 			Args:    &module.File{Path: "/tmp/w/f", Data: []byte("hello\n")},
 			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
 		},

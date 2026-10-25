@@ -107,12 +107,12 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 	case !fi.IsDir():
 		return Result{}, fmt.Errorf("%s is %s, not a directory", d.Path, kind(fi))
 	}
-	if err := noFlags(at, atName, fi, d.Path); err != nil {
-		return Result{}, err
-	}
 	changes, err := attrChanges(fi, owner, group, mode)
 	if err != nil || len(changes) == 0 {
 		return Result{Status: OK}, err
+	}
+	if err := noFlags(at, atName, fi, d.Path); err != nil {
+		return Result{}, err
 	}
 	return Result{Status: Change, Action: Modify, Changes: changes, Link: link}, nil
 }

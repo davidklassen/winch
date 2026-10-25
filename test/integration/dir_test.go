@@ -182,6 +182,12 @@ func TestDirModule(t *testing.T) {
 			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
 		},
 		{
+			Name:  "an immutable directory that is already right is ok",
+			Setup: `mkdir /tmp/w/d && chattr +i /tmp/w/d`,
+			Args:  &module.Dir{Path: "/tmp/w/d"},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
 			Name:    "an immutable directory fails",
 			Setup:   `mkdir /tmp/w/d && chmod 700 /tmp/w/d && chattr +i /tmp/w/d`,
 			Args:    &module.Dir{Path: "/tmp/w/d"},
@@ -189,7 +195,7 @@ func TestDirModule(t *testing.T) {
 		},
 		{
 			Name:    "an immutable directory behind a link fails",
-			Setup:   `mkdir /tmp/wsrc && chattr +i /tmp/wsrc && ln -s /tmp/wsrc /tmp/w/l`,
+			Setup:   `mkdir /tmp/wsrc && chmod 700 /tmp/wsrc && chattr +i /tmp/wsrc && ln -s /tmp/wsrc /tmp/w/l`,
 			Args:    &module.Dir{Path: "/tmp/w/l"},
 			WantErr: "/tmp/w/l is immutable; chattr -i changes it",
 		},

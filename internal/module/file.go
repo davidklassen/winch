@@ -220,17 +220,15 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	if err != nil {
 		return Result{}, err
 	}
-	if exists && fi.Mode().IsRegular() {
-		if err := noFlags(dir, name, fi, f.Path); err != nil {
-			return Result{}, err
-		}
-	}
 	if f.Absent {
 		switch {
 		case !exists:
 			return Result{Status: OK}, nil
 		case !fi.Mode().IsRegular():
 			return Result{}, fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
+		}
+		if err := noFlags(dir, name, fi, f.Path); err != nil {
+			return Result{}, err
 		}
 		return Result{Status: Change, Action: Remove}, nil
 	}
@@ -281,6 +279,11 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	if len(changes) > 0 {
 		res.Status, res.Action = Change, Modify
 		res.Changes = append(res.Changes, changes...)
+	}
+	if res.Status == Change {
+		if err := noFlags(dir, name, fi, f.Path); err != nil {
+			return Result{}, err
+		}
 	}
 	return res, nil
 }

@@ -115,6 +115,12 @@ func TestLinkModule(t *testing.T) {
 			After: `[ "$(readlink /tmp/w/d)" = /tmp ]`,
 		},
 		{
+			Name:  "a link that is already right in an immutable directory is ok",
+			Setup: `mkdir /tmp/w/d && ln -s /etc/hostname /tmp/w/d/l && chattr +i /tmp/w/d`,
+			Args:  &module.Link{Path: "/tmp/w/d/l", Target: new("/etc/hostname")},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
 			Name:    "replace an immutable file fails",
 			Setup:   `touch /tmp/w/f && chattr +i /tmp/w/f`,
 			Args:    &module.Link{Path: "/tmp/w/f", Target: new("/etc/hostname"), Replace: true},
