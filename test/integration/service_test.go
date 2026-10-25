@@ -38,6 +38,8 @@ U
 cat > /etc/systemd/system/winch-tpl@.service <<'U'
 [Service]
 ExecStart=/bin/sleep infinity
+[Install]
+WantedBy=multi-user.target
 U
 cat > /usr/lib/systemd/system/winch-vendor.service <<'U'
 [Service]
@@ -57,7 +59,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service; systemctl disable winch-test.service winch-test.timer winch-vendor.service 2>/dev/null; true"
+	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service 2>/dev/null; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -221,6 +223,27 @@ systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
 			Args:  &module.Service{Name: "winch-vendor", Enabled: new(false), Running: new(false)},
 			Want:  change("stop"),
 			After: `! systemctl is-active -q winch-vendor`,
+		},
+		{
+			Name:  "a mask of an enabled unit disables it",
+			Setup: `systemctl enable winch-vendor && systemctl mask winch-vendor && systemctl is-enabled winch-vendor | grep -qx masked`,
+			Args:  &module.Service{Name: "winch-vendor", Enabled: new(false)},
+			Want:  change("disable"),
+			After: `systemctl is-enabled winch-vendor | grep -qx masked && systemctl unmask winch-vendor && systemctl is-enabled winch-vendor | grep -qx disabled && systemctl mask winch-vendor`,
+		},
+		{
+			Name:  "a mask of an enabled template instance disables it",
+			Setup: `systemctl enable winch-tpl@one && systemctl mask winch-tpl@one && systemctl is-enabled winch-tpl@one | grep -qx masked`,
+			Args:  &module.Service{Name: "winch-tpl@one", Enabled: new(false)},
+			Want:  change("disable"),
+			After: `systemctl is-enabled winch-tpl@one | grep -qx masked && systemctl unmask winch-tpl@one && systemctl is-enabled winch-tpl@one | grep -qx disabled && systemctl mask winch-tpl@one`,
+		},
+		{
+			Name:  "a relative mask link stays",
+			Setup: `systemctl enable winch-vendor && ln -s ../../../dev/null /etc/systemd/system/winch-vendor.service && systemctl daemon-reload && systemctl is-enabled winch-vendor | grep -qx masked`,
+			Args:  &module.Service{Name: "winch-vendor", Enabled: new(false)},
+			Want:  change("disable"),
+			After: `test -L /etc/systemd/system/winch-vendor.service && test ! -e /etc/systemd/system/multi-user.target.wants/winch-vendor.service`,
 		},
 		{
 			Name:  "a runtime mask of an enabled unit disables it",

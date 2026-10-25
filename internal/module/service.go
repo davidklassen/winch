@@ -83,7 +83,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 			}
 		case !*s.Enabled && u.file == "enabled":
 			s.todo = append(s.todo, "disable")
-		case !*s.Enabled && u.file == "masked-runtime":
+		case !*s.Enabled && u.load == "masked":
 			// systemctl disable ignores a masked unit. When the mask goes
 			// away, the enable links start the unit.
 			s.links, err = enableLinks(u.id)
@@ -145,10 +145,13 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 
 // enableLinks returns the links in /etc/systemd/system that systemctl
 // disable removes: the ones with the unit's name, and the ones to the unit.
+// The link at the unit's own path is the mask or the unit file.
 func enableLinks(id string) ([]string, error) {
+	const dir = "/etc/systemd/system"
+	mask := filepath.Join(dir, id)
 	var links []string
-	err := filepath.WalkDir("/etc/systemd/system", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.Type() != fs.ModeSymlink {
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.Type() != fs.ModeSymlink || p == mask {
 			return err
 		}
 		if d.Name() == id {
