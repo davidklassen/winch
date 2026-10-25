@@ -85,15 +85,16 @@ func Load(dir, inventory, pipeline string, set []string) (*Project, error) {
 
 // Validate loads every pipeline in dir against an inventory: the one in
 // inventory, the default from winch.yaml, or else every file in
-// inventories/.
-func Validate(dir, inventory string) error {
+// inventories/. set holds the --set flags.
+func Validate(dir, inventory string, set []string) error {
 	cfg, cfgErr := loadConfig(dir)
 	if cfg == nil {
 		return cfgErr
 	}
 	l, lErr := newLoader(dir, cfg)
-	invs, invErr := l.loadInventories(inventory, cfg, true, nil)
-	errs := []error{cfgErr, lErr, invErr}
+	sets, setErr := l.parseSets(set)
+	invs, invErr := l.loadInventories(inventory, cfg, true, sets)
+	errs := []error{cfgErr, lErr, setErr, invErr}
 	files, err := list(dir, "pipelines")
 	if err != nil {
 		return err

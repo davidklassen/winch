@@ -101,6 +101,24 @@ func TestValidate(t *testing.T) {
 }
 
 // spec: CLI
+func TestValidateSet(t *testing.T) {
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\nvars:\n  release:\n",
+		"inventories/prod.yaml": "hosts:\n  web1: {}\n",
+		"inventories/test.yaml": "hosts:\n  web2: {}\n",
+		"pipelines/site.yaml":   motd,
+	})
+	r := winch(t, dir, fakehost.New(), false, "", "validate")
+	if r.code != exitInvalid || !strings.Contains(r.err, `variable "release" is required and has no value on web1`) || !strings.Contains(r.err, "no value on web2") {
+		t.Errorf("without --set: exit %d, stderr %q", r.code, r.err)
+	}
+	r = winch(t, dir, fakehost.New(), false, "", "validate", "--set", "vars.release=1.4.2")
+	if r.code != exitOK || r.out != "ok\n" {
+		t.Errorf("with --set: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+}
+
+// spec: CLI
 func TestHelp(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"plan", "--help"}, {"apply", "-h"}, {"validate", "--help"}} {
 		r := winch(t, t.TempDir(), fakehost.New(), false, "", args...)
@@ -293,8 +311,8 @@ func TestSet(t *testing.T) {
 	if c, _ := h.File("web1", "/etc/motd"); r.code != exitOK || c != "it's\n" {
 		t.Errorf("apply: exit %d, /etc/motd %q", r.code, c)
 	}
-	r = winch(t, dir, fakehost.New(), false, "", "validate", "--set", "vars.greeting=x")
-	if r.code != exitInvalid || !strings.Contains(r.err, "flag provided but not defined: -set") {
-		t.Errorf("validate takes no --set: exit %d, stderr %q", r.code, r.err)
+	r = winch(t, dir, fakehost.New(), false, "", "validate", "--set", "vars.greting=x")
+	if r.code != exitInvalid || !strings.Contains(r.err, `--set vars.greting=x: unknown variable "greting"; did you mean "greeting"?`) {
+		t.Errorf("validate with an unknown variable: exit %d, stderr %q", r.code, r.err)
 	}
 }

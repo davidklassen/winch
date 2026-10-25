@@ -53,7 +53,6 @@ Run "winch <command> --help" for the arguments and flags of a command.
 
 type command struct {
 	help string
-	set  bool
 	// yes is true when the command takes --yes.
 	yes bool
 	run func(ctx context.Context, env Env, f *flags, args []string) int
@@ -61,13 +60,14 @@ type command struct {
 
 var commands = map[string]command{
 	"validate": {help: validateHelp, run: validate},
-	"plan":     {help: planHelp, set: true, run: plan},
-	"apply":    {help: applyHelp, set: true, yes: true, run: apply},
+	"plan":     {help: planHelp, run: plan},
+	"apply":    {help: applyHelp, yes: true, run: apply},
 }
 
 const validateHelp = `Examples:
   winch validate
   winch validate --inventory inventories/production.yaml
+  winch validate --set vars.release=1.4.2
 
 Load the project and check schemas, names, and module arguments.
 
@@ -77,7 +77,9 @@ Without --inventory and without inventory in winch.yaml, validate checks
 every file in inventories/.
 
 Flags:
-  --inventory <path>   The inventory file to check.
+  --inventory <path>            The inventory file to check.
+  --set vars.<name>=<value>     Set a variable. The value parses as YAML.
+                                Repeatable.
 `
 
 const planHelp = `Examples:
@@ -138,12 +140,10 @@ func Main(ctx context.Context, args []string, env Env) int {
 	fs.SetOutput(io.Discard)
 	var f flags
 	fs.StringVar(&f.inventory, "inventory", "", "")
-	if cmd.set {
-		fs.Func("set", "", func(s string) error {
-			f.set = append(f.set, s)
-			return nil
-		})
-	}
+	fs.Func("set", "", func(s string) error {
+		f.set = append(f.set, s)
+		return nil
+	})
 	if cmd.yes {
 		fs.BoolVar(&f.yes, "yes", false, "")
 	}
@@ -180,7 +180,7 @@ func validate(ctx context.Context, env Env, f *flags, args []string) int {
 		fmt.Fprintln(env.Err, "winch: validate takes no arguments")
 		return exitInvalid
 	}
-	if err := project.Validate(env.Dir, f.inventory); err != nil {
+	if err := project.Validate(env.Dir, f.inventory, f.set); err != nil {
 		fmt.Fprintln(env.Err, err)
 		return exitInvalid
 	}

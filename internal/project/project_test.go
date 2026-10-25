@@ -249,7 +249,7 @@ func TestValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, tt.files)
 			got := "ok\n"
-			if err := Validate(dir, tt.inventory); err != nil {
+			if err := Validate(dir, tt.inventory, nil); err != nil {
 				got = err.Error() + "\n"
 			}
 			golden.Assert(t, filepath.Join("testdata", "validate", tt.name+".golden"), []byte(got))
