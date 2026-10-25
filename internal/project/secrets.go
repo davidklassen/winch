@@ -305,11 +305,20 @@ func Rekey(dir, identity string) (int, int, error) {
 	var ids []age.Identity
 	// next keeps one value that two places hold the same after rekey.
 	next := map[string]string{}
+	// out is keyed by the path after links, so two links to one file write
+	// it once.
 	out := map[string][]byte{}
 	count := 0
 	var errs []error
 	for _, file := range files {
-		data, err := os.ReadFile(filepath.Join(dir, file))
+		path, err := filepath.EvalSymlinks(filepath.Join(dir, file))
+		if err != nil {
+			return 0, 0, err
+		}
+		if _, ok := out[path]; ok {
+			continue
+		}
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -355,13 +364,13 @@ func Rekey(dir, identity string) (int, int, error) {
 			lines[t.Pos.Line-1] = line[:i] + next[text] + line[i+len(text):]
 			count++
 		}
-		out[file] = []byte(strings.Join(lines, ""))
+		out[path] = []byte(strings.Join(lines, ""))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return 0, 0, err
 	}
-	for _, file := range slices.Sorted(maps.Keys(out)) {
-		if err := replaceFile(filepath.Join(dir, file), out[file]); err != nil {
+	for _, path := range slices.Sorted(maps.Keys(out)) {
+		if err := replaceFile(path, out[path]); err != nil {
 			return 0, 0, err
 		}
 	}

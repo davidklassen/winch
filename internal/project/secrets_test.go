@@ -477,6 +477,60 @@ func TestRekeyFailsWhole(t *testing.T) {
 	}
 }
 
+// spec: Variables/Secrets (winch secret rekey)
+func TestRekeyWritesThroughLink(t *testing.T) {
+	k, next := newKey(t), newKey(t)
+	dir := writeProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n",
+		"inventories/test.yaml": "",
+		"pipelines/site.yaml":   "stages: []\n",
+		"shared/hosts.yaml":     "hosts:\n  web1:\n    vars:\n      pw: !secret " + k.encrypt(t, "hunter2") + "\n",
+	})
+	shared := filepath.Join(dir, "shared", "hosts.yaml")
+	if err := os.Chmod(shared, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	links := map[string]string{
+		"shared/alias.yaml":     "hosts.yaml",
+		"inventories/test.yaml": "../shared/alias.yaml",
+		"inventories/prod.yaml": "../shared/hosts.yaml",
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "inventories"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for link, target := range links {
+		if err := os.Symlink(target, filepath.Join(dir, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, files, err := Rekey(dir, k.path); err != nil || n != 1 || files != 1 {
+		t.Fatalf("Rekey = %d secrets in %d files, %v; want 1 in 1", n, files, err)
+	}
+	for link, target := range links {
+		if got, err := os.Readlink(filepath.Join(dir, link)); err != nil || got != target {
+			t.Errorf("%s = %q, %v; want a link to %s", link, got, err, target)
+		}
+	}
+	info, err := os.Stat(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Errorf("target mode = %v, want 0640", info.Mode().Perm())
+	}
+	data, err := os.ReadFile(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts := secretTexts(string(data))
+	if len(texts) != 1 {
+		t.Fatalf("target has %d secrets:\n%s", len(texts), data)
+	}
+	if got, err := secret.Decrypt(texts[0], []age.Identity{next.id}); err != nil || got != "hunter2" {
+		t.Errorf("target secret = %q, %v; want it for the new key", got, err)
+	}
+}
+
 // secretTexts returns the base64 texts after !secret in a file, in order.
 func secretTexts(s string) []string {
 	var out []string
