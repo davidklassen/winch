@@ -15,6 +15,7 @@ import (
 	"os/user"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -111,6 +112,8 @@ func checkPath(p string) error {
 	switch {
 	case !path.IsAbs(p):
 		return &yamlx.FieldError{Field: "path", Msg: "must be an absolute path"}
+	case slices.Contains(strings.Split(p, "/"), ".."):
+		return &yamlx.FieldError{Field: "path", Msg: `".." is not allowed; write the path without it`}
 	case path.Clean(p) != p:
 		return &yamlx.FieldError{Field: "path", Msg: fmt.Sprintf("must be a clean path, such as %q", path.Clean(p))}
 	case p == "/":

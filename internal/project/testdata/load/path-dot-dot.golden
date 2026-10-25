@@ -1,0 +1,7 @@
+pipelines/site.yaml:5:22: path: ".." is not allowed; write the path without it
+pipelines/site.yaml:6:22: path: ".." is not allowed; write the path without it
+pipelines/site.yaml:7:21: path: ".." is not allowed; write the path without it
+pipelines/site.yaml:8:21: path: ".." is not allowed; write the path without it
+pipelines/site.yaml:9:22: path: ".." is not allowed; write the path without it
+pipelines/site.yaml:10:22: path: ".." is not allowed; write the path without it
+pipelines/site.yaml:11:21: path: must be a clean path, such as "/var/www"

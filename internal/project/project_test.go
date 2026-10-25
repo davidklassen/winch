@@ -157,6 +157,14 @@ func TestLoad(t *testing.T) {
 		{name: "file-content-and-absent", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: a\n          absent: true\n"}},
 		{name: "file-relative-path", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: x\n          content: a\n"}},
 		{name: "link-dot-dot-target", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - link: {path: /srv/x, target: a/../b}\n      - link: {path: /srv/y, target: ../a/../b}\n      - link: {path: /srv/z, target: ../lib/x}\n"}},
+		{name: "path-dot-dot", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n" +
+			"      - file: {path: /srv/app/../conf, content: a}\n" +
+			"      - file: {path: /.., content: a}\n" +
+			"      - dir: {path: /srv/app/../conf}\n" +
+			"      - dir: {path: /..}\n" +
+			"      - link: {path: /srv/app/../conf, target: /x}\n" +
+			"      - link: {path: /.., target: /x}\n" +
+			"      - dir: {path: /var/www/}\n"}},
 		{name: "service-unit-names", files: map[string]string{"pipelines/site.yaml": stage(
 			"      - service: {name: \"nginx@\", running: true}\n" +
 				"      - service: {name: \"@foo\", running: true}\n" +
