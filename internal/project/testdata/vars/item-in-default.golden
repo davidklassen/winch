@@ -1,1 +1,3 @@
 recipes/web/recipe.yaml:2:13: a default cannot use item
+ | item
+ | ^

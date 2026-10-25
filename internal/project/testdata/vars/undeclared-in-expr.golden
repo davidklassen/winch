@@ -1,1 +1,3 @@
 recipes/web/recipe.yaml:18:16: unknown variable "web_prot"; did you mean "web_port"?
+ | string(vars.web_prot) + " " + facts.os.codename + " " + vars.tools_name + "\n"
+ | ............^

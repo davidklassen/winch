@@ -1,1 +1,3 @@
 recipes/web/recipe.yaml:10:11: loop cannot use item
+ | [item]
+ | .^

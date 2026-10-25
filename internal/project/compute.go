@@ -8,7 +8,9 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strings"
 	"text/template"
+	"unicode"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
@@ -94,7 +96,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 		return nil, yamlx.Errorf(n.Pos, "%s", exprMessage(err, exprNames))
 	}
 	c.prog = prog
-	check := &exprCheck{sc: sc}
+	check := &exprCheck{sc: sc, src: prog.Source()}
 	ast.Walk(new(prog.Node()), check)
 	if len(check.errs) > 0 {
 		var errs []error
@@ -111,15 +113,21 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 // reports undeclared variables and an item that is not defined.
 type exprCheck struct {
 	sc    scope
+	src   file.Source
 	reads []string
 	errs  []string
+}
+
+func (c *exprCheck) fail(n ast.Node, msg string) {
+	fe := &file.Error{Location: n.Location(), Message: msg}
+	c.errs = append(c.errs, msg+snippet(fe.Bind(c.src)))
 }
 
 func (c *exprCheck) Visit(np *ast.Node) {
 	switch n := (*np).(type) {
 	case *ast.IdentifierNode:
 		if n.Value == "item" && c.sc.noItem != "" {
-			c.errs = append(c.errs, c.sc.noItem)
+			c.fail(n, c.sc.noItem)
 		}
 	case *ast.MemberNode:
 		name, ok := n.Property.(*ast.StringNode)
@@ -127,7 +135,7 @@ func (c *exprCheck) Visit(np *ast.Node) {
 			return
 		}
 		if _, ok := c.sc.vars[name.Value]; !ok {
-			c.errs = append(c.errs, unknownVariable(name.Value, c.sc.vars))
+			c.fail(n, unknownVariable(name.Value, c.sc.vars))
 			return
 		}
 		c.reads = append(c.reads, name.Value)
@@ -171,21 +179,32 @@ var (
 )
 
 // exprMessage returns the message of an expr error, with a suggestion for an
-// unknown name.
+// unknown name, and the snippet.
 func exprMessage(err error, names []string) string {
-	msg := err.Error()
-	if fe, ok := errors.AsType[*file.Error](err); ok {
-		msg = fe.Message
+	fe, ok := errors.AsType[*file.Error](err)
+	if !ok {
+		return err.Error()
 	}
+	msg := fe.Message
 	if m := unknownNameRe.FindStringSubmatch(msg); m != nil {
-		return fmt.Sprintf("unknown name %q%s", m[1], yamlx.Suggest(m[1], names))
-	}
-	if m := unknownFieldRe.FindStringSubmatch(msg); m != nil {
+		msg = fmt.Sprintf("unknown name %q%s", m[1], yamlx.Suggest(m[1], names))
+	} else if m := unknownFieldRe.FindStringSubmatch(msg); m != nil {
 		if f, ok := fieldNames[m[1]]; ok {
-			return fmt.Sprintf("unknown %s %q%s", f.noun, m[2], yamlx.Suggest(m[2], f.names))
+			msg = fmt.Sprintf("unknown %s %q%s", f.noun, m[2], yamlx.Suggest(m[2], f.names))
 		}
 	}
-	return msg
+	return msg + snippet(fe)
+}
+
+// snippet returns the snippet of fe: the expression line and a caret line
+// under the error. Control characters in the expression become "?".
+func snippet(fe *file.Error) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && (unicode.IsControl(r) || r == '\u2028' || r == '\u2029') {
+			return '?'
+		}
+		return r
+	}, fe.Snippet)
 }
 
 func fieldTags(v any) []string {

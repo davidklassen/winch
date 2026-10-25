@@ -351,15 +351,19 @@ func evalAll(t *testing.T, p *Project) string {
 // spec: Templates and expressions/Data; Variables; Variables/Sources; Steps; Inventory
 func TestEval(t *testing.T) {
 	tests := []struct {
-		name string
-		set  []string
+		name  string
+		set   []string
+		files map[string]string
 	}{
 		{name: "two-hosts"},
 		{name: "set", set: []string{"vars.web_sites=[x]", "vars.web_port=9000"}},
+		{name: "expr-snippet", files: map[string]string{
+			"pipelines/site.yaml": strings.Replace(varsProject["pipelines/site.yaml"], "'len(host.groups) > 1'", "'host.groups[1] == \"mail\"'", 1),
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := Load(writeProject(t, varsProject), "", "site", tt.set)
+			p, err := Load(writeProject(t, with(varsProject, tt.files)), "", "site", tt.set)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -495,9 +499,9 @@ func TestEvalErrors(t *testing.T) {
 		{name: "content not a string", step: "  - file:\n      path: /a\n      content: !expr vars.l\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: expected a string, got a list"},
 		{name: "expression fails", step: "  - file:\n      path: /a\n      content: !expr 1 + vars.s\n",
-			want: "error: recipes/r/recipe.yaml:4:16: content: invalid operation: int + string"},
+			want: "error: recipes/r/recipe.yaml:4:16: content: invalid operation: int + string\n | 1 + vars.s\n | ..^"},
 		{name: "default fails", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: x\n",
-			want: `error: winch.yaml:15:8: variable "bad": invalid operation: int + string`},
+			want: "error: winch.yaml:15:8: variable \"bad\": invalid operation: int + string\n | 1 + vars.s\n | ..^"},
 		{name: "computed template", step: "  - file:\n      path: /a\n      template: !tpl '{{ .vars.s }}.tmpl'\n",
 			files: map[string]string{"recipes/r/templates/yes.tmpl": "{{ .vars.i }}"},
 			want:  "80"},

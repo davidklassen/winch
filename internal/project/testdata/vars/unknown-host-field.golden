@@ -1,1 +1,3 @@
 recipes/web/recipe.yaml:4:13: unknown host field "nmae"; did you mean "name"?
+ | vars.mail_server ? vars.domain : host.nmae
+ | ......................................^

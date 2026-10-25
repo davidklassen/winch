@@ -1,1 +1,3 @@
 recipes/web/recipe.yaml:15:11: unexpected token EOF
+ | vars.mail_server ==
+ | ..................^

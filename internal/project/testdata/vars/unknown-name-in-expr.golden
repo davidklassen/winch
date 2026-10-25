@@ -1,1 +1,3 @@
 recipes/web/recipe.yaml:15:11: unknown name "var"; did you mean "vars"?
+ | var.mail_server
+ | ^
