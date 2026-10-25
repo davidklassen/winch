@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,16 +27,15 @@ func fakeHelper(arch string) helperbin.Binary {
 // arguments to $SSH_ARGS when it is set, prints $SSH_BANNER and the output of
 // $SSH_BANNER_CMD when they are set, and runs its last argument with sh, on
 // this machine. When $SSH_FAIL_ONCE is a missing file, ssh creates it
-// and fails once at the point that $SSH_FAIL names: "before" the script
-// prints, "timeout" before it with a connect timeout, or after the
-// script prints "have" or "need arm64". A later start creates
-// $SSH_FAIL_ONCE.again.
+// and fails once: it prints $SSH_FAIL_OUT on stdout when it is set, prints
+// $SSH_FAIL_ERR on stderr, and exits with $SSH_FAIL_CODE. A later start
+// creates $SSH_FAIL_ONCE.again.
 func fakeBin(t *testing.T, arch, uid, sudo string) {
 	t.Helper()
 	bin := t.TempDir()
 	scripts := map[string]string{
 		"ssh": "#!/bin/sh\n[ -z \"$SSH_FAIL_ONCE\" ] || [ ! -e \"$SSH_FAIL_ONCE\" ] || : > \"$SSH_FAIL_ONCE.again\"\n" +
-			"if [ -n \"$SSH_FAIL_ONCE\" ] && [ ! -e \"$SSH_FAIL_ONCE\" ]; then : > \"$SSH_FAIL_ONCE\"; case \"$SSH_FAIL\" in have) echo have ;; need) echo need arm64 ;; timeout) echo 'ssh: connect to host web1 port 22: Connection timed out' >&2; exit 255 ;; esac; echo 'Connection closed by remote host' >&2; exit 255; fi\n" +
+			"if [ -n \"$SSH_FAIL_ONCE\" ] && [ ! -e \"$SSH_FAIL_ONCE\" ]; then : > \"$SSH_FAIL_ONCE\"; [ -z \"$SSH_FAIL_OUT\" ] || printf '%s\\n' \"$SSH_FAIL_OUT\"; printf '%s\\n' \"$SSH_FAIL_ERR\" >&2; exit \"$SSH_FAIL_CODE\"; fi\n" +
 			"[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
 		"uname": "#!/bin/sh\necho " + arch + "\n",
 		"id":    "#!/bin/sh\necho " + uid + "\n",
@@ -401,28 +400,63 @@ cat >/dev/null
 
 const retryDelay = 300 * time.Millisecond
 
+// failOnce makes the fake ssh fail its first start with this output and
+// exit code. It returns the file that the first start creates.
+func failOnce(t *testing.T, stdout, stderr string, code int) string {
+	t.Helper()
+	failed := filepath.Join(t.TempDir(), "failed")
+	t.Setenv("SSH_FAIL_ONCE", failed)
+	t.Setenv("SSH_FAIL_OUT", stdout)
+	t.Setenv("SSH_FAIL_ERR", stderr)
+	t.Setenv("SSH_FAIL_CODE", strconv.Itoa(code))
+	return failed
+}
+
+// OpenSSH 9.6 and later print only the last line of a close before the
+// banner at the default log level. Earlier versions print both lines.
+const closed = "Connection closed by 192.0.2.10 port 22"
+
 // spec: Remote execution/Sessions
 func TestOpenRetry(t *testing.T) {
 	// ssh fails only its first start, so a retry ends without an error.
-	tests := []struct{ fail, wantErr string }{
-		{"before", ""},
-		{"timeout", "Connection timed out"},
-		{"have", "Connection closed by remote host"},
-		{"need", "Connection closed by remote host"},
+	tests := []struct {
+		name, stdout, stderr string
+		code                 int
+		retry                bool
+	}{
+		{"closed", "", closed, 255, true},
+		{"closed, OpenSSH 9.5", "", "kex_exchange_identification: Connection closed by remote host\n" + closed, 255, true},
+		{"closed, OpenSSH 9.5, log level error", "", "kex_exchange_identification: Connection closed by remote host", 255, true},
+		{"busy jump host", "", "Connection closed by 192.0.2.1 port 22\nConnection closed by UNKNOWN port 65535", 255, true},
+		{"refused login on the jump host", "", "admin@bastion: Permission denied (publickey).\nConnection closed by UNKNOWN port 65535", 255, false},
+		{"jump host timeout", "", "ssh: connect to host bastion port 22: Connection timed out\nConnection closed by UNKNOWN port 65535", 255, false},
+		{"kex timeout", "", "kex_exchange_identification: read: Operation timed out", 255, false},
+		{"reset", "", "kex_exchange_identification: read: Connection reset by peer\nConnection reset by 192.0.2.10 port 22", 255, true},
+		{"reset, log level error", "", "kex_exchange_identification: read: Connection reset by peer", 255, true},
+		{"connect timeout", "", "ssh: connect to host web1 port 22: Connection timed out", 255, false},
+		{"banner timeout", "", "Connection timed out during banner exchange\nConnection to 192.0.2.10 port 22 timed out", 255, false},
+		{"refused", "", "ssh: connect to host web1 port 22: Connection refused", 255, false},
+		{"refused login", "", "admin@web1: Permission denied (publickey).", 255, false},
+		{"keepalive", "", "Timeout, server web1 not responding.", 255, false},
+		{"close text from the script", "", closed, 1, false},
+		{"closed after have", "have", closed, 255, false},
+		{"closed after need", "need arm64", closed, 255, false},
 	}
 	for _, tt := range tests {
-		t.Run(tt.fail, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			fakeBin(t, "aarch64", "0", goodSudo)
-			failed := filepath.Join(t.TempDir(), "failed")
-			t.Setenv("SSH_FAIL_ONCE", failed)
-			t.Setenv("SSH_FAIL", tt.fail)
+			failed := failOnce(t, tt.stdout, tt.stderr, tt.code)
 			dir := t.TempDir()
 			_, err := open(t, dir, []helperbin.Binary{recordingHelper("arm64", filepath.Join(dir, "requests"))})
-			if got := fmt.Sprint(err); (tt.wantErr == "" && err != nil) || !strings.Contains(got, tt.wantErr) {
-				t.Errorf("error = %v, want %q", err, tt.wantErr)
-			}
-			if tt.wantErr != "" {
+			if !tt.retry {
+				last := tt.stderr[strings.LastIndex(tt.stderr, "\n")+1:]
+				if err == nil || !strings.Contains(err.Error(), last) {
+					t.Errorf("error = %v, want %q without a retry", err, last)
+				}
 				return
+			}
+			if err != nil {
+				t.Errorf("error = %v, want a retry that works", err)
 			}
 			first, err1 := os.Stat(failed)
 			second, err2 := os.Stat(failed + ".again")
@@ -439,9 +473,7 @@ func TestOpenRetry(t *testing.T) {
 // spec: Remote execution/Sessions
 func TestOpenRetryCancelled(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
-	failed := filepath.Join(t.TempDir(), "failed")
-	t.Setenv("SSH_FAIL_ONCE", failed)
-	t.Setenv("SSH_FAIL", "before")
+	failed := failOnce(t, "", closed, 255)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	start := time.Now()

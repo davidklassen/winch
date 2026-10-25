@@ -102,10 +102,10 @@ func command(script string) string {
 		`exec sudo -n sh -c "$s"`
 }
 
-// Open starts ssh and the helper. When ssh fails before the script prints
-// its first line, and not by the connect timeout, Open starts it once more
-// after RetryDelay: a busy sshd, for example at its MaxStartups limit, drops
-// new connections.
+// Open starts ssh and the helper. When the host closes the connection before
+// the SSH handshake, as a busy sshd does at its MaxStartups limit, Open starts
+// ssh once more after RetryDelay. It does not retry another failure, so a
+// retry never counts as a second failed login.
 func Open(ctx context.Context, cfg Config) (*Session, error) {
 	s, retry, err := dial(ctx, cfg)
 	if !retry {
@@ -124,8 +124,7 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	return s, err
 }
 
-// dial reports whether a second start can help: ssh ended before the script
-// printed its first line, and not by the connect timeout.
+// dial reports whether the host closed the connection before the handshake.
 func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	dir := cfg.Dir
 	if dir == "" {
@@ -160,7 +159,7 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	line, err := s.stdout.ReadString('\n')
 	if err != nil {
 		err = s.fail(err)
-		return nil, !strings.Contains(s.stderr.String(), "timed out"), err
+		return nil, s.dropped(), err
 	}
 	if err := s.start(cfg, strings.TrimSpace(line)); err != nil {
 		// ssh can block on a full pipe, or the host can print without end.
@@ -169,6 +168,33 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 		return nil, false, err
 	}
 	return s, false, nil
+}
+
+// dropped reports whether ssh failed because the host closed or reset the
+// connection before the handshake. Each line of the error output must say so.
+// Another line, such as a refused login on a jump host before the close of
+// the proxy, means that the host did more than drop the connection.
+func (s *Session) dropped() bool {
+	out := strings.TrimSpace(s.stderr.String())
+	if s.cmd.ProcessState.ExitCode() != 255 || out == "" {
+		return false
+	}
+	for line := range strings.Lines(out) {
+		if !droppedLine(strings.TrimSpace(line)) {
+			return false
+		}
+	}
+	return true
+}
+
+// droppedLine reports whether line is one that OpenSSH prints for a close or
+// a reset before the handshake. The "kex_exchange_identification:" lines show
+// at log level ERROR, the others at INFO.
+func droppedLine(line string) bool {
+	if kex, ok := strings.CutPrefix(line, "kex_exchange_identification: "); ok {
+		return kex == "Connection closed by remote host" || kex == "read: Connection reset by peer"
+	}
+	return strings.HasPrefix(line, "Connection closed by ") || strings.HasPrefix(line, "Connection reset by ")
 }
 
 func (s *Session) start(cfg Config, line string) error {
