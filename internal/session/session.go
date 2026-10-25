@@ -100,7 +100,19 @@ func command(script string) string {
 		`exec sudo -n sh -c "$s"`
 }
 
+// Open starts ssh and the helper. When ssh fails before the script prints
+// its first line, Open starts it once more: sshd can drop a new connection,
+// for example at its MaxStartups limit.
 func Open(ctx context.Context, cfg Config) (*Session, error) {
+	s, early, err := dial(ctx, cfg)
+	if early && ctx.Err() == nil {
+		s, _, err = dial(ctx, cfg)
+	}
+	return s, err
+}
+
+// dial reports whether ssh ended before the script printed its first line.
+func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	dir := cfg.Dir
 	if dir == "" {
 		dir = StateDir
@@ -118,34 +130,33 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	cmd := exec.CommandContext(ctx, "ssh", args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	s := &Session{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout), stderr: &limitedBuffer{max: 64 << 10}, host: cfg.Host, progress: cfg.Progress}
 	cmd.Stderr = s.stderr
 	// A child of ssh, such as a ProxyCommand, can keep stderr open.
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start ssh: %w", err)
+		return nil, false, fmt.Errorf("start ssh: %w", err)
 	}
-	if err := s.start(cfg); err != nil {
+	line, err := s.stdout.ReadString('\n')
+	if err != nil {
+		return nil, true, s.fail(err)
+	}
+	if err := s.start(cfg, strings.TrimSpace(line)); err != nil {
 		// ssh can block on a full pipe, or the host can print without end.
 		_ = cmd.Process.Kill()
 		s.Close()
-		return nil, err
+		return nil, false, err
 	}
-	return s, nil
+	return s, false, nil
 }
 
-func (s *Session) start(cfg Config) error {
-	line, err := s.stdout.ReadString('\n')
-	if err != nil {
-		return s.fail(err)
-	}
-	line = strings.TrimSpace(line)
+func (s *Session) start(cfg Config, line string) error {
 	if arch, ok := strings.CutPrefix(line, "need "); ok {
 		i := slices.IndexFunc(cfg.Binaries, func(b helperbin.Binary) bool { return b.Arch == arch })
 		if i < 0 {
@@ -155,11 +166,12 @@ func (s *Session) start(cfg Config) error {
 		if _, err := s.stdin.Write(cfg.Binaries[i].Data); err != nil {
 			return s.fail(err)
 		}
-		if line, err = s.stdout.ReadString('\n'); err != nil {
+		got, err := s.stdout.ReadString('\n')
+		if err != nil {
 			return s.fail(err)
 		}
-		if line = strings.TrimSpace(line); line != "got" {
-			return fmt.Errorf("unexpected output from the host: %q", line)
+		if got = strings.TrimSpace(got); got != "got" {
+			return fmt.Errorf("unexpected output from the host: %q", got)
 		}
 	} else if line != "have" {
 		return fmt.Errorf("the login shell printed %q before winch started; remove it from the shell startup files, such as ~/.bashrc", line)

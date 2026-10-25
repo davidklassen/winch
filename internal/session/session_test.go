@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,12 +26,15 @@ func fakeHelper(arch string) helperbin.Binary {
 // fakeBin puts fake ssh, uname, id, and sudo first in PATH. ssh writes its
 // arguments to $SSH_ARGS when it is set, prints $SSH_BANNER and the output of
 // $SSH_BANNER_CMD when they are set, and runs its last argument with sh, on
-// this machine.
+// this machine. When $SSH_FAIL_ONCE is a missing file, ssh creates it
+// and fails once at the point that $SSH_FAIL names: "before" the script
+// prints, or after the script prints "have" or "need arm64".
 func fakeBin(t *testing.T, arch, uid, sudo string) {
 	t.Helper()
 	bin := t.TempDir()
 	scripts := map[string]string{
-		"ssh":   "#!/bin/sh\n[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
+		"ssh": "#!/bin/sh\nif [ -n \"$SSH_FAIL_ONCE\" ] && [ ! -e \"$SSH_FAIL_ONCE\" ]; then : > \"$SSH_FAIL_ONCE\"; case \"$SSH_FAIL\" in have) echo have ;; need) echo need arm64 ;; esac; echo 'Connection closed by remote host' >&2; exit 255; fi\n" +
+			"[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
 		"uname": "#!/bin/sh\necho " + arch + "\n",
 		"id":    "#!/bin/sh\necho " + uid + "\n",
 		"sudo":  sudo,
@@ -388,5 +392,27 @@ cat >/dev/null
 	}
 	if want := "web1: waiting for another apt run (pid 42)\n"; progress.String() != want {
 		t.Errorf("progress = %q, want %q", progress.String(), want)
+	}
+}
+
+// spec: Remote execution/Sessions
+func TestOpenRetry(t *testing.T) {
+	// ssh fails only its first start, so a retry ends without an error.
+	tests := []struct{ fail, wantErr string }{
+		{"before", ""},
+		{"have", "Connection closed by remote host"},
+		{"need", "Connection closed by remote host"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.fail, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			t.Setenv("SSH_FAIL_ONCE", filepath.Join(t.TempDir(), "failed"))
+			t.Setenv("SSH_FAIL", tt.fail)
+			dir := t.TempDir()
+			_, err := open(t, dir, []helperbin.Binary{recordingHelper("arm64", filepath.Join(dir, "requests"))})
+			if got := fmt.Sprint(err); (tt.wantErr == "" && err != nil) || !strings.Contains(got, tt.wantErr) {
+				t.Errorf("error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
