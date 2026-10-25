@@ -66,8 +66,10 @@ func TestDirValidate(t *testing.T) {
 		{"mode and absent", "path: /x\nmode: \"0755\"\nabsent: true\n", `t.yaml:2:7: mode: absent: true takes no mode`},
 		{"owner and absent", "path: /x\nowner: root\nabsent: true\n", `t.yaml:2:8: owner: absent: true takes no owner`},
 		{"names with digits", "path: /x\nowner: user1\ngroup: \"2g\"\n", ""},
-		{"numeric owner", "path: /x\nowner: \"1000\"\n", `t.yaml:2:8: owner: must be a user name, not a number`},
-		{"numeric group", "path: /x\ngroup: \"50\"\n", `t.yaml:2:8: group: must be a group name, not a number`},
+		{"numeric IDs", "path: /x\nowner: 999\ngroup: 999\n", ""},
+		{"quoted numeric IDs", "path: /x\nowner: \"999\"\ngroup: \"50\"\n", ""},
+		{"owner ID too large", "path: /x\nowner: \"4294967296\"\n", `t.yaml:2:8: owner: an ID must be below 4294967295`},
+		{"group ID too large", "path: /x\ngroup: 4294967295\n", `t.yaml:2:8: group: an ID must be below 4294967295`},
 		{"purge", "path: /x\npurge: true\n", `t.yaml:2:1: unknown key "purge"`},
 	}
 	for _, tt := range tests {

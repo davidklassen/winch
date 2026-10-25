@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"os/user"
 	"path"
@@ -31,12 +32,12 @@ type File struct {
 	SourcePos   yamlx.Pos `json:"-"`
 	// Data is the content for the host, from content, template, or source.
 	// Without omitempty, JSON keeps nil apart from empty content.
-	Data       []byte `json:"data"`
-	DataSHA256 string `json:"data_sha256,omitempty"`
-	Owner      string `yaml:"owner" json:"owner,omitempty"`
-	Group      string `yaml:"group" json:"group,omitempty"`
-	Mode       string `yaml:"mode" json:"mode,omitempty"`
-	Absent     bool   `yaml:"absent" json:"absent,omitempty"`
+	Data       []byte         `json:"data"`
+	DataSHA256 string         `json:"data_sha256,omitempty"`
+	Owner      yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
+	Group      yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
+	Mode       string         `yaml:"mode" json:"mode,omitempty"`
+	Absent     bool           `yaml:"absent" json:"absent,omitempty"`
 }
 
 func (f *File) Main() string { return f.Path }
@@ -67,7 +68,10 @@ func (f *File) Validate() error {
 	if err := checkRelative("source", f.Source); err != nil {
 		return err
 	}
-	if err := checkNames(f.Owner, f.Group); err != nil {
+	if err := checkID("owner", f.Owner); err != nil {
+		return err
+	}
+	if err := checkID("group", f.Group); err != nil {
 		return err
 	}
 	return checkMode(f.Mode, "0644")
@@ -75,12 +79,14 @@ func (f *File) Validate() error {
 
 var numberRe = regexp.MustCompile(`^[0-9]+$`)
 
-func checkNames(owner, group string) error {
-	if numberRe.MatchString(owner) {
-		return &yamlx.FieldError{Field: "owner", Msg: "must be a user name, not a number"}
+// checkID checks the range of a value of only digits. chown takes the ID
+// 4294967295 as "no change".
+func checkID(field string, v yamlx.NameOrID) error {
+	if !numberRe.MatchString(string(v)) {
+		return nil
 	}
-	if numberRe.MatchString(group) {
-		return &yamlx.FieldError{Field: "group", Msg: "must be a group name, not a number"}
+	if n, err := strconv.ParseUint(string(v), 10, 32); err != nil || n == math.MaxUint32 {
+		return &yamlx.FieldError{Field: field, Msg: "an ID must be below 4294967295"}
 	}
 	return nil
 }
@@ -147,7 +153,7 @@ func (f *File) Text() *string {
 const maxDiff = 1 << 20
 
 // attrs returns the owner, group, and mode with their defaults.
-func attrs(owner, group, mode, defaultMode string) (string, string, uint32, error) {
+func attrs(owner, group yamlx.NameOrID, mode, defaultMode string) (string, string, uint32, error) {
 	if owner == "" {
 		owner = "root"
 	}
@@ -158,7 +164,7 @@ func attrs(owner, group, mode, defaultMode string) (string, string, uint32, erro
 		mode = defaultMode
 	}
 	n, err := strconv.ParseUint(mode, 8, 32)
-	return owner, group, uint32(n), err
+	return string(owner), string(group), uint32(n), err
 }
 
 // ids returns the IDs of a user and a group that must exist.
@@ -643,7 +649,12 @@ func fileMode(m uint32) fs.FileMode {
 	return out
 }
 
+// lookupUser returns the ID of a user name, or the ID that a value of only
+// digits gives.
 func lookupUser(name string) (uint32, bool, error) {
+	if id, err := strconv.ParseUint(name, 10, 32); err == nil {
+		return uint32(id), true, nil
+	}
 	u, err := user.Lookup(name)
 	if _, ok := errors.AsType[user.UnknownUserError](err); ok {
 		return 0, false, nil
@@ -656,6 +667,9 @@ func lookupUser(name string) (uint32, bool, error) {
 }
 
 func lookupGroup(name string) (uint32, bool, error) {
+	if id, err := strconv.ParseUint(name, 10, 32); err == nil {
+		return uint32(id), true, nil
+	}
 	g, err := user.LookupGroup(name)
 	if _, ok := errors.AsType[user.UnknownGroupError](err); ok {
 		return 0, false, nil

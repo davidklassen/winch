@@ -9,14 +9,16 @@ import (
 	"os"
 	"path"
 	"strings"
+
+	"github.com/davidklassen/winch/internal/yamlx"
 )
 
 type Dir struct {
-	Path   string `yaml:"path,required" json:"path"`
-	Owner  string `yaml:"owner" json:"owner,omitempty"`
-	Group  string `yaml:"group" json:"group,omitempty"`
-	Mode   string `yaml:"mode" json:"mode,omitempty"`
-	Absent bool   `yaml:"absent" json:"absent,omitempty"`
+	Path   string         `yaml:"path,required" json:"path"`
+	Owner  yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
+	Group  yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
+	Mode   string         `yaml:"mode" json:"mode,omitempty"`
+	Absent bool           `yaml:"absent" json:"absent,omitempty"`
 }
 
 func (d *Dir) Main() string { return d.Path }
@@ -28,7 +30,10 @@ func (d *Dir) Validate() error {
 	if d.Absent {
 		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""})
 	}
-	if err := checkNames(d.Owner, d.Group); err != nil {
+	if err := checkID("owner", d.Owner); err != nil {
+		return err
+	}
+	if err := checkID("group", d.Group); err != nil {
 		return err
 	}
 	return checkMode(d.Mode, "0755")

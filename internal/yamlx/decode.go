@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -33,9 +34,10 @@ func DecodeLazy(n *Node, v any) error {
 }
 
 var (
-	nodeType    = reflect.TypeFor[*Node]()
-	posType     = reflect.TypeFor[Pos]()
-	stringsType = reflect.TypeFor[Strings]()
+	nodeType     = reflect.TypeFor[*Node]()
+	posType      = reflect.TypeFor[Pos]()
+	stringsType  = reflect.TypeFor[Strings]()
+	nameOrIDType = reflect.TypeFor[NameOrID]()
 )
 
 type decoder struct {
@@ -75,6 +77,10 @@ func (d *decoder) value(n *Node, v reflect.Value, name string) {
 		default:
 			d.errorf(n.Pos, name, "expected a string or a list of strings, got %s", Describe(n))
 		}
+		return
+	}
+	if i, ok := n.Value.(int64); ok && i >= 0 && v.Type() == nameOrIDType {
+		v.SetString(strconv.FormatInt(i, 10))
 		return
 	}
 	switch v.Kind() {
@@ -239,3 +245,7 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 
 // Strings decodes from one string or a list of strings.
 type Strings []string
+
+// NameOrID decodes from a string, or from an integer that is not negative.
+// The integer gives its decimal digits.
+type NameOrID string

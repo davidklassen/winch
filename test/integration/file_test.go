@@ -69,6 +69,26 @@ func TestFileModule(t *testing.T) {
 			After: `[ "$(stat -c '%U %G %a' /tmp/w/f)" = "admin adm 640" ]`,
 		},
 		{
+			Name:  "create with numeric IDs",
+			Args:  &module.File{Path: "/tmp/w/f", Data: []byte("x\n"), Owner: "4242", Group: "4242"},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"owner 4242, group 4242, mode 0644"}, Old: new("")},
+			After: `[ "$(stat -c '%u %g' /tmp/w/f)" = "4242 4242" ]`,
+		},
+		{
+			Name:  "numeric IDs of the current owner",
+			Setup: `printf 'x\n' > /tmp/w/f`,
+			Args:  &module.File{Path: "/tmp/w/f", Data: []byte("x\n"), Owner: "0", Group: "0"},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:      "numeric IDs that no user has",
+			Setup:     `! getent passwd 4242 && ! getent group 4242 && printf 'x\n' > /tmp/w/f`,
+			Args:      &module.File{Path: "/tmp/w/f", Data: []byte("x\n"), Owner: "4242", Group: "4242"},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner root → 4242", "group root → 4242"}},
+			Unchanged: `[ "$(stat -c '%U %G' /tmp/w/f)" = "root root" ]`,
+			After:     `[ "$(stat -c '%u %g' /tmp/w/f)" = "4242 4242" ]`,
+		},
+		{
 			Name:  "setuid mode",
 			Args:  &module.File{Path: "/tmp/w/f", Data: []byte("x\n"), Mode: "4755"},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"owner root, group root, mode 4755"}, Old: new("")},

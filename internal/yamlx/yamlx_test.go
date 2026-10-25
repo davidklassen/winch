@@ -274,3 +274,38 @@ func TestSuggestSwap(t *testing.T) {
 		t.Errorf("Suggest = %q", got)
 	}
 }
+
+// spec: Modules/file, dir, link
+func TestNameOrID(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"name", "owner: www-data\n", `"www-data"`},
+		{"integer", "owner: 999\n", `"999"`},
+		{"quoted integer", "owner: \"0999\"\n", `"0999"`},
+		{"negative", "owner: -1\n", `t.yaml:1:8: owner: expected a string, got the integer -1; quote the value to make it a string`},
+		{"float", "owner: 1.5\n", `t.yaml:1:8: owner: expected a string, got the number 1.5; quote the value to make it a string`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := Parse("t.yaml", []byte(tt.yaml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var d struct {
+				Owner NameOrID `yaml:"owner"`
+			}
+			got := ""
+			if err := Decode(n, &d); err != nil {
+				got = err.Error()
+			} else {
+				got = fmt.Sprintf("%q", d.Owner)
+			}
+			if got != tt.want {
+				t.Errorf("got  %s\nwant %s", got, tt.want)
+			}
+		})
+	}
+}

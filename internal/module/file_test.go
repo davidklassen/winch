@@ -41,8 +41,10 @@ func TestFileValidate(t *testing.T) {
 		{"owner and absent", "path: /x\nowner: root\nabsent: true\n", `t.yaml:2:8: owner: absent: true takes no owner`},
 		{"group and absent", "path: /x\ngroup: root\nabsent: true\n", `t.yaml:2:8: group: absent: true takes no group`},
 		{"names with digits", "path: /x\ncontent: hi\nowner: user1\ngroup: \"2g\"\n", ""},
-		{"numeric owner", "path: /x\ncontent: hi\nowner: \"1000\"\n", `t.yaml:3:8: owner: must be a user name, not a number`},
-		{"numeric group", "path: /x\ncontent: hi\ngroup: \"50\"\n", `t.yaml:3:8: group: must be a group name, not a number`},
+		{"numeric IDs", "path: /x\ncontent: hi\nowner: 999\ngroup: 999\n", ""},
+		{"quoted numeric IDs", "path: /x\ncontent: hi\nowner: \"999\"\ngroup: \"50\"\n", ""},
+		{"owner ID too large", "path: /x\ncontent: hi\nowner: 4294967295\n", `t.yaml:3:8: owner: an ID must be below 4294967295`},
+		{"group ID too large", "path: /x\ncontent: hi\ngroup: \"4294967296\"\n", `t.yaml:3:8: group: an ID must be below 4294967295`},
 		{"bad mode", "path: /x\ncontent: hi\nmode: \"644x\"\n", `t.yaml:3:7: mode: must be an octal mode such as "0644"`},
 		{"long mode", "path: /x\ncontent: hi\nmode: \"07777\"\n", `t.yaml:3:7: mode: must be an octal mode such as "0644"`},
 		{"unknown key", "path: /x\ncontnet: hi\n", `t.yaml:2:1: unknown key "contnet"; did you mean "content"?`},
@@ -120,6 +122,16 @@ func TestFileText(t *testing.T) {
 		f := &File{Path: "/x", Data: tt.data}
 		if got := f.Text() != nil; got != tt.text {
 			t.Errorf("%s: text = %v, want %v", tt.name, got, tt.text)
+		}
+	}
+}
+
+// spec: Modules/file, dir, link
+func TestLookupNumericID(t *testing.T) {
+	for _, lookup := range []func(string) (uint32, bool, error){lookupUser, lookupGroup} {
+		id, ok, err := lookup("4242")
+		if id != 4242 || !ok || err != nil {
+			t.Errorf("lookup(%q) = %d, %t, %v; want 4242, true, nil", "4242", id, ok, err)
 		}
 	}
 }
