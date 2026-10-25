@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -257,6 +258,36 @@ func TestWinch(t *testing.T) {
 		}
 		if out, err := exec.Command("ssh", "-O", "check", vm.Name).CombinedOutput(); err != nil {
 			t.Errorf("no ssh master runs: %v: %s", err, out)
+		}
+	})
+
+	t.Run("host commands run with C.UTF-8, umask 022, and no sudo variables", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /root/env-mark
+          content: "x\n"
+        then: "{ env; umask; locale; } > /root/env.out 2>&1"
+`,
+		})
+		// A strict umask of the login user, before the check for an interactive
+		// shell, so that ssh commands read it.
+		vm.MustRun(t, "sed -i '1i umask 077' /home/admin/.bashrc")
+		r := lab.Winch(t, dir, "apply", "site", "--yes")
+		vm.MustRun(t, "sed -i 1d /home/admin/.bashrc")
+		if r.Code != 0 {
+			t.Fatalf("apply: exit %d", r.Code)
+		}
+		out := vm.MustRun(t, "cat /root/env.out")
+		lines := strings.Split(out, "\n")
+		sudo := slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "SUDO_") })
+		if !slices.Contains(lines, "LC_ALL=C.UTF-8") || !slices.Contains(lines, `LC_CTYPE="C.UTF-8"`) || !slices.Contains(lines, "0022") || sudo || strings.Contains(out, "Cannot set") {
+			t.Errorf("want LC_ALL=C.UTF-8, umask 0022, no SUDO_ variable, and no locale error, got:\n%s", out)
 		}
 	})
 }
