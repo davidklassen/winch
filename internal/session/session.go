@@ -37,11 +37,13 @@ type Config struct {
 
 // Session is one ssh process with the helper at the other end.
 type Session struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	stderr *limitedBuffer
-	id     int
+	cmd      *exec.Cmd
+	stdin    io.WriteCloser
+	stdout   *bufio.Reader
+	stderr   *limitedBuffer
+	id       int
+	host     string
+	progress io.Writer
 
 	waitOnce sync.Once
 	waitErr  error
@@ -122,7 +124,7 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout), stderr: &limitedBuffer{max: 64 << 10}}
+	s := &Session{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout), stderr: &limitedBuffer{max: 64 << 10}, host: cfg.Host, progress: cfg.Progress}
 	cmd.Stderr = s.stderr
 	// A child of ssh, such as a ProxyCommand, can keep stderr open.
 	cmd.WaitDelay = 5 * time.Second
@@ -191,16 +193,23 @@ func (s *Session) call(method string, params, result any) error {
 	if _, err := s.stdin.Write(append(req, '\n')); err != nil {
 		return s.fail(err)
 	}
-	line, err := s.stdout.ReadBytes('\n')
-	if err != nil {
-		return s.fail(err)
-	}
 	var resp protocol.Response
-	if err := json.Unmarshal(line, &resp); err != nil {
-		return fmt.Errorf("bad response from the helper: %w", err)
-	}
-	if resp.ID != s.id {
-		return fmt.Errorf("response %d to request %d", resp.ID, s.id)
+	for {
+		line, err := s.stdout.ReadBytes('\n')
+		if err != nil {
+			return s.fail(err)
+		}
+		resp = protocol.Response{}
+		if err := json.Unmarshal(line, &resp); err != nil {
+			return fmt.Errorf("bad response from the helper: %w", err)
+		}
+		if resp.ID != s.id {
+			return fmt.Errorf("response %d to request %d", resp.ID, s.id)
+		}
+		if resp.Note == "" {
+			break
+		}
+		fmt.Fprintf(s.progress, "%s: %s\n", s.host, resp.Note)
 	}
 	if resp.NeedContent {
 		return errNeedContent

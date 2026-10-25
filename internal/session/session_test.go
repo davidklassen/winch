@@ -359,3 +359,34 @@ func TestOpenHostName(t *testing.T) {
 		})
 	}
 }
+
+// spec: Modules/pkg
+func TestNotesGoToProgress(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	helper := helperbin.New("arm64", []byte(`#!/bin/sh
+read -r line
+echo '{"id":1}'
+read -r line
+echo '{"id":2,"note":"waiting for another apt run (pid 42)"}'
+echo '{"id":2,"result":{"status":"ok"}}'
+cat >/dev/null
+`))
+	var progress bytes.Buffer
+	s, err := Open(context.Background(), Config{
+		Host: "web1", Address: "web1", Dir: t.TempDir(),
+		Binaries: []helperbin.Binary{helper},
+		Hello:    protocol.Hello{Run: "r1"}, Progress: &progress,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	progress.Reset()
+	res, err := s.Check(context.Background(), "pkg", &module.Pkg{Name: []string{"hello"}}, &module.State{})
+	if err != nil || res.Status != module.OK {
+		t.Fatalf("check = %+v, %v", res, err)
+	}
+	if want := "web1: waiting for another apt run (pid 42)\n"; progress.String() != want {
+		t.Errorf("progress = %q, want %q", progress.String(), want)
+	}
+}

@@ -39,7 +39,7 @@ func (d *Dir) Validate() error {
 	return checkMode(d.Mode, "0755")
 }
 
-func (d *Dir) Check(ctx context.Context, _ *State) (Result, error) {
+func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
 	dir, missing, err := openParent(d.Path)
 	if _, ok := errors.AsType[*noPathError](err); ok && d.Absent {
 		return Result{Status: OK}, nil
@@ -88,7 +88,7 @@ func (d *Dir) Check(ctx context.Context, _ *State) (Result, error) {
 	return Result{Status: Change, Action: Modify, Changes: changes}, nil
 }
 
-func (d *Dir) Apply(ctx context.Context) error {
+func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
 	name := path.Base(d.Path)
 	if d.Absent {
 		dir, err := openDir(d.Path)

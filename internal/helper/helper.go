@@ -39,6 +39,10 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) e
 		}
 		var result any
 		var err error
+		note := func(msg string) {
+			// A failed write fails the answer that follows.
+			_ = enc.Encode(protocol.Response{ID: req.ID, Note: msg})
+		}
 		switch {
 		case req.Method == "hello" && lock != nil:
 			err = errors.New("hello was already sent")
@@ -49,9 +53,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) e
 		case req.Method == "facts":
 			result, err = facts.Read("/etc/os-release")
 		case req.Method == "check":
-			result, err = step(ctx, req.Params, false)
+			result, err = step(ctx, req.Params, false, note)
 		case req.Method == "apply":
-			result, err = step(ctx, req.Params, true)
+			result, err = step(ctx, req.Params, true, note)
 		default:
 			err = fmt.Errorf("unknown method %q", req.Method)
 		}
@@ -142,7 +146,7 @@ func deleteOthers(bin, self string) error {
 }
 
 // step checks a step. With apply, it then makes the changes the check found.
-func step(ctx context.Context, params json.RawMessage, apply bool) (protocol.StepResult, error) {
+func step(ctx context.Context, params json.RawMessage, apply bool, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
@@ -154,12 +158,12 @@ func step(ctx context.Context, params json.RawMessage, apply bool) (protocol.Ste
 	if err := json.Unmarshal(s.Args, m); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode %s arguments: %w", s.Module, err)
 	}
-	res, err := m.Check(ctx, &s.State)
+	res, err := m.Check(ctx, &s.State, note)
 	out := protocol.StepResult{Result: res, State: s.State}
 	if err != nil || !apply || res.Status == module.OK {
 		return out, err
 	}
 	// The plan has shown the diff already.
 	out.Old = nil
-	return out, m.Apply(ctx)
+	return out, m.Apply(ctx, note)
 }

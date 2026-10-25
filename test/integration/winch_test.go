@@ -98,6 +98,40 @@ func TestWinch(t *testing.T) {
 		}
 	})
 
+	t.Run("plan and apply wait for another apt run and name it", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
+			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - pkg:\n          name: hello\n",
+		})
+		// The fcntl lock of apt, held for 10 s. /root/locked gets the PID.
+		pid := strings.TrimSpace(vm.MustRun(t, quietApt+` && (python3 -c 'import fcntl, os, time; f = open("/var/lib/dpkg/lock-frontend", "w"); fcntl.lockf(f, fcntl.LOCK_EX); open("/root/locked.tmp", "w").write(str(os.getpid())); os.rename("/root/locked.tmp", "/root/locked"); time.sleep(10)' >/dev/null 2>&1 &) && `+
+			"timeout 10 sh -c 'until [ -e /root/locked ]; do sleep 0.1; done' && cat /root/locked && rm /root/locked"))
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "+ pkg hello") {
+			t.Fatalf("plan: exit %d", r.Code)
+		}
+		if n := strings.Count(r.Stderr, "winch: waiting for another apt run (pid "+pid+")\n"); n != 1 {
+			t.Errorf("stderr has the wait message for pid %s %d times, want once", pid, n)
+		}
+
+		// The refresh of apply starts the lock holder, after the check of the
+		// step and before the install.
+		vm.MustRun(t, `rm -f /root/locked && printf '#!/bin/sh\n(python3 -c '"'"'`+
+			`import fcntl, os, time; f = open("/var/lib/dpkg/lock-frontend", "w"); fcntl.lockf(f, fcntl.LOCK_EX); open("/root/locked.tmp", "w").write(str(os.getpid())); os.rename("/root/locked.tmp", "/root/locked"); time.sleep(10)`+
+			`'"'"' >/dev/null 2>&1 &)\ntimeout 10 sh -c "until [ -e /root/locked ]; do sleep 0.1; done"\n' > /root/hold-lock && chmod 755 /root/hold-lock && `+
+			`echo 'APT::Update::Post-Invoke {"/root/hold-lock";};' > /etc/apt/apt.conf.d/99hold`)
+		defer vm.MustRun(t, "rm -f /etc/apt/apt.conf.d/99hold /root/hold-lock /root/locked")
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 {
+			t.Fatalf("apply: exit %d", r.Code)
+		}
+		pid = strings.TrimSpace(vm.MustRun(t, "cat /root/locked"))
+		if n := strings.Count(r.Stderr, "winch: waiting for another apt run (pid "+pid+")\n"); n != 1 {
+			t.Errorf("apply stderr has the wait message for pid %s %d times, want once", pid, n)
+		}
+	})
+
 	t.Run("a host without passwordless sudo fails", func(t *testing.T) {
 		dir := project(t, "hosts:\n  winch:\n    address: 127.0.0.1\n    user: nosudo\n")
 		r := lab.Winch(t, dir, "plan", "site")

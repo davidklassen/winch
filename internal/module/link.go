@@ -36,7 +36,7 @@ func (l *Link) Validate() error {
 	return nil
 }
 
-func (l *Link) Check(ctx context.Context, _ *State) (Result, error) {
+func (l *Link) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
 	dir, missing, err := openParent(l.Path)
 	if _, ok := errors.AsType[*noPathError](err); ok && l.Absent {
 		return Result{Status: OK}, nil
@@ -71,7 +71,7 @@ func (l *Link) Check(ctx context.Context, _ *State) (Result, error) {
 	return Result{Status: Change, Action: Modify, Changes: []string{"target " + cur + " → " + *l.Target}}, nil
 }
 
-func (l *Link) Apply(ctx context.Context) error {
+func (l *Link) Apply(ctx context.Context, _ func(string)) error {
 	name := path.Base(l.Path)
 	if l.Absent {
 		dir, err := openDir(l.Path)

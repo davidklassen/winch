@@ -21,6 +21,9 @@ type Response struct {
 	Error  string          `json:"error,omitempty"`
 	// NeedContent marks an apply that must write content it did not get.
 	NeedContent bool `json:"need_content,omitempty"`
+	// Note is a line for the person while the request waits on the host. A
+	// response with a note is not the answer: more responses follow.
+	Note string `json:"note,omitempty"`
 }
 
 // Hello is the first request of a session. The helper writes it into the

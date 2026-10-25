@@ -58,8 +58,8 @@ var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive"}
 // aptLock makes apt wait for another apt, such as unattended-upgrades.
 const aptLock = "DPkg::Lock::Timeout=300"
 
-func (p *Pkg) Check(ctx context.Context, st *State) (Result, error) {
-	pkgs, err := readDpkg(ctx, p.Name)
+func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, error) {
+	pkgs, err := readDpkg(ctx, p.Name, note)
 	if err != nil {
 		return Result{}, err
 	}
@@ -143,8 +143,11 @@ func (p *Pkg) dependents(ctx context.Context) ([]string, error) {
 	return others, nil
 }
 
-func (p *Pkg) Apply(ctx context.Context) error {
+func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 	if len(p.auto) > 0 {
+		if err := waitDpkg(ctx, note); err != nil {
+			return err
+		}
 		if _, err := run(ctx, nil, "apt-mark", append([]string{"manual", "-o", aptLock}, p.auto...)...); err != nil {
 			return err
 		}
@@ -170,8 +173,22 @@ func (p *Pkg) Apply(ctx context.Context) error {
 			args = append(args, "--no-install-recommends")
 		}
 	}
+	if err := waitDpkg(ctx, note); err != nil {
+		return err
+	}
 	_, err := run(ctx, aptEnv, "apt-get", append(args, p.todo...)...)
 	return err
+}
+
+// waitDpkg waits until no other apt or dpkg run holds the locks. apt waits
+// for them too, but prints nothing while it waits.
+func waitDpkg(ctx context.Context, note func(string)) error {
+	unlock, err := lockFiles(ctx, dpkgLocks, note)
+	if err != nil {
+		return err
+	}
+	unlock()
+	return nil
 }
 
 type pkgState int
@@ -187,16 +204,17 @@ type dpkgPkg struct {
 	held  bool
 }
 
+// dpkgLocks are the fcntl locks that apt and dpkg use.
+var dpkgLocks = []string{"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock"}
+
 // readDpkg holds the locks of apt and dpkg while it reads, so it does not see
 // the half-done packages of a running apt.
-func readDpkg(ctx context.Context, names []string) (map[string]dpkgPkg, error) {
-	for _, name := range []string{"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock"} {
-		f, err := lockFile(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
+func readDpkg(ctx context.Context, names []string, note func(string)) (map[string]dpkgPkg, error) {
+	unlock, err := lockFiles(ctx, dpkgLocks, note)
+	if err != nil {
+		return nil, err
 	}
+	defer unlock()
 	pkgs, err := dpkgStates(ctx, names)
 	if err != nil {
 		return nil, err
@@ -212,37 +230,63 @@ func readDpkg(ctx context.Context, names []string) (map[string]dpkgPkg, error) {
 	return pkgs, nil
 }
 
-// lockFile takes the fcntl lock that apt and dpkg use. It waits as long as
-// aptLock. Closing the file releases the lock.
-func lockFile(ctx context.Context, name string) (*os.File, error) {
-	f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE, 0o640)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, errors.New("/var/lib/dpkg not found: the host needs dpkg")
+// lockFiles takes fcntl locks in order. It waits as long as aptLock for all of
+// them, and notes the first process that it waits for. unlock releases the
+// locks.
+func lockFiles(ctx context.Context, names []string, note func(string)) (unlock func(), err error) {
+	var files []*os.File
+	unlock = func() {
+		for _, f := range files {
+			f.Close()
+		}
 	}
-	if err != nil {
-		return nil, err
-	}
+	defer func() {
+		if err != nil {
+			unlock()
+		}
+	}()
 	deadline := time.Now().Add(300 * time.Second)
-	for {
-		err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &syscall.Flock_t{Type: syscall.F_WRLCK, Whence: io.SeekStart})
-		if err == nil {
-			return f, nil
+	waiting := ""
+	for _, name := range names {
+		f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE, 0o640)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, errors.New("/var/lib/dpkg not found: the host needs dpkg")
 		}
-		if !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EACCES) {
-			f.Close()
-			return nil, fmt.Errorf("lock %s: %w", name, err)
+		if err != nil {
+			return nil, err
 		}
-		if time.Now().After(deadline) {
-			f.Close()
-			return nil, fmt.Errorf("another apt or dpkg run holds %s", name)
-		}
-		select {
-		case <-ctx.Done():
-			f.Close()
-			return nil, ctx.Err()
-		case <-time.After(time.Second):
+		files = append(files, f)
+		for {
+			err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &syscall.Flock_t{Type: syscall.F_WRLCK, Whence: io.SeekStart})
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EACCES) {
+				return nil, fmt.Errorf("lock %s: %w", name, err)
+			}
+			if waiting == "" {
+				lk := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: io.SeekStart}
+				if err := syscall.FcntlFlock(f.Fd(), syscall.F_GETLK, &lk); err != nil {
+					return nil, fmt.Errorf("lock %s: %w", name, err)
+				}
+				// The holder can release the lock between the two calls.
+				if lk.Type == syscall.F_UNLCK {
+					continue
+				}
+				waiting = fmt.Sprintf("waiting for another apt run (pid %d)", lk.Pid)
+				note(waiting)
+			}
+			if time.Now().After(deadline) {
+				return nil, errors.New(waiting)
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Second):
+			}
 		}
 	}
+	return unlock, nil
 }
 
 // dpkgStates returns each named package that dpkg knows.

@@ -47,11 +47,12 @@ type State struct {
 
 // Module is the decoded arguments of one step. Main returns the main
 // argument for the plan. Check updates the state. Apply runs on the value
-// that Check returned a change for, and does what Check decided.
+// that Check returned a change for, and does what Check decided. Both call
+// note with a line for the person while they wait for the host.
 type Module interface {
 	Main() string
-	Check(ctx context.Context, st *State) (Result, error)
-	Apply(ctx context.Context) error
+	Check(ctx context.Context, st *State, note func(string)) (Result, error)
+	Apply(ctx context.Context, note func(string)) error
 }
 
 // WithContent is a module that writes content. A check sends only the hash

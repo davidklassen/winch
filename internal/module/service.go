@@ -36,7 +36,7 @@ func (s *Service) Validate() error {
 	return nil
 }
 
-func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
+func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
 	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,NeedDaemonReload", "--", s.Name)
 	if err != nil {
 		return Result{}, err
@@ -102,7 +102,7 @@ func (s *Service) Check(ctx context.Context, _ *State) (Result, error) {
 	return Result{Status: Change, Action: Modify, Changes: changes}, nil
 }
 
-func (s *Service) Apply(ctx context.Context) error {
+func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 	for _, c := range s.todo {
 		if c == "disable" && s.links != nil {
 			for _, l := range s.links {
