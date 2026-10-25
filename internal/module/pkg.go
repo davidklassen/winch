@@ -161,7 +161,7 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 		if err := waitLocks(ctx, []string{indexLock}, note); err != nil {
 			return err
 		}
-		if _, err := run(ctx, aptEnv, "apt-get", "update", "-q", "--error-on=any", "-o", aptLock); err != nil {
+		if _, err := run(ctx, aptEnv, "apt-get", "update", "-q", "--error-on=any"); err != nil {
 			return err
 		}
 	}
