@@ -111,7 +111,7 @@ func TestApplyChecksStagesWithoutChange(t *testing.T) {
 		t.Fatalf("plan: exit %d, want only the pkg step:\n%s", r.Code, r.Stdout)
 	}
 	r = lab.Winch(t, dir, "apply", "site", "--yes")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "stages: - link /etc/nginx/sites-enabled/default") {
+	if r.Code != 0 || !strings.Contains(r.Stdout, "stages: configure: - link /etc/nginx/sites-enabled/default") {
 		t.Fatalf("apply: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 	r = lab.Winch(t, dir, "plan", "site")

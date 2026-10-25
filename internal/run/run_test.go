@@ -405,6 +405,9 @@ func TestPlanRecipes(t *testing.T) {
       - name: "x\e]0;owned\a"
         recipe: nginx
 `}},
+		{name: "recipes-check-fails", failed: []string{"web1"},
+			files: map[string]string{"recipes/tools/templates/tools.tmpl": "{{ .host.short }}\n"},
+			setup: func(h *fakehost.Hosts) { h.FailCheck("web1 /etc/nginx/site") }},
 		{name: "recipes-change", failed: []string{"web2"}, setup: func(h *fakehost.Hosts) {
 			for _, host := range []string{"web1", "web2"} {
 				h.SetFile(host, "/etc/nginx/site", "server_name "+host+";\n")
@@ -450,18 +453,32 @@ func TestPlanRecipes(t *testing.T) {
 
 // spec: CLI/Output; Steps
 func TestApplyRecipes(t *testing.T) {
-	h := fakehost.New()
-	p := loadFiles(t, recipes)
-	plan := run.MakePlan(context.Background(), p, h.Connector())
-	var out, errOut bytes.Buffer
-	run.Apply(context.Background(), plan, h.Connector(), &out, &errOut)
-	golden.Assert(t, filepath.Join("testdata", "apply", "recipes.golden"),
-		[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
-	if c, _ := h.File("web1", "/etc/nginx/logo.png"); c != "\x89PNG\r\n\x1a\n\x00\x00\xff" {
-		t.Errorf("logo.png = %q", c)
+	tests := []struct {
+		name  string
+		setup func(h *fakehost.Hosts)
+	}{
+		{name: "recipes"},
+		{name: "recipes-fails", setup: func(h *fakehost.Hosts) { h.FailApply("web1 /etc/php.ini") }},
 	}
-	if n := h.FactsReads["web1"]; n != 1 {
-		t.Errorf("facts read %d times in plan and apply, want 1", n)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := fakehost.New()
+			if tt.setup != nil {
+				tt.setup(h)
+			}
+			p := loadFiles(t, recipes)
+			plan := run.MakePlan(context.Background(), p, h.Connector())
+			var out, errOut bytes.Buffer
+			run.Apply(context.Background(), plan, h.Connector(), &out, &errOut)
+			golden.Assert(t, filepath.Join("testdata", "apply", tt.name+".golden"),
+				[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
+			if c, _ := h.File("web1", "/etc/nginx/logo.png"); c != "\x89PNG\r\n\x1a\n\x00\x00\xff" {
+				t.Errorf("logo.png = %q", c)
+			}
+			if n := h.FactsReads["web1"]; n != 1 {
+				t.Errorf("facts read %d times in plan and apply, want 1", n)
+			}
+		})
 	}
 }
 
@@ -539,4 +556,27 @@ func TestPlanVars(t *testing.T) {
 			t.Errorf("web1 has %s", path)
 		}
 	}
+}
+
+// spec: CLI/Output
+func TestApplyStageNameControlCharacters(t *testing.T) {
+	h := fakehost.New()
+	h.FailApply("web2")
+	p := loadFiles(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: "x\e]0;owned\a"
+    hosts: all
+    steps:
+      - file:
+          path: /etc/motd
+          content: "x\n"
+`,
+	})
+	plan := run.MakePlan(context.Background(), p, h.Connector())
+	var out, errOut bytes.Buffer
+	run.Apply(context.Background(), plan, h.Connector(), &out, &errOut)
+	golden.Assert(t, filepath.Join("testdata", "apply", "stage-name-control-characters.golden"),
+		[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
 }

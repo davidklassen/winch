@@ -1,0 +1,6 @@
+stdout:
+web1: x?]0;owned?: + file /etc/motd
+
+2 hosts: 1 changed, 0 unchanged, 1 failed
+stderr:
+web2: x?]0;owned?: failed: file /etc/motd: write /etc/motd: read-only file system

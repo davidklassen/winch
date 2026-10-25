@@ -92,7 +92,7 @@ steps:
 	}
 
 	r = lab.Winch(t, dir, "apply", "site", "--yes")
-	if r.Code != 1 || !strings.Contains(r.Stdout, "recipes: + Site: file /etc/nginx/sites-available/demo") {
+	if r.Code != 1 || !strings.Contains(r.Stdout, "recipes: nginx: + Site: file /etc/nginx/sites-available/demo") {
 		t.Fatalf("apply: exit %d, want 1 with the steps of host recipes", r.Code)
 	}
 	if out, err := vm.Run(t.Context(), "test -e /etc/ubuntu"); err == nil {

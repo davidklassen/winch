@@ -1,8 +1,8 @@
 stdout:
-web1: + Site: file /etc/nginx/site
-web1: + file /etc/nginx/logo.png
-web1: + file /etc/issue
-web1: + file /etc/php.ini
+web1: nginx: + Site: file /etc/nginx/site
+web1: nginx: + file /etc/nginx/logo.png
+web1: web: + file /etc/issue
+web1: php: + file /etc/php.ini
 
 2 hosts: 1 changed, 0 unchanged, 1 failed
 stderr:

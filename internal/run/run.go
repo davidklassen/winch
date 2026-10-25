@@ -129,7 +129,7 @@ func check(ctx context.Context, connect Connect, p *project.Project, h project.H
 	for i, p := range steps {
 		steps[i].Result, err = conn.Check(ctx, p.Step.Module, p.Step.Args, &hr.state)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", label(p.Step), err)
+			return nil, fmt.Errorf("%s: %s: %w", scope(stage, p), label(p.Step), err)
 		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
 	}
@@ -207,6 +207,14 @@ func (p *Plan) HasChanges() bool {
 		}
 	}
 	return false
+}
+
+// scope is the recipe of a step, or the stage for a module step of a stage.
+func scope(stage *project.Stage, p Planned) string {
+	if p.In != nil {
+		return printable(p.In.Recipe.Name)
+	}
+	return printable(stage.Name)
 }
 
 // label is the text of a step in the plan and the logs.
@@ -371,9 +379,9 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, out, errOut io.Writ
 			if states[hp.Host.Name] == nil {
 				states[hp.Host.Name] = &module.State{}
 			}
-			ok, err := apply(ctx, connect, hp, states[hp.Host.Name], out)
+			ok, err := apply(ctx, connect, sp.Stage, hp, states[hp.Host.Name], out)
 			if err != nil {
-				fmt.Fprintf(errOut, "%s: failed: %v\n", hp.Host.Name, err)
+				fmt.Fprintf(errOut, "%s: %v\n", hp.Host.Name, err)
 				failed[hp.Host.Name] = true
 				delete(changed, hp.Host.Name)
 				continue
@@ -390,24 +398,24 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, out, errOut io.Writ
 
 // apply runs the steps of a stage on one host. It reports whether a
 // step changed something.
-func apply(ctx context.Context, connect Connect, hp HostPlan, state *module.State, out io.Writer) (changed bool, err error) {
+func apply(ctx context.Context, connect Connect, stage *project.Stage, hp HostPlan, state *module.State, out io.Writer) (changed bool, err error) {
 	conn, err := connect(ctx, hp.Host)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("failed: %w", err)
 	}
 	defer func() {
 		if cerr := conn.Close(); err == nil && cerr != nil {
-			err = cerr
+			err = fmt.Errorf("failed: %w", cerr)
 		}
 	}()
 	for _, p := range hp.Steps {
 		res, err := conn.Apply(ctx, p.Step.Module, p.Step.Args, state)
 		if err != nil {
-			return changed, fmt.Errorf("%s: %w", label(p.Step), err)
+			return changed, fmt.Errorf("%s: failed: %s: %w", scope(stage, p), label(p.Step), err)
 		}
 		if res.Status == module.Change {
 			changed = true
-			fmt.Fprintf(out, "%s: %s %s\n", hp.Host.Name, marks[res.Action], label(p.Step))
+			fmt.Fprintf(out, "%s: %s: %s %s\n", hp.Host.Name, scope(stage, p), marks[res.Action], label(p.Step))
 		}
 	}
 	return changed, nil

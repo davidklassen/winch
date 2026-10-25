@@ -1,6 +1,6 @@
 stdout:
-web1: + file /etc/motd
+web1: base: + file /etc/motd
 
 3 hosts: 1 changed, 1 unchanged, 1 failed
 stderr:
-web2: failed: file /etc/motd: write /etc/motd: read-only file system
+web2: base: failed: file /etc/motd: write /etc/motd: read-only file system

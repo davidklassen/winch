@@ -9,4 +9,4 @@ web1, web3 (2 hosts)
 
 3 hosts: 2 to change, 0 unchanged, 0 unknown, 1 failed
 stderr:
-web2: file /etc/issue: permission denied
+web2: cleanup: file /etc/issue: permission denied

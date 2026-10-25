@@ -167,7 +167,7 @@ func TestApply(t *testing.T) {
 	t.Run("yes", func(t *testing.T) {
 		h := fakehost.New()
 		r := winch(t, dir, h, false, "", "apply", "site", "--yes")
-		if r.code != exitOK || !strings.Contains(r.out, "web1: + file /etc/motd") {
+		if r.code != exitOK || !strings.Contains(r.out, "web1: base: + file /etc/motd") {
 			t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 		}
 		if c, _ := h.File("web2", "/etc/motd"); c != "hello\n" {
@@ -240,7 +240,7 @@ func TestApply(t *testing.T) {
 		h := fakehost.New()
 		h.FailCheck("web1")
 		r := winch(t, dir, h, false, "", "plan", "site")
-		if r.code != exitFailed || !strings.Contains(r.err, "web1: file /etc/motd: permission denied") {
+		if r.code != exitFailed || !strings.Contains(r.err, "web1: base: file /etc/motd: permission denied") {
 			t.Errorf("exit %d, stderr %q", r.code, r.err)
 		}
 	})

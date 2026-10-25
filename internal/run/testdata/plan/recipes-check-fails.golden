@@ -1,0 +1,30 @@
+stdout:
+web2
+  web
+    nginx: Web server
+      + Site: file /etc/nginx/site
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +server_name web2;
+      + file /etc/nginx/logo.png
+          owner root, group root, mode 0644
+          content (binary or larger than 1 MiB)
+    + file /etc/issue
+        owner root, group root, mode 0644
+        @@ -0,0 +1,1 @@
+        +stage step
+    php
+      + file /etc/php.ini
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +x
+  tools
+    tools
+      + file /etc/tools
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +web2
+
+2 hosts: 1 to change, 0 unchanged, 0 unknown, 1 failed
+stderr:
+web1: nginx: Site: file /etc/nginx/site: permission denied

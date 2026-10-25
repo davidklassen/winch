@@ -9,4 +9,4 @@ web1, web3 (2 hosts)
 
 3 hosts: 2 to change, 0 unchanged, 0 unknown, 1 failed
 stderr:
-web2: file /etc/motd: permission denied
+web2: base: file /etc/motd: permission denied

@@ -57,7 +57,7 @@ func TestWinch(t *testing.T) {
 		}
 
 		r = lab.Winch(t, dir, "apply", "site", "--yes")
-		if r.Code != 0 || !strings.Contains(r.Stdout, "winch: ~ file /etc/motd") {
+		if r.Code != 0 || !strings.Contains(r.Stdout, "winch: base: ~ file /etc/motd") {
 			t.Fatalf("apply --yes: exit %d", r.Code)
 		}
 		if strings.Contains(r.Stderr, "sending the helper") {
