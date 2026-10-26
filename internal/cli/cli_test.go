@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/secret"
@@ -55,9 +56,13 @@ func winchWith(t *testing.T, dir, home, ageKey string, h *fakehost.Hosts, termin
 		Home:     home,
 		AgeKey:   ageKey,
 		Filter:   secret.NewFilter(),
+		Now:      fixedNow,
 	})
 	return result{code, out.String(), errOut.String()}
 }
+
+// fixedNow is the clock of the JSON events in tests.
+func fixedNow() time.Time { return time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC) }
 
 // spec: CLI/Exit codes
 func TestInvalid(t *testing.T) {
@@ -185,7 +190,7 @@ func TestApply(t *testing.T) {
 			t.Errorf("web2 /etc/motd = %q", c)
 		}
 		r = winch(t, dir, h, false, "", "apply", "site")
-		if r.code != exitOK || !strings.HasSuffix(r.out, "2 hosts: 0 to change, 2 unchanged, 0 unknown\n") {
+		if r.code != exitOK || !strings.Contains(r.out, "2 hosts: 0 to change, 2 unchanged, 0 unknown\nplan ") {
 			t.Errorf("second apply: exit %d, stdout %q", r.code, r.out)
 		}
 	})
@@ -195,7 +200,8 @@ func TestApply(t *testing.T) {
 		if r.code != exitConfirm {
 			t.Errorf("exit %d, want %d", r.code, exitConfirm)
 		}
-		if want := "To apply, run: winch apply site --inventory inventories/test.yaml --yes\n"; !strings.HasSuffix(r.out, want) {
+		// spec: CLI/Prompts
+		if want := "To apply, run: winch apply site --inventory inventories/test.yaml --check " + planHash(t, r.out) + "\n"; !strings.HasSuffix(r.out, want) {
 			t.Errorf("stdout = %q, want suffix %q", r.out, want)
 		}
 		if h.Applies != 0 {
@@ -232,7 +238,7 @@ func TestApply(t *testing.T) {
 		h := fakehost.New()
 		h.FailCheck("web1")
 		r := winch(t, dir, h, false, "", "apply", "site")
-		if r.code != exitFailed || !strings.HasSuffix(r.out, "To apply, run: winch apply site --yes\n") {
+		if r.code != exitFailed || !strings.HasSuffix(r.out, "To apply, run: winch apply site --check "+planHash(t, r.out)+"\n") {
 			t.Errorf("exit %d, stdout %q", r.code, r.out)
 		}
 	})
@@ -333,7 +339,7 @@ func TestSet(t *testing.T) {
 	}
 	h := fakehost.New()
 	r = winch(t, dir, h, false, "", "apply", "site", "--set", "vars.greeting=it's")
-	if want := `To apply, run: winch apply site --set 'vars.greeting=it'\''s' --yes` + "\n"; r.code != exitConfirm || !strings.HasSuffix(r.out, want) {
+	if want := `To apply, run: winch apply site --set 'vars.greeting=it'\''s' --check ` + planHash(t, r.out) + "\n"; r.code != exitConfirm || !strings.HasSuffix(r.out, want) {
 		t.Errorf("apply without a terminal: exit %d, stdout %q, want suffix %q", r.code, r.out, want)
 	}
 	r = winch(t, dir, h, false, "", "apply", "site", "--set", "vars.greeting=it's", "--yes")

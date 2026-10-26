@@ -113,7 +113,7 @@ func TestApply(t *testing.T) {
 			p := load(t, "web3")
 			plan := run.MakePlan(context.Background(), p, h.Connector())
 			var out, errOut bytes.Buffer
-			ok := run.Apply(context.Background(), plan, h.Connector(), &out, &errOut)
+			ok := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK()
 			golden.Assert(t, filepath.Join("testdata", "apply", tt.name+".golden"),
 				[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
 			failed := tt.setup != nil
@@ -182,7 +182,7 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
 	plan.Write(&out, &errOut)
 	golden.Assert(t, filepath.Join("testdata", "plan", "index-refresh.golden"),
 		[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
-	if !run.Apply(context.Background(), plan, h.Connector(), &out, &errOut) {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
 		t.Fatalf("apply failed: %s", errOut.String())
 	}
 	for _, host := range []string{"web1", "web2"} {
@@ -299,7 +299,7 @@ func TestApplyChecksStagesWithoutChange(t *testing.T) {
 		t.Fatalf("plan of stage configure = %v, want ok", st)
 	}
 	var out, errOut bytes.Buffer
-	if !run.Apply(context.Background(), plan, h.Connector(), &out, &errOut) {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
 		t.Fatalf("apply failed: %s", errOut.String())
 	}
 	if _, ok := h.File("web1", "/etc/nginx/sites-enabled/default"); ok {
@@ -469,7 +469,7 @@ func TestApplyRecipes(t *testing.T) {
 			p := loadFiles(t, recipes)
 			plan := run.MakePlan(context.Background(), p, h.Connector())
 			var out, errOut bytes.Buffer
-			run.Apply(context.Background(), plan, h.Connector(), &out, &errOut)
+			run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK()
 			golden.Assert(t, filepath.Join("testdata", "apply", tt.name+".golden"),
 				[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
 			if c, _ := h.File("web1", "/etc/nginx/logo.png"); c != "\x89PNG\r\n\x1a\n\x00\x00\xff" {
@@ -538,7 +538,7 @@ func TestPlanVars(t *testing.T) {
 	if plan.Failed["web3"] == nil || len(plan.Failed) != 1 {
 		t.Errorf("failed hosts %v, want web3 only", plan.Failed)
 	}
-	if !run.Apply(context.Background(), plan, h.Connector(), &out, &errOut) {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
 		t.Logf("apply: %s", errOut.String())
 	}
 	for _, f := range []struct{ host, path, want string }{
@@ -598,7 +598,7 @@ func TestApplyStageNameControlCharacters(t *testing.T) {
 	})
 	plan := run.MakePlan(context.Background(), p, h.Connector())
 	var out, errOut bytes.Buffer
-	run.Apply(context.Background(), plan, h.Connector(), &out, &errOut)
+	run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK()
 	golden.Assert(t, filepath.Join("testdata", "apply", "stage-name-control-characters.golden"),
 		[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
 }

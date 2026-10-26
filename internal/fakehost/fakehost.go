@@ -40,6 +40,13 @@ type Hosts struct {
 	Log map[string][]string
 	// Open is the number of open connections.
 	Open int
+	// Connects counts the connects per host.
+	Connects map[string]int
+	down     map[string]bool
+	results  map[string]module.Result
+	// OnCheck and OnApply run before each check and each apply of a step,
+	// with the host and the main argument of the step.
+	OnCheck, OnApply func(host, main string)
 }
 
 func New() *Hosts {
@@ -57,7 +64,17 @@ func New() *Hosts {
 		thens:      map[string][]protocol.Then{},
 		failCmd:    map[string]bool{},
 		Log:        map[string][]string{},
+		results:    map[string]module.Result{},
+		Connects:   map[string]int{},
+		down:       map[string]bool{},
 	}
+}
+
+// SetResult makes the check of the dir step for path on a host return res.
+func (h *Hosts) SetResult(host, path string, res module.Result) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.results[host+" "+path] = res
 }
 
 func (h *Hosts) SetPending(host string, names ...string) {
@@ -166,13 +183,21 @@ func (h *Hosts) Fix(key string) {
 	delete(h.failCmd, key)
 }
 
-func (h *Hosts) Connect(ctx context.Context, host project.Host) (*Conn, error) {
-	if host.Address == "unreachable" {
-		return nil, errors.New("ssh: connect to host unreachable: Connection refused")
-	}
+// SetUnreachable makes each later connect to host fail as unreachable.
+func (h *Hosts) SetUnreachable(host string) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.down[host] = true
+}
+
+func (h *Hosts) Connect(ctx context.Context, host project.Host) (*Conn, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if host.Address == "unreachable" || h.down[host.Name] {
+		return nil, run.MarkUnreachable(errors.New("ssh: connect to host " + host.Address + ": Connection refused"))
+	}
 	h.Open++
-	h.mu.Unlock()
+	h.Connects[host.Name]++
 	return &Conn{hosts: h, host: host.Name}, nil
 }
 
@@ -197,6 +222,13 @@ type Conn struct {
 }
 
 func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
+	if c.hosts.OnCheck != nil {
+		c.hosts.OnCheck(c.host, m.Main())
+	}
+	// A real session finishes a call that has started.
+	if ctx.Err() != nil {
+		return module.Result{}, fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
+	}
 	if p, ok := m.(*module.Pkg); ok {
 		return c.checkPkg(p, st), nil
 	}
@@ -234,6 +266,10 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 // checkDir creates only.
 func (c *Conn) checkDir(d *module.Dir) module.Result {
 	c.hosts.mu.Lock()
+	if res, ok := c.hosts.results[c.host+" "+d.Path]; ok {
+		c.hosts.mu.Unlock()
+		return res
+	}
 	missing := c.hosts.noDirs[c.host][d.Path]
 	c.hosts.mu.Unlock()
 	if !missing {
@@ -277,6 +313,12 @@ func serviceAction(s *module.Service) string {
 }
 
 func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
+	if c.hosts.OnApply != nil {
+		c.hosts.OnApply(c.host, m.Main())
+	}
+	if ctx.Err() != nil {
+		return module.Result{}, fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
+	}
 	fresh := st.IndexFresh
 	res, err := c.Check(ctx, name, m, st)
 	if err != nil || res.Status == module.OK {
@@ -369,6 +411,9 @@ func (c *Conn) Handled(ctx context.Context, handler string) error {
 }
 
 func (c *Conn) Command(ctx context.Context, command string, then protocol.Then) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
+	}
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
 	c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "command "+command)

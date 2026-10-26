@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,7 +24,8 @@ func fakeHelper(arch string) helperbin.Binary {
 	return helperbin.New(arch, []byte("#!/bin/sh\nread line\necho '{\"id\":1,\"error\":\"ran "+arch+"\"}'\n"))
 }
 
-// fakeBin puts fake ssh, uname, id, and sudo first in PATH. ssh writes its
+// fakeBin puts fake ssh, uname, id, and sudo first in PATH. ssh sends itself
+// SIGINT when $SSH_INT is set. It writes its
 // arguments to $SSH_ARGS when it is set, prints $SSH_BANNER and the output of
 // $SSH_BANNER_CMD when they are set, and runs its last argument with sh, on
 // this machine. When $SSH_FAIL_ONCE is a missing file, ssh creates it
@@ -34,7 +36,7 @@ func fakeBin(t *testing.T, arch, uid, sudo string) {
 	t.Helper()
 	bin := t.TempDir()
 	scripts := map[string]string{
-		"ssh": "#!/bin/sh\n[ -z \"$SSH_FAIL_ONCE\" ] || [ ! -e \"$SSH_FAIL_ONCE\" ] || : > \"$SSH_FAIL_ONCE.again\"\n" +
+		"ssh": "#!/bin/sh\n[ -z \"$SSH_INT\" ] || kill -INT $$\n[ -z \"$SSH_FAIL_ONCE\" ] || [ ! -e \"$SSH_FAIL_ONCE\" ] || : > \"$SSH_FAIL_ONCE.again\"\n" +
 			"if [ -n \"$SSH_FAIL_ONCE\" ] && [ ! -e \"$SSH_FAIL_ONCE\" ]; then : > \"$SSH_FAIL_ONCE\"; [ -z \"$SSH_FAIL_OUT\" ] || printf '%s\\n' \"$SSH_FAIL_OUT\"; printf '%s\\n' \"$SSH_FAIL_ERR\" >&2; exit \"$SSH_FAIL_CODE\"; fi\n" +
 			"[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
 		"uname": "#!/bin/sh\necho " + arch + "\n",
@@ -494,5 +496,53 @@ func TestOpenRetryCancelled(t *testing.T) {
 	}
 	if _, err := os.Stat(failed + ".again"); err == nil {
 		t.Error("ssh started again after the context ended")
+	}
+}
+
+// spec: CLI/Exit codes ("4: one or more hosts were unreachable")
+func TestOpenUnreachable(t *testing.T) {
+	tests := []struct {
+		name, stdout, stderr string
+		code                 int
+		unreachable          bool
+	}{
+		{"refused", "", "ssh: connect to host web1 port 22: Connection refused", 255, true},
+		{"timeout", "", "ssh: connect to host web1 port 22: Connection timed out", 255, true},
+		{"name", "", "ssh: Could not resolve hostname web1: nodename nor servname provided, or not known", 255, true},
+		{"host key", "", "Host key verification failed.", 255, true},
+		{"refused login", "", "admin@web1: Permission denied (publickey).", 255, true},
+		{"error of the script", "", "winch: unsupported architecture mips", 1, false},
+		{"closed after have", "have", closed, 255, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			failOnce(t, tt.stdout, tt.stderr, tt.code)
+			_, err := open(t, t.TempDir(), []helperbin.Binary{fakeHelper("arm64")})
+			if err == nil || errors.Is(err, ErrUnreachable) != tt.unreachable {
+				t.Errorf("error %v, unreachable %v, want %v", err, errors.Is(err, ErrUnreachable), tt.unreachable)
+			}
+			if err != nil && err.Error() != tt.stderr {
+				t.Errorf("error %q, want the text of ssh %q", err, tt.stderr)
+			}
+		})
+	}
+	t.Run("missing sudo", func(t *testing.T) {
+		fakeBin(t, "aarch64", "1000", "#!/bin/sh\nexit 1\n")
+		_, err := open(t, t.TempDir(), []helperbin.Binary{fakeHelper("arm64")})
+		if err == nil || errors.Is(err, ErrUnreachable) {
+			t.Errorf("error %v, want a failure that is not unreachable", err)
+		}
+	})
+}
+
+// spec: Running a pipeline/Apply ("Ctrl-C reaches only winch, not its SSH
+// sessions")
+func TestSSHIgnoresInterrupt(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	t.Setenv("SSH_INT", "1")
+	_, err := open(t, t.TempDir(), []helperbin.Binary{fakeHelper("arm64")})
+	if err == nil || err.Error() != "ran arm64" {
+		t.Errorf("error = %v, want the helper to run", err)
 	}
 }

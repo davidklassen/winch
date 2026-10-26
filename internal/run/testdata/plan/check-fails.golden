@@ -8,5 +8,6 @@ web1, web3 (2 hosts)
         +world
 
 3 hosts: 2 to change, 0 unchanged, 0 unknown, 1 failed
+plan efa8fc51
 stderr:
 web2: base: file /etc/motd: permission denied

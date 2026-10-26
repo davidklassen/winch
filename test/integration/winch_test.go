@@ -49,7 +49,7 @@ func TestWinch(t *testing.T) {
 		}
 
 		r = lab.Winch(t, dir, "apply", "site")
-		if r.Code != 5 || !strings.HasSuffix(r.Stdout, "To apply, run: winch apply site --yes\n") {
+		if r.Code != 5 || !strings.HasSuffix(r.Stdout, "To apply, run: winch apply site --check "+hashOf(t, r.Stdout)+"\n") {
 			t.Errorf("apply without a terminal: exit %d", r.Code)
 		}
 		if out := vm.MustRun(t, "cat /etc/motd"); out == "Managed by winch.\n" {
@@ -71,7 +71,7 @@ func TestWinch(t *testing.T) {
 		}
 
 		r = lab.Winch(t, dir, "plan", "site")
-		if r.Code != 0 || r.Stdout != "1 host: 0 to change, 1 unchanged, 0 unknown\n" {
+		if r.Code != 0 || !unchanged(r.Stdout, 1) {
 			t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 		}
 		r = lab.Winch(t, dir, "apply", "site")
@@ -111,7 +111,7 @@ func TestWinch(t *testing.T) {
 			t.Errorf("/srv/www is %q", out)
 		}
 		r = lab.Winch(t, dir, "plan", "site")
-		if r.Code != 0 || r.Stdout != "1 host: 0 to change, 1 unchanged, 0 unknown\n" {
+		if r.Code != 0 || !unchanged(r.Stdout, 1) {
 			t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 		}
 	})
@@ -256,7 +256,7 @@ func TestWinch(t *testing.T) {
 			t.Errorf("root logins and sudo calls of root: %q, want some logins and no sudo", out)
 		}
 		r = lab.Winch(t, dir, "plan", "site")
-		if r.Code != 0 || r.Stdout != "1 host: 0 to change, 1 unchanged, 0 unknown\n" {
+		if r.Code != 0 || !unchanged(r.Stdout, 1) {
 			t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 		}
 	})

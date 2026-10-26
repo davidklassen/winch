@@ -82,8 +82,12 @@ type Step struct {
 	Notify []*Handler
 	// Then is the command of then, after Eval.
 	Then string
-	// Shown is set after Eval when the step reads a secret.
+	// Shown is set after Eval when the output shows a part of the step as
+	// a secret.
 	Shown *Shown
+	// Secret is true after Eval when the evaluation of the step reads a
+	// secret.
+	Secret bool
 	// in is the recipe that holds the step, or nil in a stage.
 	in   *Recipe
 	args *value
@@ -805,12 +809,15 @@ func (st Step) eval(e *Env) ([]Step, error) {
 		}
 		s.Then = then
 		if variants {
-			s.Shown = st.shown(ie, s, args, thens)
+			s.Shown, s.Secret = st.shown(ie, s, args, thens)
 		}
 		out = append(out, s)
 	}
 	return out, nil
 }
+
+// Loops reports whether the step has loop.
+func (st Step) Loops() bool { return st.loop != nil }
 
 // items returns the elements of loop for e.
 func (st Step) items(e *Env) ([]any, error) {
@@ -880,10 +887,12 @@ func (st Step) instance(e *Env) (Step, any, error) {
 }
 
 // shown returns how the output shows s, the step for the real variant of e,
-// or nil when no part of it comes from a secret. real are the computed
+// or nil when no part of it comes from a secret. It also reports whether the
+// step reads a secret: a part comes from a secret, or a placeholder variant
+// fails. real are the computed
 // arguments of s, and thens the commands of then in the three variants. The
 // parts that come from a secret go to the filter.
-func (st Step) shown(e *Env, s Step, real any, thens [3]string) *Shown {
+func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 	mods := [3]module.Module{s.Args}
 	args := [3]any{real}
 	argsOK, contentOK := true, true
@@ -930,8 +939,9 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) *Shown {
 		}
 	}
 	e.learn(parts)
+	reads := !argsOK || !contentOK || slices.ContainsFunc(parts, func(p string) bool { return p != "" })
 	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Lines == nil && !sh.Hidden {
-		return nil
+		return nil, reads
 	}
-	return sh
+	return sh, reads
 }

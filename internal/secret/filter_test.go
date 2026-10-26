@@ -34,6 +34,7 @@ func TestFilter(t *testing.T) {
 		{"json backslash", []string{`dir\path-secret`}, `{"k": "dir\\path-secret"}`, `{"k": "(secret)"}`},
 		{"json tab", []string{"tab\there"}, `{"k": "tab\there"}`, `{"k": "(secret)"}`},
 		{"json html", []string{"a<b&c>d"}, `{"k": "a\u003cb\u0026c\u003ed"}`, `{"k": "(secret)"}`},
+		{"json of the printable form", []string{"a<b\x01cdef"}, `{"k": "a\u003cb?cdef"}`, `{"k": "(secret)"}`},
 		{"json non-ascii stays", []string{"Zürich-secret\x01"}, `{"k": "Zürich-secret\u0001"}`, `{"k": "(secret)"}`},
 		{"base64", []string{"topsecret"}, "data: dG9wc2VjcmV0", "data: (secret)"},
 		{"base64 with padding", []string{"hunter2"}, "data: aHVudGVyMg==", "data: (secret)=="},

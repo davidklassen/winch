@@ -1,0 +1,5 @@
+stdout:
+{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","message":"winch: plan needs one pipeline"}
+{"type":"summary","time":"2026-10-26T12:00:00Z","exit_code":3}
+stderr:

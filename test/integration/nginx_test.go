@@ -78,7 +78,7 @@ func TestNginx(t *testing.T) {
 	}
 
 	r = lab.Winch(t, dir, "plan", "site")
-	if r.Code != 0 || r.Stdout != "1 host: 0 to change, 1 unchanged, 0 unknown\n" {
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 }
@@ -115,7 +115,7 @@ func TestApplyChecksStagesWithoutChange(t *testing.T) {
 		t.Fatalf("apply: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 	r = lab.Winch(t, dir, "plan", "site")
-	if r.Code != 0 || r.Stdout != "1 host: 0 to change, 1 unchanged, 0 unknown\n" {
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 }

@@ -171,7 +171,7 @@ func TestHandlers(t *testing.T) {
 		}
 		starts("4")
 		r = lab.Winch(t, dir, "plan", "site", "--set", "vars.app_value=three")
-		if r.Code != 0 || r.Stdout != "2 hosts: 0 to change, 2 unchanged, 0 unknown\n" {
+		if r.Code != 0 || !unchanged(r.Stdout, 2) {
 			t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 		}
 	})
@@ -198,7 +198,7 @@ func TestHandlers(t *testing.T) {
 			t.Errorf("then ran %q times, want once", out)
 		}
 		r = lab.Winch(t, dir, append([]string{"plan", "site"}, set...)...)
-		if r.Code != 0 || r.Stdout != "2 hosts: 0 to change, 2 unchanged, 0 unknown\n" {
+		if r.Code != 0 || !unchanged(r.Stdout, 2) {
 			t.Errorf("third plan: exit %d, stdout %q", r.Code, r.Stdout)
 		}
 	})

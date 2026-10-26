@@ -26,5 +26,6 @@ web2
           +web2
 
 2 hosts: 1 to change, 0 unchanged, 0 unknown, 1 failed
+plan cd30b717
 stderr:
 web1: nginx: Site: file /etc/nginx/site: permission denied

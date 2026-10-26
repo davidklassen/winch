@@ -68,8 +68,8 @@ func TestSilentAddressFails(t *testing.T) {
 			if ctx.Err() != nil {
 				t.Fatal("winch did not end within a minute")
 			}
-			if exit, ok := errors.AsType[*exec.ExitError](err); !ok || exit.ExitCode() != 1 {
-				t.Errorf("exit = %v, want 1", err)
+			if exit, ok := errors.AsType[*exec.ExitError](err); !ok || exit.ExitCode() != 4 {
+				t.Errorf("exit = %v, want 4", err)
 			}
 			if !strings.Contains(string(out), host+":") || !strings.Contains(string(out), "timed out") {
 				t.Errorf("output does not name the host and the timeout")

@@ -1,0 +1,123 @@
+package run_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"slices"
+	"testing"
+
+	"github.com/davidklassen/winch/internal/fakehost"
+	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/run"
+	"github.com/davidklassen/winch/internal/vmtest"
+)
+
+func interruptProject(t *testing.T) *project.Project {
+	t.Helper()
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
+		"recipes/app/recipe.yaml": `steps:
+  - file:
+      path: /etc/a
+      content: "a\n"
+    then: echo a
+    notify: reload
+  - file:
+      path: /etc/b
+      content: "b\n"
+handlers:
+  reload:
+    - service:
+        name: app
+        reloaded: true
+`,
+	})
+	p, err := project.Load(dir, "", "site", nil, project.Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// spec: Running a pipeline/Apply (Ctrl-C)
+func TestApplyInterrupted(t *testing.T) {
+	p := interruptProject(t)
+	h := fakehost.New()
+	plan := run.MakePlan(context.Background(), p, h.Connector())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.OnApply = func(host, main string) {
+		if host == "web1" && main == "/etc/a" {
+			cancel()
+		}
+	}
+	var out, errOut bytes.Buffer
+	o := run.Apply(ctx, plan, h.Connector(), run.Text(&out, &errOut))
+	for _, host := range []string{"web1", "web2"} {
+		if !errors.Is(o.Failed[host], run.ErrInterrupted) {
+			t.Errorf("%s: error %v, want interrupted", host, o.Failed[host])
+		}
+	}
+	if c, _ := h.File("web1", "/etc/a"); c != "a\n" {
+		t.Error("the running step did not finish")
+	}
+	if !slices.Contains(h.Log["web1"], "command echo a") {
+		t.Errorf("the then of the running step did not run: %q", h.Log["web1"])
+	}
+	if _, ok := h.File("web1", "/etc/b"); ok {
+		t.Error("a new step started after the interrupt")
+	}
+	if _, ok := h.File("web2", "/etc/a"); ok || h.Connects["web2"] != 1 {
+		t.Errorf("a new host started after the interrupt: %d connects of web2, want 1 of the plan", h.Connects["web2"])
+	}
+	if got := h.PendingOf("web1"); !slices.Equal(got, []string{"app.reload"}) {
+		t.Errorf("pending handlers %q, want app.reload", got)
+	}
+	if h.Open != 0 {
+		t.Errorf("%d connections are still open", h.Open)
+	}
+	want := "web1: app: + file /etc/a\n\n2 hosts: 0 changed, 0 unchanged, 2 failed\n"
+	if out.String() != want || errOut.String() != "web1: interrupted\nweb2: interrupted\n" {
+		t.Errorf("stdout %q, stderr %q", out.String(), errOut.String())
+	}
+}
+
+// spec: Running a pipeline/Apply (Ctrl-C)
+func TestPlanInterrupted(t *testing.T) {
+	h := fakehost.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	plan := run.MakePlan(ctx, interruptProject(t), h.Connector())
+	for _, host := range []string{"web1", "web2"} {
+		if !errors.Is(plan.Failed[host], run.ErrInterrupted) {
+			t.Errorf("%s: error %v, want interrupted", host, plan.Failed[host])
+		}
+		if h.FactsReads[host] != 0 {
+			t.Errorf("%s: the plan contacted the host after the interrupt", host)
+		}
+	}
+}
+
+// spec: Running a pipeline/Apply (Ctrl-C)
+func TestPlanInterruptedBetweenChecks(t *testing.T) {
+	h := fakehost.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var checks []string
+	h.OnCheck = func(host, main string) {
+		checks = append(checks, host+" "+main)
+		cancel()
+	}
+	plan := run.MakePlan(ctx, interruptProject(t), h.Connector())
+	if !slices.Equal(checks, []string{"web1 /etc/a"}) {
+		t.Errorf("checks %q, want only the first", checks)
+	}
+	for _, host := range []string{"web1", "web2"} {
+		if !errors.Is(plan.Failed[host], run.ErrInterrupted) {
+			t.Errorf("%s: error %v, want interrupted", host, plan.Failed[host])
+		}
+	}
+}

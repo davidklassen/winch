@@ -18,4 +18,5 @@ web2
     - file /etc/issue
 
 3 hosts: 2 to change, 1 unchanged, 0 unknown
+plan 116a4dc0
 stderr:

@@ -24,7 +24,8 @@ func NewFilter() *Filter {
 }
 
 // Add adds a secret value: the value and each of its lines, in plain,
-// JSON-escaped, base64, and URL-encoded form, and as the output prints it. It skips text shorter than 4
+// JSON-escaped, base64, and URL-encoded form, and as the output prints it,
+// also JSON-escaped. It skips text shorter than 4
 // characters, and true and false.
 func (f *Filter) Add(value string) {
 	f.mu.Lock()
@@ -36,8 +37,10 @@ func (f *Filter) Add(value string) {
 		}
 		f.values[v] = true
 		f.values[Printable(v)] = true
-		j, _ := json.Marshal(v)
-		f.values[string(j[1:len(j)-1])] = true
+		for _, s := range []string{v, Printable(v)} {
+			j, _ := json.Marshal(s)
+			f.values[string(j[1:len(j)-1])] = true
+		}
 		f.values[base64.RawStdEncoding.EncodeToString([]byte(v))] = true
 		f.values[url.QueryEscape(v)] = true
 		f.values[url.PathEscape(v)] = true

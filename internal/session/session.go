@@ -23,6 +23,19 @@ import (
 
 const StateDir = "/var/lib/winch"
 
+// ErrUnreachable is the cause of a failed connect when ssh fails before the
+// script on the host starts: no route, a timeout, a host key, or a refused
+// login.
+var ErrUnreachable = errors.New("unreachable")
+
+// unreachable marks an error so that errors.Is finds ErrUnreachable. Its text
+// stays the same.
+type unreachable struct{ error }
+
+func (unreachable) Is(target error) bool { return target == ErrUnreachable }
+
+func (u unreachable) Unwrap() error { return u.error }
+
 type Config struct {
 	// Host is the inventory name and the ssh target. An Address that differs
 	// from it becomes the HostName.
@@ -140,7 +153,10 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 		args = append(args, "-l", cfg.User)
 	}
 	args = append(args, "--", cfg.Host, command(Script(cfg.Binaries, dir)))
-	cmd := exec.CommandContext(ctx, "ssh", args...)
+	// ssh keeps an ignored SIGINT ignored, so a Ctrl-C in the terminal reaches
+	// only winch. ssh stays in the terminal's process group and can still ask
+	// for a host key or a passphrase.
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, args...)...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, false, err
@@ -159,6 +175,9 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	line, err := s.stdout.ReadString('\n')
 	if err != nil {
 		err = s.fail(err)
+		if s.cmd.ProcessState.ExitCode() == 255 {
+			err = unreachable{err}
+		}
 		return nil, s.dropped(), err
 	}
 	if err := s.start(cfg, strings.TrimSpace(line)); err != nil {

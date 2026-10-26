@@ -1,0 +1,6 @@
+stdout:
+{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","file":"winch.yaml","line":3,"col":1,"message":"unknown key \"foo\""}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","file":"pipelines/site.yaml","line":8,"col":15,"message":"unexpected token Operator(\"\u0026\")","expr":"true \u0026\u0026\u0026 false","expr_col":8}
+{"type":"summary","time":"2026-10-26T12:00:00Z","exit_code":3}
+stderr:

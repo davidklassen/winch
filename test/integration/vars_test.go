@@ -83,7 +83,7 @@ steps:
 	}
 
 	r = lab.Winch(t, dir, "plan", "site")
-	if r.Code != 0 || r.Stdout != "2 hosts: 0 to change, 2 unchanged, 0 unknown\n" {
+	if r.Code != 0 || !unchanged(r.Stdout, 2) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 }
