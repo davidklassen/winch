@@ -2,9 +2,11 @@ package vmtest
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -86,7 +88,33 @@ func (l *Lab) WinchEnv(t *testing.T, dir string, env []string, args ...string) R
 		t.Fatal(err)
 	}
 	t.Logf("winch %s: exit %d\nstdout:\n%s\nstderr:\n%s%s", strings.Join(args, " "), r.Code, r.Stdout, r.Stderr, l.hint(r.Stdout+r.Stderr))
+	failOnWarnings(t, args, r)
 	return r
+}
+
+func failOnWarnings(t interface{ Errorf(string, ...any) }, args []string, r Result) {
+	for _, w := range warnings(r.Stdout, r.Stderr) {
+		t.Errorf("winch %s: unexpected warning: %s", strings.Join(args, " "), w)
+	}
+}
+
+var textWarning = regexp.MustCompile(`^.*:\d+:\d+: warning: `)
+
+// warnings returns the warnings of winch in its output.
+func warnings(stdout, stderr string) []string {
+	var out []string
+	for line := range strings.Lines(stderr) {
+		if textWarning.MatchString(line) {
+			out = append(out, strings.TrimSuffix(line, "\n"))
+		}
+	}
+	for line := range strings.Lines(stdout) {
+		var ev struct{ Type, Severity string }
+		if json.Unmarshal([]byte(line), &ev) == nil && ev.Type == "diagnostic" && ev.Severity == "warning" {
+			out = append(out, strings.TrimSuffix(line, "\n"))
+		}
+	}
+	return out
 }
 
 // Session opens a helper session to the VM as admin. The lab's PATH must be

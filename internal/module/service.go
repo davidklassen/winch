@@ -73,7 +73,10 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
-	u := parseShow(out)
+	u, err := parseShow(out)
+	if err != nil {
+		return Result{}, fmt.Errorf("systemctl show %s: %w", s.Name, err)
+	}
 	if u.id != s.Name && u.id != s.Name+".service" {
 		return Result{}, fmt.Errorf("%s is an alias of %s; use %s", s.Name, u.id, strings.TrimSuffix(u.id, ".service"))
 	}
@@ -268,10 +271,18 @@ type unitState struct {
 	reload, oneshot, remain                        bool
 }
 
-func parseShow(out string) unitState {
+func parseShow(out string) (unitState, error) {
 	var u unitState
-	for line := range strings.SplitSeq(out, "\n") {
-		k, v, _ := strings.Cut(line, "=")
+	if out == "" {
+		return u, errors.New("no output")
+	}
+	seen := map[string]bool{}
+	for line := range strings.SplitSeq(strings.TrimSuffix(out, "\n"), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			return u, fmt.Errorf("unexpected line %q", line)
+		}
+		seen[k] = true
 		switch k {
 		case "Id":
 			u.id = v
@@ -295,5 +306,10 @@ func parseShow(out string) unitState {
 			u.remain = v == "yes"
 		}
 	}
-	return u
+	for _, k := range []string{"Id", "LoadState", "ActiveState"} {
+		if !seen[k] {
+			return u, fmt.Errorf("no %s line", k)
+		}
+	}
+	return u, nil
 }

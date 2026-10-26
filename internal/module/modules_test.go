@@ -170,7 +170,10 @@ func TestParseDpkg(t *testing.T) {
 		"nginx\tamd64\tiF \t1.26.3-3\nlibbar\tall\tii \t2\nlibbar\tamd64\tiU \t3\n" +
 		"libz\tamd64\trc \t1\nlibz\ti386\tii \t1\nwine32\ti386\tii \t9\nlibheld\tamd64\tii \t1\nlibheld\ti386\thi \t1\nlibhalf\ti386\tiF \t4\n" +
 		"heldnone\t\thn \t\n"
-	got := parseDpkg(out, "amd64")
+	got, err := parseDpkg(out, "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := map[string]dpkgPkg{"bash": {state: installed}, "exim4": {state: configFiles},
 		"held": {state: installed, held: true}, "heldrc": {state: configFiles, held: true}, "purged": {state: notInstalled},
 		"libc6": {state: installed}, "libfoo": {state: installed}, "held2": {state: installed, held: true},
@@ -191,7 +194,7 @@ func TestParseDpkg(t *testing.T) {
 
 // spec: Modules/pkg
 func TestOthersHalfDone(t *testing.T) {
-	pkgs := parseDpkg("bash\tamd64\tii \t5.2\nnginx\tamd64\tiF \t1.26\nlibfoo\tall\tiU \t1\nlibbar\tamd64\tiHR\t1\nlibbaz\tamd64\tit \t1\nlibqux\tamd64\tiW \t1\n", "amd64")
+	pkgs, _ := parseDpkg("bash\tamd64\tii \t5.2\nnginx\tamd64\tiF \t1.26\nlibfoo\tall\tiU \t1\nlibbar\tamd64\tiHR\t1\nlibbaz\tamd64\tit \t1\nlibqux\tamd64\tiW \t1\n", "amd64")
 	tests := []struct {
 		name  string
 		names []string
@@ -222,7 +225,7 @@ func TestOthersHalfDone(t *testing.T) {
 
 // spec: Modules/pkg
 func TestOthersHalfDoneNamesTheArchitecture(t *testing.T) {
-	pkgs := parseDpkg("libc6\tamd64\tii \t2.41\nlibc6\ti386\tiH \t2.41\n", "amd64")
+	pkgs, _ := parseDpkg("libc6\tamd64\tii \t2.41\nlibc6\ti386\tiH \t2.41\n", "amd64")
 	err := othersHalfDone(pkgs, []string{"libc6"})
 	want := "libc6:i386 is half installed: its installation failed; fix the cause, then run apt-get install --reinstall libc6:i386"
 	if err == nil || err.Error() != want {
@@ -232,10 +235,43 @@ func TestOthersHalfDoneNamesTheArchitecture(t *testing.T) {
 
 // spec: Modules/service and unit
 func TestParseShow(t *testing.T) {
-	got := parseShow("Id=nginx.service\nLoadState=loaded\nActiveState=activating\nSubState=auto-restart\nUnitFileState=enabled\nNeedDaemonReload=yes\n")
+	got, err := parseShow("Id=nginx.service\nLoadState=loaded\nActiveState=activating\nSubState=auto-restart\nUnitFileState=enabled\nNeedDaemonReload=yes\nDropInPaths=\n")
 	want := unitState{id: "nginx.service", load: "loaded", active: "activating", sub: "auto-restart", file: "enabled", reload: true}
-	if got != want {
-		t.Errorf("got %+v, want %+v", got, want)
+	if got != want || err != nil {
+		t.Errorf("got %+v, %v; want %+v", got, err, want)
+	}
+}
+
+// spec: Modules/service and unit
+func TestParseShowBadOutput(t *testing.T) {
+	for _, tc := range []struct{ name, out, want string }{
+		{"empty", "", "no output"},
+		{"junk line", "Id=nginx.service\nLoadState=loaded\nActiveState=active\nFailed to get properties: Access denied\n", `unexpected line "Failed to get properties: Access denied"`},
+		{"no Id", "LoadState=loaded\nActiveState=active\n", "no Id line"},
+		{"no LoadState", "Id=nginx.service\nActiveState=active\n", "no LoadState line"},
+		{"no ActiveState", "Id=nginx.service\nLoadState=loaded\n", "no ActiveState line"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := parseShow(tc.out); err == nil || err.Error() != tc.want {
+				t.Errorf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// spec: Modules/pkg
+func TestParseDpkgBadOutput(t *testing.T) {
+	for _, tc := range []struct{ name, out, want string }{
+		{"empty", "", "no packages in the output"},
+		{"junk line", "bash\tamd64\tii \t5.2\ndpkg-query: warning: something\n", `unexpected line "dpkg-query: warning: something"`},
+		{"no version", "bash\tamd64\tii \t5.2\nnginx\tamd64\tii \n", `unexpected line "nginx\tamd64\tii "`},
+		{"short status", "bash\tamd64\ti\t5.2\n", `unexpected line "bash\tamd64\ti\t5.2"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := parseDpkg(tc.out, "amd64"); err == nil || err.Error() != tc.want {
+				t.Errorf("err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

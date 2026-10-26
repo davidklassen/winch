@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
+	"github.com/davidklassen/winch/internal/yamlx"
 )
 
 type client struct {
@@ -427,26 +429,6 @@ func TestPendingStaysInTheStateDirectory(t *testing.T) {
 	}
 }
 
-// spec: Steps; Remote execution/State on the host
-func TestDamagedThenRecord(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "then"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(dir, "then", "acme")
-	if err := os.WriteFile(file, []byte("{\"recipe\":\"a\",\"sha256\":\"1f\"}\n\n{\"recipe\":\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c := start(t, dir, "")
-	h := hello("r1")
-	h.Project = "acme"
-	c.call(t, "hello", h)
-	want := "read the pending then records: " + file + ":3: unexpected end of JSON input"
-	if r := c.call(t, "pending", nil); r.Error != want {
-		t.Errorf("pending error = %q, want %q", r.Error, want)
-	}
-}
-
 // spec: Handlers; Remote execution/State on the host
 func TestEmptyLinesInRecords(t *testing.T) {
 	dir := t.TempDir()
@@ -468,5 +450,94 @@ func TestEmptyLinesInRecords(t *testing.T) {
 	}
 	if want := []protocol.Then{{Recipe: "a", SHA256: "1f"}}; !slices.Equal(p.Then, want) {
 		t.Errorf("then = %v, want %v", p.Then, want)
+	}
+}
+
+// spec: Handlers; Steps; Remote execution/State on the host
+func TestDamagedState(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, dir string)
+		want  string
+	}{
+		{"truncated then record", func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "then", "acme"), "{\"recipe\":\"a\",\"sha256\":\"1f\"}\n\n{\"recipe\":\n")
+		}, "read the pending then records: DIR/then/acme:3: unexpected end of JSON input"},
+		{"then line that is not JSON", func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "then", "acme"), "postmap /etc/postfix/virtual\n")
+		}, "read the pending then records: DIR/then/acme:1: invalid character 'p' looking for beginning of value"},
+		{"directory in place of the handlers", func(t *testing.T, dir string) {
+			mkdir(t, filepath.Join(dir, "handlers", "acme"))
+		}, "read the pending handlers: read DIR/handlers/acme: is a directory"},
+		{"directory in place of the then records", func(t *testing.T, dir string) {
+			mkdir(t, filepath.Join(dir, "then", "acme"))
+		}, "read the pending then records: read DIR/then/acme: is a directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, dir)
+			c := start(t, dir, "")
+			h := hello("r1")
+			h.Project = "acme"
+			if r := c.call(t, "hello", h); r.Error != "" {
+				t.Fatal(r.Error)
+			}
+			want := strings.ReplaceAll(tc.want, "DIR", dir)
+			if r := c.call(t, "pending", nil); r.Error != want {
+				t.Errorf("pending error = %q, want %q", r.Error, want)
+			}
+		})
+	}
+}
+
+// spec: Remote execution/Helper
+func TestEmptyLockFile(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "lock"), "")
+	c := start(t, dir, "")
+	if r := c.call(t, "hello", hello("r1")); r.Error != "" {
+		t.Fatalf("hello with an empty lock file: %s", r.Error)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec lockRecord
+	if err := json.Unmarshal(data, &rec); err != nil || rec.Run != "r1" || rec.PID != os.Getpid() {
+		t.Errorf("lock file = %q, %v; want the record of run r1", data, err)
+	}
+}
+
+// spec: Handlers; Steps
+func TestRecordsBeforeApply(t *testing.T) {
+	dir := t.TempDir()
+	c := start(t, dir, "")
+	h := hello("r1")
+	h.Project = "acme"
+	if r := c.call(t, "hello", h); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	// The validate command runs inside Apply and sees the records.
+	validate := "grep -qxF nginx.reload '" + filepath.Join(dir, "handlers", "acme") + "' && grep -qF '\"sha256\":\"1f\"' '" + filepath.Join(dir, "then", "acme") + "'"
+	uid, gid := yamlx.NameOrID(strconv.Itoa(os.Getuid())), yamlx.NameOrID(strconv.Itoa(os.Getgid()))
+	args, _ := json.Marshal(module.File{Path: filepath.Join(t.TempDir(), "f"), Data: []byte("x\n"), Owner: uid, Group: gid, Validation: &validate})
+	r := c.call(t, "apply", protocol.Step{Module: "file", Args: args, Notify: []string{"nginx.reload"}, Then: &protocol.Then{Recipe: "nginx", SHA256: "1f"}})
+	if r.Error != "" {
+		t.Errorf("apply: %s", r.Error)
+	}
+}
+
+func write(t *testing.T, name, data string) {
+	t.Helper()
+	mkdir(t, filepath.Dir(name))
+	if err := os.WriteFile(name, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mkdir(t *testing.T, name string) {
+	t.Helper()
+	if err := os.MkdirAll(name, 0o700); err != nil {
+		t.Fatal(err)
 	}
 }

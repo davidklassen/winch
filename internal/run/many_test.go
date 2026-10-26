@@ -23,10 +23,18 @@ import (
 func manyProject(t *testing.T, stages string) *project.Project {
 	t.Helper()
 	p, err := project.Load(t.Context(), vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n  web3: {}\n",
-		"pipelines/site.yaml":   "stages:\n" + stages,
-		"recipes/app/recipe.yaml": `steps:
+		"winch.yaml":              "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml":   "hosts:\n  web1: {}\n  web2: {}\n  web3: {}\n",
+		"pipelines/site.yaml":     "stages:\n" + stages,
+		"recipes/app/recipe.yaml": manyRecipe,
+	}), "", "site", nil, project.Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+const manyRecipe = `steps:
   - file:
       path: /etc/app.conf
       content: "app\n"
@@ -36,13 +44,7 @@ handlers:
     - service:
         name: app
         reloaded: true
-`,
-	}), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
-}
+`
 
 const motdStage = `  - name: base
     hosts: all
@@ -601,4 +603,52 @@ func TestPlanStagesInOrder(t *testing.T) {
 			t.Errorf("a host checked the next stage before every host finished the first: %q", checks)
 		}
 	})
+}
+
+// spec: Running a pipeline/Plan; CLI/Output; CLI/JSON output
+func TestPlanIndependentOfFinishOrder(t *testing.T) {
+	hosts := []string{"web1", "web2", "web3", "web4", "web5"}
+	type planOut struct{ text, hash, json string }
+	plan := func(order []string) planOut {
+		var o planOut
+		synctest.Test(t, func(t *testing.T) {
+			p, err := project.Load(t.Context(), vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n  web3: {}\n  web4: {}\n  web5: {}\n",
+				"pipelines/site.yaml": "stages:\n" + motdStage + `  - name: app
+    hosts: all
+    steps:
+      - recipe: app
+`,
+				"recipes/app/recipe.yaml": manyRecipe,
+			}), "", "site", nil, project.Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := fakehost.New()
+			h.SetFile("web1", "/etc/motd", "old\n")
+			h.SetFile("web5", "/etc/motd", "hi\n")
+			h.SetFile("web5", "/etc/app.conf", "app\n")
+			h.SetFile("web3", "/etc/app.conf", "app\n")
+			h.SetPending("web3", "app.reload")
+			h.FailCheck("web2")
+			h.FailCheck("web4 /etc/app.conf")
+			// The host at index i of order finishes each check i seconds late.
+			h.OnCheck = func(host, _ string) {
+				time.Sleep(time.Duration(slices.Index(order, host)) * time.Second)
+			}
+			pl := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+			var out, errOut, js bytes.Buffer
+			pl.Write(&out, &errOut)
+			pl.WriteJSON(run.NewEvents(&js, func() time.Time { return time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC) }))
+			o = planOut{string(output(&out, &errOut)), pl.Hash(), js.String()}
+		})
+		return o
+	}
+	first := plan(hosts)
+	last := plan([]string{"web5", "web4", "web3", "web2", "web1"})
+	if first != last {
+		t.Errorf("reversed finish order:\n%+v\nwant\n%+v", last, first)
+	}
+	golden.Assert(t, filepath.Join("testdata", "plan", "finish-order.golden"), []byte(first.text+"json:\n"+first.json))
 }

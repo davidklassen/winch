@@ -208,7 +208,7 @@ func parseShowpkg(out string) (providers map[string][]string, foreign map[string
 			hasVersion = true
 		// A step names packages of the native architecture, which have no
 		// :arch suffix.
-		case section == "Reverse Provides:" && !hasVersion && !strings.Contains(f[0], ":"):
+		case name != "" && section == "Reverse Provides:" && !hasVersion && !strings.Contains(f[0], ":"):
 			providers[name] = append(providers[name], f[0])
 		}
 	}
@@ -367,7 +367,11 @@ func readDpkg(ctx context.Context, note func(string)) (map[string]dpkgPkg, error
 	if err != nil {
 		return nil, err
 	}
-	return parseDpkg(out, strings.TrimSpace(native)), nil
+	pkgs, err := parseDpkg(out, strings.TrimSpace(native))
+	if err != nil {
+		return nil, fmt.Errorf("dpkg-query: %w", err)
+	}
+	return pkgs, nil
 }
 
 // othersHalfDone fails on each half-done package that names does not hold.
@@ -453,12 +457,15 @@ func lockFiles(ctx context.Context, names []string, note func(string)) (unlock f
 // parseDpkg reads lines of a package name, its architecture, its status
 // abbreviation, such as "ii " or "hi ", and its version. The first letter is
 // the selection, the second the state of the package.
-func parseDpkg(out, native string) map[string]dpkgPkg {
+func parseDpkg(out, native string) (map[string]dpkgPkg, error) {
+	if out == "" {
+		return nil, errors.New("no packages in the output")
+	}
 	pkgs := map[string]dpkgPkg{}
-	for line := range strings.SplitSeq(out, "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(out, "\n"), "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) != 4 || len(f[2]) < 2 {
-			continue
+		if len(f) != 4 || len(f[2]) != 3 {
+			return nil, fmt.Errorf("unexpected line %q", line)
 		}
 		name, abbrev, version := f[0], f[2], f[3]
 		// A step names packages of the native architecture or all. A foreign
@@ -485,5 +492,5 @@ func parseDpkg(out, native string) map[string]dpkgPkg {
 		}
 		pkgs[name] = pkg
 	}
-	return pkgs
+	return pkgs, nil
 }

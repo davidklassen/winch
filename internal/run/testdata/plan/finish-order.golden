@@ -1,0 +1,44 @@
+stdout:
+web1
+  base
+    ~ file /etc/motd
+        @@ -1,1 +1,1 @@
+        -old
+        +hi
+  app
+    app
+      + file /etc/app.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +app
+      ! handler app.reload
+
+web3
+  base
+    + file /etc/motd
+        owner root, group root, mode 0644
+        @@ -0,0 +1,1 @@
+        +hi
+  app
+    app
+      ! handler app.reload
+
+5 hosts: 2 to change, 1 unchanged, 0 unknown, 2 failed
+plan db451c8dbc9e1742
+stderr:
+web2: base: file /etc/motd: permission denied
+web4: app: file /etc/app.conf: permission denied
+json:
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"change","diff":["@@ -1,1 +1,1 @@","-old","+hi"]}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:app#1","stage":"app","recipe":"app","step":"file /etc/app.conf","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+app"]}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:app.reload","stage":"app","recipe":"app","handler":"app.reload","status":"change"}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web3","address":"web3:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hi"]}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web3","address":"web3:app#1","stage":"app","recipe":"app","step":"file /etc/app.conf","module":"file","status":"ok"}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web3","address":"web3:app.reload","stage":"app","recipe":"app","handler":"app.reload","status":"change"}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web5","address":"web5:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"ok"}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web5","address":"web5:app#1","stage":"app","recipe":"app","step":"file /etc/app.conf","module":"file","status":"ok"}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"change"}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web2","status":"failed","error":"base: file /etc/motd: permission denied"}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web3","status":"change"}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web4","status":"failed","error":"app: file /etc/app.conf: permission denied"}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web5","status":"ok"}

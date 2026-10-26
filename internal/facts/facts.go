@@ -25,19 +25,24 @@ type OS struct {
 func Read(paths ...string) (Facts, error) {
 	var data []byte
 	var err error
-	for _, p := range paths {
-		if data, err = os.ReadFile(p); !errors.Is(err, fs.ErrNotExist) {
+	var path string
+	for _, path = range paths {
+		if data, err = os.ReadFile(path); !errors.Is(err, fs.ErrNotExist) {
 			break
 		}
 	}
 	if err != nil {
 		return Facts{}, fmt.Errorf("read facts: %w", err)
 	}
-	return Parse(data), nil
+	f, err := Parse(data)
+	if err != nil {
+		return Facts{}, fmt.Errorf("read facts: %s: %w", path, err)
+	}
+	return f, nil
 }
 
 // Parse reads the facts from the text of /etc/os-release.
-func Parse(data []byte) Facts {
+func Parse(data []byte) (Facts, error) {
 	var f Facts
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	for sc.Scan() {
@@ -54,7 +59,10 @@ func Parse(data []byte) Facts {
 			f.OS.Codename = unquote(value)
 		}
 	}
-	return f
+	if f.OS.ID == "" {
+		return Facts{}, errors.New("no ID line")
+	}
+	return f, nil
 }
 
 // unquote removes the shell quotes of an os-release value.

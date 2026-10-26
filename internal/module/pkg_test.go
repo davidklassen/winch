@@ -97,3 +97,21 @@ func TestParseShowpkgForeign(t *testing.T) {
 		t.Errorf("foreign = %q, want %q", foreign, want)
 	}
 }
+
+// apt-cache showpkg prints nothing for a name that apt does not know, so bad
+// output gives no providers and the install fails at apply.
+// spec: Modules/pkg
+func TestParseShowpkgBadOutput(t *testing.T) {
+	for _, tc := range []struct{ name, out string }{
+		{"empty", ""},
+		{"junk lines", "\x00garbage\nW: something\n\n"},
+		{"no Package line", "Versions: \nReverse Provides: \nlibssl3t64 3.5.1-1 (= )\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			providers, foreign := parseShowpkg(tc.out)
+			if len(providers) != 0 || len(foreign) != 0 {
+				t.Errorf("providers = %q, foreign = %q; want none", providers, foreign)
+			}
+		})
+	}
+}

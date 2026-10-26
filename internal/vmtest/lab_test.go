@@ -1,8 +1,10 @@
 package vmtest
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -240,5 +242,43 @@ func TestFromEnvOnline(t *testing.T) {
 				t.Errorf("ONLINE=%q: online %v, %v; want %v", c.value, cfg.Online, err, c.online)
 			}
 		})
+	}
+}
+
+// spec: roadmap: Testing/VMs
+func TestWarnings(t *testing.T) {
+	for _, c := range []struct {
+		name, stdout, stderr string
+		want                 []string
+	}{
+		{name: "none", stdout: "web1\n  base\n", stderr: "web1: base: file /etc/motd: permission denied\n"},
+		{name: "text", stderr: "connecting\ninventories/test.yaml:4:14: warning: this looks like a GitHub token; use !secret\n",
+			want: []string{"inventories/test.yaml:4:14: warning: this looks like a GitHub token; use !secret"}},
+		{name: "JSON", stdout: `{"type":"version","version":1}` + "\n" + `{"type":"diagnostic","severity":"warning","file":"pipelines/site.yml","line":1,"col":1,"message":"winch reads only .yaml"}` + "\n",
+			want: []string{`{"type":"diagnostic","severity":"warning","file":"pipelines/site.yml","line":1,"col":1,"message":"winch reads only .yaml"}`}},
+		{name: "file name with a space", stderr: "inventories/my hosts.yaml:4:14: warning: x\n", want: []string{"inventories/my hosts.yaml:4:14: warning: x"}},
+		{name: "no file", stderr: ":0:0: warning: x\n", want: []string{":0:0: warning: x"}},
+		{name: "JSON error", stdout: `{"type":"diagnostic","severity":"error","message":"x"}` + "\n"},
+		{name: "host output", stdout: "        +warning: x\n", stderr: "web1: apt-get install: W: warning: y\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := warnings(c.stdout, c.stderr)
+			if !slices.Equal(got, c.want) {
+				t.Errorf("warnings = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+type errLog []string
+
+func (e *errLog) Errorf(format string, args ...any) { *e = append(*e, fmt.Sprintf(format, args...)) }
+
+// spec: roadmap: Testing/VMs
+func TestFailOnWarnings(t *testing.T) {
+	var got errLog
+	failOnWarnings(&got, []string{"plan", "site"}, Result{Stderr: "inventories/test.yaml:4:14: warning: x\n"})
+	if want := (errLog{"winch plan site: unexpected warning: inventories/test.yaml:4:14: warning: x"}); !slices.Equal(got, want) {
+		t.Errorf("errors = %q, want %q", got, want)
 	}
 }

@@ -51,6 +51,8 @@ func TestPkgModule(t *testing.T) {
 	// localOnly refreshes only the index of the test source.
 	const localOnly = "apt-get update -q -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/winch-test.sources -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 >/dev/null"
 	const localArmhf = "dpkg --add-architecture armhf && " + localOnly
+	// fragileV1 installs version 1 of winch-fragile while the index has version 2.
+	const fragileV1 = "touch /etc/winch-fragile.ok && dpkg -i /root/winch-fragile.deb >/dev/null && " + localOnly + " && apt-cache policy winch-fragile | grep -q 'Candidate: 2'"
 	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /var/lib/apt/lists/10.0.2.100_test_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --purge winch-mta-c:armhf >/dev/null 2>&1; dpkg --remove-architecture armhf 2>/dev/null; " +
 		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-fragile winch-conflict hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
@@ -228,6 +230,20 @@ func TestPkgModule(t *testing.T) {
 			WantState:   module.State{IndexFresh: true},
 			BeforeApply: "touch /etc/winch-fragile.ok",
 			After:       "[ \"$(dpkg-query -W -f='${db:Status-Abbrev}${Version}' winch-fragile)\" = 'ii 1' ]",
+		},
+		{
+			Name:  "an installed package is ok while the index has a newer version",
+			Setup: fragileV1,
+			Args:  &module.Pkg{Name: []string{"winch-fragile"}},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:      "a list with a missing package keeps the installed version of the others",
+			Setup:     fragileV1,
+			Args:      &module.Pkg{Name: []string{"winch-fragile", "hello"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello"}},
+			WantState: module.State{IndexFresh: true},
+			After:     "[ \"$(dpkg-query -W -f='${db:Status-Abbrev}${Version}' winch-fragile)\" = 'ii 1' ] && dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii'",
 		},
 		{
 			Name:         "an install that would remove a conflicting package fails",
