@@ -116,8 +116,8 @@ func TestTimeLimitEndsWhenTheCommandStops(t *testing.T) {
 			t.Parallel()
 			start := time.Now()
 			err := tt.run(t.Context(), "sleep 30 & wait")
-			if err == nil || !strings.Contains(err.Error(), "no result after 1s") {
-				t.Fatalf("error = %v, want the time limit", err)
+			if err == nil || !strings.HasSuffix(err.Error(), ": no result after 1s") {
+				t.Fatalf("error = %v, want it to end at the time limit", err)
 			}
 			if d := time.Since(start); d >= time.Second+killDelay {
 				t.Errorf("returned after %s, want before the kill delay ends", d)
@@ -141,21 +141,52 @@ func TestTailBuffer(t *testing.T) {
 // spec: Modules
 func TestTimeLimitAfterExit(t *testing.T) {
 	t.Parallel()
-	// The command exits before the limit, but its background child keeps the
-	// output open past the limit.
-	command := "sleep 3 & echo done"
-	t.Run("module command", func(t *testing.T) {
-		t.Parallel()
-		if _, err := runLimited(t.Context(), time.Second, 2*time.Second, nil, "", "sh", "-c", command); err != nil && strings.Contains(err.Error(), "no result") {
-			t.Errorf("error = %v, want no time limit", err)
-		}
-	})
-	t.Run("project command", func(t *testing.T) {
-		t.Parallel()
-		if err := ShellLimit(t.Context(), command, time.Second, 2*time.Second); err != nil {
-			t.Errorf("error = %v, want nil", err)
-		}
-	})
+	for _, tt := range limitRunners(2 * time.Second) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// The command exits before the limit, but its background child keeps
+			// the output open past the limit and the kill delay.
+			if err := tt.run(t.Context(), "sleep 4 & echo done"); err != nil {
+				t.Errorf("error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// spec: Modules
+func TestFailureWhileAChildKeepsTheOutputOpen(t *testing.T) {
+	t.Parallel()
+	for _, tt := range limitRunners(time.Second) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if err := tt.run(t.Context(), "sleep 3 & exit 1"); err == nil || !strings.HasSuffix(err.Error(), ": exit status 1") {
+				t.Errorf("error = %v, want the exit status", err)
+			}
+		})
+	}
+}
+
+func TestRunOutputWhileAChildKeepsItOpen(t *testing.T) {
+	t.Parallel()
+	out, err := runLimited(t.Context(), commandLimit, time.Second, nil, "", "sh", "-c", "sleep 3 & echo done")
+	if err != nil || out != "done\n" {
+		t.Errorf("run = %q, %v, want done", out, err)
+	}
+}
+
+// spec: Modules
+func TestFailureWithoutOutput(t *testing.T) {
+	t.Parallel()
+	for _, tt := range limitRunners(time.Second) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			for _, command := range []string{"exit 2", "echo; exit 2"} {
+				if err := tt.run(t.Context(), command); err == nil || !strings.HasSuffix(err.Error(), ": exit status 2") {
+					t.Errorf("%s: error = %v, want it to end at the exit status", command, err)
+				}
+			}
+		})
+	}
 }
 
 // spec: Modules

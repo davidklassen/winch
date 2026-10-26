@@ -49,14 +49,18 @@ func runLimited(ctx context.Context, limit, killDelay time.Duration, env []strin
 		if len(args) > 0 {
 			what += " " + args[0]
 		}
-		return stdout.String(), fmt.Errorf("%s: %w: %s", what, err, tail(stdout.String()+stderr.String(), 10))
+		return stdout.String(), failure(what, err, stdout.String()+stderr.String())
 	}
 	return stdout.String(), nil
 }
 
-func tail(s string, n int) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	return strings.Join(lines[max(0, len(lines)-n):], "\n")
+func failure(what string, err error, out string) error {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	lines := strings.Split(out, "\n")
+	return fmt.Errorf("%s: %w: %s", what, err, strings.Join(lines[max(0, len(lines)-10):], "\n"))
 }
 
 // Shell runs a command of the project through sh -c, in / and with stdin
@@ -75,16 +79,10 @@ func ShellLimit(ctx context.Context, command string, limit, killDelay time.Durat
 	// The error shows only the end of the output.
 	out := &tailBuffer{max: 64 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
-	err := wait(ctx, cmd, killDelay)
-	switch {
-	// A daemon that the command starts can keep the output open; the command
-	// itself succeeded.
-	case err == nil, errors.Is(err, exec.ErrWaitDelay):
-		return nil
-	case len(out.b) == 0:
-		return fmt.Errorf("%s: %w", command, err)
+	if err := wait(ctx, cmd, killDelay); err != nil {
+		return failure(command, err, string(out.b))
 	}
-	return fmt.Errorf("%s: %w: %s", command, err, tail(string(out.b), 10))
+	return nil
 }
 
 // wait runs cmd in its own process group. When ctx ends, the group gets
@@ -108,6 +106,10 @@ func wait(ctx context.Context, cmd *exec.Cmd, killDelay time.Duration) error {
 	err := cmd.Run()
 	if stopped {
 		return context.Cause(ctx)
+	}
+	// The command itself succeeded.
+	if errors.Is(err, exec.ErrWaitDelay) {
+		return nil
 	}
 	return err
 }
