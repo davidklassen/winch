@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,31 +25,67 @@ func fakeHelper(arch string) helperbin.Binary {
 	return helperbin.New(arch, []byte("#!/bin/sh\nread line\necho '{\"id\":1,\"error\":\"ran "+arch+"\"}'\n"))
 }
 
-// fakeBin puts fake ssh, uname, id, and sudo first in PATH. ssh sends itself
-// SIGINT when $SSH_INT is set. It writes its
-// arguments to $SSH_ARGS when it is set, prints $SSH_BANNER and the output of
+// stateDir is the state directory that the tests share, so that each helper
+// is sent and checked only once.
+var stateDir string
+
+func TestMain(m *testing.M) {
+	os.Exit(run(m))
+}
+
+func run(m *testing.M) int {
+	root, err := os.MkdirTemp("", "winch-session")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer os.RemoveAll(root)
+	stateDir = filepath.Join(root, "state")
+	if err := fakeSSH(filepath.Join(root, "bin")); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return m.Run()
+}
+
+// fakeSSH puts fake ssh, uname, id, and sudo in bin, and bin first in PATH.
+// The tests share them: macOS checks each new executable file on its first
+// run, and that takes up to half a second.
+//
+// ssh sends itself SIGINT when $SSH_INT is set. It writes its arguments to
+// $SSH_ARGS when it is set, prints $SSH_BANNER and the output of
 // $SSH_BANNER_CMD when they are set, and runs its last argument with sh, on
-// this machine. When $SSH_FAIL_ONCE is a missing file, ssh creates it
-// and fails once: it prints $SSH_FAIL_OUT on stdout when it is set, prints
+// this machine. When $SSH_FAIL_ONCE is a missing file, ssh creates it and
+// fails once: it prints $SSH_FAIL_OUT on stdout when it is set, prints
 // $SSH_FAIL_ERR on stderr, and exits with $SSH_FAIL_CODE. A later start
-// creates $SSH_FAIL_ONCE.again.
-func fakeBin(t *testing.T, arch, uid, sudo string) {
-	t.Helper()
-	bin := t.TempDir()
+// creates $SSH_FAIL_ONCE.again. uname prints $FAKE_UNAME, id prints
+// $FAKE_UID, and sudo runs the script $FAKE_SUDO with its arguments.
+func fakeSSH(bin string) error {
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		return err
+	}
 	scripts := map[string]string{
 		"ssh": "#!/bin/sh\n[ -z \"$SSH_INT\" ] || kill -INT $$\n[ -z \"$SSH_FAIL_ONCE\" ] || [ ! -e \"$SSH_FAIL_ONCE\" ] || : > \"$SSH_FAIL_ONCE.again\"\n" +
 			"if [ -n \"$SSH_FAIL_ONCE\" ] && [ ! -e \"$SSH_FAIL_ONCE\" ]; then : > \"$SSH_FAIL_ONCE\"; [ -z \"$SSH_FAIL_OUT\" ] || printf '%s\\n' \"$SSH_FAIL_OUT\"; printf '%s\\n' \"$SSH_FAIL_ERR\" >&2; exit \"$SSH_FAIL_CODE\"; fi\n" +
 			"[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
-		"uname": "#!/bin/sh\necho " + arch + "\n",
-		"id":    "#!/bin/sh\necho " + uid + "\n",
-		"sudo":  sudo,
+		"uname": "#!/bin/sh\necho \"$FAKE_UNAME\"\n",
+		"id":    "#!/bin/sh\necho \"$FAKE_UID\"\n",
+		"sudo":  "#!/bin/sh\nexec sh -c \"$FAKE_SUDO\" sudo \"$@\"\n",
 	}
 	for name, s := range scripts {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(s), 0o755); err != nil {
-			t.Fatal(err)
+			return err
 		}
 	}
-	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	return os.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+}
+
+// fakeBin sets what the fake uname, id, and sudo do.
+func fakeBin(t *testing.T, arch, uid, sudo string) {
+	t.Helper()
+	t.Setenv("FAKE_UNAME", arch)
+	t.Setenv("FAKE_UID", uid)
+	t.Setenv("FAKE_SUDO", sudo)
 }
 
 // goodSudo creates the file $SUDO_MARK, so a test can see that it ran.
@@ -95,7 +132,7 @@ func TestOpenArchitecture(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.uname, func(t *testing.T) {
 			fakeBin(t, tt.uname, "0", goodSudo)
-			_, err := open(t, t.TempDir(), bins)
+			_, err := open(t, stateDir, bins)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("error = %v, want %q", err, tt.wantErr)
 			}
@@ -146,7 +183,7 @@ func TestOpenSudo(t *testing.T) {
 	t.Run("non-root uses sudo -n", func(t *testing.T) {
 		fakeBin(t, "aarch64", "1000", goodSudo)
 		ran := sudoRan(t)
-		_, err := open(t, t.TempDir(), bins)
+		_, err := open(t, stateDir, bins)
 		if err == nil || !strings.Contains(err.Error(), "ran arm64") {
 			t.Errorf("error = %v", err)
 		}
@@ -157,7 +194,7 @@ func TestOpenSudo(t *testing.T) {
 	t.Run("root does not use sudo", func(t *testing.T) {
 		fakeBin(t, "aarch64", "0", goodSudo)
 		ran := sudoRan(t)
-		_, err := open(t, t.TempDir(), bins)
+		_, err := open(t, stateDir, bins)
 		if err == nil || !strings.Contains(err.Error(), "ran arm64") {
 			t.Errorf("error = %v", err)
 		}
@@ -167,7 +204,7 @@ func TestOpenSudo(t *testing.T) {
 	})
 	t.Run("password required", func(t *testing.T) {
 		fakeBin(t, "aarch64", "1000", "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n")
-		_, err := open(t, t.TempDir(), bins)
+		_, err := open(t, stateDir, bins)
 		want := "winch: the login user needs passwordless sudo"
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %v, want %q", err, want)
@@ -223,11 +260,11 @@ func TestScriptHasNoSingleQuote(t *testing.T) {
 }
 
 // recordingHelper answers every request and appends each request line to
-// file. A first apply without content gets need_content.
-func recordingHelper(arch, file string) helperbin.Binary {
+// $REQUESTS when it is set. A first apply without content gets need_content.
+func recordingHelper(arch string) helperbin.Binary {
 	script := `#!/bin/sh
 while read -r line; do
-  printf '%s\n' "$line" >> ` + file + `
+  [ -z "$REQUESTS" ] || printf '%s\n' "$line" >> "$REQUESTS"
   id=$(printf '%s' "$line" | sed 's/^{"id":\([0-9]*\).*/\1/')
   case "$line" in
   *'"method":"apply"'*'"data":"'*) echo '{"id":'$id',"result":{"status":"change","action":"create"}}' ;;
@@ -243,10 +280,9 @@ done
 // spec: Remote execution/Facts
 func TestFacts(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
-	dir := t.TempDir()
 	s, err := Open(context.Background(), Config{
-		Host: "web1", Address: "web1", Dir: dir,
-		Binaries: []helperbin.Binary{fakeHelper("amd64"), recordingHelper("arm64", filepath.Join(dir, "requests"))},
+		Host: "web1", Address: "web1", Dir: stateDir,
+		Binaries: []helperbin.Binary{fakeHelper("amd64"), recordingHelper("arm64")},
 		Hello:    protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
 	})
 	if err != nil {
@@ -262,11 +298,11 @@ func TestFacts(t *testing.T) {
 // spec: Remote execution/Helper
 func TestContentOnlyWhenNeeded(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
-	dir := t.TempDir()
-	file := filepath.Join(dir, "requests")
+	file := filepath.Join(t.TempDir(), "requests")
+	t.Setenv("REQUESTS", file)
 	s, err := Open(context.Background(), Config{
-		Host: "web1", Address: "web1", Dir: dir,
-		Binaries: []helperbin.Binary{fakeHelper("amd64"), recordingHelper("arm64", file)},
+		Host: "web1", Address: "web1", Dir: stateDir,
+		Binaries: []helperbin.Binary{fakeHelper("amd64"), recordingHelper("arm64")},
 		Hello:    protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
 	})
 	if err != nil {
@@ -313,7 +349,7 @@ func sshArgs(t *testing.T, host, address string) (options, target string) {
 	s, err := Open(context.Background(), Config{
 		Host:     host,
 		Address:  address,
-		Dir:      t.TempDir(),
+		Dir:      stateDir,
 		Binaries: []helperbin.Binary{fakeHelper("arm64")},
 		Hello:    protocol.Hello{Run: "r1"},
 		Progress: &bytes.Buffer{},
@@ -382,7 +418,7 @@ cat >/dev/null
 `))
 	var progress bytes.Buffer
 	s, err := Open(context.Background(), Config{
-		Host: "web1", Address: "web1", Dir: t.TempDir(),
+		Host: "web1", Address: "web1", Dir: stateDir,
 		Binaries: []helperbin.Binary{helper},
 		Hello:    protocol.Hello{Run: "r1"}, Progress: &progress,
 	})
@@ -400,7 +436,7 @@ cat >/dev/null
 	}
 }
 
-const retryDelay = 300 * time.Millisecond
+const retryDelay = 100 * time.Millisecond
 
 // failOnce makes the fake ssh fail its first start with this output and
 // exit code. It returns the file that the first start creates.
@@ -448,8 +484,7 @@ func TestOpenRetry(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeBin(t, "aarch64", "0", goodSudo)
 			failed := failOnce(t, tt.stdout, tt.stderr, tt.code)
-			dir := t.TempDir()
-			_, err := open(t, dir, []helperbin.Binary{recordingHelper("arm64", filepath.Join(dir, "requests"))})
+			_, err := open(t, stateDir, []helperbin.Binary{recordingHelper("arm64")})
 			if !tt.retry {
 				last := tt.stderr[strings.LastIndex(tt.stderr, "\n")+1:]
 				if err == nil || !strings.Contains(err.Error(), last) {
@@ -541,7 +576,7 @@ func TestOpenUnreachable(t *testing.T) {
 func TestSSHIgnoresInterrupt(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
 	t.Setenv("SSH_INT", "1")
-	_, err := open(t, t.TempDir(), []helperbin.Binary{fakeHelper("arm64")})
+	_, err := open(t, stateDir, []helperbin.Binary{fakeHelper("arm64")})
 	if err == nil || err.Error() != "ran arm64" {
 		t.Errorf("error = %v, want the helper to run", err)
 	}
@@ -555,7 +590,7 @@ func TestOpenBatch(t *testing.T) {
 			argsFile := filepath.Join(t.TempDir(), "args")
 			t.Setenv("SSH_ARGS", argsFile)
 			s, err := Open(context.Background(), Config{
-				Host: "web1", Address: "web1", Dir: t.TempDir(), Batch: batch,
+				Host: "web1", Address: "web1", Dir: stateDir, Batch: batch,
 				Binaries: []helperbin.Binary{fakeHelper("arm64")}, Hello: protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
 			})
 			if s != nil {
