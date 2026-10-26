@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 
@@ -118,24 +119,29 @@ func roundTrip(t *testing.T, in any, out any) {
 	}
 }
 
-// spec: Modules/file, dir, link
+// spec: CLI/Output; Modules/file, dir, link
 func TestFileText(t *testing.T) {
 	tests := []struct {
-		name string
-		data []byte
-		text bool
+		name   string
+		data   []byte
+		reason string
 	}{
-		{"text", []byte("a\n"), true},
-		{"1 MiB", bytes.Repeat([]byte("a"), maxDiff), true},
-		{"larger than 1 MiB", bytes.Repeat([]byte("a"), maxDiff+1), false},
-		{"NUL", []byte("a\x00"), false},
-		{"not UTF-8", []byte{0xff}, false},
-		{"no content", nil, false},
+		{"text", []byte("a\n"), ""},
+		{"1 MiB", bytes.Repeat([]byte("a"), maxDiff), ""},
+		{"larger than 1 MiB", bytes.Repeat([]byte("a"), maxDiff+1), "larger than 1 MiB"},
+		{"NUL", []byte("a\x00"), "binary"},
+		{"NUL and not UTF-8", []byte{0, 0xff}, "binary"},
+		{"larger than 1 MiB with NUL", append(bytes.Repeat([]byte("a"), maxDiff), 0), "larger than 1 MiB"},
+		{"not UTF-8", []byte("caf\xe9\n"), "not UTF-8"},
 	}
 	for _, tt := range tests {
 		f := &File{Path: "/x", Data: tt.data}
-		if got := f.Text() != nil; got != tt.text {
-			t.Errorf("%s: text = %v, want %v", tt.name, got, tt.text)
+		text, reason := f.Text()
+		if reason != tt.reason {
+			t.Errorf("%s: reason = %q, want %q", tt.name, reason, tt.reason)
+		}
+		if reason == "" && !bytes.Equal(text, tt.data) {
+			t.Errorf("%s: text = %q", tt.name, text)
 		}
 	}
 }
@@ -179,6 +185,35 @@ func TestCheckNamesSpecialKind(t *testing.T) {
 		_, err := (&File{Path: tt.path, Absent: true}).Check(t.Context(), nil, nil)
 		if err == nil || err.Error() != tt.want {
 			t.Errorf("Check(%s) error = %v, want %q", tt.path, err, tt.want)
+		}
+	}
+}
+
+// spec: CLI/Output; Modules/file, dir, link
+func TestCheckNamesWhyNoDiff(t *testing.T) {
+	tests := []struct {
+		name string
+		old  []byte
+		want string
+	}{
+		{"not UTF-8", []byte("caf\xe9\n"), "content (not UTF-8)"},
+		{"binary", []byte("a\x00b"), "content (binary)"},
+		{"larger than 1 MiB", bytes.Repeat([]byte("a"), maxDiff+1), "content (larger than 1 MiB)"},
+		{"larger than 1 MiB with NUL", append([]byte{0}, bytes.Repeat([]byte("a"), maxDiff)...), "content (larger than 1 MiB)"},
+	}
+	for _, tt := range tests {
+		p := filepath.Join(t.TempDir(), "f")
+		if err := os.WriteFile(p, tt.old, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f := &File{Path: p, Data: []byte("new\n"), Mode: "0644",
+			Owner: yamlx.NameOrID(strconv.Itoa(os.Getuid())), Group: yamlx.NameOrID(strconv.Itoa(os.Getgid()))}
+		res, err := f.Check(t.Context(), nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Changes) != 1 || res.Changes[0] != tt.want || res.Old != nil {
+			t.Errorf("%s: changes %q, old %v; want [%q], nil", tt.name, res.Changes, res.Old, tt.want)
 		}
 	}
 }

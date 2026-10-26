@@ -169,12 +169,8 @@ func (f *File) WithoutContent() Module {
 	return &c
 }
 
-// Text returns the content when it is text, for a diff.
-func (f *File) Text() *string {
-	if f.Data == nil || !isText(f.Data) {
-		return nil
-	}
-	return new(string(f.Data))
+func (f *File) Text() ([]byte, string) {
+	return f.Data, notText(f.Data)
 }
 
 const maxDiff = 1 << 20
@@ -273,10 +269,14 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	}
 	if sum != f.sum() {
 		res.Status, res.Action = Change, Modify
-		if old, ok := readText(r, fi.Size()); ok {
-			res.Old = &old
+		old, err := readHead(r)
+		if err != nil {
+			return Result{}, fmt.Errorf("read %s: %w", f.Path, err)
+		}
+		if reason := notText(old); reason != "" {
+			res.Changes = append(res.Changes, "content ("+reason+")")
 		} else {
-			res.Changes = append(res.Changes, "content (binary or larger than 1 MiB)")
+			res.Old = new(string(old))
 		}
 	}
 	changes, err := attrChanges(fi, owner, group, mode)
@@ -398,22 +398,27 @@ func fileSHA(r io.Reader) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func readText(r io.ReadSeeker, size int64) (string, bool) {
-	if size > maxDiff {
-		return "", false
-	}
+// readHead reads r from the start, up to one byte more than a diff takes.
+func readHead(r io.ReadSeeker) ([]byte, error) {
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return "", false
+		return nil, err
 	}
-	data, err := io.ReadAll(r)
-	if err != nil || !isText(data) {
-		return "", false
-	}
-	return string(data), true
+	return io.ReadAll(io.LimitReader(r, maxDiff+1))
 }
 
-func isText(data []byte) bool {
-	return len(data) <= maxDiff && utf8.Valid(data) && bytes.IndexByte(data, 0) < 0
+const tooLarge = "larger than 1 MiB"
+
+// notText returns the reason the plan shows no diff of data, or "" for text.
+func notText(data []byte) string {
+	switch {
+	case len(data) > maxDiff:
+		return tooLarge
+	case bytes.IndexByte(data, 0) >= 0:
+		return "binary"
+	case !utf8.Valid(data):
+		return "not UTF-8"
+	}
+	return ""
 }
 
 func kind(fi fs.FileInfo) string {

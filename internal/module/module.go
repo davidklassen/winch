@@ -63,11 +63,12 @@ type Module interface {
 }
 
 // WithContent is a module that writes content. A check sends only the hash
-// of the content, and the plan shows a diff to Text.
+// of the content. Text returns the content and the reason the plan shows no
+// diff to it, or "" when the plan shows one.
 type WithContent interface {
 	Module
 	WithoutContent() Module
-	Text() *string
+	Text() ([]byte, string)
 }
 
 var modules = map[string]func() Module{

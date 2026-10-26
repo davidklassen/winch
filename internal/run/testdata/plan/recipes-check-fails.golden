@@ -8,7 +8,7 @@ web2
           +server_name web2;
       + file /etc/nginx/logo.png
           owner root, group root, mode 0644
-          content (binary or larger than 1 MiB)
+          content (binary)
     + file /etc/issue
         owner root, group root, mode 0644
         @@ -0,0 +1,1 @@

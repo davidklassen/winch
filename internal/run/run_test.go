@@ -5,6 +5,7 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/facts"
@@ -189,6 +190,34 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
 			t.Errorf("%s: %d index refreshes, want 1", host, n)
 		}
 	}
+}
+
+// spec: CLI/Output; Modules/file, dir, link
+func TestPlanContentReasons(t *testing.T) {
+	p := loadFiles(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
+		"recipes/app/recipe.yaml": `steps:
+  - file:
+      path: /etc/latin1.conf
+      source: latin1.conf
+  - file:
+      path: /etc/blob
+      source: blob
+  - file:
+      path: /etc/big.txt
+      source: big.txt
+`,
+		"recipes/app/files/latin1.conf": "caf\xe9\n",
+		"recipes/app/files/blob":        "a\x00b",
+		"recipes/app/files/big.txt":     strings.Repeat("a", 1<<20+1),
+	})
+	plan := run.MakePlan(context.Background(), p, fakehost.New().Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(&out, &errOut)
+	golden.Assert(t, filepath.Join("testdata", "plan", "content-reasons.golden"),
+		[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
 }
 
 // spec: Modules/file, dir, link; Running a pipeline/Plan

@@ -416,7 +416,7 @@ func (u *User) keyLines(home, group string) ([]string, error) {
 	}
 	defer f.Close()
 	if fi.Size() > maxDiff {
-		return append(lines, "rewrite "+file+" (larger than 1 MiB)"), nil
+		return append(lines, "rewrite "+file+" ("+tooLarge+")"), nil
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxDiff+1))
 	if err != nil {

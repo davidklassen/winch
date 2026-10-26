@@ -1,0 +1,17 @@
+stdout:
+web1
+  base
+    app
+      + file /etc/latin1.conf
+          owner root, group root, mode 0644
+          content (not UTF-8)
+      + file /etc/blob
+          owner root, group root, mode 0644
+          content (binary)
+      + file /etc/big.txt
+          owner root, group root, mode 0644
+          content (larger than 1 MiB)
+
+1 host: 1 to change, 0 unchanged, 0 unknown
+plan 38bc9c555356a623
+stderr:

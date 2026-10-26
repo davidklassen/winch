@@ -219,17 +219,17 @@ func diffLines(st project.Step, res module.Result) []string {
 	if res.Old == nil || !ok {
 		return nil
 	}
-	text := t.Text()
+	text, reason := t.Text()
 	var d []byte
 	switch {
-	case text == nil:
-		return []string{"content (binary or larger than 1 MiB)"}
+	case reason != "":
+		return []string{"content (" + reason + ")"}
 	case st.Shown != nil && st.Shown.Hidden:
 		d = []byte(secret.Mark + "\n")
 	case st.Shown != nil && st.Shown.Lines != nil:
 		d = secret.Diff([]byte(*res.Old), st.Shown.Lines)
 	default:
-		d = diff.Diff([]byte(*res.Old), []byte(*text))
+		d = diff.Diff([]byte(*res.Old), text)
 	}
 	var lines []string
 	for _, line := range strings.SplitAfter(string(d), "\n") {
