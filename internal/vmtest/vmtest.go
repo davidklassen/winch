@@ -345,13 +345,18 @@ func (vm *VM) waitRunning(ctx context.Context) error {
 	}
 }
 
-// waitBoot waits until cloud-init is done.
+// waitBoot waits until cloud-init is done. ssh exits 255 while the VM boots;
+// any other exit status is the result of cloud-init.
 func (vm *VM) waitBoot(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	for {
-		if _, err := vm.Run(ctx, "cloud-init status --wait >/dev/null"); err == nil {
+		_, err := vm.Run(ctx, "cloud-init status --wait --long")
+		if err == nil {
 			return nil
+		}
+		if exit, ok := errors.AsType[*exec.ExitError](err); ok && ctx.Err() == nil && exit.ExitCode() != 255 {
+			return fmt.Errorf("vm %s: cloud-init failed: %w", vm.Name, err)
 		}
 		select {
 		case <-ctx.Done():

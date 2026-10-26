@@ -1,6 +1,7 @@
 package vmtest
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 // spec: roadmap: Testing/VMs
@@ -284,5 +286,53 @@ func TestFailOnWarnings(t *testing.T) {
 	failOnWarnings(&got, []string{"plan", "site"}, Result{Stderr: "inventories/test.yaml:4:14: warning: x\n"})
 	if want := (errLog{"winch plan site: unexpected warning: inventories/test.yaml:4:14: warning: x"}); !slices.Equal(got, want) {
 		t.Errorf("errors = %q, want %q", got, want)
+	}
+}
+
+// spec: roadmap: Testing/VMs
+func TestWaitBoot(t *testing.T) {
+	// cloud-init gives its errors only with --long, and the output must not
+	// go to /dev/null.
+	report := `case "$*" in *">/dev/null"*) ;; *--long*) echo 'errors: boom' ;; esac; `
+	for _, c := range []struct {
+		name string
+		ssh  string
+		// want holds the parts of the error; none means success.
+		want []string
+	}{
+		{name: "done", ssh: "exit 0"},
+		{name: "ssh fails first", ssh: `[ -e "$0.ran" ] && exit 0; touch "$0.ran"; exit 255`},
+		{name: "error", ssh: report + "exit 1", want: []string{"cloud-init failed", "errors: boom"}},
+		{name: "recoverable error", ssh: report + "exit 2", want: []string{"cloud-init failed", "errors: boom"}},
+		{name: "time limit", ssh: "exec sleep 30", want: []string{"did not start", "deadline exceeded"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "bin", "ssh"), []byte("#!/bin/sh\n"+c.ssh+"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			vm := &VM{Name: "base", lab: &Lab{Dir: dir}, dir: dir}
+			ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+			defer cancel()
+			err := vm.waitBoot(ctx)
+			if len(c.want) == 0 {
+				if err != nil {
+					t.Fatalf("waitBoot = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("waitBoot = nil, want an error with %q", c.want)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("waitBoot = %v, want %q in it", err, w)
+				}
+			}
+		})
 	}
 }
