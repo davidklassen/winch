@@ -44,7 +44,7 @@ func TestRepoModule(t *testing.T) {
 	}
 	refresh := "refresh the index of source winch-signed"
 	keyLine := "add key " + fpr + " winch test repository"
-	reset := "pkill -f 'fcntl[.]lockf'; rm -f " + signedFile + " " + signedAsc + " /etc/apt/sources.list.d/vendor.* /var/lib/apt/lists/10.0.2.100_signed_* /root/locked; " +
+	reset := "pkill -f 'fcntl[.]lockf'; rm -f " + signedFile + " " + signedAsc + " /etc/apt/sources.list.d/vendor.* /var/lib/apt/lists/10.0.2.100_signed_* /var/lib/apt/lists/10.0.2.100:80_signed_* /root/locked; " +
 		"rm -rf /etc/apt/sources.list.d/vendor.list /etc/apt/sources.list.d/debian.sources; sed -i '/10.0.2.100.signed/d' /etc/apt/sources.list 2>/dev/null; rm -rf /root/saved; mkdir -p /etc/apt/keyrings"
 	withOther := func() *module.Repo {
 		r := args()
@@ -78,6 +78,15 @@ func TestRepoModule(t *testing.T) {
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{signedFile + ": Suites bookworm → trixie", refresh}},
 			WantState: module.State{},
+		},
+		{
+			Name:      "change the url",
+			Setup:     strings.Replace(signedSource("trixie"), "URIs: "+signedURL, "URIs: http://10.0.2.100:80/signed", 1) + " && apt-get update -q >/dev/null && ls /var/lib/apt/lists | grep -q '^10.0.2.100:80_signed_'",
+			State:     module.State{IndexFresh: true},
+			Args:      args(),
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{signedFile + ": URIs http://10.0.2.100:80/signed → " + signedURL, refresh}},
+			WantState: module.State{},
+			After:     "apt-cache policy winch-signed | grep -q 'Candidate: 1'",
 		},
 		{
 			Name:      "a key file with mode 0600 refreshes nothing",

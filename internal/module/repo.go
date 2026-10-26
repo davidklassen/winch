@@ -437,34 +437,33 @@ func (r *Repo) removed(p string) bool {
 	return false
 }
 
-// checkOwnFile fails when old, the content of the source file, holds an entry
-// with another type or URI, or more than one entry. One entry with the step's
-// URI is the step's source, perhaps with an old suite.
+// checkOwnFile fails when old, the content of the source file, holds more
+// than one entry or an entry that is not deb. One deb entry is the step's
+// source, perhaps with an old URI or suite.
 func (r *Repo) checkOwnFile(old []byte) error {
 	if r.removed(r.sourcePath()) {
 		return nil
 	}
-	var suites []string
-	other := ""
+	var entries, keys []string
 	for _, st := range stanzas(string(old)) {
 		for _, t := range strings.Fields(st["types"]) {
 			for _, u := range strings.Fields(st["uris"]) {
 				for _, s := range strings.Fields(st["suites"]) {
-					switch {
-					case t != "deb" || !sameURI(u, r.URL):
-						return r.otherEntry(t + " " + u + " " + s)
-					case !slices.Contains(suites, s):
-						suites = append(suites, s)
-					}
-					if other == "" && s != r.Suite {
-						other = t + " " + u + " " + s
+					if k := t + " " + uriKey(u) + " " + s; !slices.Contains(keys, k) {
+						keys = append(keys, k)
+						entries = append(entries, t+" "+u+" "+s)
 					}
 				}
 			}
 		}
 	}
-	if len(suites) > 1 {
-		return r.otherEntry(other)
+	if len(keys) == 1 && strings.HasPrefix(keys[0], "deb ") {
+		return nil
+	}
+	for i, k := range keys {
+		if k != "deb "+r.Source() {
+			return r.otherEntry(entries[i])
+		}
 	}
 	return nil
 }
