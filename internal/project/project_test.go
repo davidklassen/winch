@@ -1,7 +1,10 @@
 package project
 
 import (
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,9 +13,11 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/yamlx"
 )
 
 var base = map[string]string{
@@ -520,6 +525,64 @@ func TestLoadRepoKey(t *testing.T) {
 	if !ok || string(r.KeyData) != string(key) {
 		t.Errorf("args = %#v, want the key data of files/keys/a.asc", p.Pipeline.Stages[0].Steps[0].Recipe.Steps[0].Args)
 	}
+}
+
+// spec: Modules/repo
+func TestLoadRepoKeyExpiry(t *testing.T) {
+	expired, err := os.ReadFile(filepath.Join("..", "module", "testdata", "expiring.asc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := writeProject(t, with(nginx, map[string]string{
+		"recipes/nginx/recipe.yaml": recipe(repoStep("  ", "a.asc")),
+		"recipes/nginx/files/a.asc": string(expired),
+	}))
+	const wantErr = "recipes/nginx/recipe.yaml:7:12: key: recipes/nginx/files/a.asc: the key 98E68808D2F3430CFF79D49BADF72694C8CF341E expired on 2024-12-31"
+	if _, err := Load(t.Context(), dir, "", "site", nil, Keys{}); err == nil || err.Error() != wantErr {
+		t.Errorf("Load error = %v, want %q", err, wantErr)
+	}
+
+	expires := time.Now().UTC().Add(10 * 24 * time.Hour).Truncate(time.Second)
+	soon, fpr := armoredKey(expires)
+	dir = writeProject(t, with(nginx, map[string]string{
+		"recipes/nginx/recipe.yaml": recipe(repoStep("  ", "a.asc")),
+		"recipes/nginx/files/a.asc": soon,
+	}))
+	want := "recipes/nginx/recipe.yaml:7:12: key: recipes/nginx/files/a.asc: the key " + fpr + " expires on " + expires.Format(time.DateOnly)
+	p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	warnings, err := Validate(dir, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for what, ws := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": warnings} {
+		if len(ws) != 1 || ws[0].Error() != want {
+			t.Errorf("%s warnings = %v, want %q", what, ws, want)
+		}
+	}
+}
+
+// armoredKey returns an armored OpenPGP key whose primary key expires at
+// expires, and its fingerprint. Its signature is not valid.
+func armoredKey(expires time.Time) (string, string) {
+	created := expires.Add(-365 * 24 * time.Hour)
+	be32 := func(t time.Time) []byte { return binary.BigEndian.AppendUint32(nil, uint32(t.Unix())) }
+	packet := func(tag byte, body []byte) []byte { return append([]byte{0xc0 | tag, byte(len(body))}, body...) }
+	key := append(append([]byte{4}, be32(created)...), 22, 1, 2, 3)
+	h := sha1.Sum(append([]byte{0x99, 0, byte(len(key))}, key...))
+	hashed := append([]byte{5, 2}, be32(created)...)
+	hashed = append(append(hashed, 5, 9), binary.BigEndian.AppendUint32(nil, uint32(expires.Sub(created).Seconds()))...)
+	hashed = append(append(hashed, 22, 33, 4), h[:]...)
+	sig := append([]byte{4, 0x13, 22, 8, 0, byte(len(hashed))}, hashed...)
+	sig = append(sig, 0, 0, 0, 0)
+	var data []byte
+	data = append(data, packet(6, key)...)
+	data = append(data, packet(13, []byte("soon <soon@example.com>"))...)
+	data = append(data, packet(2, sig)...)
+	return "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\n" + base64.StdEncoding.EncodeToString(data) + "\n-----END PGP PUBLIC KEY BLOCK-----\n",
+		strings.ToUpper(hex.EncodeToString(h[:]))
 }
 
 // spec: Modules/repo

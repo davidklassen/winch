@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 	"unicode"
 
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -97,17 +98,29 @@ func (r *Repo) Validate() error {
 }
 
 // SetKey sets the key data to data, the content of the key file name. data
-// must be an ASCII-armored OpenPGP public key.
-func (r *Repo) SetKey(name string, data []byte) error {
-	_, err := parsePGPKey(data)
+// must be ASCII-armored OpenPGP public keys whose primary keys have not
+// expired at now. It returns a warning for each key that expires within 30
+// days.
+func (r *Repo) SetKey(name string, data []byte, now time.Time) ([]string, error) {
+	keys, err := parsePGPKeys(data)
 	if errors.Is(err, errNotArmored) {
-		return fmt.Errorf("%s %w", name, err)
+		return nil, fmt.Errorf("%s %w", name, err)
 	}
 	if err != nil {
-		return fmt.Errorf("%s: %w", name, err)
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	var warnings []string
+	for _, k := range keys {
+		switch {
+		case k.expires.IsZero():
+		case !now.Before(k.expires):
+			return nil, fmt.Errorf("%s: the key %s expired on %s", name, k.fingerprint, k.expires.Format(time.DateOnly))
+		case k.expires.Sub(now) < 30*24*time.Hour:
+			warnings = append(warnings, fmt.Sprintf("%s: the key %s expires on %s", name, k.fingerprint, k.expires.Format(time.DateOnly)))
+		}
 	}
 	r.KeyData = data
-	return nil
+	return warnings, nil
 }
 
 func (r *Repo) sourcePath() string { return sourcesDir + "/" + r.Name + ".sources" }
@@ -132,24 +145,16 @@ func (r *Repo) Check(_ context.Context, st *State, _ func(string)) (Result, erro
 	}
 	var changes []string
 	if r.KeyData != nil {
-		newKey, err := parsePGPKey(r.KeyData)
-		if err != nil {
-			return Result{}, fmt.Errorf("the key: %w", err)
-		}
 		f, lines, err := checkRepoFile(r.keyPath(), r.KeyData)
 		if err != nil {
 			return Result{}, err
 		}
 		if f.fi == nil || string(f.old) != string(f.content) {
-			if f.fi != nil {
-				old, err := parsePGPKey(f.old)
-				if err != nil {
-					lines = append(lines, "replace "+r.keyPath()+": "+err.Error())
-				} else {
-					lines = append(lines, "remove key "+keyText(old))
-				}
+			kl, err := keyFileChanges(r.keyPath(), f.old, r.KeyData)
+			if err != nil {
+				return Result{}, err
 			}
-			lines = append(lines, "add key "+keyText(newKey))
+			lines = append(lines, kl...)
 			r.refresh = true
 		}
 		changes = append(changes, lines...)
@@ -182,6 +187,41 @@ func (r *Repo) Check(_ context.Context, st *State, _ func(string)) (Result, erro
 		st.IndexFresh = false
 	}
 	return Result{Status: Change, Action: action, Changes: changes}, nil
+}
+
+// keyFileChanges describes how the key file p changes from old, nil when there
+// is no file, to new.
+func keyFileChanges(p string, old, new []byte) ([]string, error) {
+	newKeys, err := parsePGPKeys(new)
+	if err != nil {
+		return nil, fmt.Errorf("the key: %w", err)
+	}
+	var lines []string
+	var oldKeys []pgpKey
+	if old != nil {
+		oldKeys, err = parsePGPKeys(old)
+		if err != nil {
+			lines = append(lines, "replace "+p+": "+err.Error())
+		}
+	}
+	for _, o := range oldKeys {
+		if !slices.ContainsFunc(newKeys, func(k pgpKey) bool { return k.fingerprint == o.fingerprint }) {
+			lines = append(lines, "remove key "+keyText(o))
+		}
+	}
+	for _, k := range newKeys {
+		i := slices.IndexFunc(oldKeys, func(o pgpKey) bool { return o.fingerprint == k.fingerprint })
+		switch {
+		case i < 0:
+			lines = append(lines, "add key "+keyText(k))
+		case oldKeys[i].data != k.data:
+			lines = append(lines, "update key "+k.fingerprint+" (same key, new content)")
+		}
+	}
+	if len(lines) == 0 {
+		lines = append(lines, "rewrite "+p)
+	}
+	return lines, nil
 }
 
 func keyText(k pgpKey) string {

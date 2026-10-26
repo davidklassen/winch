@@ -154,6 +154,7 @@ func Load(ctx context.Context, dir, inventory, pipeline string, set []string, ke
 	if err != nil {
 		return nil, err
 	}
+	warnings = append(warnings, l.warnings...)
 	setNames := map[string]bool{}
 	for _, v := range sets {
 		setNames[v.name] = true
@@ -196,7 +197,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 		return nil, err
 	}
 	yml, err := ymlFiles(dir)
-	return append(warnings, yml...), err
+	return slices.Concat(warnings, l.warnings, yml), err
 }
 
 // ymlFiles returns a warning for each .yml file in pipelines/ and in a recipe
@@ -232,7 +233,8 @@ type loader struct {
 	// recipes holds nil for a recipe that failed to load.
 	recipes map[string]*Recipe
 	// sealed are the !secret values of the variables.
-	sealed []sealedAt
+	sealed   []sealedAt
+	warnings []*yamlx.Error
 }
 
 // newLoader declares the variables of winch.yaml and of every recipe, then
@@ -666,9 +668,11 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 		}
 	}
 	if k, ok := args.(*module.Repo); ok {
-		if err := r.key(k); err != nil {
+		warnings, err := r.key(k)
+		if err != nil {
 			return Step{}, err
 		}
+		l.warnings = append(l.warnings, warnings...)
 	}
 	if st.Module == "file" {
 		st.tmplReads = r.templateReads(argsNode)
@@ -1026,7 +1030,7 @@ func (st Step) instance(e *Env) (Step, any, error) {
 			}
 		}
 		if k, ok := m.(*module.Repo); ok {
-			if err := st.in.key(k); err != nil {
+			if _, err := st.in.key(k); err != nil {
 				return Step{}, nil, err
 			}
 		}

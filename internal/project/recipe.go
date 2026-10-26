@@ -12,6 +12,7 @@ import (
 	"slices"
 	"syscall"
 	"text/template"
+	"time"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"
@@ -256,19 +257,25 @@ func (r *Recipe) content(f *module.File, loops bool) (*template.Template, error)
 	return nil, nil
 }
 
-// key sets the key data of a repo step of r from its key file.
-func (r *Recipe) key(k *module.Repo) error {
+// key sets the key data of a repo step of r from its key file, and returns
+// its warnings.
+func (r *Recipe) key(k *module.Repo) ([]*yamlx.Error, error) {
 	if k.Key == "" {
-		return nil
+		return nil, nil
 	}
 	data, err := r.readFile("files", k.Key)
+	var warnings []string
 	if err == nil {
-		err = k.SetKey(r.Dir+"/files/"+k.Key, data)
+		warnings, err = k.SetKey(r.Dir+"/files/"+k.Key, data, time.Now())
 	}
 	if err != nil {
-		return yamlx.Errorf(k.KeyPos, "key: %v", err)
+		return nil, yamlx.Errorf(k.KeyPos, "key: %v", err)
 	}
-	return nil
+	var out []*yamlx.Error
+	for _, w := range warnings {
+		out = append(out, yamlx.Errorf(k.KeyPos, "key: %s", w))
+	}
+	return out, nil
 }
 
 // templateReads returns the variables that the template of the file

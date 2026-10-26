@@ -1,10 +1,15 @@
 package module
 
 import (
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // spec: Modules/repo
@@ -70,45 +75,191 @@ func TestRepoSource(t *testing.T) {
 	}
 }
 
+const (
+	testFpr     = "08F59DAD86F61D67A6A960698445EE6567433B2C"
+	rsaFpr      = "68211508469BEE79A13385E5EE1E5094B9E465ED"
+	expiringFpr = "98E68808D2F3430CFF79D49BADF72694C8CF341E"
+)
+
 // spec: Modules/repo
-func TestParsePGPKey(t *testing.T) {
+func TestParsePGPKeys(t *testing.T) {
+	testKey := pgpKey{fingerprint: testFpr, userID: "winch test key <test@example.com>"}
+	rsaKey := pgpKey{fingerprint: rsaFpr, userID: "winch rsa key <rsa@example.com>"}
+	expiring := pgpKey{fingerprint: expiringFpr, userID: "winch expiring key <expiring@example.com>"}
 	tests := []struct {
 		file    string
-		want    pgpKey
+		want    []pgpKey
 		wantErr string
 	}{
-		{"key.asc", pgpKey{fingerprint: "08F59DAD86F61D67A6A960698445EE6567433B2C", userID: "winch test key <test@example.com>"}, ""},
-		{"rsa.asc", pgpKey{fingerprint: "68211508469BEE79A13385E5EE1E5094B9E465ED", userID: "winch rsa key <rsa@example.com>"}, ""},
-		{"key.gpg", pgpKey{}, "is not an ASCII-armored OpenPGP public key"},
-		{"signature.asc", pgpKey{}, "is not an ASCII-armored OpenPGP public key"},
-		{"revoked.asc", pgpKey{}, "the key 06AC54F1582AD1504107DE2CD1EAA49074573A45 is revoked"},
+		{"key.asc", []pgpKey{testKey}, ""},
+		{"rsa.asc", []pgpKey{rsaKey}, ""},
+		{"expiring.asc", []pgpKey{{expiring.fingerprint, expiring.userID, time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC), ""}}, ""},
+		{"renewed.asc", []pgpKey{{expiring.fingerprint, expiring.userID, time.Date(2027, 6, 1, 0, 0, 0, 0, time.UTC), ""}}, ""},
+		{"two-keys.asc", []pgpKey{testKey, rsaKey}, ""},
+		{"two-blocks.asc", []pgpKey{testKey, rsaKey}, ""},
+		{"key.gpg", nil, "is not an ASCII-armored OpenPGP public key"},
+		{"signature.asc", nil, "is not an ASCII-armored OpenPGP public key"},
+		{"revoked.asc", nil, "the key 06AC54F1582AD1504107DE2CD1EAA49074573A45 is revoked"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
-			data, err := os.ReadFile("testdata/" + tt.file)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := parsePGPKey(data)
+			got, err := parsePGPKeys(readTestdata(t, tt.file))
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("error = %v, want %q", err, tt.wantErr)
 				}
 				return
 			}
-			if err != nil || got != tt.want {
-				t.Fatalf("parsePGPKey = %+v, %v; want %+v", got, err, tt.want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range got {
+				got[i].data = ""
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("parsePGPKeys = %+v; want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func readTestdata(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile("testdata/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// testSig is a test signature on the user ID: its creation time, the key
+// lifetime in days, and the issuer, nil for the key itself.
+type testSig struct {
+	created  time.Time
+	lifetime int
+	issuer   []byte
+}
+
+// buildKey returns an armored key created at 2024-01-01 with the signatures
+// sigs, and its fingerprint. The signatures are not valid.
+func buildKey(sigs ...testSig) ([]byte, string) {
+	created := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	be32 := func(v int64) []byte { return binary.BigEndian.AppendUint32(nil, uint32(v)) }
+	packet := func(tag byte, body []byte) []byte { return append([]byte{0xc0 | tag, byte(len(body))}, body...) }
+	key := append(append([]byte{4}, be32(created.Unix())...), 22, 1, 2, 3)
+	fpr := sha1.Sum(append([]byte{0x99, 0, byte(len(key))}, key...))
+	data := append(packet(tagPublicKey, key), packet(tagUserID, []byte("a <a@example.com>"))...)
+	for _, s := range sigs {
+		issuer := s.issuer
+		if issuer == nil {
+			issuer = fpr[:]
+		}
+		hashed := append([]byte{5, subCreated}, be32(s.created.Unix())...)
+		hashed = append(append(hashed, 5, subExpires), be32(int64(s.lifetime)*86400)...)
+		hashed = append(append(hashed, 22, subIssuerFpr, 4), issuer...)
+		sig := append([]byte{4, sigCertPositive, 22, 8, 0, byte(len(hashed))}, hashed...)
+		data = append(data, packet(tagSignature, append(sig, 0, 0, 0, 0))...)
+	}
+	return []byte(armorBegin + "\n\n" + base64.StdEncoding.EncodeToString(data) + "\n" + armorEnd + "\n"),
+		strings.ToUpper(hex.EncodeToString(fpr[:]))
+}
+
+// spec: Modules/repo
+func TestPGPKeyExpirySelfSig(t *testing.T) {
+	jan, jun := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	old := testSig{created: jan, lifetime: 365}
+	renewed := testSig{created: jun, lifetime: 1000}
+	other := testSig{created: jun, lifetime: 0, issuer: make([]byte, 20)}
+	tests := []struct {
+		name string
+		sigs []testSig
+		want time.Time
+	}{
+		{"old then renewed", []testSig{old, renewed}, jan.AddDate(0, 0, 1000)},
+		{"renewed then old", []testSig{renewed, old}, jan.AddDate(0, 0, 1000)},
+		{"newer certification by another key", []testSig{old, other}, jan.AddDate(0, 0, 365)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, _ := buildKey(tt.sigs...)
+			keys, err := parsePGPKeys(data)
+			if err != nil || len(keys) != 1 {
+				t.Fatalf("parsePGPKeys = %d keys, %v; want 1 key", len(keys), err)
+			}
+			if !keys[0].expires.Equal(tt.want) {
+				t.Errorf("expires = %v, want %v", keys[0].expires, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Modules/repo
+func TestRepoSetKey(t *testing.T) {
+	day := func(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 12, 0, 0, 0, time.UTC) }
+	both := string(readTestdata(t, "key.asc")) + string(readTestdata(t, "expiring.asc"))
+	tests := []struct {
+		name, data string
+		now        time.Time
+		want       []string
+		wantErr    string
+	}{
+		{"no expiry", string(readTestdata(t, "key.asc")), day(2100, 1, 1), nil, ""},
+		{"expires later", string(readTestdata(t, "expiring.asc")), day(2024, 6, 1), nil, ""},
+		{"expires soon", string(readTestdata(t, "expiring.asc")), day(2024, 12, 21), []string{"a.asc: the key " + expiringFpr + " expires on 2024-12-31"}, ""},
+		{"expired", string(readTestdata(t, "expiring.asc")), day(2025, 1, 1), nil, "a.asc: the key " + expiringFpr + " expired on 2024-12-31"},
+		{"renewed", string(readTestdata(t, "renewed.asc")), day(2025, 1, 1), nil, ""},
+		{"second key expired", both, day(2025, 1, 1), nil, "a.asc: the key " + expiringFpr + " expired on 2024-12-31"},
+		{"second key expires soon", both, day(2024, 12, 21), []string{"a.asc: the key " + expiringFpr + " expires on 2024-12-31"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var r Repo
+			got, err := r.SetKey("a.asc", []byte(tt.data), tt.now)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || !reflect.DeepEqual(got, tt.want) || string(r.KeyData) != tt.data {
+				t.Fatalf("SetKey = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Modules/repo
+func TestKeyFileChanges(t *testing.T) {
+	const p = "/etc/apt/keyrings/a.asc"
+	key, rsa := readTestdata(t, "key.asc"), readTestdata(t, "rsa.asc")
+	addTest := "add key " + testFpr + " winch test key <test@example.com>"
+	addRSA := "add key " + rsaFpr + " winch rsa key <rsa@example.com>"
+	tests := []struct {
+		name     string
+		old, new []byte
+		want     []string
+	}{
+		{"no file", nil, readTestdata(t, "two-keys.asc"), []string{addTest, addRSA}},
+		{"no file, two blocks", nil, readTestdata(t, "two-blocks.asc"), []string{addTest, addRSA}},
+		{"renewed", readTestdata(t, "expiring.asc"), readTestdata(t, "renewed.asc"), []string{"update key " + expiringFpr + " (same key, new content)"}},
+		{"added key", key, readTestdata(t, "two-blocks.asc"), []string{addRSA}},
+		{"removed key", readTestdata(t, "two-blocks.asc"), key, []string{"remove key " + rsaFpr + " winch rsa key <rsa@example.com>"}},
+		{"other key", key, rsa, []string{"remove key " + testFpr + " winch test key <test@example.com>", addRSA}},
+		{"not a key", []byte("not a key\n"), key, []string{"replace " + p + ": is not an ASCII-armored OpenPGP public key", addTest}},
+		{"same keys", []byte(strings.Replace(string(key), "\n\n", "\nComment: x\n\n", 1)), key, []string{"rewrite " + p}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := keyFileChanges(p, tt.old, tt.new)
+			if err != nil || !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("keyFileChanges = %q, %v; want %q", got, err, tt.want)
 			}
 		})
 	}
 }
 
 func TestParsePGPKeyBad(t *testing.T) {
-	key, err := os.ReadFile("testdata/key.asc")
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(string(key), "\n")
+	lines := strings.Split(string(readTestdata(t, "key.asc")), "\n")
 	tests := []struct {
 		name, data, want string
 	}{
@@ -127,7 +278,7 @@ func TestParsePGPKeyBad(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := parsePGPKey([]byte(tt.data)); err == nil || !strings.Contains(err.Error(), tt.want) {
+			if _, err := parsePGPKeys([]byte(tt.data)); err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want %q", err, tt.want)
 			}
 		})
@@ -136,18 +287,15 @@ func TestParsePGPKeyBad(t *testing.T) {
 
 // Some key files have no empty line after the first line, or CRLF line ends.
 func TestParsePGPKeyForms(t *testing.T) {
-	key, err := os.ReadFile("testdata/key.asc")
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := readTestdata(t, "key.asc")
 	for name, data := range map[string]string{
 		"no empty line": strings.Replace(string(key), "\n\n", "\n", 1),
 		"headers":       strings.Replace(string(key), "\n\n", "\nComment: winch\n\n", 1),
 		"crlf":          strings.ReplaceAll(string(key), "\n", "\r\n"),
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, err := parsePGPKey([]byte(data))
-			if err != nil || got.fingerprint != "08F59DAD86F61D67A6A960698445EE6567433B2C" {
+			got, err := parsePGPKeys([]byte(data))
+			if err != nil || len(got) != 1 || got[0].fingerprint != testFpr {
 				t.Fatalf("parsePGPKey = %+v, %v", got, err)
 			}
 		})
