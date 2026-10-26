@@ -88,15 +88,16 @@ func fakeBin(t *testing.T, arch, uid, sudo string) {
 	t.Setenv("FAKE_SUDO", sudo)
 }
 
-// goodSudo creates the file $SUDO_MARK, so a test can see that it ran.
-const goodSudo = "#!/bin/sh\n[ \"$1\" = -n ] || exit 2\nshift\n[ -z \"$SUDO_MARK\" ] || touch \"$SUDO_MARK\"\nexec \"$@\"\n"
+// goodSudo writes its first two arguments as one line to $SUDO_LOG, so a test
+// can see how sudo ran.
+const goodSudo = "#!/bin/sh\n[ -z \"$SUDO_LOG\" ] || echo \"$1 $2\" >> \"$SUDO_LOG\"\n[ \"$1\" = -n ] || exit 2\nshift\nexec \"$@\"\n"
 
-func sudoRan(t *testing.T) func() bool {
-	mark := filepath.Join(t.TempDir(), "sudo-ran")
-	t.Setenv("SUDO_MARK", mark)
-	return func() bool {
-		_, err := os.Stat(mark)
-		return err == nil
+func sudoCalls(t *testing.T) func() string {
+	log := filepath.Join(t.TempDir(), "sudo-log")
+	t.Setenv("SUDO_LOG", log)
+	return func() string {
+		data, _ := os.ReadFile(log)
+		return string(data)
 	}
 }
 
@@ -182,24 +183,24 @@ func TestOpenSudo(t *testing.T) {
 	bins := []helperbin.Binary{fakeHelper("amd64"), fakeHelper("arm64")}
 	t.Run("non-root uses sudo -n", func(t *testing.T) {
 		fakeBin(t, "aarch64", "1000", goodSudo)
-		ran := sudoRan(t)
+		calls := sudoCalls(t)
 		_, err := open(t, stateDir, bins)
 		if err == nil || !strings.Contains(err.Error(), "ran arm64") {
 			t.Errorf("error = %v", err)
 		}
-		if !ran() {
-			t.Error("sudo -n did not run")
+		if got, want := calls(), "-n true\n-n sh\n"; got != want {
+			t.Errorf("sudo calls = %q, want %q", got, want)
 		}
 	})
 	t.Run("root does not use sudo", func(t *testing.T) {
 		fakeBin(t, "aarch64", "0", goodSudo)
-		ran := sudoRan(t)
+		calls := sudoCalls(t)
 		_, err := open(t, stateDir, bins)
 		if err == nil || !strings.Contains(err.Error(), "ran arm64") {
 			t.Errorf("error = %v", err)
 		}
-		if ran() {
-			t.Error("root used sudo")
+		if got := calls(); got != "" {
+			t.Errorf("root used sudo: %q", got)
 		}
 	})
 	t.Run("password required", func(t *testing.T) {
