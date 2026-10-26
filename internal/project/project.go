@@ -984,13 +984,13 @@ func (st Step) instance(e *Env) (Step, any, error) {
 	if st.tmpl == nil {
 		return st, args, nil
 	}
-	var b strings.Builder
-	if err := st.tmpl.Execute(&b, e.templateData()); err != nil {
+	out, err := e.render(st.tmpl)
+	if err != nil {
 		return st, args, errContent{templateError(st.tmpl.Name(), err)}
 	}
 	f := *st.Args.(*module.File)
 	// Empty output is empty content, not missing content.
-	f.Data = append([]byte{}, b.String()...)
+	f.Data = append([]byte{}, out...)
 	st.Args = &f
 	return st, args, nil
 }

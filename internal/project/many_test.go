@@ -381,7 +381,7 @@ groups:
           path: !tpl /etc/peer-{{ .item.short }}
           content: !tpl "{{ .item.address }} {{ join .item.groups \",\" }}\n"
         loop: !expr 'match("all & !mon")'
-        when: !expr 'len(match("mon")) == 1 and match("mon")[0].vars.role == nil'
+        when: !expr 'len(match("mon")) == 1 and match("mon")[0].vars.mail_server != nil'
 `,
 	"recipes/monit/recipe.yaml": `vars:
   monit_peers:
@@ -416,6 +416,54 @@ func TestMatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			golden.Assert(t, filepath.Join("testdata", "many", tt.name+".golden"), []byte(evalSteps(t, p)))
+		})
+	}
+}
+
+// spec: Templates and expressions/Data
+func TestMatchComputedDefault(t *testing.T) {
+	const computed = "vars.role of host monitor.acme.com is computed from its facts; match() gives only inventory values and plain defaults"
+	tests := []struct {
+		name    string
+		content string
+		tmpl    string
+		set     []string
+		want    string
+	}{
+		{name: "expression", content: `!expr 'string(match("mon")[0].vars.role)'`, want: computed},
+		{name: "stored expression", content: `!expr 'string(vars.monit_peers[0].vars.role)'`, want: computed},
+		{name: "template", tmpl: "{{ range .vars.monit_peers }}{{ .vars.role }}{{ end }}", want: computed},
+		{name: "template condition", tmpl: "{{ range .vars.monit_peers }}{{ if .vars.role }}x{{ end }}{{ end }}", want: `map has no entry for key "role"`},
+		{name: "comparison", content: `!expr 'string(match("mon")[0]?.vars?.role == nil)'`, want: computed},
+		{name: "whole map", content: `!expr 'string(match("mon")[0].vars)'`, want: computed},
+		{name: "get", content: `!expr 'string(get(match("mon")[0].vars, "role") == nil)'`, want: computed},
+		{name: "values", content: `!expr 'string(len(filter(values(match("mon")[0].vars), # != "")))'`, want: computed},
+		{name: "toPairs", content: `!expr 'string(len(toPairs(match("mon")[0].vars)))'`, want: computed},
+		{name: "keys", content: `!expr 'join(keys(match("mon")[0].vars), ",")'`, want: `data="mail_server,role"`},
+		{name: "inline template", content: `!tpl "{{ range .vars.monit_peers }}{{ .vars.role }}{{ end }}"`, want: computed},
+		{name: "set value", content: `!expr 'match("mon")[0].vars.role'`, set: []string{"vars.role=x"}, want: `data="x"`},
+		{name: "inventory value", content: `!expr 'match("mail.acme.com")[0].vars.role'`, want: `data="relay"`},
+		{name: "plain default", content: `!expr 'string(match("mon")[0].vars.mail_server)'`, want: `data="false"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			step := "  - file:\n      path: /x\n      content: " + tt.content + "\n"
+			if tt.tmpl != "" {
+				step = "  - file:\n      path: /x\n      template: peers.tmpl\n"
+			}
+			files := with(matchFiles, map[string]string{
+				"inventories/test.yaml":              "hosts:\n  mail.acme.com:\n    vars:\n      mail_server: true\n      role: relay\n  monitor.acme.com: {}\ngroups:\n  mon:\n    hosts: [monitor.acme.com]\n",
+				"pipelines/site.yaml":                "stages:\n  - name: monit\n    hosts: mail.acme.com\n    steps:\n      - recipe: monit\n        vars:\n          monit_peers: !expr 'match(\"mon\")'\n",
+				"recipes/monit/recipe.yaml":          "vars:\n  monit_peers:\nsteps:\n" + step,
+				"recipes/monit/templates/peers.tmpl": tt.tmpl,
+			})
+			p, err := Load(t.Context(), writeProject(t, files), "", "site", tt.set, Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := evalSteps(t, p); !strings.Contains(got, tt.want) {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
 		})
 	}
 }

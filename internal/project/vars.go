@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"text/template"
 
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/secret"
@@ -308,7 +309,8 @@ func hostMap(h Host, vars any) map[string]any {
 }
 
 // peerVars returns the vars of each host for match(): the defaults that are
-// plain values, the inventory values, and --set.
+// plain values, the inventory values, and --set. A computed default holds a
+// marker that names it and the host.
 func peerVars(inv *Inventory, decls []*Var) map[string]map[string]any {
 	defaults := map[string]any{}
 	for _, v := range decls {
@@ -319,10 +321,87 @@ func peerVars(inv *Inventory, decls []*Var) map[string]map[string]any {
 	out := map[string]map[string]any{}
 	for _, h := range inv.Hosts {
 		vars := maps.Clone(defaults)
+		for _, v := range decls {
+			if v.computed != nil {
+				vars[v.Name] = computedMark + v.Name + "\x00" + h.Name + "\x00"
+			}
+		}
 		maps.Copy(vars, h.Vars)
 		out[h.Name] = vars
 	}
 	return out
+}
+
+// computedMark starts the marker of a computed default of a host from match():
+// the marker is the variable name and the host name, each with a NUL byte
+// after it. The marker passes through variables, so the variables of a recipe
+// step can hold match() hosts.
+const computedMark = "\x00computed\x00"
+
+// computedError returns the error for the first marker in v, a string, or
+// nil.
+func computedError(v any) error {
+	s, _ := v.(string)
+	_, rest, ok := strings.Cut(s, computedMark)
+	if !ok {
+		return nil
+	}
+	name, rest, _ := strings.Cut(rest, "\x00")
+	host, _, _ := strings.Cut(rest, "\x00")
+	return computedMessage(name, host)
+}
+
+func computedMessage(name, host string) error {
+	return fmt.Errorf("vars.%s of host %s is computed from its facts; match() gives only inventory values and plain defaults", name, host)
+}
+
+// withoutComputed returns a copy of v without the map entries that hold a
+// marker, so that a template that reads one fails.
+func withoutComputed(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		m := make(map[string]any, len(v))
+		for k, x := range v {
+			if s, ok := x.(string); !ok || !strings.HasPrefix(s, computedMark) {
+				m[k] = withoutComputed(x)
+			}
+		}
+		return m
+	case []any:
+		l := make([]any, len(v))
+		for i, x := range v {
+			l[i] = withoutComputed(x)
+		}
+		return l
+	}
+	return v
+}
+
+var missingKeyRe = regexp.MustCompile(`map has no entry for key "([a-z0-9_]+)"`)
+
+// render executes t with the data of e. A read of a computed default of a
+// match() host fails as a missing key. When a second run with the markers
+// prints the marker of that variable, the error names the default and the
+// host instead.
+func (e *Env) render(t *template.Template) (string, error) {
+	data := e.templateData()
+	var b strings.Builder
+	err := t.Execute(&b, withoutComputed(data))
+	if err == nil {
+		return b.String(), nil
+	}
+	m := missingKeyRe.FindStringSubmatch(err.Error())
+	if m == nil {
+		return "", err
+	}
+	var full strings.Builder
+	_ = t.Execute(&full, data)
+	_, rest, ok := strings.Cut(full.String(), computedMark+m[1]+"\x00")
+	if !ok {
+		return "", err
+	}
+	host, _, _ := strings.Cut(rest, "\x00")
+	return "", errors.New(strings.Replace(err.Error(), m[0], computedMessage(m[1], host).Error(), 1))
 }
 
 // Start returns the data of host h with facts f: it evaluates the defaults

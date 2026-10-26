@@ -1,7 +1,6 @@
 package project
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"maps"
@@ -73,6 +72,10 @@ var exprOptions = []expr.Option{
 	sortedFunc("keys", func(k string, v any) any { return k }),
 	sortedFunc("values", func(k string, v any) any { return v }),
 	sortedFunc("toPairs", func(k string, v any) any { return []any{k, v} }),
+	expr.Function(readFunc, func(args ...any) (any, error) {
+		return args[0], computedError(args[0])
+	}),
+	expr.Patch(readCheck{}),
 	expr.Function("quote", func(args ...any) (any, error) {
 		s, ok := args[0].(string)
 		if !ok {
@@ -80,6 +83,33 @@ var exprOptions = []expr.Option{
 		}
 		return quote(s), nil
 	}, quote),
+}
+
+// readFunc checks the value of a member read. Its name cannot be written in
+// an expression.
+const readFunc = "$read"
+
+// readCheck checks each member read and get() that gives a value of unknown
+// type: such a value can be the marker of a computed default of a host from
+// match().
+type readCheck struct{}
+
+func (readCheck) Visit(n *ast.Node) {
+	switch m := (*n).(type) {
+	case *ast.MemberNode:
+		if m.Method {
+			return
+		}
+	case *ast.BuiltinNode:
+		if m.Name != "get" {
+			return
+		}
+	default:
+		return
+	}
+	if (*n).Type().Kind() == reflect.Interface {
+		ast.Patch(n, &ast.CallNode{Callee: &ast.IdentifierNode{Value: readFunc}, Arguments: []ast.Node{*n}})
+	}
 }
 
 func sortedFunc(name string, pick func(k string, v any) any) expr.Option {
@@ -90,6 +120,9 @@ func sortedFunc(name string, pick func(k string, v any) any) expr.Option {
 		}
 		var out []any
 		for _, k := range slices.Sorted(maps.Keys(m)) {
+			if err := computedError(m[k]); err != nil && name != "keys" {
+				return nil, err
+			}
 			out = append(out, pick(k, m[k]))
 		}
 		return out, nil
@@ -269,15 +302,18 @@ func fieldTags(v any) []string {
 // eval returns the value for the environment of a host.
 func (c *computed) eval(e *Env) (any, error) {
 	if c.tmpl != nil {
-		var b bytes.Buffer
-		if err := c.tmpl.Execute(&b, e.templateData()); err != nil {
+		out, err := e.render(c.tmpl)
+		if err != nil {
 			return nil, errors.New(templateMessage(c.tmpl.Name(), err))
 		}
-		return b.String(), nil
+		return out, nil
 	}
 	out, err := expr.Run(c.prog, e.exprEnv())
 	if err != nil {
 		return nil, errors.New(exprMessage(err, exprNames))
+	}
+	if err := computedError(out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
