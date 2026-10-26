@@ -91,16 +91,18 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	if missing && (s.Restarted || s.Reloaded) {
 		return Result{Status: OK}, nil
 	}
+	off := (s.Enabled == nil || !*s.Enabled) && (s.Running == nil || !*s.Running)
+	broken := u.load == "bad-setting" || u.load == "error"
 	switch {
-	case missing, u.load == "loaded":
-	case u.load == "masked" && (s.Enabled == nil || !*s.Enabled) && (s.Running == nil || !*s.Running):
+	case missing, u.load == "loaded", broken && off && !s.Restarted && !s.Reloaded:
+	case u.load == "masked" && off:
 	case u.load == "masked":
 		return Result{}, fmt.Errorf("%s has the load state %q", u.id, u.load)
 	default:
 		return Result{}, withJournal(ctx, u.id, fmt.Errorf("%s has the load state %q", u.id, u.load))
 	}
 	var startedBy []string
-	if u.load == "loaded" && len(u.triggeredBy) > 0 && (s.Running != nil && !*s.Running || s.Enabled != nil && !*s.Enabled) {
+	if (u.load == "loaded" || broken) && len(u.triggeredBy) > 0 && (s.Running != nil && !*s.Running || s.Enabled != nil && !*s.Enabled) {
 		startedBy, err = activeOrEnabled(ctx, u.triggeredBy)
 		if err != nil {
 			return Result{}, err

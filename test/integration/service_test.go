@@ -69,6 +69,12 @@ cat > /etc/systemd/system/winch-bad.service <<'U'
 [Service]
 ExecStart=relative/path
 U
+cat > /etc/systemd/system/winch-noexec.service <<'U'
+[Service]
+Type=simple
+[Install]
+WantedBy=multi-user.target
+U
 mkdir -p /opt/winch
 cat > /opt/winch/winch-linked.service <<'U'
 [Service]
@@ -100,6 +106,9 @@ systemctl daemon-reload`
 
 const waitCrash = `timeout 10 sh -c 'until systemctl show -P SubState winch-crash | grep -qx auto-restart; do sleep 0.1; done'`
 
+const noexecErr = `winch-noexec.service has the load state "bad-setting"
+winch-noexec.service: Service has no ExecStart=`
+
 // oddUnit has the instance "a b;$(touch /tmp/pwn)", as systemd-escape writes it.
 const oddUnit = `winch-tpl@a\x20b\x3b\x24\x28touch\x20-tmp-pwn\x29`
 
@@ -108,7 +117,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service; rm -f /tmp/boom; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
+	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service winch-lost.service; rm -f /tmp/boom; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service winch-noexec.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -540,6 +549,49 @@ systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
 			Name:    "a bad load state shows the journal",
 			Args:    &module.Service{Name: "winch-bad", Running: new(true)},
 			WantErr: "\n/etc/systemd/system/winch-bad.service:2: Neither a valid executable name nor an absolute path: relative/path",
+		},
+		{
+			Name:  "a unit without ExecStart that must not run is ok",
+			Setup: `systemctl show -P LoadState winch-noexec | grep -qx bad-setting`,
+			Args:  &module.Service{Name: "winch-noexec", Enabled: new(false), Running: new(false)},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "disable a unit without ExecStart",
+			Setup: `systemctl enable winch-noexec && systemctl show -P LoadState winch-noexec | grep -qx bad-setting`,
+			Args:  &module.Service{Name: "winch-noexec", Enabled: new(false)},
+			Want:  change("disable"),
+			After: `! systemctl is-enabled -q winch-noexec`,
+		},
+		{
+			Name: "stop a running unit that lost its ExecStart",
+			Setup: `printf '[Service]\nExecStart=/bin/sleep infinity\n' > /etc/systemd/system/winch-lost.service
+systemctl daemon-reload && systemctl start winch-lost
+printf '[Service]\nType=simple\n' > /etc/systemd/system/winch-lost.service
+systemctl daemon-reload && systemctl show -P LoadState winch-lost | grep -qx bad-setting && systemctl is-active -q winch-lost`,
+			Args:  &module.Service{Name: "winch-lost", Running: new(false)},
+			Want:  change("stop"),
+			After: `! systemctl is-active -q winch-lost`,
+		},
+		{
+			Name:    "a unit without ExecStart that must be enabled shows the journal",
+			Args:    &module.Service{Name: "winch-noexec", Enabled: new(true)},
+			WantErr: noexecErr,
+		},
+		{
+			Name:    "a unit without ExecStart that must run shows the journal",
+			Args:    &module.Service{Name: "winch-noexec", Enabled: new(false), Running: new(true)},
+			WantErr: noexecErr,
+		},
+		{
+			Name:    "restarted on a unit without ExecStart shows the journal",
+			Args:    &module.Service{Name: "winch-noexec", Restarted: true},
+			WantErr: noexecErr,
+		},
+		{
+			Name:    "reloaded on a unit without ExecStart shows the journal",
+			Args:    &module.Service{Name: "winch-noexec", Reloaded: true},
+			WantErr: noexecErr,
 		},
 		{
 			Name: "restarted on a missing unit is ok",

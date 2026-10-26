@@ -78,6 +78,25 @@ func TestServiceStartedBy(t *testing.T) {
 		vm.MustRun(t, socketReset)
 	})
 
+	t.Run("the check names the socket of a unit without ExecStart", func(t *testing.T) {
+		vm.MustRun(t, `cat > /etc/systemd/system/winch-bsock.socket <<'U'
+[Socket]
+ListenStream=127.0.0.1:7980
+[Install]
+WantedBy=sockets.target
+U
+printf '[Service]\nType=simple\n' > /etc/systemd/system/winch-bsock.service
+systemctl daemon-reload && systemctl enable winch-bsock.socket && systemctl show -P LoadState winch-bsock.service | grep -qx bad-setting`)
+		defer vm.MustRun(t, "systemctl disable winch-bsock.socket")
+		res, err := vm.Session(t).Check(t.Context(), "service", &module.Service{Name: "winch-bsock", Running: new(false)}, &module.State{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"winch-bsock.socket"}; !slices.Equal(res.StartedBy, want) {
+			t.Errorf("started by %q, want %q", res.StartedBy, want)
+		}
+	})
+
 	t.Run("a step for the socket stops it", func(t *testing.T) {
 		vm.MustRun(t, socketReset+"\nsystemctl enable --now winch-sock.socket && systemctl start winch-sock.service")
 		pipeline := "stages:\n  - name: s\n    hosts: all\n    steps:\n"
