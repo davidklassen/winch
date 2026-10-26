@@ -17,7 +17,7 @@ import (
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
-var hashRe = regexp.MustCompile(`\nplan ([0-9a-f]{8})\n`)
+var hashRe = regexp.MustCompile(`\nplan ([0-9a-f]{16})\n`)
 
 func hashOf(t *testing.T, out string) string {
 	t.Helper()
@@ -234,5 +234,5 @@ func unchanged(out string, n int) bool {
 	if n > 1 {
 		hosts = strconv.Itoa(n) + " hosts"
 	}
-	return regexp.MustCompile(`^` + hosts + `: 0 to change, ` + strconv.Itoa(n) + ` unchanged, 0 unknown\nplan [0-9a-f]{8}\n$`).MatchString(out)
+	return regexp.MustCompile(`^` + hosts + `: 0 to change, ` + strconv.Itoa(n) + ` unchanged, 0 unknown\nplan [0-9a-f]{16}\n$`).MatchString(out)
 }

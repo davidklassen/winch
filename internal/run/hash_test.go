@@ -116,8 +116,8 @@ func edit(t *testing.T, file, old, new string) map[string]string {
 func TestHashStable(t *testing.T) {
 	a := planHash(t, hashFiles, nil)
 	b := planHash(t, hashFiles, nil)
-	if !regexp.MustCompile(`^[0-9a-f]{8}$`).MatchString(a.Hash()) {
-		t.Errorf("hash %q is not 8 hex characters", a.Hash())
+	if !regexp.MustCompile(`^[0-9a-f]{16}$`).MatchString(a.Hash()) {
+		t.Errorf("hash %q is not 16 hex characters", a.Hash())
 	}
 	if a.Hash() != b.Hash() {
 		t.Errorf("two plans of the same state: %s and %s", a.Hash(), b.Hash())

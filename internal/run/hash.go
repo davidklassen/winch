@@ -130,6 +130,6 @@ func sumJSON(v any) string {
 	return sumBytes(b)
 }
 
-// Hash returns the plan hash: the first 8 hex characters of the SHA-256 of
+// Hash returns the plan hash: the first 16 hex characters of the SHA-256 of
 // the hash input. MakePlan computes it once.
 func (p *Plan) Hash() string { return p.hash }

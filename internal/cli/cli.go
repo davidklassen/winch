@@ -153,7 +153,7 @@ const applyHelp = `Examples:
   winch apply site
   winch apply site --inventory inventories/test.yaml --yes
   winch apply site --hosts mail --stages mail
-  winch apply site --check a3f9c2e1
+  winch apply site --check a3f9c2e1d07b4c58
 
 Show the changes, ask, then make them.
 
@@ -391,12 +391,12 @@ func plan(ctx context.Context, env Env, f *flags, args []string) int {
 	return o.end(code, summary{plan: pl})
 }
 
-var hashRe = regexp.MustCompile(`^[0-9a-f]{8}$`)
+var hashRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func apply(ctx context.Context, env Env, f *flags, args []string) int {
 	o := newOutput(env, f)
 	if f.check != nil && !hashRe.MatchString(*f.check) {
-		o.fail(fmt.Errorf("winch: --check %q: a plan hash has 8 hex characters, such as a3f9c2e1", *f.check))
+		o.fail(fmt.Errorf("winch: --check %q: a plan hash has 16 hex characters, such as a3f9c2e1d07b4c58", *f.check))
 		return o.end(exitInvalid, summary{})
 	}
 	p, ok := o.load(f, "apply", args)

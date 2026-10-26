@@ -14,7 +14,7 @@ import (
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
-var hashLineRe = regexp.MustCompile(`\nplan ([0-9a-f]{8})\n`)
+var hashLineRe = regexp.MustCompile(`\nplan ([0-9a-f]{16})\n`)
 
 // planHash returns the plan hash in the output of plan or apply.
 func planHash(t *testing.T, out string) string {
@@ -64,7 +64,7 @@ func TestCheck(t *testing.T) {
 	})
 	t.Run("a stale hash with a terminal does not ask", func(t *testing.T) {
 		h := fakehost.New()
-		r := winch(t, dir, h, true, "y\n", "apply", "site", "--check", "0badc0de")
+		r := winch(t, dir, h, true, "y\n", "apply", "site", "--check", "0badc0de0badc0de")
 		if r.code != exitHash || h.Applies != 0 || strings.Contains(r.err, "Apply these changes?") {
 			t.Errorf("exit %d, applies %d, stderr %q", r.code, h.Applies, r.err)
 		}
@@ -72,16 +72,16 @@ func TestCheck(t *testing.T) {
 	t.Run("a failed host wins over a stale hash", func(t *testing.T) {
 		h := fakehost.New()
 		h.FailCheck("web1")
-		r := winch(t, dir, h, false, "", "apply", "site", "--check", "0badc0de")
+		r := winch(t, dir, h, false, "", "apply", "site", "--check", "0badc0de0badc0de")
 		if r.code != exitFailed || h.Applies != 0 {
 			t.Errorf("exit %d, applies %d", r.code, h.Applies)
 		}
 	})
-	for _, bad := range []string{"xyz", "A3F9C2E1", "a3f9c2e", "a3f9c2e10", ""} {
+	for _, bad := range []string{"xyz", "A3F9C2E1D07B4C58", "a3f9c2e1", "a3f9c2e1d07b4c5", "a3f9c2e1d07b4c580", ""} {
 		t.Run("bad hash "+bad, func(t *testing.T) {
 			h := fakehost.New()
 			r := winch(t, dir, h, false, "", "apply", "site", "--yes", "--check", bad)
-			if r.code != exitInvalid || !strings.Contains(r.err, "a plan hash has 8 hex characters") {
+			if r.code != exitInvalid || !strings.Contains(r.err, "a plan hash has 16 hex characters") {
 				t.Errorf("exit %d, stderr %q", r.code, r.err)
 			}
 			if h.Applies != 0 || len(h.FactsReads) != 0 {
@@ -90,7 +90,7 @@ func TestCheck(t *testing.T) {
 		})
 	}
 	t.Run("plan does not take --check", func(t *testing.T) {
-		r := winch(t, dir, fakehost.New(), false, "", "plan", "site", "--check", "a3f9c2e1")
+		r := winch(t, dir, fakehost.New(), false, "", "plan", "site", "--check", "a3f9c2e1d07b4c58")
 		if r.code != exitInvalid {
 			t.Errorf("exit %d", r.code)
 		}
@@ -183,7 +183,7 @@ func TestUnreachableExit(t *testing.T) {
 	if c, _ := h.File("web1", "/etc/motd"); r.code != exitUnreachable || c != "hello\n" {
 		t.Errorf("apply: exit %d, web1 /etc/motd %q", r.code, c)
 	}
-	if r := winch(t, dir, h, false, "", "apply", "site", "--check", "0badc0de"); r.code != exitUnreachable {
+	if r := winch(t, dir, h, false, "", "apply", "site", "--check", "0badc0de0badc0de"); r.code != exitUnreachable {
 		t.Errorf("apply with a stale hash: exit %d, want %d", r.code, exitUnreachable)
 	}
 	h.SetFile("web1", "/etc/motd", "drift\n")

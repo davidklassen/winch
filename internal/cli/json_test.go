@@ -89,7 +89,7 @@ func TestJSON(t *testing.T) {
 			})
 		}, args: []string{"plan", "site", "--json"}},
 		{name: "plan-no-pipeline", dir: jsonProject, args: []string{"plan", "--json"}},
-		{name: "apply-stale-check", dir: jsonProject, args: []string{"apply", "site", "--json", "--check", "0badc0de"}},
+		{name: "apply-stale-check", dir: jsonProject, args: []string{"apply", "site", "--json", "--check", "0badc0de0badc0de"}},
 		{name: "apply-confirm", dir: func(t *testing.T) string {
 			return vmtest.WriteProject(t, map[string]string{
 				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
@@ -172,7 +172,7 @@ func TestJSONLastLine(t *testing.T) {
 		{"apply without a terminal", good, nil, []string{"apply", "site"}, exitConfirm, false},
 		{"apply --yes", good, nil, []string{"apply", "site", "--yes"}, exitOK, false},
 		{"apply with a failed host", good, func(h *fakehost.Hosts) { h.FailApply("web1") }, []string{"apply", "site", "--yes"}, exitFailed, false},
-		{"apply with a stale hash", good, nil, []string{"apply", "site", "--check", "0badc0de"}, exitHash, false},
+		{"apply with a stale hash", good, nil, []string{"apply", "site", "--check", "0badc0de0badc0de"}, exitHash, false},
 		{"apply with a bad hash", good, nil, []string{"apply", "site", "--check", "x"}, exitInvalid, false},
 		{"apply without changes", good, present, []string{"apply", "site"}, exitOK, false},
 		{"apply answered no", good, nil, []string{"apply", "site"}, exitOK, true},

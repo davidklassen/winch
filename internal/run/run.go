@@ -181,7 +181,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			plan.Hosts = append(plan.Hosts, h)
 		}
 	}
-	plan.hash = sumBytes(plan.HashInput())[:8]
+	plan.hash = sumBytes(plan.HashInput())[:16]
 	return plan
 }
 
