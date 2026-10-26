@@ -71,6 +71,11 @@ func (p *Plan) Write(out, errOut io.Writer) {
 				in = p.In
 				if p.Handler != nil {
 					markLine(b, indent, "!", " handler "+p.Handler.Handler.FullName()+"\n")
+					for _, hs := range p.Handler.Steps {
+						if hs.PendingThen {
+							markLine(b, indent+"    ", "!", " then:"+command(hs.Step.ShownThen(), indent+"        ")+"\n")
+						}
+					}
 					continue
 				}
 				if p.Result.Status == module.Change {

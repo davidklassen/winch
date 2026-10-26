@@ -280,6 +280,14 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 			name := s.Handler.FullName()
 			s.Runs = hr.notified[name]
 			delete(hr.notified, name)
+			if s.Runs {
+				for j, hs := range s.Steps {
+					if hs.Last && hs.Then != nil && hr.thens[*hs.Then] {
+						s.Steps[j].PendingThen = true
+						delete(hr.thens, *hs.Then)
+					}
+				}
+			}
 			continue
 		}
 		if ctx.Err() != nil {

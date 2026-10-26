@@ -83,6 +83,14 @@ func writePlanned(e *Events, host string, stage *project.Stage, steps []Planned)
 			if s.Runs {
 				ev.Handler, ev.Status = s.Handler.FullName(), "change"
 				e.Write("planned", ev)
+				for _, hs := range s.Steps {
+					if hs.PendingThen {
+						tev := stepEvent(host, stage, hs)
+						tev.Handler, tev.Status = ev.Handler, "change"
+						tev.Then, tev.ThenPending = secret.PrintableLines(hs.Step.ShownThen()), true
+						e.Write("planned", tev)
+					}
+				}
 			}
 			continue
 		}

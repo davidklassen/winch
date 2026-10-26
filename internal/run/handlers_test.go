@@ -560,7 +560,7 @@ func TestPendingThenOfAChangedStep(t *testing.T) {
 // spec: Steps; Handlers
 func TestPendingThenOfAHandlerStep(t *testing.T) {
 	files := maps.Clone(handlerFiles)
-	files["recipes/app/recipe.yaml"] += "      then: app-check\n"
+	files["recipes/app/recipe.yaml"] += "      loop: [1, 2]\n      then: |\n        app-check\n        app-log\n"
 	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
@@ -568,11 +568,20 @@ func TestPendingThenOfAHandlerStep(t *testing.T) {
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetPending("web1", "app.restart")
-	h.SetThen("web1", protocol.Then{Recipe: "app", SHA256: sum("app-check")})
-	if ok, got := applyAll(t, p, h); !ok {
-		t.Fatal(string(got))
+	h.SetThen("web1", protocol.Then{Recipe: "app", SHA256: sum("app-check\napp-log\n")})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(&out, &errOut)
+	out.WriteString("json:\n")
+	plan.WriteJSON(run.NewEvents(&out, func() time.Time { return time.Time{} }))
+	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-pending-then-handler.golden"), output(&out, &errOut))
+
+	out.Reset()
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+		t.Fatal(errOut.String())
 	}
-	if want := []string{"app restart", "command app-check"}; !slices.Equal(h.Log["web1"], want) {
+	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-pending-then-handler.golden"), output(&out, &errOut))
+	if want := []string{"app restart", "app restart", "command app-check\napp-log\n"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if got := h.ThenOf("web1"); len(got) != 0 {

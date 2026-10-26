@@ -1,0 +1,28 @@
+stdout:
+web1
+  apps
+    app
+      ! handler app.restart
+          ! then:
+              app-check
+              app-log
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+plan 2ffd073bf21d8c86
+json:
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:nginx#1","stage":"web","recipe":"nginx","step":"file /etc/nginx/a.conf","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:nginx#2","stage":"web","recipe":"nginx","step":"file /etc/nginx/b.conf","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:nginx#3","stage":"web","recipe":"nginx","step":"file /etc/nginx/c.conf","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:site#1[0]","stage":"web","recipe":"site","step":"file /var/www/index.html","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:site#1[1]","stage":"web","recipe":"site","step":"file /var/www/about.html","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:app#1","stage":"apps","recipe":"app","step":"file /etc/app.conf","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:app.restart","stage":"apps","recipe":"app","handler":"app.restart","status":"change"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:app.restart#1[1]","stage":"apps","recipe":"app","handler":"app.restart","status":"change","then":"app-check\napp-log\n","then_pending":true}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:nginx#1","stage":"web","recipe":"nginx","step":"file /etc/nginx/a.conf","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:nginx#2","stage":"web","recipe":"nginx","step":"file /etc/nginx/b.conf","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:nginx#3","stage":"web","recipe":"nginx","step":"file /etc/nginx/c.conf","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:site#1[0]","stage":"web","recipe":"site","step":"file /var/www/index.html","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:site#1[1]","stage":"web","recipe":"site","step":"file /var/www/about.html","module":"file","status":"ok"}
+{"type":"host","time":"0001-01-01T00:00:00Z","phase":"plan","host":"web1","status":"change"}
+{"type":"host","time":"0001-01-01T00:00:00Z","phase":"plan","host":"web2","status":"ok"}
+stderr:

@@ -1,0 +1,9 @@
+stdout:
+web1: app: ~ handler app.restart: service app
+web1: app: ~ handler app.restart: service app
+web1: app: ! then:
+    app-check
+    app-log
+
+2 hosts: 1 changed, 1 unchanged
+stderr:
