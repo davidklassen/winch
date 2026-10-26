@@ -63,8 +63,8 @@ type hostEnv struct {
 	Vars    map[string]any `expr:"vars"`
 }
 
-// exprOptions replace keys, values, and toPairs, whose order is random in
-// expr, with versions in sorted key order.
+// exprOptions add quote, and replace keys, values, and toPairs, whose order
+// is random in expr, with versions in sorted key order.
 var exprOptions = []expr.Option{
 	expr.Env(exprEnv{}),
 	expr.DisableBuiltin("keys"),
@@ -73,6 +73,13 @@ var exprOptions = []expr.Option{
 	sortedFunc("keys", func(k string, v any) any { return k }),
 	sortedFunc("values", func(k string, v any) any { return v }),
 	sortedFunc("toPairs", func(k string, v any) any { return []any{k, v} }),
+	expr.Function("quote", func(args ...any) (any, error) {
+		s, ok := args[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("quote: %s is not a string", describeValue(args[0]))
+		}
+		return quote(s), nil
+	}, quote),
 }
 
 func sortedFunc(name string, pick func(k string, v any) any) expr.Option {

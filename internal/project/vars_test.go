@@ -3,8 +3,10 @@ package project
 import (
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -492,6 +494,32 @@ func TestValues(t *testing.T) {
 	}
 }
 
+// spec: Templates and expressions/Template functions
+func TestQuote(t *testing.T) {
+	values := []string{"", "a b", "it's", "''", "x; echo pwned", "a\nb", "$HOME $(id) `id`", `\ "`}
+	for _, v := range values {
+		vars := "  v: " + strconv.Quote(v) + "\n"
+		for kind, content := range map[string]string{
+			"tpl":  `!tpl "printf %s {{ quote .vars.v }}"`,
+			"expr": `!expr '"printf %s " + quote(vars.v)'`,
+		} {
+			t.Run(fmt.Sprintf("%s %q", kind, v), func(t *testing.T) {
+				cmd := evalOne(t, vars, "  - file:\n      path: /a\n      content: "+content+"\n", nil)
+				if strings.HasPrefix(cmd, "error: ") || strings.HasPrefix(cmd, "load error: ") {
+					t.Fatal(cmd)
+				}
+				out, err := exec.Command("sh", "-c", cmd).Output()
+				if err != nil {
+					t.Fatalf("sh -c %q: %v", cmd, err)
+				}
+				if string(out) != v {
+					t.Errorf("sh -c %q\ngot  %q\nwant %q", cmd, out, v)
+				}
+			})
+		}
+	}
+}
+
 // spec: Templates and expressions; Templates and expressions/Data
 func TestExprValues(t *testing.T) {
 	tests := []struct {
@@ -545,6 +573,8 @@ func TestEvalErrors(t *testing.T) {
 			want: "error: recipes/r/recipe.yaml:4:16: content: expected a string, got a list"},
 		{name: "expression fails", step: "  - file:\n      path: /a\n      content: !expr 1 + vars.s\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: invalid operation: int + string\n | 1 + vars.s\n | ..^"},
+		{name: "quote of a number", step: "  - file:\n      path: /a\n      content: !expr quote(vars.i)\n",
+			want: "error: recipes/r/recipe.yaml:4:16: content: quote: the integer 80 is not a string\n | quote(vars.i)\n | ^"},
 		{name: "default fails", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n",
 			want: "error: winch.yaml:15:8: variable \"bad\": invalid operation: int + string\n | 1 + vars.s\n | ..^"},
 		{name: "when fails before a default", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n    when: !expr 'vars.l[5] == \"x\"'\n",

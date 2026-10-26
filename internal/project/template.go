@@ -17,7 +17,7 @@ import (
 
 // funcs replaces the built-in index, which gives the zero value for a missing
 // map key.
-var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": title}
+var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": title, "quote": quote}
 
 // tmplFile is a parsed template file of a recipe.
 type tmplFile struct {
@@ -305,6 +305,10 @@ func title(s string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+func quote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 var templateErrRe = regexp.MustCompile(`(?s)^(\d+)(?::(\d+))?: (?:executing "(?:[^"\\]|\\.)*" at <(.*?)>: )?(.*)$`)
