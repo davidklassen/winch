@@ -426,3 +426,47 @@ func TestPendingStaysInTheStateDirectory(t *testing.T) {
 		t.Errorf("pending of project ../secret = %s, want an error", r.Result)
 	}
 }
+
+// spec: Steps; Remote execution/State on the host
+func TestDamagedThenRecord(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "then"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "then", "acme")
+	if err := os.WriteFile(file, []byte("{\"recipe\":\"a\",\"sha256\":\"1f\"}\n\n{\"recipe\":\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := start(t, dir, "")
+	h := hello("r1")
+	h.Project = "acme"
+	c.call(t, "hello", h)
+	want := "read the pending then records: " + file + ":3: unexpected end of JSON input"
+	if r := c.call(t, "pending", nil); r.Error != want {
+		t.Errorf("pending error = %q, want %q", r.Error, want)
+	}
+}
+
+// spec: Handlers; Remote execution/State on the host
+func TestEmptyLinesInRecords(t *testing.T) {
+	dir := t.TempDir()
+	for sub, data := range map[string]string{"handlers": "nginx.reload\n\napp.restart\n", "then": "\n{\"recipe\":\"a\",\"sha256\":\"1f\"}\n"} {
+		if err := os.Mkdir(filepath.Join(dir, sub), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, sub, "acme"), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := start(t, dir, "")
+	h := hello("r1")
+	h.Project = "acme"
+	c.call(t, "hello", h)
+	p := pendingAll(t, c)
+	if want := []string{"nginx.reload", "app.restart"}; !slices.Equal(p.Handlers, want) {
+		t.Errorf("handlers = %q, want %q", p.Handlers, want)
+	}
+	if want := []protocol.Then{{Recipe: "a", SHA256: "1f"}}; !slices.Equal(p.Then, want) {
+		t.Errorf("then = %v, want %v", p.Then, want)
+	}
+}

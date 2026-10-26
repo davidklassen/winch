@@ -206,8 +206,8 @@ func TestOpenSudo(t *testing.T) {
 	t.Run("password required", func(t *testing.T) {
 		fakeBin(t, "aarch64", "1000", "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n")
 		_, err := open(t, stateDir, bins)
-		want := "winch: the login user needs passwordless sudo"
-		if err == nil || !strings.Contains(err.Error(), want) {
+		want := "winch: the login user needs passwordless sudo: sudo: a password is required"
+		if err == nil || err.Error() != want {
 			t.Errorf("error = %v, want %q", err, want)
 		}
 	})
@@ -371,9 +371,9 @@ func sshArgs(t *testing.T, host, address string) (options, target string) {
 }
 
 // spec: Remote execution/Sessions
-func TestOpenTimeouts(t *testing.T) {
+func TestOpenOptions(t *testing.T) {
 	options, _ := sshArgs(t, "web1", "web1")
-	for _, want := range []string{"ConnectTimeout=15", "ServerAliveInterval=15"} {
+	for _, want := range []string{"ConnectTimeout=15", "ServerAliveInterval=15", "RemoteCommand=none", "PermitLocalCommand=no"} {
 		if !strings.Contains(options, "-o\n"+want+"\n") {
 			t.Errorf("ssh arguments have no -o %s", want)
 		}
@@ -566,8 +566,8 @@ func TestOpenUnreachable(t *testing.T) {
 	t.Run("missing sudo", func(t *testing.T) {
 		fakeBin(t, "aarch64", "1000", "#!/bin/sh\nexit 1\n")
 		_, err := open(t, t.TempDir(), []helperbin.Binary{fakeHelper("arm64")})
-		if err == nil || errors.Is(err, ErrUnreachable) {
-			t.Errorf("error %v, want a failure that is not unreachable", err)
+		if err == nil || errors.Is(err, ErrUnreachable) || err.Error() != "winch: the login user needs passwordless sudo" {
+			t.Errorf("error %v, want the sudo failure, not unreachable", err)
 		}
 	})
 }
@@ -617,27 +617,32 @@ func TestOpenBatchHint(t *testing.T) {
 		name, stderr string
 		batch        bool
 		address      string
+		user         string
 		want         string
 	}{
-		{"host key", "Host key verification failed.", true, "web1",
+		{"host key", "Host key verification failed.", true, "web1", "",
 			`Host key verification failed. (in batch mode ssh asks nothing; run "ssh web1" once)`},
-		{"refused login", "admin@web1: Permission denied (publickey).", true, "192.0.2.1",
-			`admin@web1: Permission denied (publickey). (in batch mode ssh asks nothing; run "ssh -o HostName=192.0.2.1 web1" once)`},
-		{"refused login of a user", "deploy@web1: Permission denied (publickey).", true, "web1",
-			`deploy@web1: Permission denied (publickey). (in batch mode ssh asks nothing; run "ssh -l deploy web1" once)`},
-		{"changed host key", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.", true, "web1",
+		{"host key of an address", "Host key verification failed.", true, "192.0.2.1", "",
+			`Host key verification failed. (in batch mode ssh asks nothing; run "ssh -o HostName=192.0.2.1 web1" once)`},
+		{"host key of a user", "Host key verification failed.", true, "web1", "deploy",
+			`Host key verification failed. (in batch mode ssh asks nothing; run "ssh -l deploy web1" once)`},
+		{"refused login", "admin@web1: Permission denied (publickey).", true, "192.0.2.1", "",
+			`admin@web1: Permission denied (publickey). (batch mode cannot type a key passphrase or a password; add the key to the agent with ssh-add)`},
+		{"changed host key", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.", true, "web1", "",
 			"@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed."},
-		{"refused connection", "ssh: connect to host web1 port 22: Connection refused", true, "web1",
+		{"refused connection", "ssh: connect to host web1 port 22: Connection refused", true, "web1", "",
 			"ssh: connect to host web1 port 22: Connection refused"},
-		{"host key with a terminal", "Host key verification failed.", false, "web1",
+		{"host key with a terminal", "Host key verification failed.", false, "web1", "",
 			"Host key verification failed."},
+		{"refused login with a terminal", "admin@web1: Permission denied (publickey).", false, "web1", "",
+			"admin@web1: Permission denied (publickey)."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeBin(t, "aarch64", "0", goodSudo)
 			failOnce(t, "", tt.stderr, 255)
 			_, err := Open(context.Background(), Config{
-				Host: "web1", Address: tt.address, Dir: t.TempDir(), Batch: tt.batch, User: user(tt.stderr),
+				Host: "web1", Address: tt.address, Dir: t.TempDir(), Batch: tt.batch, User: tt.user,
 				Binaries: []helperbin.Binary{fakeHelper("arm64")}, Hello: protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
 			})
 			if err == nil || err.Error() != tt.want || !errors.Is(err, ErrUnreachable) {
@@ -645,12 +650,4 @@ func TestOpenBatchHint(t *testing.T) {
 			}
 		})
 	}
-}
-
-// user is the login user that an ssh error names, or "" for admin.
-func user(stderr string) string {
-	if strings.HasPrefix(stderr, "deploy@") {
-		return "deploy"
-	}
-	return ""
 }

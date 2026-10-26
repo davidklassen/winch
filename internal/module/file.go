@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -74,10 +75,10 @@ func (f *File) Validate() error {
 	if err := checkRelative("source", f.Source); err != nil {
 		return err
 	}
-	if err := checkID("owner", f.Owner); err != nil {
+	if err := checkOwner("owner", f.Owner); err != nil {
 		return err
 	}
-	if err := checkID("group", f.Group); err != nil {
+	if err := checkOwner("group", f.Group); err != nil {
 		return err
 	}
 	return checkMode(f.Mode, "0644")
@@ -92,9 +93,13 @@ func checkCommand(field string, c *string) error {
 
 var numberRe = regexp.MustCompile(`^[0-9]+$`)
 
-// checkID checks the range of a value of only digits. chown takes the ID
-// 4294967295 as "no change".
-func checkID(field string, v yamlx.NameOrID) error {
+// checkOwner checks an owner or a group: the characters of a name, and the
+// range of a value of only digits. chown takes the ID 4294967295 as "no
+// change".
+func checkOwner(field string, v yamlx.NameOrID) error {
+	if strings.ContainsAny(string(v), ":/") || strings.ContainsFunc(string(v), unicode.IsSpace) || strings.HasPrefix(string(v), "-") {
+		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf(`%q is not a name; a name has no ":", "/", or white space, and does not start with "-"`, v)}
+	}
 	if !numberRe.MatchString(string(v)) {
 		return nil
 	}

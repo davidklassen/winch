@@ -3,6 +3,7 @@ package project
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
@@ -59,6 +60,16 @@ func validAddress(s string) bool {
 	})
 }
 
+// hasPort reports whether s has brackets, or a ":" that is not part of an
+// IPv6 address.
+func hasPort(s string) bool {
+	if strings.ContainsAny(s, "[]") {
+		return true
+	}
+	_, err := netip.ParseAddr(s)
+	return strings.Contains(s, ":") && err != nil
+}
+
 // loadInventory loads an inventory file. Its variables must be declared; the
 // values of set come last.
 func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) {
@@ -101,6 +112,7 @@ func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) 
 			errs = append(errs, merr)
 		}
 	}
+	addresses := map[string]string{}
 	for i := range inv.Hosts {
 		h := &inv.Hosts[i]
 		if h.Name == "all" {
@@ -111,6 +123,14 @@ func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) 
 			h.Address = h.Name
 		} else if !validAddress(h.Address) {
 			errs = append(errs, yamlx.Errorf(h.Pos, "host %q: address %q is not a host name or IP", h.Name, h.Address))
+		} else if hasPort(h.Address) {
+			errs = append(errs, yamlx.Errorf(h.Pos, "host %q: address %q has a port or brackets; put the port in the SSH config", h.Name, h.Address))
+		}
+		// Two hosts with one address share the lock of the helper there.
+		if other, ok := addresses[strings.ToLower(h.Address)]; ok {
+			errs = append(errs, yamlx.Errorf(h.Pos, "host %q has the address of host %q: %s", h.Name, other, h.Address))
+		} else {
+			addresses[strings.ToLower(h.Address)] = h.Name
 		}
 		own, verrs := l.values(h.VarsNode)
 		errs = append(errs, verrs...)

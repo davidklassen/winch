@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"time"
 
@@ -55,7 +56,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) e
 		case lock == nil:
 			err = errors.New("the first request must be hello")
 		case req.Method == "facts":
-			result, err = facts.Read("/etc/os-release")
+			result, err = facts.Read("/etc/os-release", "/usr/lib/os-release")
 		case req.Method == "pending":
 			result, err = readPending(handlers, thens)
 		case req.Method == "handled":
@@ -204,11 +205,16 @@ func readPending(handlers, thens records) (protocol.Pending, error) {
 	if err != nil {
 		return protocol.Pending{}, err
 	}
-	p := protocol.Pending{Handlers: names, Then: make([]protocol.Then, len(lines))}
+	p := protocol.Pending{Handlers: slices.DeleteFunc(names, func(n string) bool { return n == "" }), Then: []protocol.Then{}}
 	for i, l := range lines {
-		if err := json.Unmarshal([]byte(l), &p.Then[i]); err != nil {
-			return protocol.Pending{}, fmt.Errorf("read the pending then records: %w", err)
+		if l == "" {
+			continue
 		}
+		var t protocol.Then
+		if err := json.Unmarshal([]byte(l), &t); err != nil {
+			return protocol.Pending{}, fmt.Errorf("read the pending then records: %s:%d: %w", filepath.Join(thens.dir, thens.project), i+1, err)
+		}
+		p.Then = append(p.Then, t)
 	}
 	return p, nil
 }

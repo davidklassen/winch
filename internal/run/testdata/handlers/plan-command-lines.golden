@@ -1,0 +1,28 @@
+stdout:
+web1
+  base
+    ! then:
+        newaliases
+        postmap /etc/postfix/virtual
+    * health:
+        systemctl is-active nginx
+
+        curl -sf http://localhost/
+
+web2
+  base
+    + file /etc/aliases
+        owner root, group root, mode 0644
+        @@ -0,0 +1,1 @@
+        +a
+        then:
+          newaliases
+          postmap /etc/postfix/virtual
+    * health:
+        systemctl is-active nginx
+
+        curl -sf http://localhost/
+
+2 hosts: 2 to change, 0 unchanged, 0 unknown
+plan 5a99680aa981a7f6
+stderr:

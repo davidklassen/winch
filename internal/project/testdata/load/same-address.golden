@@ -1,0 +1,3 @@
+inventories/test.yaml:4:3: host "web2" has the address of host "web1": 192.0.2.1
+inventories/test.yaml:7:3: host "web4" has the address of host "web3": web3
+inventories/test.yaml:13:3: host "web7" has the address of host "web6": mail.acme.com

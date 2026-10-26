@@ -20,6 +20,8 @@ type records struct {
 	what string
 }
 
+// read returns the lines of the file, also empty ones, so that the index of a
+// line gives its line number.
 func (h records) read() ([]string, error) {
 	f, err := os.OpenInRoot(h.dir, h.project)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -36,7 +38,11 @@ func (h records) read() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read the %s: %w", h.what, err)
 	}
-	return strings.FieldsFunc(string(data), func(r rune) bool { return r == '\n' }), nil
+	text := strings.TrimSuffix(string(data), "\n")
+	if text == "" {
+		return []string{}, nil
+	}
+	return strings.Split(text, "\n"), nil
 }
 
 func (h records) add(names []string) error {

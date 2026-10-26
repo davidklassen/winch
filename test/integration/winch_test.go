@@ -217,8 +217,8 @@ func TestWinch(t *testing.T) {
 	t.Run("a host without passwordless sudo fails", func(t *testing.T) {
 		dir := project(t, "hosts:\n  winch:\n    address: 127.0.0.1\n    user: nosudo\n")
 		r := lab.Winch(t, dir, "plan", "site")
-		if r.Code != 1 || !strings.Contains(r.Stderr, "the login user needs passwordless sudo") {
-			t.Errorf("plan as nosudo: exit %d", r.Code)
+		if r.Code != 1 || !strings.Contains(r.Stderr, "the login user needs passwordless sudo: sudo: a password is required") {
+			t.Errorf("plan as nosudo: exit %d\n%s", r.Code, r.Stderr)
 		}
 	})
 

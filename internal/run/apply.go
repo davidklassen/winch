@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,10 +94,10 @@ type text struct{ out, errOut io.Writer }
 func (t text) Step(ev StepEvent) {
 	switch {
 	case ev.Health != "" && ev.Status == "ok":
-		fmt.Fprintf(t.out, "%s: %s: * health: %s\n", ev.Host, ev.Stage, ev.Health)
+		fmt.Fprintf(t.out, "%s: %s: * health:%s\n", ev.Host, ev.Stage, command(ev.Health, "    "))
 	case ev.Status != "change":
 	case ev.Then != "" && ev.ThenPending:
-		fmt.Fprintf(t.out, "%s: %s: ! then: %s\n", ev.Host, ev.scope(), ev.Then)
+		fmt.Fprintf(t.out, "%s: %s: ! then:%s\n", ev.Host, ev.scope(), command(ev.Then, "    "))
 	case ev.Then == "":
 		fmt.Fprintf(t.out, "%s: %s: %s %s%s\n", ev.Host, ev.scope(), marks[module.Action(ev.Action)], ev.label(), linkNote(ev.Link))
 	}
@@ -293,7 +294,11 @@ func (a *hostApply) health(ctx context.Context, stage *project.Stage) error {
 	}
 	a.rep.Step(ev)
 	if err != nil {
-		return fmt.Errorf("%s: failed: health: %s: %w", ev.Stage, ev.Health, err)
+		shown, sep := command(ev.Health, "    "), ": "
+		if strings.HasPrefix(shown, "\n") {
+			sep = "\n"
+		}
+		return fmt.Errorf("%s: failed: health:%s%s%w", ev.Stage, shown, sep, err)
 	}
 	return nil
 }
@@ -301,7 +306,7 @@ func (a *hostApply) health(ctx context.Context, stage *project.Stage) error {
 // healthEvent returns the event of the health gate of stage on host, as it
 // passes.
 func healthEvent(host string, stage *project.Stage) StepEvent {
-	return StepEvent{Host: host, Address: host + ":" + stage.Name + "#health", Stage: stage.Name, Health: secret.Printable(stage.Health.Command), Status: "ok"}
+	return StepEvent{Host: host, Address: host + ":" + stage.Name + "#health", Stage: stage.Name, Health: secret.PrintableLines(stage.Health.Command), Status: "ok"}
 }
 
 // stepEvent returns the event of p on host in stage, without its result.
@@ -365,7 +370,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 			continue
 		}
 		tev := ev
-		tev.Step, tev.Module, tev.Then, tev.ThenPending = "", "", secret.Printable(p.Step.ShownThen()), a.thens[*t]
+		tev.Step, tev.Module, tev.Then, tev.ThenPending = "", "", secret.PrintableLines(p.Step.ShownThen()), a.thens[*t]
 		if err := a.conn.Command(context.WithoutCancel(ctx), p.Step.Then, *t); err != nil {
 			tev.Status, tev.Error = "failed", err.Error()
 			a.rep.Step(tev)

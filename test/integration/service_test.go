@@ -58,6 +58,17 @@ ExecStartPre=/bin/sh -c 'if [ -e /tmp/boom ]; then cat /tmp/boom; exit 1; fi'
 ExecStart=/bin/sleep infinity
 ExecReload=/bin/sh -c 'echo boom on reload; exit 1'
 U
+cat > /etc/systemd/system/winch-slowstop.service <<'U'
+[Unit]
+JobTimeoutSec=1
+[Service]
+ExecStart=/bin/sleep infinity
+ExecStop=/bin/sh -c 'echo boom on stop; sleep 3'
+U
+cat > /etc/systemd/system/winch-bad.service <<'U'
+[Service]
+ExecStart=relative/path
+U
 mkdir -p /opt/winch
 cat > /opt/winch/winch-linked.service <<'U'
 [Service]
@@ -101,6 +112,14 @@ func TestServiceModule(t *testing.T) {
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
+	t.Run("a masked unit fails without journal lines", func(t *testing.T) {
+		vm.MustRun(t, "systemctl start winch-vendor && systemctl stop winch-vendor && systemctl mask --runtime winch-vendor")
+		defer vm.MustRun(t, "systemctl unmask --runtime winch-vendor")
+		_, err := vm.Session(t).Check(t.Context(), "service", &module.Service{Name: "winch-vendor", Running: new(true)}, &module.State{})
+		if want := `winch-vendor.service has the load state "masked"`; err == nil || err.Error() != want {
+			t.Errorf("check error = %v, want %q", err, want)
+		}
+	})
 	vmtest.RunCases(t, vm, "service", reset, []vmtest.Case{
 		{
 			Name:      "start",
@@ -508,6 +527,19 @@ systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
 			Args:         &module.Service{Name: "winch-boom", Reloaded: true},
 			Want:         change("reload"),
 			WantApplyErr: "\nboom on reload",
+		},
+		{
+			Name:         "a failed stop shows the journal",
+			Setup:        `systemctl start winch-slowstop`,
+			Args:         &module.Service{Name: "winch-slowstop", Running: new(false)},
+			Want:         change("stop"),
+			WantApplyErr: "\nboom on stop",
+			After:        `systemctl kill -s KILL winch-slowstop`,
+		},
+		{
+			Name:    "a bad load state shows the journal",
+			Args:    &module.Service{Name: "winch-bad", Running: new(true)},
+			WantErr: "\n/etc/systemd/system/winch-bad.service:2: Neither a valid executable name nor an absolute path: relative/path",
 		},
 		{
 			Name: "restarted on a missing unit is ok",

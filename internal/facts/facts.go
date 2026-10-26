@@ -4,7 +4,9 @@ package facts
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 )
@@ -19,9 +21,15 @@ type OS struct {
 	Codename string `json:"codename" expr:"codename"`
 }
 
-// Read reads the facts from the os-release file at path.
-func Read(path string) (Facts, error) {
-	data, err := os.ReadFile(path)
+// Read reads the facts from the first os-release file in paths that exists.
+func Read(paths ...string) (Facts, error) {
+	var data []byte
+	var err error
+	for _, p := range paths {
+		if data, err = os.ReadFile(p); !errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+	}
 	if err != nil {
 		return Facts{}, fmt.Errorf("read facts: %w", err)
 	}

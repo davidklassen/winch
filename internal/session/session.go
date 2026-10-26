@@ -114,7 +114,7 @@ exec "$b"
 // command runs the script as root: directly for root, else with sudo -n.
 func command(script string) string {
 	return "s='" + script + `'; if [ "$(id -u)" -eq 0 ]; then exec sh -c "$s"; fi; ` +
-		`sudo -n true 2>/dev/null || { echo "winch: the login user needs passwordless sudo" >&2; exit 1; }; ` +
+		`e=$(sudo -n true 2>&1) || { printf "winch: the login user needs passwordless sudo%s\n" "${e:+: $e}" >&2; exit 1; }; ` +
 		`exec sudo -n sh -c "$s"`
 }
 
@@ -146,7 +146,7 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	if dir == "" {
 		dir = StateDir
 	}
-	args := []string{"-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15"}
+	args := []string{"-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "RemoteCommand=none", "-o", "PermitLocalCommand=no"}
 	if cfg.Batch {
 		args = append(args, "-o", "BatchMode=yes")
 	}
@@ -195,13 +195,17 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	return s, false, nil
 }
 
-// hint adds to err, an error of ssh in batch mode, the command that answers
-// the questions of ssh, when ssh failed on a host key or a login.
+// hint adds to err, an error of ssh in batch mode, how to answer the question
+// that ssh could not ask: a new host key, or a key passphrase or a password.
 func hint(cfg Config, err error) error {
 	msg := err.Error()
+	switch {
+	case !cfg.Batch:
+		return err
+	case strings.Contains(msg, "Permission denied"):
+		return fmt.Errorf("%w (batch mode cannot type a key passphrase or a password; add the key to the agent with ssh-add)", err)
 	// A changed host key is no question that ssh asks.
-	if !cfg.Batch || strings.Contains(msg, "HAS CHANGED") ||
-		!strings.Contains(msg, "Host key verification failed") && !strings.Contains(msg, "Permission denied") {
+	case strings.Contains(msg, "HAS CHANGED") || !strings.Contains(msg, "Host key verification failed"):
 		return err
 	}
 	cmd := "ssh"

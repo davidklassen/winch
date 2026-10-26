@@ -92,7 +92,11 @@ func (l *loader) readRecipes() error {
 		}
 		n, err := parse(l.dir, dir+"/recipe.yaml")
 		if errors.Is(err, fs.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("%s: a recipe needs a recipe.yaml", dir))
+			hint := ""
+			if _, err := os.Stat(filepath.Join(l.dir, dir, "recipe.yml")); err == nil {
+				hint = "; rename recipe.yml to recipe.yaml"
+			}
+			errs = append(errs, fmt.Errorf("%s: a recipe needs a recipe.yaml%s", dir, hint))
 			continue
 		}
 		if err != nil {

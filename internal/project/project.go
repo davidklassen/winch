@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -190,7 +191,34 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-	return scanProject(dir, cfg)
+	warnings, err := scanProject(dir, cfg)
+	if err != nil {
+		return nil, err
+	}
+	yml, err := ymlFiles(dir)
+	return append(warnings, yml...), err
+}
+
+// ymlFiles returns a warning for each .yml file in pipelines/ and in a recipe
+// directory. winch reads neither.
+func ymlFiles(dir string) ([]*yamlx.Error, error) {
+	fsys := os.DirFS(dir)
+	pipelines, err := fs.Glob(fsys, "pipelines/*.yml")
+	if err != nil {
+		return nil, err
+	}
+	recipes, err := fs.Glob(fsys, "recipes/*/*.yml")
+	if err != nil {
+		return nil, err
+	}
+	var out []*yamlx.Error
+	for _, file := range pipelines {
+		out = append(out, yamlx.Errorf(yamlx.Pos{File: file, Line: 1, Col: 1}, "winch reads only .yaml files in pipelines/; rename it to %s.yaml", strings.TrimSuffix(path.Base(file), ".yml")))
+	}
+	for _, file := range recipes {
+		out = append(out, yamlx.Errorf(yamlx.Pos{File: file, Line: 1, Col: 1}, "winch reads only recipe.yaml in a recipe directory"))
+	}
+	return out, nil
 }
 
 type loader struct {
@@ -445,6 +473,10 @@ func (l *loader) loadPipeline(name string) (*Pipeline, error) {
 		for _, f := range files {
 			names = append(names, pipelineName(f))
 		}
+		yml := "pipelines/" + name + ".yml"
+		if _, err := os.Stat(filepath.Join(l.dir, yml)); err == nil {
+			return nil, fmt.Errorf("unknown pipeline %q; winch reads only .yaml files: rename %s to %s.yaml", name, yml, name)
+		}
 		return nil, fmt.Errorf("unknown pipeline %q%s", name, yamlx.Suggest(name, names))
 	}
 	return l.decodePipeline(file)
@@ -465,6 +497,10 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 	}
 	pl := &Pipeline{Name: pipelineName(file)}
 	var errs []error
+	if len(pf.Stages) == 0 {
+		i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "stages" })
+		errs = append(errs, yamlx.Errorf(n.Pairs[i].Value.Pos, "stages: a pipeline needs at least one stage"))
+	}
 	seen := map[string]bool{}
 	for _, sf := range pf.Stages {
 		if seen[sf.Name] {

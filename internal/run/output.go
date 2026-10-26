@@ -77,13 +77,13 @@ func (p *Plan) Write(out, errOut io.Writer) {
 				}
 				switch {
 				case p.PendingThen:
-					fmt.Fprintf(b, "%s! then: %s\n", indent, secret.Printable(p.Step.ShownThen()))
+					fmt.Fprintf(b, "%s! then:%s\n", indent, command(p.Step.ShownThen(), indent+"    "))
 				case p.ThenRuns:
-					fmt.Fprintf(b, "%s    then: %s\n", indent, secret.Printable(p.Step.ShownThen()))
+					fmt.Fprintf(b, "%s    then:%s\n", indent, command(p.Step.ShownThen(), indent+"      "))
 				}
 			}
 			if h := sp.Stage.Health; h != nil {
-				fmt.Fprintf(b, "    * health: %s\n", secret.Printable(h.Command))
+				fmt.Fprintf(b, "    * health:%s\n", command(h.Command, "        "))
 			}
 		}
 	}
@@ -119,6 +119,23 @@ func (p *Plan) Write(out, errOut io.Writer) {
 	change, unchanged, failed := p.Counts()
 	fmt.Fprintf(out, "%s: %d to change, %d unchanged, 0 unknown%s\nplan %s\n",
 		hosts(len(p.Hosts)), change, unchanged, failures(failed), p.Hash())
+}
+
+// command returns a command for the end of a line: after a space when it has
+// one line, else as a block of lines with indent.
+func command(cmd, indent string) string {
+	cmd = strings.TrimSuffix(cmd, "\n")
+	if !strings.Contains(cmd, "\n") {
+		return " " + secret.Printable(cmd)
+	}
+	var b strings.Builder
+	for line := range strings.SplitSeq(cmd, "\n") {
+		b.WriteString("\n")
+		if line != "" {
+			b.WriteString(indent + secret.Printable(line))
+		}
+	}
+	return b.String()
 }
 
 func recipeLabel(st *project.Step) string {

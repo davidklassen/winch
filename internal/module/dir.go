@@ -31,10 +31,10 @@ func (d *Dir) Validate() error {
 	if d.Absent {
 		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"replace", d.Replace})
 	}
-	if err := checkID("owner", d.Owner); err != nil {
+	if err := checkOwner("owner", d.Owner); err != nil {
 		return err
 	}
-	if err := checkID("group", d.Group); err != nil {
+	if err := checkOwner("group", d.Group); err != nil {
 		return err
 	}
 	return checkMode(d.Mode, "0755")

@@ -1,0 +1,16 @@
+stdout:
+web1: base: ! then:
+    newaliases
+    postmap /etc/postfix/virtual
+web1: base: * health:
+    systemctl is-active nginx
+
+    curl -sf http://localhost/
+web2: base: + file /etc/aliases
+web2: base: * health:
+    systemctl is-active nginx
+
+    curl -sf http://localhost/
+
+2 hosts: 2 changed, 0 unchanged
+stderr:

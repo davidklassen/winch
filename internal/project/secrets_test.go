@@ -358,7 +358,7 @@ func TestLoadWarnings(t *testing.T) {
 		"recipes/r/templates/t.tmpl":     "id {{ .vars.short }}\naws " + fakeSecret(t, "aws.txt") + "\nexample " + fakeSecret(t, "aws_example.txt") + "\n",
 		"recipes/r/files/k.pem":          key,
 		"recipes/r/files/unused.pem":     key,
-		"pipelines/other.yaml":           "# " + slack + "\nstages: []\n",
+		"pipelines/other.yaml":           "# " + slack + "\nstages:\n  - {name: a, hosts: all, steps: []}\n",
 		"recipes/r/templates/stub.tmpl":  "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
 		"recipes/r/files/public.pem":     strings.ReplaceAll(key, "PRIVATE", "PUBLIC"),
 		"inventories/production.yaml":    "hosts:\n  web1:\n    vars:\n      pw: !secret YWdl\n",
@@ -412,7 +412,7 @@ func TestRekey(t *testing.T) {
 	quoted := oldKey.encrypt(t, "quoted")
 	files["recipes/r/recipe.yaml"] = strings.Replace(files["recipes/r/recipe.yaml"], "QUOTED", quoted, 1)
 	files["winch.yaml"] = strings.Replace(files["winch.yaml"], "NEW", newKey2.id.Recipient().String(), 1)
-	files["pipelines/site.yaml"] = "stages: []\n"
+	files["pipelines/site.yaml"] = "stages:\n  - {name: a, hosts: all, steps: []}\n"
 	dir := writeProject(t, files)
 
 	n, nfiles, err := Rekey(t.Context(), dir, secret.Identity{Path: oldKey.path})
@@ -485,7 +485,7 @@ func TestRekeyWritesThroughLink(t *testing.T) {
 	dir := writeProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n",
 		"inventories/test.yaml": "",
-		"pipelines/site.yaml":   "stages: []\n",
+		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 		"shared/hosts.yaml":     "hosts:\n  web1:\n    vars:\n      pw: !secret " + k.encrypt(t, "hunter2") + "\n",
 	})
 	shared := filepath.Join(dir, "shared", "hosts.yaml")
@@ -589,7 +589,7 @@ func TestRekeyKeepsEqualValuesEqual(t *testing.T) {
 	dir := writeProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + k.id.Recipient().String() + "]\nvars:\n  pw:\n",
 		"inventories/test.yaml": inv,
-		"pipelines/site.yaml":   "stages: []\n",
+		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
 	if _, err := Load(t.Context(), dir, "", "site", nil, k.keys()); err != nil {
 		t.Fatalf("Load before rekey: %v", err)
@@ -609,7 +609,7 @@ func TestInventoryOutsideInventories(t *testing.T) {
 		"winch.yaml":            "name: acme\ninventory: prod.yaml\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n  token:\n",
 		"prod.yaml":             "hosts:\n  web1:\n    vars:\n      pw: !secret " + k.encrypt(t, "hunter2") + "\n      token: " + fakeSecret(t, "ghp.txt") + "\n",
 		"inventories/test.yaml": "",
-		"pipelines/site.yaml":   "stages: []\n",
+		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
 	n, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
 	if err != nil || n != 1 {
@@ -629,7 +629,7 @@ func TestValidateChecksSecretForm(t *testing.T) {
 	dir := writeProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nvars:\n  pw:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret YWdl\n",
-		"pipelines/site.yaml":   "stages: []\n",
+		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
 	if _, err := Validate(dir, "", nil); err == nil || err.Error() != "inventories/test.yaml:4:11: !secret: the value is not an age file" {
 		t.Errorf("Validate = %q", err)

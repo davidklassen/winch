@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
@@ -579,5 +580,66 @@ func TestPendingThenOfAHandlerStep(t *testing.T) {
 	}
 	if got := h.PendingOf("web1"); len(got) != 0 {
 		t.Errorf("pending handlers = %v, want none", got)
+	}
+}
+
+// spec: CLI/Output; CLI/JSON output
+func TestCommandLines(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    parallelism: 1
+    health:
+      command: |
+        systemctl is-active nginx
+
+        curl -sf http://localhost/
+    steps:
+      - file:
+          path: /etc/aliases
+          content: "a\n"
+        then: |
+          newaliases
+          postmap /etc/postfix/virtual
+`,
+	}
+	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	then := "newaliases\npostmap /etc/postfix/virtual\n"
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/aliases", "a\n")
+	h.SetThen("web1", protocol.Then{Stage: "base", SHA256: sum(then)})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(&out, &errOut)
+	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-command-lines.golden"), output(&out, &errOut))
+
+	out.Reset()
+	plan.WriteJSON(run.NewEvents(&out, func() time.Time { return time.Time{} }))
+	if n := strings.Count(out.String(), `"then":"newaliases\npostmap /etc/postfix/virtual\n"`); n != 2 {
+		t.Errorf("JSON has the then with its newlines %d times, want 2:\n%s", n, out.String())
+	}
+	if n := strings.Count(out.String(), `"health":"systemctl is-active nginx\n\ncurl -sf http://localhost/\n"`); n != 2 {
+		t.Errorf("JSON has the health command with its newlines %d times, want 2:\n%s", n, out.String())
+	}
+
+	out.Reset()
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+		t.Fatal(errOut.String())
+	}
+	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-command-lines.golden"), output(&out, &errOut))
+
+	h = fakehost.New()
+	h.FailCommand("web1", "systemctl is-active nginx\n\ncurl -sf http://localhost/\n")
+	plan = run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+	want := "base: failed: health:\n    systemctl is-active nginx\n\n    curl -sf http://localhost/\ndid not pass within 1m0s: exit status 1"
+	if err := o.Failed["web1"]; err == nil || err.Error() != want {
+		t.Errorf("web1: error %q, want %q", err, want)
 	}
 }

@@ -84,8 +84,10 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	switch {
 	case missing, u.load == "loaded":
 	case u.load == "masked" && (s.Enabled == nil || !*s.Enabled) && (s.Running == nil || !*s.Running):
-	default:
+	case u.load == "masked":
 		return Result{}, fmt.Errorf("%s has the load state %q", u.id, u.load)
+	default:
+		return Result{}, withJournal(ctx, u.id, fmt.Errorf("%s has the load state %q", u.id, u.load))
 	}
 	if u.reload {
 		s.todo = append(s.todo, "daemon-reload")
@@ -189,17 +191,22 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 		_, err := run(ctx, nil, "systemctl", args...)
 		switch {
 		case err == nil:
-		case c == "start", c == "try-restart", c == "try-reload-or-restart":
-			journal, jerr := run(ctx, nil, "journalctl", "--unit="+s.Name, "-n", "10", "--no-pager", "-o", "cat")
-			if jerr != nil {
-				return errors.Join(err, jerr)
-			}
-			return fmt.Errorf("%w\n%s", err, strings.TrimSpace(journal))
+		case c == "start", c == "stop", c == "try-restart", c == "try-reload-or-restart":
+			return withJournal(ctx, s.Name, err)
 		default:
 			return err
 		}
 	}
 	return nil
+}
+
+// withJournal adds the last 10 lines of the journal of unit to err.
+func withJournal(ctx context.Context, unit string, err error) error {
+	journal, jerr := run(ctx, nil, "journalctl", "--unit="+unit, "-n", "10", "--no-pager", "-o", "cat")
+	if jerr != nil {
+		return errors.Join(err, jerr)
+	}
+	return fmt.Errorf("%w\n%s", err, strings.TrimSpace(journal))
 }
 
 const unitDir = "/etc/systemd/system"

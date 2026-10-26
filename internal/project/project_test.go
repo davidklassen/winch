@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -134,7 +135,7 @@ func TestLoad(t *testing.T) {
 		{name: "no-inventory", files: map[string]string{"winch.yaml": "name: acme\n"}},
 		{name: "missing-inventory-file", inventory: "inventories/nope.yaml"},
 		{name: "missing-default-inventory", files: map[string]string{"winch.yaml": "name: acme\ninventory: inventories/prdo.yaml\n"}},
-		{name: "pipeline-name-with-dots", pipeline: "web.v2", files: map[string]string{"pipelines/web.v2.yaml": "stages: []\n"}},
+		{name: "pipeline-name-with-dots", pipeline: "web.v2", files: map[string]string{"pipelines/web.v2.yaml": "stages:\n  - {name: a, hosts: all, steps: []}\n"}},
 		{name: "no-winch-yaml", files: map[string]string{"winch.yaml": ""}},
 		{name: "no-name", files: map[string]string{"winch.yaml": "inventory: inventories/test.yaml\n"}},
 		{name: "winch-unknown-key", files: map[string]string{"winch.yaml": "name: acme\ninventroy: x\n"}},
@@ -142,6 +143,8 @@ func TestLoad(t *testing.T) {
 		{name: "all-with-hosts", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1: {}\ngroups:\n  all:\n    hosts: [web1]\n"}},
 		{name: "other-group", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\ngroups:\n  web:\n    hosts: [web2]\n    user: x\n"}},
 		{name: "bad-address", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    address: a$(id)b\n  web2:\n    address: -oProxyCommand=x\n  web3:\n    address: fe80::1%eth0\n"}},
+		{name: "address-port", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    address: 192.0.2.1:22\n  web2:\n    address: \"[2001:db8::1]\"\n  web3:\n    address: mail.acme.com:2222\n  web4:\n    address: 2001:db8::1\n  web5:\n    address: fe80::1%eth0\n"}},
+		{name: "same-address", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    address: 192.0.2.1\n  web2:\n    address: 192.0.2.1\n  web3: {}\n  web4:\n    address: web3\n  web5:\n    address: 192.0.2.5\n  web6:\n    address: MAIL.acme.com\n  web7:\n    address: mail.acme.com\n"}},
 		{name: "host-named-all", files: map[string]string{"inventories/test.yaml": "hosts:\n  all: {}\n"}},
 		{name: "empty-inventory", files: map[string]string{"inventories/test.yaml": "hosts: {}\n"}},
 		{name: "host-name-number", files: map[string]string{"inventories/test.yaml": "hosts:\n  1234: {}\n  1.5: {}\n  web2: {}\n"}},
@@ -149,7 +152,9 @@ func TestLoad(t *testing.T) {
 		{name: "host-name-quoted", files: map[string]string{"inventories/test.yaml": "hosts:\n  \"1234\": {}\n  web2: {}\ngroups:\n  db:\n    hosts: [\"1234\"]\n"}},
 		{name: "unknown-pipeline", pipeline: "sit"},
 		{name: "bad-pipeline-name", pipeline: "../winch"},
+		{name: "unknown-pipeline-yml", pipeline: "web", files: map[string]string{"pipelines/web.yml": stage("")}},
 		{name: "duplicate-stage", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps: []\n  - name: a\n    hosts: all\n    steps: []\n"}},
+		{name: "pipeline-without-stages", files: map[string]string{"pipelines/site.yaml": "stages: []\n"}},
 		{name: "stage-missing-hosts", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    steps: []\n"}},
 		{name: "unknown-stage-host", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: web3\n    steps: []\n"}},
 		{name: "unknown-module", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - fiel:\n          path: /x\n"}},
@@ -183,6 +188,13 @@ func TestLoad(t *testing.T) {
 				"      - dir: {path: /d, group: 0o750}\n" +
 				"      - dir: {path: /e, owner: +999}\n" +
 				"      - dir: {path: /f, owner: 999, group: \"999\"}\n")}},
+		{name: "owner-group-names", files: map[string]string{"pipelines/site.yaml": stage(
+			"      - file: {path: /a, content: a, owner: \"www-data:www-data\"}\n" +
+				"      - file: {path: /b, content: a, group: a/b}\n" +
+				"      - dir: {path: /c, owner: \"a b\"}\n" +
+				"      - dir: {path: /d, group: -x}\n" +
+				"      - dir: {path: /e, owner: \"a\\tb\"}\n" +
+				"      - dir: {path: /f, owner: www-data, group: ssl-cert}\n")}},
 		{name: "file-bad-mode", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: a\n          mode: 0644\n"}},
 		{name: "modules", files: map[string]string{"pipelines/site.yaml": `stages:
   - name: web
@@ -284,6 +296,33 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// spec: CLI
+func TestValidateNamesYML(t *testing.T) {
+	dir := writeProject(t, map[string]string{
+		"pipelines/web.yml":           stage(""),
+		"recipes/nginx/recipe.yaml":   "steps: []\n",
+		"recipes/nginx/vars.yml":      "vars: {}\n",
+		"recipes/nginx/files/a.yml":   "a: 1\n",
+		"recipes/nginx/templates.yml": "a: 1\n",
+	})
+	warnings, err := Validate(dir, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, w := range warnings {
+		got = append(got, w.Error())
+	}
+	want := []string{
+		"pipelines/web.yml:1:1: winch reads only .yaml files in pipelines/; rename it to web.yaml",
+		"recipes/nginx/templates.yml:1:1: winch reads only recipe.yaml in a recipe directory",
+		"recipes/nginx/vars.yml:1:1: winch reads only recipe.yaml in a recipe directory",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("warnings\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 var nginx = map[string]string{
 	"pipelines/site.yaml": `stages:
   - name: web
@@ -371,6 +410,10 @@ func TestLoadRecipes(t *testing.T) {
 		{name: "recipe-without-file", files: map[string]string{
 			"pipelines/site.yaml":       stage("      - recipe: empty\n"),
 			"recipes/empty/files/a.txt": "a",
+		}},
+		{name: "recipe-yml", files: map[string]string{
+			"pipelines/site.yaml":      stage("      - recipe: empty\n"),
+			"recipes/empty/recipe.yml": "steps: []\n",
 		}},
 		{name: "recipe-unknown-key", files: map[string]string{
 			"recipes/nginx/recipe.yaml": "stpes: []\n",
