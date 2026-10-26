@@ -87,6 +87,9 @@ type Planned struct {
 	// PendingThen is true on the last element of a step whose then is
 	// pending on the host.
 	PendingThen bool
+	// ThenRuns is true on the last element of a step whose then the plan
+	// expects to run: an element changes, or the then is pending.
+	ThenRuns bool
 	// Address is the scope, the number of the step in its list, and the loop
 	// index: nginx#3[0]. A slot has the full name of its handler.
 	Address string
@@ -103,7 +106,7 @@ type Slot struct {
 
 // shows reports whether the plan shows p.
 func (p Planned) shows() bool {
-	return p.Result.Status == module.Change || p.Handler != nil && p.Handler.Runs || p.PendingThen
+	return p.Result.Status == module.Change || p.Handler != nil && p.Handler.Runs || p.ThenRuns
 }
 
 func (h HostPlan) changes() bool {
@@ -215,6 +218,7 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 	if err != nil {
 		return nil, err
 	}
+	changed := false
 	for i, p := range steps {
 		if s := p.Handler; s != nil {
 			name := s.Handler.FullName()
@@ -231,14 +235,20 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
 		if steps[i].Result.Status == module.Change {
+			changed = true
 			for _, n := range p.Notify {
 				hr.notified[n] = true
 			}
 		}
-		if p.Last && p.Then != nil && hr.thens[*p.Then] {
+		if !p.Last {
+			continue
+		}
+		if p.Then != nil && hr.thens[*p.Then] {
 			steps[i].PendingThen = true
 			delete(hr.thens, *p.Then)
 		}
+		steps[i].ThenRuns = p.Then != nil && (changed || steps[i].PendingThen)
+		changed = false
 	}
 	return steps, nil
 }

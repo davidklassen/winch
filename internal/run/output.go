@@ -75,8 +75,11 @@ func (p *Plan) Write(out, errOut io.Writer) {
 				if p.Result.Status == module.Change {
 					writeStep(b, indent, p.Step, p.Result)
 				}
-				if p.PendingThen {
+				switch {
+				case p.PendingThen:
 					fmt.Fprintf(b, "%s! then: %s\n", indent, secret.Printable(p.Step.ShownThen()))
+				case p.ThenRuns:
+					fmt.Fprintf(b, "%s    then: %s\n", indent, secret.Printable(p.Step.ShownThen()))
 				}
 			}
 			if h := sp.Stage.Health; h != nil {

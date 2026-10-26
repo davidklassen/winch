@@ -1,10 +1,10 @@
 stdout:
 {"type":"version","time":"2026-10-26T12:00:00Z","version":1}
-{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hello"]}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hello"],"then":"echo done"}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:app#1[0]","stage":"base","recipe":"app","step":"Pages: file /srv/a.html","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+page"]}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:app#1[1]","stage":"base","recipe":"app","step":"Pages: file /srv/b.html","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+page"]}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:app.reload","stage":"base","recipe":"app","handler":"app.reload","status":"change"}
-{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hello"]}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hello"],"then":"echo done"}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:app#1[0]","stage":"base","recipe":"app","step":"Pages: file /srv/a.html","module":"file","status":"ok"}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:app#1[1]","stage":"base","recipe":"app","step":"Pages: file /srv/b.html","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+page"]}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:app.reload","stage":"base","recipe":"app","handler":"app.reload","status":"change"}

@@ -176,6 +176,14 @@ func TestPlanHandlers(t *testing.T) {
 			present(h, "web1", "web2")
 			h.SetFile("web1", "/var/www/about.html", "old\n")
 		}},
+		{name: "then-first-element", setup: func(h *fakehost.Hosts) {
+			present(h, "web1", "web2")
+			h.SetFile("web1", "/var/www/index.html", "old\n")
+		}},
+		{name: "then-ok-after-change", setup: func(h *fakehost.Hosts) {
+			present(h, "web1", "web2")
+			h.SetFile("web1", "/etc/nginx/c.conf", "old\n")
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

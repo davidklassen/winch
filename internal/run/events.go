@@ -94,8 +94,8 @@ func writePlanned(e *Events, host string, stage *project.Stage, steps []Planned)
 			}
 			ev.Diff = diffLines(p.Step, p.Result)
 		}
-		if p.PendingThen {
-			ev.Then, ev.ThenPending = secret.Printable(p.Step.ShownThen()), true
+		if p.ThenRuns {
+			ev.Then, ev.ThenPending = secret.Printable(p.Step.ShownThen()), p.PendingThen
 		}
 		e.Write("planned", ev)
 	}

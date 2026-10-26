@@ -1,0 +1,14 @@
+stdout:
+web1
+  web
+    nginx
+      ~ file /etc/nginx/c.conf
+          @@ -1,1 +1,1 @@
+          -old
+          +c
+      ! handler nginx.restart
+      ! handler nginx.reload
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+plan 31c315f8
+stderr:

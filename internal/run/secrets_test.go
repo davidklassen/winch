@@ -97,6 +97,14 @@ func TestSecrets(t *testing.T) {
 }
 
 // spec: Variables/Secrets in output; CLI/Output
+func TestSecretThen(t *testing.T) {
+	plan := run.MakePlan(context.Background(), secretProject(t), fakehost.New().Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(&out, &errOut)
+	golden.Assert(t, filepath.Join("testdata", "secrets", "plan-then.golden"), output(&out, &errOut))
+}
+
+// spec: Variables/Secrets in output; CLI/Output
 func TestSecretsFailedStep(t *testing.T) {
 	p := secretProject(t)
 	h := fakehost.New()
