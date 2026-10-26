@@ -6,6 +6,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -151,17 +152,64 @@ func (l *loader) parseSets(set []string) ([]setValue, error) {
 			errs = append(errs, fmt.Errorf("--set %s: %s", s, msg))
 			continue
 		}
-		if n.Kind == yamlx.Null {
+		if yamlx.HasComment([]byte(text)) {
+			errs = append(errs, fmt.Errorf("--set %s: YAML drops the comment; quote it: %q", s, text))
+			continue
+		}
+		if n.Kind == yamlx.Null && text == "" {
 			errs = append(errs, fmt.Errorf("--set %s: null is not a value", s))
+			continue
+		}
+		if n.Kind == yamlx.Null {
+			errs = append(errs, fmt.Errorf("--set %s: YAML reads null; quote it: %q", s, text))
 			continue
 		}
 		if t := findTag(n); t != nil {
 			errs = append(errs, fmt.Errorf("--set %s: --set gives no %s values", s, t.Tag))
 			continue
 		}
+		if n.Kind == yamlx.Map {
+			errs = append(errs, fmt.Errorf("--set %s: YAML reads a map; quote it: %q", s, text))
+			continue
+		}
+		quoted := strings.HasPrefix(text, `"`) || strings.HasPrefix(text, "'")
+		if n.Kind == yamlx.Scalar && !quoted && n.Text != text || n.Kind == yamlx.List && !strings.HasPrefix(text, "[") {
+			errs = append(errs, fmt.Errorf("--set %s: YAML changes the text; quote it: %q", s, text))
+			continue
+		}
+		if msg := textChange(n); msg != "" {
+			errs = append(errs, fmt.Errorf("--set %s: %s", s, msg))
+			continue
+		}
 		out = append(out, setValue{name: name, value: yamlx.Value(n)})
 	}
 	return out, errors.Join(errs...)
+}
+
+// textChange tells which number in a --set value YAML reads with other text,
+// and how to quote it. It is empty when all numbers keep their text.
+func textChange(n *yamlx.Node) string {
+	var number string
+	switch v := n.Value.(type) {
+	case int64:
+		number = strconv.FormatInt(v, 10)
+	case float64:
+		number = strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	if number != "" && number != n.Text {
+		return fmt.Sprintf("YAML reads %s as %s; quote it: %q", n.Text, number, n.Text)
+	}
+	for _, item := range n.Items {
+		if msg := textChange(item); msg != "" {
+			return msg
+		}
+	}
+	for _, p := range n.Pairs {
+		if msg := textChange(p.Value); msg != "" {
+			return msg
+		}
+	}
+	return ""
 }
 
 // findTag returns the first tagged scalar in n, or nil.

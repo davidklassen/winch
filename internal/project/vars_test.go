@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -393,6 +394,65 @@ func evalAll(t *testing.T, p *Project) string {
 		}
 	}
 	return b.String()
+}
+
+// spec: Variables/Sources
+func TestSetValues(t *testing.T) {
+	tests := []struct {
+		set     string
+		want    any
+		wantErr string
+	}{
+		{set: "Hello # world", wantErr: `--set vars.domain=Hello # world: YAML drops the comment; quote it: "Hello # world"`},
+		{set: "[a, b] # c", wantErr: `--set vars.domain=[a, b] # c: YAML drops the comment; quote it: "[a, b] # c"`},
+		{set: "8.0", wantErr: `--set vars.domain=8.0: YAML reads 8.0 as 8; quote it: "8.0"`},
+		{set: "1.10", wantErr: `--set vars.domain=1.10: YAML reads 1.10 as 1.1; quote it: "1.10"`},
+		{set: "0123", wantErr: `--set vars.domain=0123: YAML reads 0123 as 123; quote it: "0123"`},
+		{set: "[1, 1.10]", wantErr: `--set vars.domain=[1, 1.10]: YAML reads 1.10 as 1.1; quote it: "1.10"`},
+		{set: "a: b", wantErr: `--set vars.domain=a: b: YAML reads a map; quote it: "a: b"`},
+		{set: `"8.0" # x`, wantErr: `--set vars.domain="8.0" # x: YAML drops the comment; quote it: "\"8.0\" # x"`},
+		{set: "#tag", wantErr: `--set vars.domain=#tag: YAML reads null; quote it: "#tag"`},
+		{set: "null", wantErr: `--set vars.domain=null: YAML reads null; quote it: "null"`},
+		{set: "Hello\nWorld", wantErr: "--set vars.domain=Hello\nWorld: YAML changes the text; quote it: \"Hello\\nWorld\""},
+		{set: "|", wantErr: `--set vars.domain=|: YAML changes the text; quote it: "|"`},
+		{set: "-", wantErr: `--set vars.domain=-: YAML changes the text; quote it: "-"`},
+		{set: "Hello ", wantErr: `--set vars.domain=Hello : YAML changes the text; quote it: "Hello "`},
+		{set: "[{a: 1.10}]", wantErr: `--set vars.domain=[{a: 1.10}]: YAML reads 1.10 as 1.1; quote it: "1.10"`},
+		{set: "0x1F", wantErr: `--set vars.domain=0x1F: YAML reads 0x1F as 31; quote it: "0x1F"`},
+		{set: "1e3", wantErr: `--set vars.domain=1e3: YAML reads 1e3 as 1000; quote it: "1e3"`},
+		{set: "+5", wantErr: `--set vars.domain=+5: YAML reads +5 as 5; quote it: "+5"`},
+		{set: `"Hello\nWorld"`, want: "Hello\nWorld"},
+		{set: `"-"`, want: "-"},
+		{set: "false", want: false},
+		{set: `"Hello # world"`, want: "Hello # world"},
+		{set: `"8.0"`, want: "8.0"},
+		{set: `'1.10'`, want: "1.10"},
+		{set: `"0123"`, want: "0123"},
+		{set: `"a: b"`, want: "a: b"},
+		{set: "Hello#world", want: "Hello#world"},
+		{set: "8", want: 8},
+		{set: "-3", want: -3},
+		{set: "1.5", want: 1.5},
+		{set: "true", want: true},
+		{set: "[a, 2]", want: []any{"a", 2}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.set, func(t *testing.T) {
+			p, err := Load(t.Context(), writeProject(t, varsProject), "", "site", []string{"vars.domain=" + tt.set}, Keys{})
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("error %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := p.Inventory.Hosts[0].Vars["domain"]; !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("value %#v, want %#v", got, tt.want)
+			}
+		})
+	}
 }
 
 // spec: Templates and expressions/Data; Variables; Variables/Sources; Steps; Inventory

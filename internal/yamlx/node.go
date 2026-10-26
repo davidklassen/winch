@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -67,6 +68,22 @@ func Parse(file string, data []byte) (*Node, error) {
 	c := converter{file: file, seen: map[*yaml.Node]*Node{}, open: map[*yaml.Node]bool{}}
 	n := c.convert(doc.Content[0])
 	return n, errors.Join(c.errs...)
+}
+
+// HasComment reports whether the YAML in data holds a comment.
+func HasComment(data []byte) bool {
+	var doc yaml.Node
+	if yaml.Unmarshal(data, &doc) != nil {
+		return false
+	}
+	var has func(n *yaml.Node) bool
+	has = func(n *yaml.Node) bool {
+		if n.HeadComment != "" || n.LineComment != "" || n.FootComment != "" {
+			return true
+		}
+		return slices.ContainsFunc(n.Content, has)
+	}
+	return has(&doc)
 }
 
 var lineRe = regexp.MustCompile(`^yaml: line (\d+): (.*)$`)
