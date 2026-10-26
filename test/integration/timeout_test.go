@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -145,30 +147,76 @@ func TestMaxStartupsRetry(t *testing.T) {
 	// upload.
 	vm.Session(t).Close()
 	// Failed polls during the boot can add a penalty that drops new
-	// connections too.
-	vm.MustRun(t, "printf 'MaxStartups 1\\nPerSourcePenalties no\\n' > /etc/ssh/sshd_config.d/startups.conf && systemctl reload ssh")
-	// The lab's LogLevel ERROR hides the message of a closed connection.
-	conf := filepath.Join(lab.Dir, "hosts", vm.Name+".conf")
-	data, err := os.ReadFile(conf)
+	// connections too. A reload returns before sshd reads the config, and a
+	// connection to the old sshd does not count as a startup of the new one.
+	vm.MustRun(t, "printf 'MaxStartups 1\\nPerSourcePenalties no\\n' > /etc/ssh/sshd_config.d/startups.conf && systemctl restart ssh")
+	data, err := os.ReadFile(filepath.Join(lab.Dir, "hosts", vm.Name+".conf"))
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(conf, append(data, "  LogLevel INFO\n"...), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var port int
 	if _, err := fmt.Sscanf(string(data[strings.Index(string(data), "Port "):]), "Port %d", &port); err != nil {
 		t.Fatal(err)
 	}
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 
-	// An unauthenticated connection holds the only startup slot. sshd
-	// refuses connections for a moment after the reload.
+	// The test counts the ssh starts of Open at a proxy. sshd's log of drops
+	// can also hold a connection of a boot poll that QEMU delivers late.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	// The end of the third connection, the first start of the second Open,
+	// frees the startup slot.
+	var starts atomic.Int32
+	release := make(chan struct{})
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			n := starts.Add(1)
+			go func() {
+				defer c.Close() //nolint:errcheck // the copy is over
+				vc, err := net.Dial("tcp", addr)
+				if err != nil {
+					t.Errorf("proxy: %v", err)
+					return
+				}
+				go func() {
+					io.Copy(vc, c) //nolint:errcheck // the close ends the other copy
+					vc.Close()     //nolint:errcheck // the copy is over
+				}()
+				io.Copy(c, vc) //nolint:errcheck // the close of c ends the other copy
+				if n == 3 {
+					close(release)
+				}
+			}()
+		}
+	}()
+	// The lab's LogLevel ERROR hides the message of a closed connection.
+	proxy := vm.Name + "-proxy"
+	conf := filepath.Join(lab.Dir, "hosts", proxy+".conf")
+	if err := os.WriteFile(conf, fmt.Appendf(nil, "Host %s\n  HostName 127.0.0.1\n  Port %d\n  LogLevel INFO\n", proxy, l.Addr().(*net.TCPAddr).Port), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(conf) })
+
+	// An unauthenticated connection holds the only startup slot. sshd can
+	// refuse or drop a try for a moment after the restart.
 	var hold net.Conn
 	for deadline := time.Now().Add(10 * time.Second); ; {
-		hold, err = net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		hold, err = net.Dial("tcp", addr)
 		if err == nil {
-			if _, err = bufio.NewReader(hold).ReadString('\n'); err == nil {
+			var line string
+			// sshd answers a dropped connection with a line too.
+			if line, err = bufio.NewReader(hold).ReadString('\n'); err == nil && strings.HasPrefix(line, "SSH-") {
 				break
+			}
+			if err == nil {
+				err = fmt.Errorf("sshd answered %q", line)
 			}
 			hold.Close() //nolint:errcheck // the next try opens a new one
 		}
@@ -178,33 +226,42 @@ func TestMaxStartupsRetry(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	defer hold.Close() //nolint:errcheck // the test is over
-	out, err := exec.CommandContext(t.Context(), "ssh", vm.Name, "true").CombinedOutput()
-	t.Logf("ssh while the slot is held: %v\n%s", err, out)
-	if exit, ok := errors.AsType[*exec.ExitError](err); !ok || exit.ExitCode() != 255 || !strings.Contains(string(out), "Connection closed by") {
-		t.Fatalf("exit = %v, want 255 and a closed connection", err)
+	open := func() (time.Duration, error) {
+		start := time.Now()
+		s, err := session.Open(t.Context(), session.Config{
+			Host:     proxy,
+			Address:  proxy,
+			Binaries: helperbin.Binaries(),
+			Hello:    protocol.Hello{Run: "test-max-startups", User: "test", Machine: "test"},
+			Progress: &strings.Builder{},
+		})
+		if err == nil {
+			s.Close()
+		}
+		return time.Since(start), err
 	}
 
-	time.AfterFunc(time.Second, func() { hold.Close() }) //nolint:errcheck // the slot is free either way
-	start := time.Now()
-	s, err := session.Open(t.Context(), session.Config{
-		Host:     vm.Name,
-		Address:  vm.Name,
-		Binaries: helperbin.Binaries(),
-		Hello:    protocol.Hello{Run: "test-max-startups", User: "test", Machine: "test"},
-		Progress: &strings.Builder{},
-	})
-	elapsed := time.Since(start)
+	elapsed, err := open()
+	t.Logf("open while the slot is held: %v after %s", err, elapsed)
+	if err == nil || !strings.Contains(err.Error(), "Connection closed by") {
+		t.Fatalf("error = %v, want a closed connection", err)
+	}
+	if n := starts.Load(); n != 2 {
+		t.Errorf("open while the slot is held started ssh %d times, want 2", n)
+	}
+
+	go func() {
+		<-release
+		hold.Close() //nolint:errcheck // the slot is free either way
+	}()
+	elapsed, err = open()
 	if err != nil {
 		t.Fatalf("open after %s: %v", elapsed, err)
 	}
-	s.Close()
 	if elapsed < 2*time.Second {
 		t.Errorf("open took %s, want the 2s wait before the retry", elapsed)
 	}
-	// sshd dropped the probe and the first start of Open.
-	// The output starts with the host key warning of LogLevel INFO.
-	out = []byte(vm.MustRun(t, "journalctl -u ssh --no-pager -o cat | grep -c 'drop connection.*Maxstartups' || true"))
-	if f := strings.Fields(string(out)); len(f) == 0 || f[len(f)-1] != "2" {
-		t.Errorf("sshd dropped connections: %q, want 2", out)
+	if n := starts.Load() - 2; n != 2 {
+		t.Errorf("open started ssh %d times, want 2", n)
 	}
 }
