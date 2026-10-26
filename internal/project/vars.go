@@ -352,7 +352,7 @@ func computedError(v any) error {
 }
 
 func computedMessage(name, host string) error {
-	return fmt.Errorf("vars.%s of host %s is computed from its facts; match() gives only inventory values and plain defaults", name, host)
+	return fmt.Errorf("vars.%s of host %s is an !expr or !tpl default; match() gives only inventory values and plain defaults", name, host)
 }
 
 // withoutComputed returns a copy of v without the map entries that hold a

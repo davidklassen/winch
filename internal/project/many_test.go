@@ -422,7 +422,7 @@ func TestMatch(t *testing.T) {
 
 // spec: Templates and expressions/Data
 func TestMatchComputedDefault(t *testing.T) {
-	const computed = "vars.role of host monitor.acme.com is computed from its facts; match() gives only inventory values and plain defaults"
+	const computed = "vars.role of host monitor.acme.com is an !expr or !tpl default; match() gives only inventory values and plain defaults"
 	tests := []struct {
 		name    string
 		content string
