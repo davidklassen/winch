@@ -8,10 +8,6 @@ import (
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
-// quietApt stops the apt timers, so no other apt run holds the lock or
-// refreshes the index during a test.
-const quietApt = "systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service"
-
 // fragileDeb builds winch-fragile, a local package whose postinst fails
 // until /etc/winch-fragile.ok exists.
 const fragileDeb = `mkdir -p /root/fragile/DEBIAN && printf 'Package: winch-fragile\nVersion: 1\nArchitecture: all\nMaintainer: winch\nDescription: test\n' > /root/fragile/DEBIAN/control && ` +
@@ -26,7 +22,7 @@ func TestPkgModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "pkg")
 	// Every apt-get update adds a line to /root/updates.
-	vm.MustRun(t, quietApt+` && echo 'APT::Update::Pre-Invoke {"echo x >> /root/updates";};' > /etc/apt/apt.conf.d/99count && touch /root/updates`)
+	vm.MustRun(t, `echo 'APT::Update::Pre-Invoke {"echo x >> /root/updates";};' > /etc/apt/apt.conf.d/99count && touch /root/updates`)
 	const (
 		install = "DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends"
 		// count keeps the number of refreshes; same checks it after apply.
@@ -403,7 +399,7 @@ func TestPkgModule(t *testing.T) {
 func TestPkgConfiguresAfterAFix(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "fragile")
-	vm.MustRun(t, quietApt+" && "+fragileDeb+" && "+halfConfigure)
+	vm.MustRun(t, fragileDeb+" && "+halfConfigure)
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
 		"inventories/test.yaml": "hosts:\n  fragile: {}\n",

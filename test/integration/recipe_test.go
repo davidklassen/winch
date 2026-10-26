@@ -16,7 +16,6 @@ import (
 func TestRecipes(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "recipes")
-	vm.MustRun(t, quietApt)
 	// A second inventory host on the same VM, for a recipe whose requirement fails.
 	conf, err := os.ReadFile(filepath.Join(lab.Dir, "hosts", vm.Name+".conf"))
 	if err != nil {

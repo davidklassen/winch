@@ -167,7 +167,7 @@ func TestWinch(t *testing.T) {
 			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
 			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - pkg:\n          name: hello\n",
 		})
-		pid := strings.TrimSpace(vm.MustRun(t, quietApt+" && (python3 -c '"+lockHolder("/var/lib/dpkg/lock-frontend", 10)+"' >/dev/null 2>&1 &) && "+
+		pid := strings.TrimSpace(vm.MustRun(t, "(python3 -c '"+lockHolder("/var/lib/dpkg/lock-frontend", 10)+"' >/dev/null 2>&1 &) && "+
 			"timeout 10 sh -c 'until [ -e /root/locked ]; do sleep 0.1; done' && cat /root/locked && rm /root/locked"))
 		r := lab.Winch(t, dir, "plan", "site")
 		if r.Code != 0 || !strings.Contains(r.Stdout, "+ pkg hello") {
@@ -200,7 +200,7 @@ func TestWinch(t *testing.T) {
 		})
 		// Nothing before the refresh waits for the index lock, so the hold
 		// covers the connect and the check.
-		pid := strings.TrimSpace(vm.MustRun(t, quietApt+" && (python3 -c '"+lockHolder("/var/lib/apt/lists/lock", 30)+"' >/dev/null 2>&1 &) && "+
+		pid := strings.TrimSpace(vm.MustRun(t, "(python3 -c '"+lockHolder("/var/lib/apt/lists/lock", 30)+"' >/dev/null 2>&1 &) && "+
 			"timeout 10 sh -c 'until [ -e /root/locked ]; do sleep 0.1; done' && cat /root/locked && rm /root/locked"))
 		r := lab.Winch(t, dir, "apply", "site", "--yes")
 		if r.Code != 0 {

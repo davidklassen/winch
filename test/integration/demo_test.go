@@ -29,9 +29,6 @@ func noSecrets(t *testing.T, what, out string, secrets ...string) {
 func TestDemo(t *testing.T) {
 	t.Parallel()
 	vms := []*vmtest.VM{lab.StartVM(t, "demo"), lab.StartVM(t, "demo2")}
-	for _, vm := range vms {
-		vm.MustRun(t, quietApt)
-	}
 	dir := "../../examples/demo"
 	env := []string{"WINCH_AGE_KEY=age.key", "HOME=" + t.TempDir()}
 

@@ -78,7 +78,7 @@ func TestApprove(t *testing.T) {
 	})
 
 	t.Run("SIGINT during a package install lets the install finish", func(t *testing.T) {
-		vm.MustRun(t, quietApt+" && apt-get update -qq && rm -f /root/winch-wait.started /root/winch-wait.go /root/after")
+		vm.MustRun(t, "apt-get update -qq && rm -f /root/winch-wait.started /root/winch-wait.go /root/after")
 		dir := vmtest.WriteProject(t, map[string]string{
 			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
 			"inventories/test.yaml": "hosts:\n  approve:\n    address: 127.0.0.1\n",

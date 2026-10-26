@@ -45,7 +45,7 @@ const nginxSite = `stages:
 func TestNginx(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "nginx")
-	vm.MustRun(t, quietApt+` && echo 'APT::Update::Pre-Invoke {"echo x >> /root/updates";};' > /etc/apt/apt.conf.d/99count && touch /root/updates`)
+	vm.MustRun(t, `echo 'APT::Update::Pre-Invoke {"echo x >> /root/updates";};' > /etc/apt/apt.conf.d/99count && touch /root/updates`)
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
 		"inventories/test.yaml": "hosts:\n  nginx: {}\n",
@@ -86,8 +86,7 @@ func TestNginx(t *testing.T) {
 // spec: Running a pipeline/Apply
 func TestApplyChecksStagesWithoutChange(t *testing.T) {
 	t.Parallel()
-	vm := lab.StartVM(t, "stages")
-	vm.MustRun(t, quietApt)
+	lab.StartVM(t, "stages")
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
 		"inventories/test.yaml": "hosts:\n  stages: {}\n",

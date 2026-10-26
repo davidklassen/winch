@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,12 +23,12 @@ func TestLab(t *testing.T) {
 		}
 	})
 
-	t.Run("a clock jump starts no apt run", func(t *testing.T) {
-		defer vm.MustRun(t, fmt.Sprintf("date -u -s @%d >/dev/null", time.Now().Unix()))
-		vm.MustRun(t, "date -u -s '+30 days' >/dev/null && sleep 2")
-		out := vm.MustRun(t, "systemctl is-active apt-daily.service apt-daily-upgrade.service || true")
-		if out != "inactive\ninactive\n" {
-			t.Errorf("apt-daily and apt-daily-upgrade after the clock jump: %q, want inactive", out)
+	t.Run("the apt timers are disabled, and no apt run is active", func(t *testing.T) {
+		timers := "apt-daily.timer apt-daily-upgrade.timer apt-listchanges.timer"
+		services := "apt-daily.service apt-daily-upgrade.service apt-listchanges.service"
+		out := vm.MustRun(t, "systemctl is-enabled "+timers+"; systemctl is-active "+timers+" "+services+"; true")
+		if want := "disabled\ndisabled\ndisabled\n" + strings.Repeat("inactive\n", 6); out != want {
+			t.Errorf("is-enabled of the timers, is-active of the timers and services: %q, want %q", out, want)
 		}
 	})
 

@@ -27,6 +27,9 @@ users:
     shell: /bin/bash
     ssh_authorized_keys: [%[1]q]
 ssh_pwauth: false
+runcmd:
+  - systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-listchanges.timer
+  - systemctl stop apt-daily.service apt-daily-upgrade.service apt-listchanges.service
 `
 
 const metaData = "instance-id: base\nlocal-hostname: base\n"
