@@ -29,9 +29,14 @@ func runInput(ctx context.Context, env []string, input, name string, args ...str
 	return runLimited(ctx, commandLimit, KillDelay, env, input, name, args...)
 }
 
+// runLimited runs a command with the time limit limit. A zero limit is no
+// limit.
 func runLimited(ctx context.Context, limit, killDelay time.Duration, env []string, input, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
-	defer cancel()
+	if limit > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
+		defer cancel()
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(cmd.Environ(), env...)
 	if input != "" {

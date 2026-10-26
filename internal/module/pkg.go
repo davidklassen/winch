@@ -60,6 +60,12 @@ var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEN
 // aptLock makes apt wait for another apt, such as unattended-upgrades.
 const aptLock = "DPkg::Lock::Timeout=300"
 
+// aptGet runs apt-get without the time limit. An apt-get that the limit stops
+// leaves dpkg half done.
+func aptGet(ctx context.Context, args ...string) (string, error) {
+	return runLimited(ctx, 0, KillDelay, aptEnv, "", "apt-get", args...)
+}
+
 func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, error) {
 	pkgs, err := readDpkg(ctx, note)
 	if err != nil {
@@ -232,7 +238,7 @@ func (p *Pkg) verb() string {
 // dependents returns the other packages that apt removes with the step's
 // packages.
 func (p *Pkg) dependents(ctx context.Context) ([]string, error) {
-	out, err := run(ctx, aptEnv, "apt-get", append([]string{"-s", "-q", p.verb()}, p.todo...)...)
+	out, err := aptGet(ctx, append([]string{"-s", "-q", p.verb()}, p.todo...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +268,7 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 		if err := waitIndexLock(ctx, note); err != nil {
 			return err
 		}
-		if _, err := run(ctx, aptEnv, "apt-get", "update", "-q", "--error-on=any"); err != nil {
+		if _, err := aptGet(ctx, "update", "-q", "--error-on=any"); err != nil {
 			return err
 		}
 	}
@@ -282,7 +288,7 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 	if err := waitLocks(ctx, dpkgLocks, note); err != nil {
 		return err
 	}
-	_, err := run(ctx, aptEnv, "apt-get", slices.Concat(args, p.todo, p.configure)...)
+	_, err := aptGet(ctx, slices.Concat(args, p.todo, p.configure)...)
 	return err
 }
 

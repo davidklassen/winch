@@ -157,3 +157,11 @@ func TestTimeLimitAfterExit(t *testing.T) {
 		}
 	})
 }
+
+// spec: Modules
+func TestRunWithoutLimit(t *testing.T) {
+	t.Parallel()
+	if _, err := runLimited(t.Context(), 0, time.Second, nil, "", "sh", "-c", "sleep 1.5"); err != nil {
+		t.Errorf("error = %v, want nil", err)
+	}
+}
