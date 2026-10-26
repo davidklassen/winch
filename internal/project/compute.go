@@ -7,9 +7,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
-	"strings"
 	"text/template"
-	"unicode"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
@@ -175,7 +173,7 @@ type exprCheck struct {
 
 func (c *exprCheck) fail(n ast.Node, msg string) {
 	fe := &file.Error{Location: n.Location(), Message: msg}
-	c.errs = append(c.errs, msg+snippet(fe.Bind(c.src)))
+	c.errs = append(c.errs, msg+secret.PrintableLines(fe.Bind(c.src).Snippet))
 }
 
 func (c *exprCheck) Visit(np *ast.Node) {
@@ -276,18 +274,7 @@ func exprMessage(err error, names []string) string {
 			msg = fmt.Sprintf("unknown %s %q%s", f.noun, m[2], yamlx.Suggest(m[2], f.names))
 		}
 	}
-	return msg + snippet(fe)
-}
-
-// snippet returns the snippet of fe: the expression line and a caret line
-// under the error. Control characters in the expression become "?".
-func snippet(fe *file.Error) string {
-	return strings.Map(func(r rune) rune {
-		if r != '\n' && (unicode.IsControl(r) || r == '\u2028' || r == '\u2029') {
-			return '?'
-		}
-		return r
-	}, fe.Snippet)
+	return secret.PrintableLines(msg + fe.Snippet)
 }
 
 func fieldTags(v any) []string {

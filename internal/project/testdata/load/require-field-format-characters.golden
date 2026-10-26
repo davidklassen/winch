@@ -1,0 +1,3 @@
+recipes/nginx/recipe.yaml:2:5: require: type facts.Facts has no field ?
+ | facts["?"] == 1
+ | .....^

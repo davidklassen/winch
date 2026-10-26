@@ -1,0 +1,3 @@
+recipes/nginx/recipe.yaml:2:5: require: invalid operation: + (mismatched types string and int)
+ | "?" + 1
+ | ....^
