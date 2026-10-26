@@ -1,0 +1,6 @@
+Package: winch-conflict
+Version: 1
+Architecture: all
+Conflicts: hello
+Maintainer: winch
+Description: test

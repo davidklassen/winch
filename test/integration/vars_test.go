@@ -18,8 +18,8 @@ func TestVarsWhenLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := filepath.Join(lab.Dir, "hosts", "vars-relay.conf")
-	if err := os.WriteFile(other, []byte(strings.Replace(string(conf), "Host "+vm.Name, "Host vars-relay", 1)), 0o644); err != nil {
+	other, err := lab.WriteHost("vars-relay", strings.Replace(string(conf), "Host "+vm.Name, "Host vars-relay", 1))
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Remove(other) })

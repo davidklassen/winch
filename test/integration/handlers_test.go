@@ -78,8 +78,8 @@ func TestHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := filepath.Join(lab.Dir, "hosts", "handlers-b.conf")
-	if err := os.WriteFile(other, []byte(strings.Replace(string(conf), "Host "+vm.Name, "Host handlers-b", 1)), 0o644); err != nil {
+	other, err := lab.WriteHost("handlers-b", strings.Replace(string(conf), "Host "+vm.Name, "Host handlers-b", 1))
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Remove(other) })

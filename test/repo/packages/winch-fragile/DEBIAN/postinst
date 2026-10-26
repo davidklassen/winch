@@ -1,0 +1,2 @@
+#!/bin/sh
+[ -e /etc/winch-fragile.ok ]

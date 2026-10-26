@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/davidklassen/winch/internal/helperbin"
 	"github.com/davidklassen/winch/internal/module"
@@ -19,10 +20,12 @@ import (
 // StartVM starts a VM and stops it when the test ends.
 func (l *Lab) StartVM(t *testing.T, name string) *VM {
 	t.Helper()
+	start := time.Now()
 	vm, err := l.Start(t.Context(), name)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Logf("vm %s is ready after %s", name, time.Since(start).Round(time.Millisecond))
 	t.Cleanup(vm.Stop)
 	return vm
 }
@@ -82,7 +85,7 @@ func (l *Lab) WinchEnv(t *testing.T, dir string, env []string, args ...string) R
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("winch %s: exit %d\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), r.Code, r.Stdout, r.Stderr)
+	t.Logf("winch %s: exit %d\nstdout:\n%s\nstderr:\n%s%s", strings.Join(args, " "), r.Code, r.Stdout, r.Stderr, l.hint(r.Stdout+r.Stderr))
 	return r
 }
 
@@ -153,7 +156,7 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("check: %v", err)
+				t.Fatalf("check: %v%s", err, vm.lab.hint(err.Error()))
 			}
 			if !equal(got, c.Want) {
 				t.Fatalf("check = %s, want %s", show(got), show(c.Want))
@@ -179,7 +182,7 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("apply: %v", err)
+				t.Fatalf("apply: %v%s", err, vm.lab.hint(err.Error()))
 			}
 			// Apply returns no old content; the plan has shown the diff.
 			want := c.Want

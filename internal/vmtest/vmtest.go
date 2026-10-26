@@ -1,12 +1,16 @@
 // Package vmtest starts Debian VMs in QEMU for integration tests. A Lab holds
 // the test SSH key and an ssh wrapper that reads the lab's SSH config, so
-// winch and the tests reach each VM by its name.
+// winch and the tests reach each VM by its name. Each VM starts from a
+// snapshot of a booted VM, and apt reads a local repository; both are kept in
+// the cache directory.
 package vmtest
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -17,42 +21,80 @@ import (
 	"time"
 )
 
-type Lab struct {
-	Dir   string
+type Config struct {
 	Image string
 	Arch  string
-	// PATH has the ssh wrapper first.
-	PATH   string
-	pubKey string
+	// Cache holds the snapshot and the repository.
+	Cache string
+	// Repo is the directory with debian.list and the test package
+	// definitions in packages/.
+	Repo string
+	// Online gives the VMs the internet and Debian's apt sources.
+	Online bool
+	// Refresh builds the repository again.
+	Refresh bool
 }
 
-// NewLab prepares dir: a key, the SSH config, and the ssh wrapper.
-func NewLab(ctx context.Context, dir, image, arch string) (*Lab, error) {
-	if _, err := os.Stat(image); err != nil {
+// FromEnv returns the configuration in WINCH_VM_IMAGE, WINCH_VM_ARCH,
+// WINCH_VM_CACHE, and WINCH_VM_ONLINE. repo is the directory of the test
+// repository.
+func FromEnv(repo string) (Config, error) {
+	cfg := Config{
+		Image:  os.Getenv("WINCH_VM_IMAGE"),
+		Arch:   os.Getenv("WINCH_VM_ARCH"),
+		Cache:  os.Getenv("WINCH_VM_CACHE"),
+		Online: os.Getenv("WINCH_VM_ONLINE") == "1",
+	}
+	if v := os.Getenv("WINCH_VM_ONLINE"); v != "" && v != "1" {
+		return Config{}, fmt.Errorf("ONLINE=%s: use ONLINE=1 or no ONLINE", v)
+	}
+	if cfg.Image == "" || cfg.Arch == "" || cfg.Cache == "" {
+		return Config{}, errors.New("WINCH_VM_IMAGE, WINCH_VM_ARCH, or WINCH_VM_CACHE is not set; run make test-integration")
+	}
+	abs, err := filepath.Abs(repo)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Repo = abs
+	return cfg, nil
+}
+
+type Lab struct {
+	Dir  string
+	Arch string
+	// PATH has the ssh wrapper first.
+	PATH     string
+	cfg      Config
+	list     string
+	snapshot string
+	http     *http.Server
+	httpPort int
+}
+
+// The guest reaches the lab's HTTP server at this address.
+const labAddr = "10.0.2.100"
+
+// NewLab prepares dir: the SSH config, the ssh wrapper, the HTTP server for
+// the repository, the snapshot, and the repository. It builds the snapshot
+// and the repository when the cache has none for their inputs.
+func NewLab(ctx context.Context, dir string, cfg Config) (_ *Lab, err error) {
+	if _, err := os.Stat(cfg.Image); err != nil {
 		return nil, fmt.Errorf("vm image: %w (run make vm-image)", err)
 	}
-	key := filepath.Join(dir, "key")
-	if out, err := exec.CommandContext(ctx, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("ssh-keygen: %v: %s", err, out)
-	}
-	pub, err := os.ReadFile(key + ".pub")
-	if err != nil {
-		return nil, err
-	}
-	for _, d := range []string{"bin", "hosts", "vms"} {
+	for _, d := range []string{"bin", "hosts", "vms", "www/seed"} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
 			return nil, err
 		}
 	}
-	config := fmt.Sprintf(`Include %s/hosts/*.conf
+	config := fmt.Sprintf(`Include %[1]s/hosts/*.conf
 Host *
   User admin
-  IdentityFile %s
+  IdentityFile %[1]s/key
   IdentitiesOnly yes
   StrictHostKeyChecking no
   UserKnownHostsFile /dev/null
   LogLevel ERROR
-`, dir, key)
+`, dir)
 	if err := os.WriteFile(filepath.Join(dir, "ssh_config"), []byte(config), 0o644); err != nil {
 		return nil, err
 	}
@@ -60,13 +102,44 @@ Host *
 	if err := os.WriteFile(filepath.Join(dir, "bin", "ssh"), []byte(wrapper), 0o755); err != nil {
 		return nil, err
 	}
-	return &Lab{
-		Dir:    dir,
-		Image:  image,
-		Arch:   arch,
-		PATH:   filepath.Join(dir, "bin") + ":" + os.Getenv("PATH"),
-		pubKey: strings.TrimSpace(string(pub)),
-	}, nil
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	l := &Lab{
+		Dir:  dir,
+		Arch: cfg.Arch,
+		PATH: filepath.Join(dir, "bin") + ":" + os.Getenv("PATH"),
+		cfg:  cfg,
+		list: filepath.Join(cfg.Repo, "debian.list"),
+		// Each guest connection holds an nc process until the server
+		// closes it.
+		http:     &http.Server{Handler: http.FileServer(http.Dir(filepath.Join(dir, "www"))), IdleTimeout: 10 * time.Second},
+		httpPort: ln.Addr().(*net.TCPAddr).Port,
+	}
+	go l.http.Serve(ln) //nolint:errcheck // Serve returns when Close closes the server
+	defer func() {
+		if err != nil {
+			l.Close()
+		}
+	}()
+	if err := l.ensureSnapshot(ctx); err != nil {
+		return nil, fmt.Errorf("snapshot: %w", err)
+	}
+	if err := l.ensureRepo(ctx); err != nil {
+		return nil, fmt.Errorf("repository: %w", err)
+	}
+	return l, nil
+}
+
+// Close stops the lab's HTTP server.
+func (l *Lab) Close() {
+	l.http.Close()
+}
+
+// Online reports whether the VMs have the internet and Debian's sources.
+func (l *Lab) Online() bool {
+	return l.cfg.Online
 }
 
 // Env returns the environment of this process with the lab's PATH.
@@ -80,31 +153,121 @@ func (l *Lab) Env() []string {
 	return append(env, "PATH="+l.PATH)
 }
 
-type VM struct {
-	Name   string
-	lab    *Lab
-	dir    string
-	cmd    *exec.Cmd
-	exited chan struct{}
-	seed   *http.Server
+// WriteHost writes the SSH config file of a host through a rename, so a
+// parallel ssh never reads half of it, and returns its path.
+func (l *Lab) WriteHost(name, conf string) (string, error) {
+	path := filepath.Join(l.Dir, "hosts", name+".conf")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(conf), 0o644); err != nil {
+		return "", err
+	}
+	return path, os.Rename(tmp, path)
 }
 
-const userData = `#cloud-config
-users:
-  - name: admin
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
-    ssh_authorized_keys: [%[1]q]
-  - name: nosudo
-    shell: /bin/bash
-    ssh_authorized_keys: [%[1]q]
-ssh_pwauth: false
-`
+// hint names the list when apt fails offline on a package that the local
+// repository does not have.
+func (l *Lab) hint(out string) string {
+	if l.cfg.Online || !strings.Contains(out, "Unable to locate package") && !strings.Contains(out, "has no installation candidate") {
+		return ""
+	}
+	return fmt.Sprintf("\nThe local apt repository does not have the package. Add it to %s; the next test run builds the repository again.", l.list)
+}
 
-// Start boots a VM from a copy-on-write layer over the image and waits until
-// cloud-init is done.
-func (l *Lab) Start(ctx context.Context, name string) (_ *VM, err error) {
-	vm := &VM{Name: name, lab: l, dir: filepath.Join(l.Dir, "vms", name)}
+type VM struct {
+	Name    string
+	lab     *Lab
+	dir     string
+	qmpPort int
+	cmd     *exec.Cmd
+	exited  chan struct{}
+}
+
+// Start starts a VM from the snapshot and gives it the apt sources of the
+// lab's mode.
+func (l *Lab) Start(ctx context.Context, name string) (*VM, error) {
+	vm, err := l.clone(ctx, name, l.cfg.Online)
+	if err != nil {
+		return nil, err
+	}
+	test := fmt.Sprintf("Types: deb\nURIs: http://%s/test/\nSuites: ./\nTrusted: yes\n", labAddr)
+	sources := "printf '" + test + "' > /etc/apt/sources.list.d/winch-test.sources"
+	if !l.cfg.Online {
+		debian := strings.ReplaceAll(test, "/test/", "/debian/")
+		sources = "rm /etc/apt/sources.list.d/debian.sources && printf '" + debian + "' > /etc/apt/sources.list.d/winch-debian.sources && " + sources
+	}
+	if _, err := vm.Run(ctx, sources); err != nil {
+		vm.Stop()
+		return nil, err
+	}
+	return vm, nil
+}
+
+// clone starts a VM from the snapshot on its own disk layer, and sets the
+// VM's clock over SSH as soon as SSH works.
+func (l *Lab) clone(ctx context.Context, name string, online bool) (_ *VM, err error) {
+	snap := filepath.Join(l.cfg.Cache, l.snapshot)
+	vm, err := l.boot(ctx, name, filepath.Join(l.Dir, "vms", name), filepath.Join(snap, "disk.qcow2"), online, filepath.Join(snap, "state"))
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			vm.Stop()
+		}
+	}()
+	if err := vm.waitRunning(ctx); err != nil {
+		return nil, err
+	}
+	wait, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	for {
+		if err = vm.setClock(wait); err == nil {
+			return vm, nil
+		}
+		select {
+		case <-wait.Done():
+			return nil, fmt.Errorf("vm %s does not answer: %w", name, err)
+		case <-vm.exited:
+			log, _ := os.ReadFile(filepath.Join(vm.dir, "qemu.log"))
+			return nil, fmt.Errorf("qemu for vm %s exited: %s", name, log)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// setClock sets the VM's clock to the Mac's time. The VM asks for the time
+// once the SSH session runs, so the setup of the session does not delay it.
+func (vm *VM) setClock(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, filepath.Join(vm.lab.Dir, "bin", "ssh"), "-o", "ConnectTimeout=5", vm.Name,
+		"sudo sh -c "+Quote(`echo ready; read t; date -u -s "@$t" >/dev/null`))
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if _, err := bufio.NewReader(stdout).ReadString('\n'); err == nil {
+		now := time.Now()
+		fmt.Fprintf(stdin, "%d.%09d\n", now.Unix(), now.Nanosecond())
+	}
+	stdin.Close()
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("set the clock: %w: %s", err, stderr.String())
+	}
+	return nil
+}
+
+// boot starts QEMU on a new disk layer over backing, with its files in dir.
+// With state, the VM loads that saved machine; without, it boots.
+func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, state string) (_ *VM, err error) {
+	vm := &VM{Name: name, lab: l, dir: dir}
 	defer func() {
 		if err != nil {
 			vm.Stop()
@@ -114,34 +277,22 @@ func (l *Lab) Start(ctx context.Context, name string) (_ *VM, err error) {
 		return nil, err
 	}
 	disk := filepath.Join(vm.dir, "disk.qcow2")
-	if out, err := exec.CommandContext(ctx, "qemu-img", "create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", l.Image, disk).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "qemu-img", "create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", backing, disk).CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("qemu-img: %v: %s", err, out)
 	}
-	seed, err := net.Listen("tcp", "127.0.0.1:0")
+	sshPort, err := freePort()
 	if err != nil {
 		return nil, err
 	}
-	files := map[string]string{
-		"/meta-data":   fmt.Sprintf("instance-id: %s\nlocal-hostname: %s\n", name, name),
-		"/user-data":   fmt.Sprintf(userData, l.pubKey),
-		"/vendor-data": "",
+	if vm.qmpPort, err = freePort(); err != nil {
+		return nil, err
 	}
-	vm.seed = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, ok := files[r.URL.Path]
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		fmt.Fprint(w, body)
-	})}
-	go vm.seed.Serve(seed) //nolint:errcheck // Serve returns when Stop closes the server
-	port, err := freePort()
+	args, err := qemuArgs(l.Arch, disk, vm.dir, ports{SSH: sshPort, QMP: vm.qmpPort, HTTP: l.httpPort}, online)
 	if err != nil {
 		return nil, err
 	}
-	args, err := qemuArgs(l.Arch, disk, port, seed.Addr().(*net.TCPAddr).Port, vm.dir)
-	if err != nil {
-		return nil, err
+	if state != "" {
+		args = append(args, "-incoming", "file:"+state)
 	}
 	qemuLog, err := os.Create(filepath.Join(vm.dir, "qemu.log"))
 	if err != nil {
@@ -158,17 +309,43 @@ func (l *Lab) Start(ctx context.Context, name string) (_ *VM, err error) {
 		vm.cmd.Wait() //nolint:errcheck // Stop kills qemu; wait only notices the exit
 		close(vm.exited)
 	}()
-	host := fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port %d\n", name, port)
-	if err := os.WriteFile(filepath.Join(l.Dir, "hosts", name+".conf"), []byte(host), 0o644); err != nil {
-		return nil, err
-	}
-	if err := vm.wait(ctx); err != nil {
+	if _, err := l.WriteHost(name, fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port %d\n", name, sshPort)); err != nil {
 		return nil, err
 	}
 	return vm, nil
 }
 
-func (vm *VM) wait(ctx context.Context) error {
+// waitRunning waits until QEMU has loaded the saved machine, then starts it.
+func (vm *VM) waitRunning(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	q, err := dialQMP(ctx, vm.qmpPort, vm.exited)
+	if err != nil {
+		return fmt.Errorf("vm %s: %w", vm.Name, err)
+	}
+	defer q.Close() //nolint:errcheck // the answers are read
+	for {
+		var st struct{ Status string }
+		if err := q.call("query-status", nil, &st); err != nil {
+			return fmt.Errorf("vm %s: %w", vm.Name, err)
+		}
+		// The snapshot holds a stopped machine.
+		if st.Status == "paused" {
+			if err := q.call("cont", nil, nil); err != nil {
+				return fmt.Errorf("vm %s: %w", vm.Name, err)
+			}
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("vm %s did not load its snapshot: %w (status %s)", vm.Name, ctx.Err(), st.Status)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+// waitBoot waits until cloud-init is done.
+func (vm *VM) waitBoot(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	for {
@@ -192,15 +369,26 @@ func tail(s string, n int) string {
 	return strings.Join(lines[max(0, len(lines)-n):], "\n")
 }
 
-func qemuArgs(arch, disk string, sshPort, seedPort int, dir string) ([]string, error) {
+type ports struct {
+	SSH, QMP, HTTP int
+}
+
+// qemuArgs returns the QEMU command of a VM. Offline, restrict=on cuts the
+// VM off from every address but the guestfwd to the lab's HTTP server.
+func qemuArgs(arch, disk, dir string, p ports, online bool) ([]string, error) {
+	netdev := fmt.Sprintf("user,id=net0,hostfwd=tcp:127.0.0.1:%d-:22,guestfwd=tcp:%s:80-cmd:nc 127.0.0.1 %d", p.SSH, labAddr, p.HTTP)
+	if !online {
+		netdev += ",restrict=on"
+	}
 	common := []string{
 		"-smp", "2", "-m", "1024",
 		"-drive", "if=virtio,format=qcow2,file=" + disk,
-		"-netdev", fmt.Sprintf("user,id=net0,hostfwd=tcp:127.0.0.1:%d-:22", sshPort),
+		"-netdev", netdev,
 		"-device", "virtio-net-pci,netdev=net0",
-		"-smbios", fmt.Sprintf("type=1,serial=ds=nocloud;s=http://10.0.2.2:%d/", seedPort),
+		"-smbios", "type=1,serial=ds=nocloud;s=http://" + labAddr + "/seed/",
 		"-display", "none", "-monitor", "none",
 		"-serial", "file:" + filepath.Join(dir, "console.log"),
+		"-qmp", fmt.Sprintf("tcp:127.0.0.1:%d,server=on,wait=off", p.QMP),
 	}
 	switch arch {
 	case "arm64":
@@ -236,9 +424,20 @@ func (vm *VM) Run(ctx context.Context, command string) (string, error) {
 	cmd := exec.CommandContext(ctx, filepath.Join(vm.lab.Dir, "bin", "ssh"), "-o", "ConnectTimeout=5", vm.Name, command)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("%s: %w: %s", command, err, out)
+		return string(out), fmt.Errorf("%s: %w: %s%s", command, err, out, vm.lab.hint(string(out)))
 	}
 	return string(out), nil
+}
+
+// stream runs a shell command as root on the VM with stdin and stdout.
+func (vm *VM) stream(ctx context.Context, command string, stdin io.Reader, stdout io.Writer) error {
+	cmd := exec.CommandContext(ctx, filepath.Join(vm.lab.Dir, "bin", "ssh"), "-o", "ConnectTimeout=5", vm.Name, "sudo sh -c "+Quote(command))
+	var stderr strings.Builder
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s: %w: %s", command, err, stderr.String())
+	}
+	return nil
 }
 
 // Freeze stops the VM process with SIGSTOP. The VM does not answer, and its
@@ -257,22 +456,9 @@ func (vm *VM) Stop() {
 		vm.cmd.Process.Kill() //nolint:errcheck // the VM may have exited
 		<-vm.exited
 	}
-	if vm.seed != nil {
-		vm.seed.Close()
-	}
 	os.Remove(filepath.Join(vm.lab.Dir, "hosts", vm.Name+".conf"))
 }
 
 func Quote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-// FromEnv returns the image and architecture from WINCH_VM_IMAGE and
-// WINCH_VM_ARCH.
-func FromEnv() (image, arch string, err error) {
-	image, arch = os.Getenv("WINCH_VM_IMAGE"), os.Getenv("WINCH_VM_ARCH")
-	if image == "" || arch == "" {
-		return "", "", errors.New("WINCH_VM_IMAGE is not set; run make test-integration")
-	}
-	return image, arch, nil
 }

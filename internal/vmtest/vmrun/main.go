@@ -1,9 +1,11 @@
 // vmrun starts one VM named "demo" for a demo by hand and keeps it running
-// until Ctrl-C.
+// until Ctrl-C. With -refresh, it builds the test apt repository again and
+// exits.
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -20,20 +22,27 @@ func main() {
 }
 
 func run() error {
+	refresh := flag.Bool("refresh", false, "build the test apt repository again and exit")
+	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	image, arch, err := vmtest.FromEnv()
+	cfg, err := vmtest.FromEnv("test/repo")
 	if err != nil {
 		return err
 	}
+	cfg.Refresh = *refresh
 	dir, err := os.MkdirTemp("", "winch-vm-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	lab, err := vmtest.NewLab(ctx, dir, image, arch)
+	lab, err := vmtest.NewLab(ctx, dir, cfg)
 	if err != nil {
 		return err
+	}
+	defer lab.Close()
+	if *refresh {
+		return nil
 	}
 	fmt.Println("starting the VM demo ...")
 	vm, err := lab.Start(ctx, "demo")

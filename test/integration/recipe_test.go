@@ -22,8 +22,8 @@ func TestRecipes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := filepath.Join(lab.Dir, "hosts", "recipes-other.conf")
-	if err := os.WriteFile(other, []byte(strings.Replace(string(conf), "Host "+vm.Name, "Host recipes-other", 1)), 0o644); err != nil {
+	other, err := lab.WriteHost("recipes-other", strings.Replace(string(conf), "Host "+vm.Name, "Host recipes-other", 1))
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Remove(other) })

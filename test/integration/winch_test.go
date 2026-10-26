@@ -3,7 +3,6 @@ package integration
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -278,8 +277,8 @@ func TestWinch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		conf := filepath.Join(lab.Dir, "hosts", "winch-mux.conf")
-		if err := os.WriteFile(conf, []byte("Host "+vm.Name+"\n  ControlMaster auto\n  ControlPath "+ctl+"/%C\n  ControlPersist 60\n"), 0o644); err != nil {
+		conf, err := lab.WriteHost("winch-mux", "Host "+vm.Name+"\n  ControlMaster auto\n  ControlPath "+ctl+"/%C\n  ControlPersist 60\n")
+		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {

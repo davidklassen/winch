@@ -1,0 +1,7 @@
+Package: winch-mta-c
+Version: 1
+Architecture: armhf
+Provides: winch-mta
+Multi-Arch: foreign
+Maintainer: winch
+Description: test

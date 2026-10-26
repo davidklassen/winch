@@ -1,0 +1,7 @@
+Package: winch-mta-b
+Version: 1
+Architecture: all
+Provides: winch-mta
+Multi-Arch: foreign
+Maintainer: winch
+Description: test

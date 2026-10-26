@@ -46,9 +46,8 @@ func TestSilentAddressFails(t *testing.T) {
 	}()
 	// The jump host is the silent address. ssh does not pass ConnectTimeout
 	// to the ssh of the jump.
-	conf := filepath.Join(lab.Dir, "hosts", "silent.conf")
-	hosts := fmt.Sprintf("Host silent\n  HostName 127.0.0.1\n  Port %d\nHost silentjump\n  HostName 127.0.0.1\n  ProxyJump silent\n", l.Addr().(*net.TCPAddr).Port)
-	if err := os.WriteFile(conf, []byte(hosts), 0o644); err != nil {
+	conf, err := lab.WriteHost("silent", fmt.Sprintf("Host silent\n  HostName 127.0.0.1\n  Port %d\nHost silentjump\n  HostName 127.0.0.1\n  ProxyJump silent\n", l.Addr().(*net.TCPAddr).Port))
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Remove(conf) })
@@ -198,8 +197,8 @@ func TestMaxStartupsRetry(t *testing.T) {
 	}()
 	// The lab's LogLevel ERROR hides the message of a closed connection.
 	proxy := vm.Name + "-proxy"
-	conf := filepath.Join(lab.Dir, "hosts", proxy+".conf")
-	if err := os.WriteFile(conf, fmt.Appendf(nil, "Host %s\n  HostName 127.0.0.1\n  Port %d\n  LogLevel INFO\n", proxy, l.Addr().(*net.TCPAddr).Port), 0o644); err != nil {
+	conf, err := lab.WriteHost(proxy, fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port %d\n  LogLevel INFO\n", proxy, l.Addr().(*net.TCPAddr).Port))
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Remove(conf) })

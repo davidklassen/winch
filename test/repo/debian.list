@@ -1,0 +1,17 @@
+# The Debian packages of the local test repository, one per line. The
+# repository also holds the dependencies that the VM snapshot lacks.
+# A change here builds the repository again on the next test run.
+at
+curl
+dkimpy-milter
+dns-root-data
+figlet
+fortune-mod
+hello
+nginx
+sl
+tree
+unbound
+# Two providers of mail-transport-agent.
+exim4-daemon-light
+postfix

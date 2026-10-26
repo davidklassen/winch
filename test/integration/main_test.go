@@ -26,7 +26,7 @@ func run(m *testing.M) int {
 		fmt.Println("integration tests skipped: WINCH_VM_IMAGE is not set; run make test-integration")
 		return 0
 	}
-	image, arch, err := vmtest.FromEnv()
+	cfg, err := vmtest.FromEnv("../repo")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -37,11 +37,12 @@ func run(m *testing.M) int {
 		return 1
 	}
 	defer os.RemoveAll(dir)
-	lab, err = vmtest.NewLab(context.Background(), dir, image, arch)
+	lab, err = vmtest.NewLab(context.Background(), dir, cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	defer lab.Close()
 	// Module cases open sessions from this process, so it needs the ssh
 	// wrapper too.
 	if err := os.Setenv("PATH", lab.PATH); err != nil {

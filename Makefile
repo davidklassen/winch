@@ -1,8 +1,11 @@
 ARCH ?= arm64
-IMAGE := $(HOME)/.cache/winch/debian-13-genericcloud-$(ARCH).qcow2
-VMENV := WINCH_BIN=$(CURDIR)/bin/winch WINCH_VM_IMAGE=$(IMAGE) WINCH_VM_ARCH=$(ARCH)
+PARALLEL ?= 4
+ONLINE ?=
+CACHE := $(HOME)/.cache/winch
+IMAGE := $(CACHE)/debian-13-genericcloud-$(ARCH).qcow2
+VMENV := WINCH_BIN=$(CURDIR)/bin/winch WINCH_VM_IMAGE=$(IMAGE) WINCH_VM_ARCH=$(ARCH) WINCH_VM_CACHE=$(CACHE) WINCH_VM_ONLINE=$(ONLINE)
 
-.PHONY: build helpers tidy lint test test-integration vm-image vm
+.PHONY: build helpers tidy lint test test-integration test-repo vm-image vm
 
 build: helpers
 	go build -o bin/winch ./cmd/winch
@@ -22,7 +25,10 @@ test: helpers
 	go test ./...
 
 test-integration: build vm-image
-	$(VMENV) go test -count=1 -parallel 4 -timeout 30m ./test/...
+	$(VMENV) go test -count=1 -parallel $(PARALLEL) -timeout 30m ./test/...
+
+test-repo: build vm-image
+	$(VMENV) go run ./internal/vmtest/vmrun -refresh
 
 vm-image: $(IMAGE)
 
