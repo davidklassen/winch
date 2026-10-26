@@ -1,7 +1,7 @@
 package integration
 
 import (
-	"strings"
+	"os"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/module"
@@ -11,7 +11,6 @@ import (
 // The lab's signed source. Its suite trixie holds winch-signed.
 const (
 	signedURL   = "http://10.0.2.100/signed"
-	signedKey   = "https://10.0.2.100/signed/key.asc"
 	signedFile  = "/etc/apt/sources.list.d/winch-signed.sources"
 	signedAsc   = "/etc/apt/keyrings/winch-signed.asc"
 	sourceAttrs = " (owner root, group root, mode 0644)"
@@ -20,7 +19,7 @@ const (
 // signedSource writes the source file of the signed source with suite, and
 // its key.
 func signedSource(suite string) string {
-	return "curl -sf " + signedKey + " -o " + signedAsc + " && printf 'Types: deb\\nURIs: " + signedURL +
+	return "cat > " + signedAsc + " <<'EOF'\n" + string(vmtest.RepoKey) + "EOF\nprintf 'Types: deb\\nURIs: " + signedURL +
 		"\\nSuites: " + suite + "\\nComponents: main\\nSigned-By: " + signedAsc + "\\n' > " + signedFile
 }
 
@@ -31,18 +30,24 @@ func TestRepoModule(t *testing.T) {
 	// The index of the lab's other sources, which a repo step keeps.
 	vm.MustRun(t, "apt-get update -q >/dev/null")
 	const others = "ls /var/lib/apt/lists | grep -q '^10.0.2.100_debian_'"
-	fpr := strings.TrimSpace(vm.MustRun(t, "curl -sf http://10.0.2.100/signed/key.fpr"))
-	other := strings.TrimSpace(vm.MustRun(t, "curl -sf http://10.0.2.100/signed/other.fpr"))
+	const (
+		fpr   = "C19F7BA4735783E4167DC2AA4B7ED2E367468894"
+		other = "08F59DAD86F61D67A6A960698445EE6567433B2C"
+	)
+	otherKey, err := os.ReadFile("../../internal/module/testdata/key.asc")
+	if err != nil {
+		t.Fatal(err)
+	}
 	args := func() *module.Repo {
-		return &module.Repo{Name: "winch-signed", URL: signedURL, Suite: "trixie", Components: []string{"main"}, Key: signedKey}
+		return &module.Repo{Name: "winch-signed", URL: signedURL, Suite: "trixie", Components: []string{"main"}, KeyData: vmtest.RepoKey}
 	}
 	refresh := "refresh the index of source winch-signed"
 	keyLine := "add key " + fpr + " winch test repository"
 	reset := "pkill -f 'fcntl[.]lockf'; rm -f " + signedFile + " " + signedAsc + " /etc/apt/sources.list.d/vendor.* /var/lib/apt/lists/10.0.2.100_signed_* /root/locked; " +
 		"sed -i '/10.0.2.100.signed/d' /etc/apt/sources.list 2>/dev/null; rm -rf /root/saved; mkdir -p /etc/apt/keyrings"
-	withKey := func(url string) *module.Repo {
+	withOther := func() *module.Repo {
 		r := args()
-		r.Key = url
+		r.KeyData = otherKey
 		return r
 	}
 	vmtest.RunCases(t, vm, "repo", reset, []vmtest.Case{
@@ -83,10 +88,10 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:      "another key",
-			Setup:     signedSource("trixie") + " && curl -sf https://10.0.2.100/signed/other.asc -o " + signedAsc,
+			Setup:     signedSource("trixie") + " && cat > " + signedAsc + " <<'EOF'\n" + string(otherKey) + "EOF",
 			State:     module.State{IndexFresh: true},
 			Args:      args(),
-			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove key " + other + " winch other key", keyLine, refresh}},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove key " + other + " winch test key <test@example.com>", keyLine, refresh}},
 			WantState: module.State{},
 		},
 		{
@@ -95,27 +100,17 @@ func TestRepoModule(t *testing.T) {
 			WantErr: "the source http://10.0.2.100/test ./ is also in /etc/apt/sources.list.d/winch-test.sources; remove it there",
 		},
 		{
-			Name:    "the key URL is not found",
-			Args:    withKey("https://10.0.2.100/signed/missing.asc"),
-			WantErr: "fetch the key https://10.0.2.100/signed/missing.asc: 404 Not Found",
-		},
-		{
-			Name:    "a binary key",
-			Args:    withKey("https://10.0.2.100/signed/key.gpg"),
-			WantErr: "https://10.0.2.100/signed/key.gpg is not an ASCII-armored OpenPGP public key",
-		},
-		{
 			Name:         "a key that does not sign the source",
-			Args:         withKey("https://10.0.2.100/signed/other.asc"),
-			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, "add key " + other + " winch other key", "create file " + signedFile + sourceAttrs, refresh}},
+			Args:         withOther(),
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, "add key " + other + " winch test key <test@example.com>", "create file " + signedFile + sourceAttrs, refresh}},
 			WantApplyErr: "refresh the index of source winch-signed",
 			After:        "[ ! -e " + signedFile + " ] && [ ! -e " + signedAsc + " ]",
 		},
 		{
 			Name:         "a failed refresh puts the old files back",
 			Setup:        signedSource("trixie") + " && mkdir /root/saved && cp " + signedFile + " " + signedAsc + " /root/saved/",
-			Args:         withKey("https://10.0.2.100/signed/other.asc"),
-			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove key " + fpr + " winch test repository", "add key " + other + " winch other key", refresh}},
+			Args:         withOther(),
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove key " + fpr + " winch test repository", "add key " + other + " winch test key <test@example.com>", refresh}},
 			WantApplyErr: "refresh the index of source winch-signed",
 			After:        "cmp " + signedFile + " /root/saved/winch-signed.sources && cmp " + signedAsc + " /root/saved/winch-signed.asc && " + others,
 		},
@@ -134,7 +129,7 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:      "an old key file that holds no key",
-			Setup:     signedSource("trixie") + " && curl -sf https://10.0.2.100/signed/key.gpg -o " + signedAsc,
+			Setup:     signedSource("trixie") + " && echo 'not a key' > " + signedAsc,
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"replace " + signedAsc + ": is not an ASCII-armored OpenPGP public key", keyLine, refresh}},
 			WantState: module.State{},

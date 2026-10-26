@@ -1,0 +1,1 @@
+recipes/nginx/recipe.yaml:7:12: key: must be a clean relative path, such as "a/b.conf"

@@ -1,9 +1,6 @@
 package module
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
@@ -18,7 +15,7 @@ func TestRepoValidate(t *testing.T) {
 		yaml string
 		want string
 	}{
-		{"all fields", "name: rspamd\n" + base + "key: https://rspamd.com/apt-stable/gpg.key\n", ""},
+		{"all fields", "name: rspamd\n" + base + "key: keys/rspamd.asc\n", ""},
 		{"no key", "name: backports\nurl: http://deb.debian.org/debian\nsuite: trixie-backports\ncomponents: [main, contrib]\n", ""},
 		{"one component", "name: a\nurl: https://example.com/apt\nsuite: trixie\ncomponents: main\n", ""},
 		{"flat", "name: a\nurl: https://example.com/apt\nsuite: ./\n", ""},
@@ -40,8 +37,8 @@ func TestRepoValidate(t *testing.T) {
 		{"no components", "name: a\nurl: https://example.com/apt\nsuite: trixie\n", `t.yaml:3:8: suite: needs components, such as [main]; only a flat suite, which ends in "/", has none`},
 		{"empty components", "name: a\nurl: https://example.com/apt\nsuite: trixie\ncomponents: []\n", `t.yaml:3:8: suite: needs components, such as [main]; only a flat suite, which ends in "/", has none`},
 		{"flat with components", "name: a\nurl: https://example.com/apt\nsuite: ./\ncomponents: [main]\n", `t.yaml:4:13: components: a flat suite, which ends in "/", has no components`},
-		{"http key", "name: a\n" + base + "key: http://example.com/key.asc\n", `t.yaml:5:6: key: must start with https://, so the network cannot choose the key`},
-		{"space in key", "name: a\n" + base + "key: https://example.com/k ey\n", `t.yaml:5:6: key: has white space or a control character`},
+		{"key outside files", "name: a\n" + base + "key: ../rspamd.asc\n", `t.yaml:5:6: key: must be a clean relative path, such as "a/b.conf"`},
+		{"absolute key", "name: a\n" + base + "key: /etc/rspamd.asc\n", `t.yaml:5:6: key: must be a clean relative path, such as "a/b.conf"`},
 		{"unknown key", "name: a\n" + base + "keyring: x\n", `t.yaml:5:1: unknown key "keyring"`},
 		{"absent", "name: a\n" + base + "absent: true\n", `t.yaml:5:1: unknown key "absent"`},
 	}
@@ -57,7 +54,7 @@ func TestRepoSource(t *testing.T) {
 		repo Repo
 		want string
 	}{
-		{"key", Repo{Name: "rspamd", URL: "https://rspamd.com/apt-stable", Suite: "trixie", Components: []string{"main", "contrib"}, Key: "https://rspamd.com/apt-stable/gpg.key"},
+		{"key", Repo{Name: "rspamd", URL: "https://rspamd.com/apt-stable", Suite: "trixie", Components: []string{"main", "contrib"}, KeyData: []byte("key")},
 			"Types: deb\nURIs: https://rspamd.com/apt-stable\nSuites: trixie\nComponents: main contrib\nSigned-By: /etc/apt/keyrings/rspamd.asc\n"},
 		{"no key", Repo{Name: "bp", URL: "http://deb.debian.org/debian", Suite: "trixie-backports", Components: []string{"main"}},
 			"Types: deb\nURIs: http://deb.debian.org/debian\nSuites: trixie-backports\nComponents: main\n"},
@@ -176,53 +173,6 @@ func TestSourceChanges(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := sourceChanges(p, []byte(tt.old), []byte(want)); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("sourceChanges = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-// spec: Modules/repo
-func TestFetchKey(t *testing.T) {
-	big := strings.Repeat("k", maxDiff+1)
-	var agent string
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		agent = r.UserAgent()
-		switch r.URL.Path {
-		case "/key.asc":
-			fmt.Fprint(w, "key")
-		case "/big":
-			fmt.Fprint(w, big)
-		case "/redirect":
-			http.Redirect(w, r, "http://"+r.Host+"/key.asc", http.StatusFound)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	client := keyClient()
-	client.Transport.(*http.Transport).TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig
-	tests := []struct {
-		path, want, wantErr string
-	}{
-		{"/key.asc", "key", ""},
-		{"/missing", "", "404 Not Found"},
-		{"/big", "", "larger than 1 MiB"},
-		{"/redirect", "", "which is not https"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			got, err := fetchKey(t.Context(), client, srv.URL+tt.path)
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("error = %v, want %q", err, tt.wantErr)
-				}
-				return
-			}
-			if err != nil || string(got) != tt.want {
-				t.Fatalf("fetchKey = %q, %v", got, err)
-			}
-			if agent != "winch" {
-				t.Errorf("user agent = %q, want winch", agent)
 			}
 		})
 	}

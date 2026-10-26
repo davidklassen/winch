@@ -135,29 +135,28 @@ func TestPackageSources(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "sources")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
-		"inventories/test.yaml": "hosts:\n  " + vm.Name + ": {}\n",
-		"pipelines/site.yaml": `stages:
-  - name: packages
-    hosts: all
-    steps:
-      - pkg:
-          name: hello
-      - repo:
-          name: winch-signed
-          url: ` + signedURL + `
-          suite: !expr facts.os.codename
-          components: [main]
-          key: ` + signedKey + `
-      - debconf:
-          package: winch-signed
-          question: winch-signed/greeting
-          type: string
-          value: hi from winch
-      - pkg:
-          name: winch-signed
-      - pkg:
-          name: sl
+		"winch.yaml":                              "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml":                   "hosts:\n  " + vm.Name + ": {}\n",
+		"pipelines/site.yaml":                     "stages:\n  - name: packages\n    hosts: all\n    steps:\n      - recipe: packages\n",
+		"recipes/packages/files/winch-signed.asc": string(vmtest.RepoKey),
+		"recipes/packages/recipe.yaml": `steps:
+  - pkg:
+      name: hello
+  - repo:
+      name: winch-signed
+      url: ` + signedURL + `
+      suite: !expr facts.os.codename
+      components: [main]
+      key: winch-signed.asc
+  - debconf:
+      package: winch-signed
+      question: winch-signed/greeting
+      type: string
+      value: hi from winch
+  - pkg:
+      name: winch-signed
+  - pkg:
+      name: sl
 `,
 	})
 	r := lab.Winch(t, dir, "plan", "site")

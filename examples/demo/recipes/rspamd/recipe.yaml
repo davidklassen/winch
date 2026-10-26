@@ -2,7 +2,8 @@ vars:
   rspamd_dkim_key:
   # The source of the packages. The demo uses the lab's signed source.
   rspamd_repo_url: https://rspamd.com/apt-stable
-  rspamd_repo_key: https://rspamd.com/apt-stable/gpg.key
+  # The key of the source in files/, from https://rspamd.com/apt-stable/gpg.key.
+  rspamd_repo_key: rspamd.asc
 
 steps:
   - name: Rspamd upstream (Debian's 3.12 gets no security fixes)

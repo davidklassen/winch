@@ -564,6 +564,9 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 	var recipe string
 	var recipePos yamlx.Pos
 	var argsNode *yamlx.Node
+	// args holds the arguments without tags, also when st.Args is unset
+	// because an argument is computed.
+	var args module.Module
 	var errs []error
 	for _, p := range n.Pairs {
 		switch {
@@ -626,7 +629,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 			errs = append(errs, yamlx.Errorf(p.Value.Pos, "%s: the arguments are a map; put %s on single values", p.Key, p.Value.Tag))
 			continue
 		}
-		st.Module, argsNode = p.Key, p.Value
+		st.Module, argsNode, args = p.Key, p.Value, m
 		if err := l.loadArgs(&st, m, p.Value, sc); err != nil {
 			errs = append(errs, err)
 		}
@@ -649,9 +652,9 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 	if st.Module == "" {
 		return Step{}, yamlx.Errorf(n.Pos, "a step needs a module")
 	}
-	if r == nil && st.Module == "file" {
+	if r == nil {
 		for _, p := range argsNode.Pairs {
-			if p.Key == "template" || p.Key == "source" {
+			if st.Module == "file" && (p.Key == "template" || p.Key == "source") || st.Module == "repo" && p.Key == "key" {
 				return Step{}, yamlx.Errorf(p.Value.Pos, "%s: a step in a stage cannot use %s; use it in a recipe", p.Key, p.Key)
 			}
 		}
@@ -659,6 +662,11 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 	if f, ok := st.Args.(*module.File); ok {
 		var err error
 		if st.tmpl, err = r.content(f, st.loop != nil); err != nil {
+			return Step{}, err
+		}
+	}
+	if k, ok := args.(*module.Repo); ok {
+		if err := r.key(k); err != nil {
 			return Step{}, err
 		}
 	}
@@ -1014,6 +1022,11 @@ func (st Step) instance(e *Env) (Step, any, error) {
 		args = yamlx.Value(n)
 		if f, ok := m.(*module.File); ok {
 			if st.tmpl, err = st.in.content(f, st.loop != nil); err != nil {
+				return Step{}, nil, err
+			}
+		}
+		if k, ok := m.(*module.Repo); ok {
+			if err := st.in.key(k); err != nil {
 				return Step{}, nil, err
 			}
 		}

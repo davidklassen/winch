@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -14,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"syscall"
-	"time"
 	"unicode"
 
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -25,7 +23,10 @@ type Repo struct {
 	URL        string        `yaml:"url,required" json:"url"`
 	Suite      string        `yaml:"suite,required" json:"suite"`
 	Components yamlx.Strings `yaml:"components" json:"components,omitempty"`
-	Key        string        `yaml:"key" json:"key,omitempty"`
+	Key        string        `yaml:"key" json:"-"`
+	KeyPos     yamlx.Pos     `json:"-"`
+	// KeyData is the content of the key file in the recipe's files.
+	KeyData []byte `json:"key_data,omitempty"`
 
 	// Check sets these for Apply.
 	writes  []repoFile
@@ -92,12 +93,20 @@ func (r *Repo) Validate() error {
 	case !flat && len(r.Components) == 0:
 		return &yamlx.FieldError{Field: "suite", Msg: `needs components, such as [main]; only a flat suite, which ends in "/", has none`}
 	}
-	if hasSpace(r.Key) {
-		return &yamlx.FieldError{Field: "key", Msg: spaceMsg}
+	return checkRelative("key", r.Key)
+}
+
+// SetKey sets the key data to data, the content of the key file name. data
+// must be an ASCII-armored OpenPGP public key.
+func (r *Repo) SetKey(name string, data []byte) error {
+	_, err := parsePGPKey(data)
+	if errors.Is(err, errNotArmored) {
+		return fmt.Errorf("%s %w", name, err)
 	}
-	if r.Key != "" && !strings.HasPrefix(r.Key, "https://") {
-		return &yamlx.FieldError{Field: "key", Msg: "must start with https://, so the network cannot choose the key"}
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
 	}
+	r.KeyData = data
 	return nil
 }
 
@@ -111,30 +120,23 @@ func (r *Repo) source() []byte {
 	if len(r.Components) > 0 {
 		fmt.Fprintf(&b, "Components: %s\n", strings.Join(r.Components, " "))
 	}
-	if r.Key != "" {
+	if r.KeyData != nil {
 		fmt.Fprintf(&b, "Signed-By: %s\n", r.keyPath())
 	}
 	return []byte(b.String())
 }
 
-func (r *Repo) Check(ctx context.Context, st *State, _ func(string)) (Result, error) {
+func (r *Repo) Check(_ context.Context, st *State, _ func(string)) (Result, error) {
 	if err := r.checkOthers(); err != nil {
 		return Result{}, err
 	}
 	var changes []string
-	if r.Key != "" {
-		data, err := fetchKey(ctx, keyClient(), r.Key)
+	if r.KeyData != nil {
+		newKey, err := parsePGPKey(r.KeyData)
 		if err != nil {
-			return Result{}, fmt.Errorf("fetch the key %s: %w", r.Key, err)
+			return Result{}, fmt.Errorf("the key: %w", err)
 		}
-		newKey, err := parsePGPKey(data)
-		if errors.Is(err, errNotArmored) {
-			return Result{}, fmt.Errorf("%s %w", r.Key, err)
-		}
-		if err != nil {
-			return Result{}, fmt.Errorf("%s: %w", r.Key, err)
-		}
-		f, lines, err := checkRepoFile(r.keyPath(), data)
+		f, lines, err := checkRepoFile(r.keyPath(), r.KeyData)
 		if err != nil {
 			return Result{}, err
 		}
@@ -187,56 +189,6 @@ func keyText(k pgpKey) string {
 		return k.fingerprint
 	}
 	return k.fingerprint + " " + k.userID
-}
-
-// keyClient returns the HTTP client of a key fetch: no proxy, and https also
-// after a redirect.
-func keyClient() *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	return &http.Client{
-		Transport: transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if req.URL.Scheme != "https" {
-				return fmt.Errorf("a redirect to %s, which is not https", req.URL)
-			}
-			if len(via) >= 10 {
-				return errors.New("more than 10 redirects")
-			}
-			return nil
-		},
-	}
-}
-
-// fetchKey fetches the key with client.
-func fetchKey(ctx context.Context, client *http.Client, key string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	defer client.CloseIdleConnections()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, key, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "winch")
-	resp, err := client.Do(req)
-	if ue, ok := errors.AsType[*url.Error](err); ok {
-		err = ue.Err
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close() //nolint:errcheck // the read gives the result
-	if resp.StatusCode != http.StatusOK {
-		return nil, errors.New(resp.Status)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDiff+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxDiff {
-		return nil, errors.New("larger than 1 MiB")
-	}
-	return data, nil
 }
 
 // checkOthers fails when another sources file of apt lists the source.

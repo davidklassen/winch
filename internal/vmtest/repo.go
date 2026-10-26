@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -13,13 +14,28 @@ import (
 	"path/filepath"
 )
 
-// repoInput is a tar of the repository definition: the package lists and the
-// package definitions. It names the repository and goes to the VM that fills
-// it.
+// The signing key of the lab's signed source, and its public key. A recipe
+// that uses the source keeps the public key in its files.
+var (
+	//go:embed testdata/fake_secrets/repo.key
+	repoSigningKey []byte
+	//go:embed testdata/repo.asc
+	RepoKey []byte
+)
+
+// repoInput is a tar of the repository definition: the package lists, the
+// package definitions, and the signing key. It names the repository and goes
+// to the VM that fills it.
 func repoInput(defs fs.FS) ([]byte, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	if err := writeTree(tw, defs); err != nil {
+		return nil, err
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: "./signing.key", Mode: 0o600, Size: int64(len(repoSigningKey))}); err != nil {
+		return nil, err
+	}
+	if _, err := tw.Write(repoSigningKey); err != nil {
 		return nil, err
 	}
 	if err := tw.Close(); err != nil {
@@ -59,9 +75,7 @@ func (l *Lab) ensureRepo(ctx context.Context) error {
 // VM lacks, one at a time, so packages that conflict all arrive. It builds
 // the test packages and writes an index for each part. The part signed holds
 // the packages of signed.list and of signed/, in a suite trixie with a signed
-// InRelease. It also holds the public key of the suite as key.asc, key.gpg
-// (binary), and key.fpr (the fingerprint), and an unrelated key as other.asc
-// and other.fpr.
+// InRelease.
 const fillScript = `set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q >/dev/null
@@ -93,14 +107,8 @@ apt-ftparchive -o APT::FTPArchive::Release::Suite=trixie -o APT::FTPArchive::Rel
 	release dists/trixie > /root/Release
 mv /root/Release dists/trixie/Release
 export GNUPGHOME=$(mktemp -d)
-gpg --batch -q --passphrase '' --quick-gen-key 'winch test repository' ed25519 sign never 2>/dev/null
-gpg --batch -q --passphrase '' --quick-gen-key 'winch other key' ed25519 sign never 2>/dev/null
+gpg --batch -q --import /root/defs/signing.key 2>/dev/null
 gpg --batch -q -u 'winch test repository' --clearsign -o dists/trixie/InRelease dists/trixie/Release
-gpg --armor --export 'winch test repository' > key.asc
-gpg --export 'winch test repository' > key.gpg
-gpg --armor --export 'winch other key' > other.asc
-gpg --with-colons --list-keys 'winch test repository' | awk -F: '/^fpr/ {print $10; exit}' > key.fpr
-gpg --with-colons --list-keys 'winch other key' | awk -F: '/^fpr/ {print $10; exit}' > other.fpr
 cd /root/repo
 tar -c .
 `

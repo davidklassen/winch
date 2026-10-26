@@ -1,6 +1,7 @@
 package project
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -447,6 +448,23 @@ func TestLoadRecipes(t *testing.T) {
 		{name: "template-in-stage", files: map[string]string{
 			"pipelines/site.yaml": stage("      - file:\n          path: /a\n          template: a.tmpl\n      - file:\n          path: /b\n          source: b\n"),
 		}},
+		{name: "repo-key-outside-files", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe(repoStep("  ", "../a.asc")),
+		}},
+		{name: "repo-key-in-stage", files: map[string]string{
+			"pipelines/site.yaml": stage(repoStep("      ", "a.asc")),
+		}},
+		{name: "repo-key-not-armored", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe(repoStep("  ", "a.asc")),
+			"recipes/nginx/files/a.asc": "not a key\n",
+		}},
+		{name: "repo-key-not-armored-computed-suite", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe(strings.Replace(repoStep("  ", "a.asc"), "suite: trixie", "suite: !expr facts.os.codename", 1)),
+			"recipes/nginx/files/a.asc": "not a key\n",
+		}},
+		{name: "repo-key-missing", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe(repoStep("  ", "a.asc")),
+		}},
 		{name: "require-untagged", files: map[string]string{
 			"recipes/nginx/recipe.yaml": "require:\n  - facts.os.id == \"debian\"\nsteps: []\n",
 		}},
@@ -474,6 +492,60 @@ func TestLoadRecipes(t *testing.T) {
 			dir := writeProject(t, with(nginx, tt.files))
 			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
 			golden.Assert(t, filepath.Join("testdata", "load", tt.name+".golden"), result(p, err))
+		})
+	}
+}
+
+// repoStep returns a repo step with key, indented by indent.
+func repoStep(indent, key string) string {
+	return indent + "- repo:\n" + indent + "    name: a\n" + indent + "    url: https://example.com/apt\n" +
+		indent + "    suite: trixie\n" + indent + "    components: [main]\n" + indent + "    key: " + key + "\n"
+}
+
+// spec: Modules/repo
+func TestLoadRepoKey(t *testing.T) {
+	key, err := os.ReadFile(filepath.Join("..", "module", "testdata", "key.asc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := writeProject(t, with(nginx, map[string]string{
+		"recipes/nginx/recipe.yaml":      recipe(repoStep("  ", "keys/a.asc")),
+		"recipes/nginx/files/keys/a.asc": string(key),
+	}))
+	p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := p.Pipeline.Stages[0].Steps[0].Recipe.Steps[0].Args.(*module.Repo)
+	if !ok || string(r.KeyData) != string(key) {
+		t.Errorf("args = %#v, want the key data of files/keys/a.asc", p.Pipeline.Stages[0].Steps[0].Recipe.Steps[0].Args)
+	}
+}
+
+// spec: Modules/repo
+func TestComputedRepoKey(t *testing.T) {
+	key, err := os.ReadFile(filepath.Join("..", "module", "testdata", "key.asc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct{ name, key, want string }{
+		{"key file", "a.asc", `"key_data":"` + base64.StdEncoding.EncodeToString(key) + `"`},
+		{"missing file", "b.asc", "error: recipes/nginx/recipe.yaml:9:12: key: recipes/nginx/files/b.asc does not exist"},
+		{"outside files", "../a.asc", "error: recipes/nginx/recipe.yaml:9:12: key: must be a clean relative path"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeProject(t, with(nginx, map[string]string{
+				"recipes/nginx/recipe.yaml": "vars:\n  nginx_key: " + tt.key + "\n" + recipe(repoStep("  ", "!expr vars.nginx_key")),
+				"recipes/nginx/files/a.asc": string(key),
+			}))
+			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := evalSteps(t, p); !strings.Contains(got, tt.want) {
+				t.Errorf("got %q, want %q in it", got, tt.want)
+			}
 		})
 	}
 }

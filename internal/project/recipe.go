@@ -256,6 +256,21 @@ func (r *Recipe) content(f *module.File, loops bool) (*template.Template, error)
 	return nil, nil
 }
 
+// key sets the key data of a repo step of r from its key file.
+func (r *Recipe) key(k *module.Repo) error {
+	if k.Key == "" {
+		return nil
+	}
+	data, err := r.readFile("files", k.Key)
+	if err == nil {
+		err = k.SetKey(r.Dir+"/files/"+k.Key, data)
+	}
+	if err != nil {
+		return yamlx.Errorf(k.KeyPos, "key: %v", err)
+	}
+	return nil
+}
+
 // templateReads returns the variables that the template of the file
 // arguments n read by name.
 func (r *Recipe) templateReads(n *yamlx.Node) []string {

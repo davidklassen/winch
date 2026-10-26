@@ -11,6 +11,7 @@ import (
 // before it sends a step.
 var controllerOnly = map[string][]string{
 	"file": {"Content", "Template", "TemplatePos", "Source", "SourcePos"},
+	"repo": {"Key", "KeyPos"},
 }
 
 // fill sets every exported field of v to a value that is not zero.
