@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/davidklassen/winch/internal/fakehost"
@@ -85,80 +86,86 @@ func barrier(n int) (func(host, main string), func() bool) {
 func TestHostsInParallel(t *testing.T) {
 	for _, serial := range []bool{false, true} {
 		t.Run(map[bool]string{false: "batch", true: "serial"}[serial], func(t *testing.T) {
-			p := manyProject(t, motdStage)
-			h := fakehost.New()
-			hook, ok := barrier(3)
-			h.OnCheck = hook
-			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: serial})
-			if !ok() {
-				t.Error("plan: the hosts did not check at the same time")
-			}
-			hook, ok = barrier(3)
-			h.OnApply = hook
-			var out, errOut bytes.Buffer
-			if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
-				t.Fatalf("apply failed: %s", errOut.String())
-			}
-			if !ok() {
-				t.Error("apply: the hosts did not apply at the same time")
-			}
+			synctest.Test(t, func(t *testing.T) {
+				p := manyProject(t, motdStage)
+				h := fakehost.New()
+				hook, ok := barrier(3)
+				h.OnCheck = hook
+				plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: serial})
+				if !ok() {
+					t.Error("plan: the hosts did not check at the same time")
+				}
+				hook, ok = barrier(3)
+				h.OnApply = hook
+				var out, errOut bytes.Buffer
+				if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+					t.Fatalf("apply failed: %s", errOut.String())
+				}
+				if !ok() {
+					t.Error("apply: the hosts did not apply at the same time")
+				}
+			})
 		})
 	}
 }
 
 // spec: Running a pipeline/Order
 func TestStagesInOrder(t *testing.T) {
-	p := manyProject(t, motdStage+`  - name: next
+	synctest.Test(t, func(t *testing.T) {
+		p := manyProject(t, motdStage+`  - name: next
     hosts: all
     steps:
       - file:
           path: /etc/issue
           content: "x\n"
 `)
-	h := fakehost.New()
-	slow := func(host, main string) {
-		if host == "web1" && main == "/etc/motd" {
-			time.Sleep(100 * time.Millisecond)
+		h := fakehost.New()
+		slow := func(host, main string) {
+			if host == "web1" && main == "/etc/motd" {
+				time.Sleep(100 * time.Millisecond)
+			}
 		}
-	}
-	h.OnCheck, h.OnApply = slow, slow
-	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
-	var out, errOut bytes.Buffer
-	run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
-	last := slices.Index(h.Trace, "apply web1 /etc/motd")
-	first := slices.IndexFunc(h.Trace, func(s string) bool { return strings.HasSuffix(s, " /etc/issue") })
-	if last < 0 || first < last {
-		t.Errorf("a host started the next stage before web1 finished the first: %q", h.Trace)
-	}
+		h.OnCheck, h.OnApply = slow, slow
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		var out, errOut bytes.Buffer
+		run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+		last := slices.Index(h.Trace, "apply web1 /etc/motd")
+		first := slices.IndexFunc(h.Trace, func(s string) bool { return strings.HasSuffix(s, " /etc/issue") })
+		if last < 0 || first < last {
+			t.Errorf("a host started the next stage before web1 finished the first: %q", h.Trace)
+		}
+	})
 }
 
 // spec: Running a pipeline/Order
 func TestParallelism(t *testing.T) {
 	for _, n := range []int{1, 2} {
 		t.Run(map[int]string{1: "one", 2: "two"}[n], func(t *testing.T) {
-			p := manyProject(t, strings.Replace(motdStage, "    hosts: all\n", "    hosts: all\n    parallelism: "+map[int]string{1: "1", 2: "2"}[n]+"\n", 1))
-			h := fakehost.New()
-			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
-			h.MaxOpen, h.Trace = 0, nil
-			h.OnApply = func(host, main string) { time.Sleep(50 * time.Millisecond) }
-			var out, errOut bytes.Buffer
-			if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
-				t.Fatalf("apply failed: %s", errOut.String())
-			}
-			if h.MaxOpen != n {
-				t.Errorf("%d hosts ran at the same time, want %d", h.MaxOpen, n)
-			}
-			var connects []string
-			for _, s := range h.Trace {
-				if strings.HasPrefix(s, "connect ") {
-					connects = append(connects, s)
+			synctest.Test(t, func(t *testing.T) {
+				p := manyProject(t, strings.Replace(motdStage, "    hosts: all\n", "    hosts: all\n    parallelism: "+map[int]string{1: "1", 2: "2"}[n]+"\n", 1))
+				h := fakehost.New()
+				plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+				h.MaxOpen, h.Trace = 0, nil
+				h.OnApply = func(host, main string) { time.Sleep(50 * time.Millisecond) }
+				var out, errOut bytes.Buffer
+				if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+					t.Fatalf("apply failed: %s", errOut.String())
 				}
-			}
-			// The first n hosts start together and connect in any order.
-			slices.Sort(connects[:n])
-			if want := []string{"connect web1", "connect web2", "connect web3"}; !slices.Equal(connects, want) {
-				t.Errorf("connects %q, want %q", connects, want)
-			}
+				if h.MaxOpen != n {
+					t.Errorf("%d hosts ran at the same time, want %d", h.MaxOpen, n)
+				}
+				var connects []string
+				for _, s := range h.Trace {
+					if strings.HasPrefix(s, "connect ") {
+						connects = append(connects, s)
+					}
+				}
+				// The first n hosts start together and connect in any order.
+				slices.Sort(connects[:n])
+				if want := []string{"connect web1", "connect web2", "connect web3"}; !slices.Equal(connects, want) {
+					t.Errorf("connects %q, want %q", connects, want)
+				}
+			})
 		})
 	}
 }
@@ -292,31 +299,33 @@ func TestPlanHealth(t *testing.T) {
 func TestSerialStart(t *testing.T) {
 	for _, serial := range []bool{true, false} {
 		t.Run(map[bool]string{false: "batch", true: "serial"}[serial], func(t *testing.T) {
-			p := manyProject(t, motdStage)
-			h := fakehost.New()
-			var mu sync.Mutex
-			inside, overlap := 0, false
-			var order []string
-			h.OnConnect = func(host string) {
-				mu.Lock()
-				inside++
-				overlap = overlap || inside > 1
-				order = append(order, host)
-				mu.Unlock()
-				time.Sleep(30 * time.Millisecond)
-				mu.Lock()
-				inside--
-				mu.Unlock()
-			}
-			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: serial})
-			var out, errOut bytes.Buffer
-			run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
-			if overlap == serial {
-				t.Errorf("connects overlap: %v", overlap)
-			}
-			if serial && !slices.Equal(order, []string{"web1", "web2", "web3", "web1", "web2", "web3"}) {
-				t.Errorf("connect order %q", order)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				p := manyProject(t, motdStage)
+				h := fakehost.New()
+				var mu sync.Mutex
+				inside, overlap := 0, false
+				var order []string
+				h.OnConnect = func(host string) {
+					mu.Lock()
+					inside++
+					overlap = overlap || inside > 1
+					order = append(order, host)
+					mu.Unlock()
+					time.Sleep(30 * time.Millisecond)
+					mu.Lock()
+					inside--
+					mu.Unlock()
+				}
+				plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: serial})
+				var out, errOut bytes.Buffer
+				run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+				if overlap == serial {
+					t.Errorf("connects overlap: %v", overlap)
+				}
+				if serial && !slices.Equal(order, []string{"web1", "web2", "web3", "web1", "web2", "web3"}) {
+					t.Errorf("connect order %q", order)
+				}
+			})
 		})
 	}
 }
@@ -405,23 +414,25 @@ func TestNoHealthGateAfterInterrupt(t *testing.T) {
 
 // spec: Running a pipeline/Failures ("Running hosts finish the stage")
 func TestParallelismRunningHostsFinish(t *testing.T) {
-	p := manyProject(t, strings.Replace(motdStage, "    hosts: all\n", "    hosts: all\n    parallelism: 2\n", 1))
-	h := fakehost.New()
-	h.FailApply("web1 /etc/motd")
-	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
-	h.OnApply = func(host, main string) {
-		if host == "web2" {
-			time.Sleep(200 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		p := manyProject(t, strings.Replace(motdStage, "    hosts: all\n", "    hosts: all\n    parallelism: 2\n", 1))
+		h := fakehost.New()
+		h.FailApply("web1 /etc/motd")
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		h.OnApply = func(host, main string) {
+			if host == "web2" {
+				time.Sleep(200 * time.Millisecond)
+			}
 		}
-	}
-	var out, errOut bytes.Buffer
-	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
-	if _, ok := h.File("web2", "/etc/motd"); !ok || o.Failed["web2"] != nil {
-		t.Errorf("web2 did not finish the stage: %v", o.Failed["web2"])
-	}
-	if err := o.Failed["web3"]; err == nil || err.Error() != "not started: web1 failed in stage base" {
-		t.Errorf("web3: error %v", err)
-	}
+		var out, errOut bytes.Buffer
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+		if _, ok := h.File("web2", "/etc/motd"); !ok || o.Failed["web2"] != nil {
+			t.Errorf("web2 did not finish the stage: %v", o.Failed["web2"])
+		}
+		if err := o.Failed["web3"]; err == nil || err.Error() != "not started: web1 failed in stage base" {
+			t.Errorf("web3: error %v", err)
+		}
+	})
 }
 
 // spec: Running a pipeline/Failures ("Without parallelism, other hosts continue")
@@ -463,26 +474,28 @@ func TestHealthGateOnlyAfterAChange(t *testing.T) {
 
 // spec: Running a pipeline/Order
 func TestPlanStagesInOrder(t *testing.T) {
-	p := manyProject(t, motdStage+`  - name: next
+	synctest.Test(t, func(t *testing.T) {
+		p := manyProject(t, motdStage+`  - name: next
     hosts: all
     steps:
       - file:
           path: /etc/issue
           content: "x\n"
 `)
-	h := fakehost.New()
-	var mu sync.Mutex
-	var checks []string
-	h.OnCheck = func(host, main string) {
-		if host == "web1" && main == "/etc/motd" {
-			time.Sleep(100 * time.Millisecond)
+		h := fakehost.New()
+		var mu sync.Mutex
+		var checks []string
+		h.OnCheck = func(host, main string) {
+			if host == "web1" && main == "/etc/motd" {
+				time.Sleep(100 * time.Millisecond)
+			}
+			mu.Lock()
+			checks = append(checks, main)
+			mu.Unlock()
 		}
-		mu.Lock()
-		checks = append(checks, main)
-		mu.Unlock()
-	}
-	run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
-	if i := slices.Index(checks, "/etc/issue"); i < 0 || slices.Contains(checks[i:], "/etc/motd") {
-		t.Errorf("a host checked the next stage before every host finished the first: %q", checks)
-	}
+		run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		if i := slices.Index(checks, "/etc/issue"); i < 0 || slices.Contains(checks[i:], "/etc/motd") {
+			t.Errorf("a host checked the next stage before every host finished the first: %q", checks)
+		}
+	})
 }

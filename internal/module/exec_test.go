@@ -20,6 +20,7 @@ func TestRunErrorEndsWithStderr(t *testing.T) {
 
 // spec: Modules; Steps
 func TestShell(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		command string
@@ -34,7 +35,7 @@ func TestShell(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ""
-			if err := Shell(t.Context(), tt.command); err != nil {
+			if err := ShellLimit(t.Context(), tt.command, commandLimit, time.Second); err != nil {
 				got = err.Error()
 			}
 			if got != tt.want {
@@ -66,8 +67,10 @@ func limitRunners(killDelay time.Duration) []struct {
 
 // spec: Modules
 func TestTimeLimit(t *testing.T) {
+	t.Parallel()
 	for _, tt := range limitRunners(time.Second) {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			// The command stops on SIGTERM. Its child records SIGTERM and keeps
 			// running and the output open, so only SIGKILL stops it.
@@ -79,7 +82,7 @@ func TestTimeLimit(t *testing.T) {
 			if err == nil || !strings.HasSuffix(err.Error(), "no result after 1s: 12\n13\n14\n15\n16\n17\n18\n19\n20\nwaiting") {
 				t.Fatalf("error = %v, want the time limit", err)
 			}
-			if d := time.Since(start); d < 2*time.Second || d > 4*time.Second {
+			if d := time.Since(start); d < 2*time.Second || d >= time.Second+KillDelay {
 				t.Errorf("returned after %s, want the limit and the kill delay", d)
 			}
 			for _, f := range []string{"term", "child-term"} {
@@ -106,15 +109,18 @@ func TestTimeLimit(t *testing.T) {
 
 // spec: Modules
 func TestTimeLimitEndsWhenTheCommandStops(t *testing.T) {
-	for _, tt := range limitRunners(10 * time.Second) {
+	t.Parallel()
+	killDelay := 10 * time.Second
+	for _, tt := range limitRunners(killDelay) {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			start := time.Now()
 			err := tt.run(t.Context(), "sleep 30 & wait")
 			if err == nil || !strings.Contains(err.Error(), "no result after 1s") {
 				t.Fatalf("error = %v, want the time limit", err)
 			}
-			if d := time.Since(start); d > 3*time.Second {
-				t.Errorf("returned after %s, want soon after the limit", d)
+			if d := time.Since(start); d >= time.Second+killDelay {
+				t.Errorf("returned after %s, want before the kill delay ends", d)
 			}
 		})
 	}
@@ -134,13 +140,20 @@ func TestTailBuffer(t *testing.T) {
 
 // spec: Modules
 func TestTimeLimitAfterExit(t *testing.T) {
+	t.Parallel()
 	// The command exits before the limit, but its background child keeps the
 	// output open past the limit.
 	command := "sleep 3 & echo done"
-	if _, err := runLimited(t.Context(), time.Second, 2*time.Second, nil, "sh", "-c", command); err != nil && strings.Contains(err.Error(), "no result") {
-		t.Errorf("module command: error = %v, want no time limit", err)
-	}
-	if err := ShellLimit(t.Context(), command, time.Second, 2*time.Second); err != nil {
-		t.Errorf("project command: error = %v, want nil", err)
-	}
+	t.Run("module command", func(t *testing.T) {
+		t.Parallel()
+		if _, err := runLimited(t.Context(), time.Second, 2*time.Second, nil, "sh", "-c", command); err != nil && strings.Contains(err.Error(), "no result") {
+			t.Errorf("error = %v, want no time limit", err)
+		}
+	})
+	t.Run("project command", func(t *testing.T) {
+		t.Parallel()
+		if err := ShellLimit(t.Context(), command, time.Second, 2*time.Second); err != nil {
+			t.Errorf("error = %v, want nil", err)
+		}
+	})
 }

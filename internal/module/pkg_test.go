@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -30,39 +31,46 @@ func TestLockHolder(t *testing.T) {
 }
 
 func TestLockFilesNotesTheHolder(t *testing.T) {
-	dir := t.TempDir()
-	name := filepath.Join(dir, "lock")
-	holder := exec.Command(os.Args[0], "-test.run=^TestLockHolder$")
-	holder.Env = append(os.Environ(), "WINCH_LOCK_HOLDER="+name)
-	release, err := holder.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := holder.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := holder.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer holder.Wait() //nolint:errcheck // the holder only holds the lock
-	if line, _ := bufio.NewReader(out).ReadString('\n'); line != "locked\n" {
-		release.Close()
-		t.Fatalf("holder printed %q", line)
-	}
-	// The lock stays taken for a few attempts of lockFiles.
-	time.AfterFunc(2500*time.Millisecond, func() { release.Close() })
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		name := filepath.Join(dir, "lock")
+		holder := exec.Command(os.Args[0], "-test.run=^TestLockHolder$")
+		holder.Env = append(os.Environ(), "WINCH_LOCK_HOLDER="+name)
+		release, err := holder.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := holder.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := holder.Start(); err != nil {
+			t.Fatal(err)
+		}
+		stop := func() {
+			release.Close()
+			holder.Wait() //nolint:errcheck // the holder only holds the lock
+		}
+		defer stop()
+		if line, _ := bufio.NewReader(out).ReadString('\n'); line != "locked\n" {
+			t.Fatalf("holder printed %q", line)
+		}
+		// The lock stays taken for a few attempts of lockFiles. The bubble's clock
+		// does not move until the holder exits.
+		time.AfterFunc(2500*time.Millisecond, stop)
 
-	var notes []string
-	unlock, err := lockFiles(t.Context(), []string{filepath.Join(dir, "free"), name}, func(s string) { notes = append(notes, s) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	unlock()
-	want := []string{fmt.Sprintf("waiting for another apt run (pid %d)", holder.Process.Pid)}
-	if !slices.Equal(notes, want) {
-		t.Errorf("notes = %q, want %q", notes, want)
-	}
+		var notes []string
+		unlock, err := lockFiles(t.Context(), []string{filepath.Join(dir, "free"), name}, func(s string) { notes = append(notes, s) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		unlock()
+		want := []string{fmt.Sprintf("waiting for another apt run (pid %d)", holder.Process.Pid)}
+		if !slices.Equal(notes, want) {
+			t.Errorf("notes = %q, want %q", notes, want)
+		}
+	})
 }
 
 func TestLockFilesNamesAMissingDirectory(t *testing.T) {
