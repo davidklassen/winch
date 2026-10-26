@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -18,6 +19,7 @@ type Dir struct {
 	Owner   yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
 	Group   yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
 	Mode    string         `yaml:"mode" json:"mode,omitempty"`
+	ModePos yamlx.Pos      `json:"-"`
 	Absent  bool           `yaml:"absent" json:"absent,omitempty"`
 	Replace bool           `yaml:"replace" json:"replace,omitempty"`
 }
@@ -38,6 +40,36 @@ func (d *Dir) Validate() error {
 		return err
 	}
 	return checkMode(d.Mode, "0755")
+}
+
+// ModeWarning returns a warning for a mode with a read bit and no execute
+// bit in the same class, or "".
+func (d *Dir) ModeWarning() string {
+	m, err := strconv.ParseUint(d.Mode, 8, 32)
+	if err != nil {
+		return ""
+	}
+	fixed := m
+	var classes []string
+	for i, class := range []string{"owner", "group", "others"} {
+		shift := 6 - 3*i
+		if m&(4<<shift) != 0 && m&(1<<shift) == 0 {
+			classes = append(classes, class)
+			fixed |= 1 << shift
+		}
+	}
+	var who string
+	switch len(classes) {
+	case 0:
+		return ""
+	case 1:
+		who = classes[0]
+	case 2:
+		who = classes[0] + " and " + classes[1]
+	case 3:
+		who = "owner, group, and others"
+	}
+	return fmt.Sprintf("%s can read the directory but not enter it; use \"%04o\"", who, fixed)
 }
 
 func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {

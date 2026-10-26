@@ -674,6 +674,11 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 		}
 		l.warnings = append(l.warnings, warnings...)
 	}
+	if d, ok := args.(*module.Dir); ok {
+		if w := d.ModeWarning(); w != "" {
+			l.warnings = append(l.warnings, yamlx.Errorf(d.ModePos, "mode: %s", w))
+		}
+	}
 	if st.Module == "file" {
 		st.tmplReads = r.templateReads(argsNode)
 	}

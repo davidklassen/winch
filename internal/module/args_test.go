@@ -10,6 +10,7 @@ import (
 // controllerOnly are the fields that the controller turns into other fields
 // before it sends a step.
 var controllerOnly = map[string][]string{
+	"dir":  {"ModePos"},
 	"file": {"Content", "Template", "TemplatePos", "Source", "SourcePos"},
 	"repo": {"Key", "KeyPos"},
 }

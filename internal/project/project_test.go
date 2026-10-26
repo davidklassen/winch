@@ -587,6 +587,43 @@ func TestLoadRepoKeyExpiry(t *testing.T) {
 	}
 }
 
+// spec: Modules/file, dir, link
+func TestLoadDirModeWarning(t *testing.T) {
+	for _, tt := range []struct{ name, path, mode, want string }{
+		{"0640", "/srv/app/conf", `"0640"`, `pipelines/site.yaml:7:17: mode: owner and group can read the directory but not enter it; use "0750"`},
+		{"0604", "/srv/app/conf", `"0604"`, `pipelines/site.yaml:7:17: mode: owner and others can read the directory but not enter it; use "0705"`},
+		{"0644", "/srv/app/conf", `"0644"`, `pipelines/site.yaml:7:17: mode: owner, group, and others can read the directory but not enter it; use "0755"`},
+		{"0750", "/srv/app/conf", `"0750"`, ""},
+		{"0711", "/srv/app/conf", `"0711"`, ""},
+		{"2640", "/srv/app/conf", `"2640"`, `pipelines/site.yaml:7:17: mode: owner and group can read the directory but not enter it; use "2750"`},
+		{"computed path", `!expr '"/srv/" + host.name'`, `"0640"`, `pipelines/site.yaml:7:17: mode: owner and group can read the directory but not enter it; use "0750"`},
+		{"computed mode", "/srv/app/conf", `!expr '"0640"'`, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeProject(t, map[string]string{
+				"pipelines/site.yaml": stage("      - dir:\n          path: " + tt.path + "\n          mode: " + tt.mode + "\n"),
+			})
+			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			warnings, err := Validate(dir, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for what, ws := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": warnings} {
+				var got string
+				if len(ws) > 0 {
+					got = ws[0].Error()
+				}
+				if len(ws) > 1 || got != tt.want {
+					t.Errorf("%s warnings = %v, want %q", what, ws, tt.want)
+				}
+			}
+		})
+	}
+}
+
 // armoredKey returns an armored OpenPGP key whose primary key expires at
 // expires, and its fingerprint. Its signature is not valid.
 func armoredKey(expires time.Time) (string, string) {
