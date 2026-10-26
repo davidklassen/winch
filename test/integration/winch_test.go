@@ -299,33 +299,54 @@ func TestWinch(t *testing.T) {
 		}
 	})
 
-	t.Run("host commands run with C.UTF-8, umask 022, and no sudo variables", func(t *testing.T) {
-		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
-			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
-			"pipelines/site.yaml": `stages:
+	t.Run("host commands run in / with C.UTF-8, PATH, umask 022, and no sudo variables", func(t *testing.T) {
+		// The systemctl in /usr/local/sbin records the environment and the
+		// working directory that a module command gets from the helper.
+		const wrapper = "#!/bin/sh\n{ xargs -0 -n1 < /proc/$$/environ; echo cwd $(readlink /proc/$$/cwd); } > /root/module.env\nexec /usr/bin/systemctl \"$@\"\n"
+		defer vm.MustRun(t, "rm -f /root/.ssh/authorized_keys /etc/sudoers.d/zz-path /usr/local/sbin/systemctl && "+
+			"sed -i '/^umask 077; export PATH/d' /home/admin/.bashrc /root/.bashrc")
+		// A sudoers without secure_path passes the login user's PATH. A strict
+		// umask, a short PATH, and LANGUAGE go in .bashrc before the check for
+		// an interactive shell, so that ssh commands read them.
+		vm.MustRun(t, "cp /home/admin/.ssh/authorized_keys /root/.ssh/authorized_keys && "+
+			"echo 'Defaults !secure_path' > /etc/sudoers.d/zz-path && "+
+			"printf '"+wrapper+"' > /usr/local/sbin/systemctl && chmod 755 /usr/local/sbin/systemctl && "+
+			"sed -i '1i umask 077; export PATH=/usr/bin:/bin LANGUAGE=de' /home/admin/.bashrc /root/.bashrc")
+		path := "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		files := map[string][]string{
+			"/root/env.out":    {"LC_ALL=C.UTF-8", `LC_CTYPE="C.UTF-8"`, "0022", path},
+			"/root/module.env": {"LC_ALL=C.UTF-8", path, "PWD=/", "cwd /"},
+		}
+		for _, user := range []string{"admin", "root"} {
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+				"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n    user: " + user + "\n",
+				"pipelines/site.yaml": `stages:
   - name: base
     hosts: all
     steps:
       - file:
-          path: /root/env-mark
+          path: /root/env-mark-` + user + `
           content: "x\n"
         then: "{ env; umask; locale; } > /root/env.out 2>&1"
+      - service:
+          name: ssh
+          running: true
 `,
-		})
-		// A strict umask of the login user, before the check for an interactive
-		// shell, so that ssh commands read it.
-		vm.MustRun(t, "sed -i '1i umask 077' /home/admin/.bashrc")
-		r := lab.Winch(t, dir, "apply", "site", "--yes")
-		vm.MustRun(t, "sed -i 1d /home/admin/.bashrc")
-		if r.Code != 0 {
-			t.Fatalf("apply: exit %d", r.Code)
-		}
-		out := vm.MustRun(t, "cat /root/env.out")
-		lines := strings.Split(out, "\n")
-		sudo := slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "SUDO_") })
-		if !slices.Contains(lines, "LC_ALL=C.UTF-8") || !slices.Contains(lines, `LC_CTYPE="C.UTF-8"`) || !slices.Contains(lines, "0022") || sudo || strings.Contains(out, "Cannot set") {
-			t.Errorf("want LC_ALL=C.UTF-8, umask 0022, no SUDO_ variable, and no locale error, got:\n%s", out)
+			})
+			vm.MustRun(t, "rm -f /root/env.out /root/module.env")
+			if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+				t.Fatalf("apply as %s: exit %d", user, r.Code)
+			}
+			for file, want := range files {
+				out := vm.MustRun(t, "cat "+file)
+				lines := strings.Split(out, "\n")
+				missing := slices.DeleteFunc(slices.Clone(want), func(w string) bool { return slices.Contains(lines, w) })
+				bad := slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "SUDO_") || l == "LANGUAGE=de" })
+				if len(missing) > 0 || bad || strings.Contains(out, "Cannot set") {
+					t.Errorf("as %s, %s: missing %q, or a SUDO_ variable, LANGUAGE, or a locale error in:\n%s", user, file, missing, out)
+				}
+			}
 		}
 	})
 }
