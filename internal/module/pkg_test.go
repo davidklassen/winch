@@ -92,7 +92,7 @@ func TestAptEnvStopsEveryPrompt(t *testing.T) {
 // spec: Modules/pkg
 func TestParseShowpkgForeign(t *testing.T) {
 	out := "Package: winch-mta-c:armhf\nVersions: \n1 (/var/lib/dpkg/status)\n\nPackage: libc6\nVersions: \n2.41 (/var/lib/dpkg/status)\n"
-	_, foreign := parseShowpkg(out)
+	_, foreign, _ := parseShowpkg(out)
 	if want := map[string]string{"winch-mta-c": "winch-mta-c:armhf"}; !maps.Equal(foreign, want) {
 		t.Errorf("foreign = %q, want %q", foreign, want)
 	}
@@ -108,10 +108,46 @@ func TestParseShowpkgBadOutput(t *testing.T) {
 		{"no Package line", "Versions: \nReverse Provides: \nlibssl3t64 3.5.1-1 (= )\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			providers, foreign := parseShowpkg(tc.out)
+			providers, foreign, _ := parseShowpkg(tc.out)
 			if len(providers) != 0 || len(foreign) != 0 {
 				t.Errorf("providers = %q, foreign = %q; want none", providers, foreign)
 			}
 		})
+	}
+}
+
+// spec: Modules/pkg
+func TestParseSimulation(t *testing.T) {
+	const out = `Reading package lists...
+The following additional packages will be installed:
+  winch-fragile
+The following packages will be upgraded:
+  winch-fragile
+1 upgraded, 1 newly installed, 0 to remove and 0 not upgraded.
+Inst winch-fragile [1] (2 10.0.2.100 [all])
+Inst libbaz (1 10.0.2.100 [arm64])
+Inst winch-mta-c:armhf (1 10.0.2.100 [armhf])
+Inst winch-uses-fragile (1 10.0.2.100 [all])
+Inst half [1] (1 local [all])
+Conf winch-fragile (2 10.0.2.100 [all])
+Conf winch-uses-fragile (1 10.0.2.100 [all])
+`
+	installs, upgrades := parseSimulation(out, []string{"winch-uses-fragile", "half", "winch-mta-c:armhf"})
+	if want := []string{"libbaz"}; !slices.Equal(installs, want) {
+		t.Errorf("installs = %q, want %q", installs, want)
+	}
+	if want := []string{"winch-fragile"}; !slices.Equal(upgrades, want) {
+		t.Errorf("upgrades = %q, want %q", upgrades, want)
+	}
+}
+
+// spec: Modules/pkg
+func TestParseShowpkgKnown(t *testing.T) {
+	out := "Package: hello\nVersions: \n2.10-5 (/var/lib/apt/lists/deb.debian.org_debian_dists_trixie_main_binary-arm64_Packages) (/var/lib/dpkg/status)\n\n" +
+		"Package: at\nVersions: \n3.2.5-2 (/var/lib/dpkg/status)\n\n" +
+		"Package: winch-mta\nVersions: \n\nReverse Provides: \nwinch-mta-a 1 (= )\n"
+	_, _, known := parseShowpkg(out)
+	if want := map[string]bool{"hello": true}; !maps.Equal(known, want) {
+		t.Errorf("known = %v, want %v", known, want)
 	}
 }

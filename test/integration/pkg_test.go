@@ -30,6 +30,7 @@ func TestPkgModule(t *testing.T) {
 		same  = `[ "$(wc -l < /root/updates)" = "$(cat /root/before)" ]`
 	)
 	refresh := "refresh the package index"
+	later := "other packages: known after the refresh"
 	// startSlow returns while the postinst of winch-slow runs. The [w] keeps
 	// pgrep from matching this shell.
 	startSlow := "touch /root/slow && (dpkg -i /root/winch-slow.deb >/dev/null 2>&1 &) && " +
@@ -54,13 +55,14 @@ func TestPkgModule(t *testing.T) {
 	// fragileV1 installs version 1 of winch-fragile while the index has version 2.
 	const fragileV1 = "touch /etc/winch-fragile.ok && dpkg -i /root/winch-fragile.deb >/dev/null && " + localOnly + " && apt-cache policy winch-fragile | grep -q 'Candidate: 2'"
 	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /var/lib/apt/lists/10.0.2.100_test_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --purge winch-mta-c:armhf >/dev/null 2>&1; dpkg --remove-architecture armhf 2>/dev/null; " +
-		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-fragile winch-conflict hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
+		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-uses-fragile winch-fragile winch-conflict hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
 		{
-			Name:      "the first install of a run refreshes the index",
+			Name: "the first install of a run refreshes the index",
+			// A new VM has no index.
 			Setup:     count,
 			Args:      &module.Pkg{Name: []string{"hello"}},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello", later}},
 			WantState: module.State{IndexFresh: true},
 			Unchanged: same + " && ! dpkg -s hello >/dev/null 2>&1",
 			After:     `[ "$(wc -l < /root/updates)" = $(( $(cat /root/before) + 1 )) ] && dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii'`,
@@ -69,10 +71,84 @@ func TestPkgModule(t *testing.T) {
 			Name:      "the refresh creates a missing index directory",
 			Setup:     "rm -rf /var/lib/apt/lists",
 			Args:      &module.Pkg{Name: []string{"hello"}},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello", later}},
 			WantState: module.State{IndexFresh: true},
 			Unchanged: "[ ! -e /var/lib/apt/lists ]",
 			After:     "[ -d /var/lib/apt/lists/partial ] && dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii'",
+		},
+		{
+			Name:      "an empty index plans the other packages after the refresh",
+			Setup:     "rm -rf /var/lib/apt/lists/*",
+			Args:      &module.Pkg{Name: []string{"hello"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello", later}},
+			WantState: module.State{IndexFresh: true},
+			After:     "dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii'",
+		},
+		{
+			Name:        "an install lists the other packages that apt installs",
+			State:       module.State{IndexFresh: true},
+			Setup:       localOnly,
+			Args:        &module.Pkg{Name: []string{"winch-uses-fragile"}},
+			Want:        module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install winch-uses-fragile", "also install winch-fragile"}},
+			WantState:   module.State{IndexFresh: true},
+			BeforeApply: "touch /etc/winch-fragile.ok",
+			After:       "dpkg-query -W -f='${db:Status-Abbrev}\\n' winch-uses-fragile winch-fragile | grep -c '^ii' | grep -qx 2",
+		},
+		{
+			Name:      "an install lists the other packages that apt upgrades",
+			State:     module.State{IndexFresh: true},
+			Setup:     fragileV1,
+			Args:      &module.Pkg{Name: []string{"winch-uses-fragile"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install winch-uses-fragile", "also upgrade winch-fragile"}},
+			WantState: module.State{IndexFresh: true},
+			After:     "[ \"$(dpkg-query -W -f='${db:Status-Abbrev}${Version}' winch-fragile)\" = 'ii 2' ]",
+		},
+		{
+			Name:    "an install that must upgrade a held package fails the check",
+			State:   module.State{IndexFresh: true},
+			Setup:   fragileV1 + " && apt-mark hold winch-fragile",
+			Args:    &module.Pkg{Name: []string{"winch-uses-fragile"}},
+			WantErr: "winch-fragile is held; apt-mark unhold winch-fragile changes it",
+		},
+		{
+			Name: "an install that must upgrade a held package fails after the refresh",
+			// The reset removed the index of the test source.
+			Setup:        "touch /etc/winch-fragile.ok && dpkg -i /root/winch-fragile.deb >/dev/null && apt-mark hold winch-fragile",
+			Args:         &module.Pkg{Name: []string{"winch-uses-fragile"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install winch-uses-fragile", later}},
+			WantState:    module.State{IndexFresh: true},
+			WantApplyErr: "winch-fragile is held; apt-mark unhold winch-fragile changes it",
+			After:        "! dpkg -s winch-uses-fragile >/dev/null 2>&1",
+		},
+		{
+			Name: "an install checks the other packages again after the refresh",
+			// The old index of the test source has winch-uses-fragile without
+			// its dependency. The old date makes the refresh fetch it again.
+			Setup: "touch /etc/winch-fragile.ok && dpkg -i /root/winch-fragile.deb >/dev/null && apt-mark hold winch-fragile >/dev/null && " + localOnly +
+				" && sed -i '/^Depends: winch-fragile/d' /var/lib/apt/lists/10.0.2.100_test_*Packages && touch -d 2000-01-01 /var/lib/apt/lists/10.0.2.100_test_*Packages" +
+				" && ! apt-cache show winch-uses-fragile | grep -q ^Depends",
+			Args:         &module.Pkg{Name: []string{"winch-uses-fragile"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install winch-uses-fragile"}},
+			WantState:    module.State{IndexFresh: true},
+			WantApplyErr: "winch-fragile is held; apt-mark unhold winch-fragile changes it",
+			After:        "! dpkg -s winch-uses-fragile >/dev/null 2>&1",
+		},
+		{
+			Name:      "a removed package with an empty index plans the other packages after the refresh",
+			Setup:     install + " at && apt-get remove -y -q at >/dev/null && rm -rf /var/lib/apt/lists/*",
+			Args:      &module.Pkg{Name: []string{"at"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install at", later}},
+			WantState: module.State{IndexFresh: true},
+			After:     "dpkg-query -W -f='${db:Status-Abbrev}' at | grep -q '^ii'",
+		},
+		{
+			Name:        "a list with a name that the index does not know plans the other packages after the refresh",
+			Setup:       localRepo + " && rm /var/lib/apt/lists/10.0.2.100_test_* && apt-cache show hello >/dev/null",
+			Args:        &module.Pkg{Name: []string{"hello", "winch-uses-fragile"}},
+			Want:        module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello, winch-uses-fragile", later}},
+			WantState:   module.State{IndexFresh: true},
+			BeforeApply: "touch /etc/winch-fragile.ok",
+			After:       "dpkg-query -W -f='${db:Status-Abbrev}\\n' hello winch-uses-fragile winch-fragile | grep -c '^ii' | grep -qx 3",
 		},
 		{
 			Name: "a refresh fails when apt cannot fetch a source",
@@ -131,7 +207,7 @@ func TestPkgModule(t *testing.T) {
 			Name:      "recommends false",
 			State:     module.State{IndexFresh: true},
 			Args:      &module.Pkg{Name: []string{"fortune-mod"}, Recommends: new(false)},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod (without recommended packages)"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod (without recommended packages)", "also install librecode3"}},
 			WantState: module.State{IndexFresh: true},
 			After:     `dpkg -s fortune-mod >/dev/null && ! dpkg -s fortunes-min >/dev/null 2>&1`,
 		},
@@ -139,7 +215,7 @@ func TestPkgModule(t *testing.T) {
 			Name:      "recommended packages by default",
 			State:     module.State{IndexFresh: true},
 			Args:      &module.Pkg{Name: []string{"fortune-mod"}},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod", "also install librecode3, fortunes-min"}},
 			WantState: module.State{IndexFresh: true},
 			After:     `dpkg-query -W -f='${db:Status-Abbrev}' fortunes-min | grep -q '^ii'`,
 		},
@@ -156,7 +232,7 @@ func TestPkgModule(t *testing.T) {
 			State:     module.State{IndexFresh: true},
 			Setup:     `echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/99norecommends`,
 			Args:      &module.Pkg{Name: []string{"fortune-mod"}, Recommends: new(true)},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod", "also install librecode3, fortunes-min"}},
 			WantState: module.State{IndexFresh: true},
 			After:     `dpkg-query -W -f='${db:Status-Abbrev}' fortunes-min | grep -q '^ii'`,
 		},
@@ -246,14 +322,11 @@ func TestPkgModule(t *testing.T) {
 			After:     "[ \"$(dpkg-query -W -f='${db:Status-Abbrev}${Version}' winch-fragile)\" = 'ii 1' ] && dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii'",
 		},
 		{
-			Name:         "an install that would remove a conflicting package fails",
-			State:        module.State{IndexFresh: true},
-			Setup:        localOnly + " && " + install + " hello",
-			Args:         &module.Pkg{Name: []string{"winch-conflict"}},
-			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install winch-conflict"}},
-			WantState:    module.State{IndexFresh: true},
-			WantApplyErr: "Packages need to be removed but remove is disabled",
-			After:        "dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii' && ! dpkg -s winch-conflict >/dev/null 2>&1",
+			Name:    "an install that would remove a conflicting package fails the check",
+			State:   module.State{IndexFresh: true},
+			Setup:   localOnly + " && " + install + " hello",
+			Args:    &module.Pkg{Name: []string{"winch-conflict"}},
+			WantErr: "Packages need to be removed but remove is disabled",
 		},
 		{
 			Name:    "a step that names a package of an interrupted dpkg fails",
@@ -404,7 +477,7 @@ func TestPkgModule(t *testing.T) {
 			Name:         "an unknown package checks as a change and fails at apply",
 			State:        module.State{IndexFresh: true},
 			Args:         &module.Pkg{Name: []string{"winch-no-such-package"}},
-			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install winch-no-such-package"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install winch-no-such-package", later}},
 			WantState:    module.State{IndexFresh: true},
 			WantApplyErr: "Unable to locate package winch-no-such-package",
 		},

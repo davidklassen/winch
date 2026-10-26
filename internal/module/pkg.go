@@ -31,6 +31,8 @@ type Pkg struct {
 	configure []string
 	// auto holds installed packages that apt marked automatic.
 	auto []string
+	// pkgs are the packages that dpkg knows.
+	pkgs map[string]dpkgPkg
 }
 
 func (p *Pkg) Main() string { return strings.Join(p.Name, ", ") }
@@ -71,13 +73,14 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
+	p.pkgs = pkgs
 	var missing []string
 	for _, n := range p.Name {
 		if pkg := pkgs[n]; pkg.state != installed && pkg.half == 0 {
 			missing = append(missing, n)
 		}
 	}
-	providers, foreign, err := showpkg(ctx, missing)
+	providers, foreign, known, err := showpkg(ctx, missing)
 	if err != nil {
 		return Result{}, err
 	}
@@ -127,7 +130,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	if len(p.todo) > 0 {
 		changes = []string{p.verb() + " " + strings.Join(p.todo, ", ")}
 		if p.Absent {
-			others, err := p.dependents(ctx)
+			others, err := p.dependents(ctx, note)
 			if err != nil {
 				return Result{}, err
 			}
@@ -149,6 +152,16 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	if len(conf) > 0 {
 		changes = append(changes, "configure "+strings.Join(conf, ", "))
 	}
+	switch {
+	case slices.ContainsFunc(p.todo, func(n string) bool { return !known[n] }):
+		changes = append(changes, "other packages: known after the refresh")
+	case len(p.todo) > 0 || len(p.configure) > 0:
+		others, err := p.others(ctx, note)
+		if err != nil {
+			return Result{}, err
+		}
+		changes = append(changes, others...)
+	}
 	if len(p.auto) > 0 {
 		changes = append(changes, "mark "+strings.Join(p.auto, ", ")+" as manually installed")
 	}
@@ -158,17 +171,18 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 // showpkg reads the package index for names. providers holds the sorted
 // native providers of each name that has no version of its own. apt takes a
 // name without a package of the native architecture or all as the foreign
-// package that it knows, and foreign maps such a name to that package.
-func showpkg(ctx context.Context, names []string) (providers map[string][]string, foreign map[string]string, err error) {
+// package that it knows, and foreign maps such a name to that package. known
+// holds the packages that the package index has a version of.
+func showpkg(ctx context.Context, names []string) (providers map[string][]string, foreign map[string]string, known map[string]bool, err error) {
 	if len(names) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	out, err := run(ctx, nil, "apt-cache", append([]string{"showpkg"}, names...)...)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	providers, foreign = parseShowpkg(out)
-	return providers, foreign, nil
+	providers, foreign, known = parseShowpkg(out)
+	return providers, foreign, known, nil
 }
 
 // providedOnly fails on each name that apt knows only as provided by other
@@ -188,10 +202,10 @@ func providedOnly(names []string, providers map[string][]string) error {
 	return errors.Join(errs...)
 }
 
-// parseShowpkg reads the output of apt-cache showpkg. It returns the providers
-// and the foreign packages of showpkg.
-func parseShowpkg(out string) (providers map[string][]string, foreign map[string]string) {
-	providers, foreign = map[string][]string{}, map[string]string{}
+// parseShowpkg reads the output of apt-cache showpkg. It returns the providers,
+// the foreign packages, and the known packages of showpkg.
+func parseShowpkg(out string) (providers map[string][]string, foreign map[string]string, known map[string]bool) {
+	providers, foreign, known = map[string][]string{}, map[string]string{}, map[string]bool{}
 	var name, section string
 	hasVersion := false
 	for line := range strings.SplitSeq(out, "\n") {
@@ -212,6 +226,10 @@ func parseShowpkg(out string) (providers map[string][]string, foreign map[string
 		case len(f) == 0:
 		case section == "Versions:" && !strings.HasPrefix(line, " "):
 			hasVersion = true
+			// The status file of dpkg has no candidate to install.
+			if strings.Contains(strings.ReplaceAll(line, "(/var/lib/dpkg/status)", ""), "(") {
+				known[name] = true
+			}
 		// A step names packages of the native architecture, which have no
 		// :arch suffix.
 		case name != "" && section == "Reverse Provides:" && !hasVersion && !strings.Contains(f[0], ":"):
@@ -222,7 +240,7 @@ func parseShowpkg(out string) (providers map[string][]string, foreign map[string
 		slices.Sort(ps)
 		providers[n] = slices.Compact(ps)
 	}
-	return providers, foreign
+	return providers, foreign, known
 }
 
 func (p *Pkg) verb() string {
@@ -237,8 +255,8 @@ func (p *Pkg) verb() string {
 
 // dependents returns the other packages that apt removes with the step's
 // packages.
-func (p *Pkg) dependents(ctx context.Context) ([]string, error) {
-	out, err := aptGet(ctx, append([]string{"-s", "-q", p.verb()}, p.todo...)...)
+func (p *Pkg) dependents(ctx context.Context, note func(string)) ([]string, error) {
+	out, err := p.simulate(ctx, note)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +268,82 @@ func (p *Pkg) dependents(ctx context.Context) ([]string, error) {
 		}
 	}
 	return others, nil
+}
+
+// simulate runs the apt-get call of the step with -s. It holds the package
+// locks, so it does not see the half-done packages of a running apt.
+func (p *Pkg) simulate(ctx context.Context, note func(string), flags ...string) (string, error) {
+	unlock, err := lockFiles(ctx, dpkgLocks, note)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	return aptGet(ctx, slices.Concat([]string{"-s", "-q", p.verb()}, flags, p.todo, p.configure)...)
+}
+
+// others returns the plan lines of the other packages that apt installs or
+// upgrades with the step's packages. A held one fails.
+func (p *Pkg) others(ctx context.Context, note func(string)) ([]string, error) {
+	// apt does not upgrade a held package and fails without its name.
+	out, err := p.simulate(ctx, note, append(p.installFlags(), "-o", "APT::Ignore-Hold=true")...)
+	if err != nil {
+		return nil, err
+	}
+	own := slices.Clone(p.todo)
+	for _, c := range p.configure {
+		n, _, _ := strings.Cut(c, "=")
+		own = append(own, n)
+	}
+	installs, upgrades := parseSimulation(out, own)
+	var errs []error
+	for _, n := range slices.Concat(installs, upgrades) {
+		if p.pkgs[n].held {
+			errs = append(errs, fmt.Errorf("%s is held; apt-mark unhold %s changes it", n, n))
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	var lines []string
+	if len(installs) > 0 {
+		lines = append(lines, "also install "+strings.Join(installs, ", "))
+	}
+	if len(upgrades) > 0 {
+		lines = append(lines, "also upgrade "+strings.Join(upgrades, ", "))
+	}
+	return lines, nil
+}
+
+// parseSimulation reads the output of apt-get -s install. It returns the
+// packages that are not in own and that apt installs or upgrades.
+func parseSimulation(out string, own []string) (installs, upgrades []string) {
+	for line := range strings.SplitSeq(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[0] != "Inst" || slices.Contains(own, f[1]) {
+			continue
+		}
+		// An upgrade shows the installed version in brackets.
+		if strings.HasPrefix(f[2], "[") {
+			upgrades = append(upgrades, f[1])
+		} else {
+			installs = append(installs, f[1])
+		}
+	}
+	return installs, upgrades
+}
+
+// installFlags are the flags of an install that change what apt installs.
+func (p *Pkg) installFlags() []string {
+	// An install that would remove a conflicting package fails.
+	flags := []string{"--no-remove"}
+	switch {
+	case p.Recommends == nil:
+	case *p.Recommends:
+		flags = append(flags, "--install-recommends")
+	default:
+		flags = append(flags, "--no-install-recommends")
+	}
+	return flags
 }
 
 func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
@@ -272,18 +366,16 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 			return err
 		}
 	}
+	// The check before the refresh read the old index.
+	if p.refresh {
+		if _, err := p.others(ctx, note); err != nil {
+			return err
+		}
+	}
 	args := []string{p.verb(), "-y", "-q", "-o", aptLock,
 		"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold"}
 	if p.verb() == "install" {
-		// An install that would remove a conflicting package fails.
-		args = append(args, "--no-remove")
-		switch {
-		case p.Recommends == nil:
-		case *p.Recommends:
-			args = append(args, "--install-recommends")
-		default:
-			args = append(args, "--no-install-recommends")
-		}
+		args = append(args, p.installFlags()...)
 	}
 	if err := waitLocks(ctx, dpkgLocks, note); err != nil {
 		return err

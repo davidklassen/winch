@@ -1,0 +1,6 @@
+Package: winch-uses-fragile
+Version: 1
+Architecture: all
+Depends: winch-fragile (>= 2)
+Maintainer: winch
+Description: test
