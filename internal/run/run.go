@@ -129,6 +129,18 @@ type hostRun struct {
 	thens map[protocol.Then]bool
 	// pending are the records that the host reported at the first contact.
 	pending *protocol.Pending
+	// conn is the session with the host, open across its stages.
+	conn Conn
+}
+
+// close closes the session with the host, if one is open.
+func (hr *hostRun) close() error {
+	if hr.conn == nil {
+		return nil
+	}
+	err := hr.conn.Close()
+	hr.conn = nil
+	return err
 }
 
 // MakePlan checks every step on every host, stage by stage. The hosts of a
@@ -138,9 +150,27 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}, opts: opts}
 	inStages := map[string]bool{}
 	runs := map[string]*hostRun{}
-	open := func(h project.Host) (Conn, error) { return connect(context.WithoutCancel(ctx), p.Name, h) }
-	for i := range p.Pipeline.Stages {
-		stage := &p.Pipeline.Stages[i]
+	open := func(h project.Host) (Conn, error) {
+		hr := runs[h.Name]
+		if hr.conn == nil {
+			c, err := connect(context.WithoutCancel(ctx), p.Name, h)
+			if err != nil {
+				return nil, err
+			}
+			hr.conn = c
+		}
+		return hr.conn, nil
+	}
+	last := map[string]int{}
+	for i, stage := range p.Pipeline.Stages {
+		if !stage.Skipped {
+			for _, h := range stage.Targets {
+				last[h.Name] = i
+			}
+		}
+	}
+	for si := range p.Pipeline.Stages {
+		stage := &p.Pipeline.Stages[si]
 		if stage.Skipped {
 			continue
 		}
@@ -157,13 +187,20 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		}
 		steps := make([][]Planned, len(hosts))
 		errs := rollout(ctx, stage.Name, hosts, 0, opts.Serial, open, func(i int, conn Conn) error {
+			hr := runs[hosts[i].Name]
 			var err error
-			steps[i], err = check(ctx, conn, p, hosts[i], stage, runs[hosts[i].Name])
+			steps[i], err = check(ctx, conn, p, hosts[i], stage, hr)
+			if err != nil || last[hosts[i].Name] == si {
+				if cerr := hr.close(); err == nil {
+					err = cerr
+				}
+			}
 			return err
 		})
 		sp := StagePlan{Stage: stage}
 		for i, h := range hosts {
 			if errs[i] != nil {
+				runs[h.Name].close() //nolint:errcheck // the host failed already
 				plan.Failed[h.Name] = errs[i]
 				continue
 			}
@@ -185,15 +222,9 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	return plan
 }
 
-// check checks the steps of a stage on one host, and then closes conn. At the
-// first contact, it reads the facts and the pending handlers, and starts the
-// host's evaluation.
-func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun) (steps []Planned, err error) {
-	defer func() {
-		if cerr := conn.Close(); err == nil && cerr != nil {
-			err = cerr
-		}
-	}()
+// check checks the steps of a stage on one host. At the first contact, it
+// reads the facts and the pending handlers, and starts the host's evaluation.
+func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun) ([]Planned, error) {
 	if hr.env == nil {
 		f, err := conn.Facts(context.WithoutCancel(ctx))
 		if err != nil {
@@ -214,7 +245,7 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 			hr.thens[t] = true
 		}
 	}
-	steps, err = evaluate(stage, hr)
+	steps, err := evaluate(stage, hr)
 	if err != nil {
 		return nil, err
 	}

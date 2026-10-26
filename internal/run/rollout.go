@@ -13,8 +13,7 @@ import (
 // (0: no limit). Hosts start in inventory order. With serial, rollout opens
 // the sessions itself, one at a time; else each host opens its own. With a
 // limit, a failure keeps the hosts that did not start from starting. After
-// an interrupt, no host starts. work closes its session. rollout
-// returns the error of each host.
+// an interrupt, no host starts. rollout returns the error of each host.
 func rollout(ctx context.Context, stage string, hosts []project.Host, limit int, serial bool,
 	open func(project.Host) (Conn, error), work func(i int, c Conn) error) []error {
 	errs := make([]error, len(hosts))

@@ -132,15 +132,25 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 		}
 	}
-	open := func(h project.Host) (Conn, error) {
-		c, err := connect(context.WithoutCancel(ctx), plan.Project, h)
-		if err != nil {
-			return nil, fmt.Errorf("failed: %w", err)
-		}
-		return c, nil
-	}
 	runs := map[string]*hostApply{}
-	for _, sp := range plan.Stages {
+	open := func(h project.Host) (Conn, error) {
+		a := runs[h.Name]
+		if a.conn == nil {
+			c, err := connect(context.WithoutCancel(ctx), plan.Project, h)
+			if err != nil {
+				return nil, fmt.Errorf("failed: %w", err)
+			}
+			a.conn = c
+		}
+		return a.conn, nil
+	}
+	last := map[string]int{}
+	for i, sp := range plan.Stages {
+		for _, hp := range sp.Hosts {
+			last[hp.Host.Name] = i
+		}
+	}
+	for si, sp := range plan.Stages {
 		var hps []HostPlan
 		var hosts []project.Host
 		for _, hp := range sp.Hosts {
@@ -161,13 +171,20 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 		}
 		changed := make([]bool, len(hps))
 		stage := sp.Stage
-		errs := rollout(ctx, stage.Name, hosts, stage.Parallelism, plan.opts.Serial, open, func(i int, conn Conn) error {
+		errs := rollout(ctx, stage.Name, hosts, stage.Parallelism, plan.opts.Serial, open, func(i int, _ Conn) error {
+			a := runs[hosts[i].Name]
 			var err error
-			changed[i], err = runs[hosts[i].Name].apply(ctx, conn, stage, hps[i])
+			changed[i], err = a.apply(ctx, stage, hps[i])
+			if err != nil || last[hosts[i].Name] == si {
+				if cerr := a.close(); err == nil && cerr != nil {
+					err = fmt.Errorf("failed: %w", cerr)
+				}
+			}
 			return err
 		})
 		for i, h := range hosts {
 			if err := errs[i]; err != nil {
+				runs[h.Name].close() //nolint:errcheck // the host failed already
 				o.Failed[h.Name] = err
 				delete(o.Changed, h.Name)
 				rep.Host(HostEvent{Phase: "apply", Host: h.Name, Status: hostStatus(err), Error: err.Error()})
@@ -234,20 +251,26 @@ type hostApply struct {
 	notified map[string]bool
 	// thens are the pending then records that no step ran yet.
 	thens map[protocol.Then]bool
-	conn  Conn
+	// conn is the session with the host, open across its stages.
+	conn Conn
+}
+
+// close closes the session with the host, if one is open.
+func (a *hostApply) close() error {
+	if a.conn == nil {
+		return nil
+	}
+	err := a.conn.Close()
+	a.conn = nil
+	return err
 }
 
 // apply runs the steps and the handlers of a stage on one host, then its
-// health gate when the stage shows a change in the plan. It closes conn. It
-// reports whether a step changed something.
-func (a *hostApply) apply(ctx context.Context, conn Conn, stage *project.Stage, hp HostPlan) (changed bool, err error) {
-	a.conn = conn
-	defer func() {
-		if cerr := a.conn.Close(); err == nil && cerr != nil {
-			err = fmt.Errorf("failed: %w", cerr)
-		}
-	}()
-	if changed, err = a.steps(ctx, stage, "", hp.Steps); err != nil {
+// health gate when the stage shows a change in the plan. It reports whether a
+// step changed something.
+func (a *hostApply) apply(ctx context.Context, stage *project.Stage, hp HostPlan) (bool, error) {
+	changed, err := a.steps(ctx, stage, "", hp.Steps)
+	if err != nil {
 		return changed, err
 	}
 	if stage.Health != nil && hp.changes() {

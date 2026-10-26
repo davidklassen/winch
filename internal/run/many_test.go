@@ -330,6 +330,109 @@ func TestSerialStart(t *testing.T) {
 	}
 }
 
+// spec: Remote execution/Sessions ("plan and apply each make one handshake
+// per host")
+func TestOneSessionPerHost(t *testing.T) {
+	for _, serial := range []bool{true, false} {
+		t.Run(map[bool]string{false: "batch", true: "serial"}[serial], func(t *testing.T) {
+			p := manyProject(t, motdStage+`  - name: web2
+    hosts: web2
+    steps:
+      - file:
+          path: /etc/issue
+          content: "x\n"
+  - name: rest
+    hosts: web1,web3
+    steps:
+      - file:
+          path: /etc/hostname
+          content: "x\n"
+`)
+			h := fakehost.New()
+			check := func(phase string) {
+				t.Helper()
+				for _, host := range []string{"web1", "web2", "web3"} {
+					if h.Connects[host] != 1 {
+						t.Errorf("%s: %s: %d connects, want 1", phase, host, h.Connects[host])
+					}
+				}
+				if h.Open != 0 {
+					t.Errorf("%s: %d connections are still open", phase, h.Open)
+				}
+				if i, j := slices.Index(h.Trace, "close web2"), slices.Index(h.Trace, "close web1"); i < 0 || i > j {
+					t.Errorf("%s: web2 is not closed before web1 at the end of its work: %q", phase, h.Trace)
+				}
+				clear(h.Connects)
+				h.Trace = nil
+			}
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: serial})
+			check("plan")
+			var out, errOut bytes.Buffer
+			if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+				t.Fatalf("apply failed: %s", errOut.String())
+			}
+			check("apply")
+		})
+	}
+}
+
+// spec: Remote execution/Sessions ("It closes when its host has no more
+// work")
+func TestSessionClosesWhenHostStops(t *testing.T) {
+	const next = `  - name: next
+    hosts: all
+    parallelism: 1
+    steps:
+      - file:
+          path: /etc/issue
+          content: "x\n"
+`
+	t.Run("plan interrupted", func(t *testing.T) {
+		p := manyProject(t, motdStage+next)
+		h := fakehost.New()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		// web3 finishes its only step of base, and is interrupted before next.
+		h.OnCheck = func(host, main string) {
+			if host == "web3" {
+				cancel()
+			}
+		}
+		plan := run.MakePlan(ctx, p, h.Connector(), run.Options{})
+		if !errors.Is(plan.Failed["web3"], run.ErrInterrupted) || h.Connects["web3"] != 1 {
+			t.Fatalf("web3: error %v, %d connects, want interrupted after 1", plan.Failed["web3"], h.Connects["web3"])
+		}
+		if h.Open != 0 {
+			t.Errorf("%d connections are still open", h.Open)
+		}
+	})
+	t.Run("last stage not selected", func(t *testing.T) {
+		p := manyProject(t, motdStage+next)
+		if err := p.Select(project.Selection{Stages: "base"}); err != nil {
+			t.Fatal(err)
+		}
+		h := fakehost.New()
+		run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		if h.Open != 0 {
+			t.Errorf("%d connections are still open", h.Open)
+		}
+	})
+	t.Run("apply hosts not started", func(t *testing.T) {
+		p := manyProject(t, motdStage+next)
+		h := fakehost.New()
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		h.FailApply("web1 /etc/issue")
+		var out, errOut bytes.Buffer
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+		if o.Failed["web2"] == nil {
+			t.Fatalf("web2 did not fail: %s", errOut.String())
+		}
+		if h.Open != 0 {
+			t.Errorf("%d connections are still open", h.Open)
+		}
+	})
+}
+
 // spec: Handlers; CLI (--stages)
 func TestStagesLeaveHandlerPending(t *testing.T) {
 	p := manyProject(t, `  - name: app
