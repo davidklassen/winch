@@ -98,9 +98,9 @@ func (r *Repo) Validate() error {
 }
 
 // SetKey sets the key data to data, the content of the key file name. data
-// must be ASCII-armored OpenPGP public keys whose primary keys have not
-// expired at now. It returns a warning for each key that expires within 30
-// days.
+// must be ASCII-armored OpenPGP public keys, and at least one primary key
+// must not have expired at now. It returns a warning for each expired key
+// and each key that expires within 30 days.
 func (r *Repo) SetKey(name string, data []byte, now time.Time) ([]string, error) {
 	keys, err := parsePGPKeys(data)
 	if errors.Is(err, errNotArmored) {
@@ -109,15 +109,20 @@ func (r *Repo) SetKey(name string, data []byte, now time.Time) ([]string, error)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	var warnings []string
+	var expired, warnings []string
 	for _, k := range keys {
 		switch {
 		case k.expires.IsZero():
 		case !now.Before(k.expires):
-			return nil, fmt.Errorf("%s: the key %s expired on %s", name, k.fingerprint, k.expires.Format(time.DateOnly))
+			msg := fmt.Sprintf("the key %s expired on %s", k.fingerprint, k.expires.Format(time.DateOnly))
+			expired = append(expired, msg)
+			warnings = append(warnings, name+": "+msg)
 		case k.expires.Sub(now) < 30*24*time.Hour:
 			warnings = append(warnings, fmt.Sprintf("%s: the key %s expires on %s", name, k.fingerprint, k.expires.Format(time.DateOnly)))
 		}
+	}
+	if len(expired) == len(keys) {
+		return nil, fmt.Errorf("%s: %s", name, strings.Join(expired, "; "))
 	}
 	r.KeyData = data
 	return warnings, nil

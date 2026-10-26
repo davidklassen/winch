@@ -542,25 +542,36 @@ func TestLoadRepoKeyExpiry(t *testing.T) {
 		t.Errorf("Load error = %v, want %q", err, wantErr)
 	}
 
+	valid, err := os.ReadFile(filepath.Join("..", "module", "testdata", "key.asc"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	expires := time.Now().UTC().Add(10 * 24 * time.Hour).Truncate(time.Second)
 	soon, fpr := armoredKey(expires)
-	dir = writeProject(t, with(nginx, map[string]string{
-		"recipes/nginx/recipe.yaml": recipe(repoStep("  ", "a.asc")),
-		"recipes/nginx/files/a.asc": soon,
-	}))
-	want := "recipes/nginx/recipe.yaml:7:12: key: recipes/nginx/files/a.asc: the key " + fpr + " expires on " + expires.Format(time.DateOnly)
-	p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	warnings, err := Validate(dir, "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for what, ws := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": warnings} {
-		if len(ws) != 1 || ws[0].Error() != want {
-			t.Errorf("%s warnings = %v, want %q", what, ws, want)
-		}
+	for _, tt := range []struct{ name, key, want string }{
+		{"expires soon", soon, "the key " + fpr + " expires on " + expires.Format(time.DateOnly)},
+		{"expired next to valid", string(valid) + string(expired), "the key 98E68808D2F3430CFF79D49BADF72694C8CF341E expired on 2024-12-31"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeProject(t, with(nginx, map[string]string{
+				"recipes/nginx/recipe.yaml": recipe(repoStep("  ", "a.asc")),
+				"recipes/nginx/files/a.asc": tt.key,
+			}))
+			want := "recipes/nginx/recipe.yaml:7:12: key: recipes/nginx/files/a.asc: " + tt.want
+			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			warnings, err := Validate(dir, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for what, ws := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": warnings} {
+				if len(ws) != 1 || ws[0].Error() != want {
+					t.Errorf("%s warnings = %v, want %q", what, ws, want)
+				}
+			}
+		})
 	}
 }
 

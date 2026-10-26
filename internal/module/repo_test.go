@@ -196,7 +196,12 @@ func TestPGPKeyExpirySelfSig(t *testing.T) {
 // spec: Modules/repo
 func TestRepoSetKey(t *testing.T) {
 	day := func(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 12, 0, 0, 0, time.UTC) }
-	both := string(readTestdata(t, "key.asc")) + string(readTestdata(t, "expiring.asc"))
+	expiring := string(readTestdata(t, "expiring.asc"))
+	renewed := string(readTestdata(t, "renewed.asc"))
+	both := string(readTestdata(t, "key.asc")) + expiring
+	jan := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	april, aprilFpr := buildKey(testSig{created: jan, lifetime: 100})
+	february, februaryFpr := buildKey(testSig{created: jan, lifetime: 400})
 	tests := []struct {
 		name, data string
 		now        time.Time
@@ -204,11 +209,16 @@ func TestRepoSetKey(t *testing.T) {
 		wantErr    string
 	}{
 		{"no expiry", string(readTestdata(t, "key.asc")), day(2100, 1, 1), nil, ""},
-		{"expires later", string(readTestdata(t, "expiring.asc")), day(2024, 6, 1), nil, ""},
-		{"expires soon", string(readTestdata(t, "expiring.asc")), day(2024, 12, 21), []string{"a.asc: the key " + expiringFpr + " expires on 2024-12-31"}, ""},
-		{"expired", string(readTestdata(t, "expiring.asc")), day(2025, 1, 1), nil, "a.asc: the key " + expiringFpr + " expired on 2024-12-31"},
-		{"renewed", string(readTestdata(t, "renewed.asc")), day(2025, 1, 1), nil, ""},
-		{"second key expired", both, day(2025, 1, 1), nil, "a.asc: the key " + expiringFpr + " expired on 2024-12-31"},
+		{"expires later", expiring, day(2024, 6, 1), nil, ""},
+		{"expires soon", expiring, day(2024, 12, 21), []string{"a.asc: the key " + expiringFpr + " expires on 2024-12-31"}, ""},
+		{"expired", expiring, day(2025, 1, 1), nil, "a.asc: the key " + expiringFpr + " expired on 2024-12-31"},
+		{"renewed", renewed, day(2025, 1, 1), nil, ""},
+		{"second key expired", both, day(2025, 1, 1), []string{"a.asc: the key " + expiringFpr + " expired on 2024-12-31"}, ""},
+		{"every key expired", expiring + string(april), day(2025, 1, 1), nil, "a.asc: the key " + expiringFpr + " expired on 2024-12-31; the key " + aprilFpr + " expired on 2024-04-10"},
+		{"expired and expires soon", expiring + string(february), day(2025, 1, 10), []string{
+			"a.asc: the key " + expiringFpr + " expired on 2024-12-31",
+			"a.asc: the key " + februaryFpr + " expires on 2025-02-04",
+		}, ""},
 		{"second key expires soon", both, day(2024, 12, 21), []string{"a.asc: the key " + expiringFpr + " expires on 2024-12-31"}, ""},
 	}
 	for _, tt := range tests {
@@ -216,8 +226,8 @@ func TestRepoSetKey(t *testing.T) {
 			var r Repo
 			got, err := r.SetKey("a.asc", []byte(tt.data), tt.now)
 			if tt.wantErr != "" {
-				if err == nil || err.Error() != tt.wantErr {
-					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				if err == nil || err.Error() != tt.wantErr || r.KeyData != nil {
+					t.Fatalf("error = %v, key data set: %t; want %q", err, r.KeyData != nil, tt.wantErr)
 				}
 				return
 			}
