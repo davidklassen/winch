@@ -10,7 +10,7 @@ type source struct {
 	uris, suites []string
 }
 
-// parseSources returns the enabled entries of an apt sources file: deb822
+// parseSources returns the enabled deb entries of an apt sources file: deb822
 // stanzas when name ends in .sources, else one-line entries. It skips what
 // apt cannot read.
 func parseSources(name string, data []byte) []source {
@@ -21,6 +21,9 @@ func parseSources(name string, data []byte) []source {
 	for _, st := range stanzas(string(data)) {
 		switch strings.ToLower(st["enabled"]) {
 		case "no", "false", "without", "off", "disable":
+			continue
+		}
+		if !slices.Contains(strings.Fields(st["types"]), "deb") {
 			continue
 		}
 		s := source{uris: strings.Fields(st["uris"]), suites: strings.Fields(st["suites"])}
@@ -38,7 +41,7 @@ func parseList(data string) []source {
 	for line := range strings.SplitSeq(data, "\n") {
 		line, _, _ = strings.Cut(line, "#")
 		f := strings.Fields(line)
-		if len(f) == 0 || f[0] != "deb" && f[0] != "deb-src" {
+		if len(f) == 0 || f[0] != "deb" {
 			continue
 		}
 		f = f[1:]
@@ -89,9 +92,13 @@ func stanzas(data string) []map[string]string {
 	return out
 }
 
-// has reports whether the entry holds the URI with the suite. URIs compare
-// with one final slash.
+// has reports whether the entry holds the URI with the suite.
 func (s source) has(uri, suite string) bool {
-	slash := func(u string) string { return strings.TrimRight(u, "/") + "/" }
-	return slices.Contains(s.suites, suite) && slices.ContainsFunc(s.uris, func(u string) bool { return slash(u) == slash(uri) })
+	return slices.Contains(s.suites, suite) && slices.ContainsFunc(s.uris, func(u string) bool { return sameURI(u, uri) })
 }
+
+// sameURI reports whether a and b are the same apt URI.
+func sameURI(a, b string) bool { return uriKey(a) == uriKey(b) }
+
+// uriKey is the apt URI u without its final slashes.
+func uriKey(u string) string { return strings.TrimRight(u, "/") }

@@ -142,6 +142,10 @@ type hostRun struct {
 	// startedBy are the errors for units that start a unit that a service
 	// step stops or disables, while no service step names them.
 	startedBy []startedBy
+	// removed are the paths of the checked absent steps.
+	removed []string
+	// sources are the URIs and suites of repo steps, with the first step.
+	sources map[string]string
 }
 
 type startedBy struct {
@@ -198,7 +202,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}, units: map[string]bool{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}, units: map[string]bool{}, sources: map[string]string{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -281,11 +285,15 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		if ctx.Err() != nil {
 			return nil, ErrInterrupted
 		}
-		steps[i].Result, err = conn.Check(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &hr.state)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %s: %w", scope(stage, p), label(p.Step), err)
-		}
 		where := scope(stage, p) + ": " + label(p.Step)
+		if err := hr.repo(&steps[i].Step, where); err != nil {
+			return nil, err
+		}
+		steps[i].Result, err = conn.Check(context.WithoutCancel(ctx), p.Step.Module, steps[i].Step.Args, &hr.state)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", where, err)
+		}
+		hr.trackRemoved(p.Step.Args)
 		if err := hr.order(p.Step.Args, steps[i].Result, where); err != nil {
 			return nil, err
 		}
@@ -357,6 +365,42 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 		}
 	}
 	return nil
+}
+
+// repo fails a repo step whose source an earlier repo step of the host has.
+// Otherwise it gives the step the paths that earlier steps remove.
+func (hr *hostRun) repo(st *project.Step, where string) error {
+	r, ok := st.Args.(*module.Repo)
+	if !ok {
+		return nil
+	}
+	key := r.Source()
+	if w, ok := hr.sources[key]; ok {
+		return fmt.Errorf("%s: the source %s %s is also in %s; use one step", where, r.URL, r.Suite, w)
+	}
+	hr.sources[key] = where
+	c := *r
+	c.Removed = hr.removed
+	st.Args = &c
+	return nil
+}
+
+// trackRemoved records the path of an absent step.
+func (hr *hostRun) trackRemoved(m module.Module) {
+	switch m := m.(type) {
+	case *module.File:
+		if m.Absent {
+			hr.removed = append(hr.removed, m.Path)
+		}
+	case *module.Dir:
+		if m.Absent {
+			hr.removed = append(hr.removed, m.Path)
+		}
+	case *module.Link:
+		if m.Absent {
+			hr.removed = append(hr.removed, m.Path)
+		}
+	}
 }
 
 // trackUnits records the unit of a service step, and the units that start it

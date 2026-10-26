@@ -28,6 +28,9 @@ type Repo struct {
 	KeyPos     yamlx.Pos     `json:"-"`
 	// KeyData is the content of the key file in the recipe's files.
 	KeyData []byte `json:"key_data,omitempty"`
+	// Removed are the paths that earlier steps of the host remove. The
+	// controller sets them.
+	Removed []string `json:"removed,omitempty"`
 
 	// Check sets these for Apply.
 	writes  []repoFile
@@ -128,6 +131,10 @@ func (r *Repo) SetKey(name string, data []byte, now time.Time) ([]string, error)
 	return warnings, nil
 }
 
+// Source names the step's source: two steps with the same Source write the same
+// apt entry.
+func (r *Repo) Source() string { return uriKey(r.URL) + " " + r.Suite }
+
 func (r *Repo) sourcePath() string { return sourcesDir + "/" + r.Name + ".sources" }
 func (r *Repo) keyPath() string    { return keyringDir + "/" + r.Name + ".asc" }
 
@@ -169,6 +176,9 @@ func (r *Repo) Check(_ context.Context, st *State, _ func(string)) (Result, erro
 	}
 	f, lines, err := checkRepoFile(r.sourcePath(), r.source())
 	if err != nil {
+		return Result{}, err
+	}
+	if err := r.checkOwnFile(f.old); err != nil {
 		return Result{}, err
 	}
 	action := Modify
@@ -251,10 +261,20 @@ func (r *Repo) checkOthers() error {
 		files = append(files, path.Join(sourcesDir, n))
 	}
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		if r.removed(f) {
+			continue
+		}
+		fi, err := os.Stat(f)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
+		if err != nil {
+			return err
+		}
+		if !fi.Mode().IsRegular() {
+			continue
+		}
+		data, err := os.ReadFile(f)
 		if err != nil {
 			return err
 		}
@@ -405,4 +425,50 @@ func writeRoot(p string, content []byte, uid, gid, mode uint32) error {
 	return writeFile(dir, path.Base(p), content, uid, gid, mode, func(tmp string) error {
 		return dir.Rename(tmp, path.Base(p))
 	})
+}
+
+// removed reports whether an earlier step removes p or a parent of p.
+func (r *Repo) removed(p string) bool {
+	for _, d := range r.Removed {
+		if p == d || strings.HasPrefix(p, strings.TrimSuffix(d, "/")+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// checkOwnFile fails when old, the content of the source file, holds an entry
+// with another type or URI, or more than one entry. One entry with the step's
+// URI is the step's source, perhaps with an old suite.
+func (r *Repo) checkOwnFile(old []byte) error {
+	if r.removed(r.sourcePath()) {
+		return nil
+	}
+	var suites []string
+	other := ""
+	for _, st := range stanzas(string(old)) {
+		for _, t := range strings.Fields(st["types"]) {
+			for _, u := range strings.Fields(st["uris"]) {
+				for _, s := range strings.Fields(st["suites"]) {
+					switch {
+					case t != "deb" || !sameURI(u, r.URL):
+						return r.otherEntry(t + " " + u + " " + s)
+					case !slices.Contains(suites, s):
+						suites = append(suites, s)
+					}
+					if other == "" && s != r.Suite {
+						other = t + " " + u + " " + s
+					}
+				}
+			}
+		}
+	}
+	if len(suites) > 1 {
+		return r.otherEntry(other)
+	}
+	return nil
+}
+
+func (r *Repo) otherEntry(e string) error {
+	return fmt.Errorf("%s holds %s, which is not this step's source; move it to another file", r.sourcePath(), e)
 }

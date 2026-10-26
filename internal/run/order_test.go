@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/fakehost"
@@ -109,4 +110,88 @@ var orderCases = []orderCase{
       - user:
           name: alice
 `), func(h *fakehost.Hosts) { h.SetGroup("web1", "alice") }, ""},
+	{"two repo steps for one source", steps(`      - repo:
+          name: a
+          url: http://x.example/apt
+          suite: trixie
+          components: [main]
+      - repo:
+          name: b
+          url: http://x.example/apt/
+          suite: trixie
+          components: [contrib]
+`), nil, "s: repo b: the source http://x.example/apt/ trixie is also in s: repo a; use one step"},
+	{"two repo steps in two stages", `stages:
+  - name: s
+    hosts: all
+    steps:
+      - repo:
+          name: a
+          url: http://x.example/apt
+          suite: trixie
+          components: [main]
+  - name: t
+    hosts: all
+    steps:
+      - repo:
+          name: b
+          url: http://x.example/apt
+          suite: trixie
+          components: [main]
+`, nil, "t: repo b: the source http://x.example/apt trixie is also in s: repo a; use one step"},
+	{"two repo steps with other suites", steps(`      - repo:
+          name: a
+          url: http://x.example/apt
+          suite: trixie
+          components: [main]
+      - repo:
+          name: b
+          url: http://x.example/apt
+          suite: trixie-backports
+          components: [main]
+`), nil, ""},
+}
+
+// spec: Modules/repo
+func TestRepoGetsRemovedPaths(t *testing.T) {
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml": steps(`      - repo:
+          name: a
+          url: http://x.example/a
+          suite: trixie
+          components: [main]
+      - file:
+          path: /etc/apt/sources.list.d/a.list
+          absent: true
+      - file:
+          path: /etc/apt/sources.list.d/kept.list
+          content: ""
+      - dir:
+          path: /etc/apt/old
+          absent: true
+      - link:
+          path: /etc/apt/sources.list.d/l.list
+          absent: true
+      - repo:
+          name: b
+          url: http://x.example/b
+          suite: trixie
+          components: [main]
+`),
+	})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	if err := plan.Failed["web1"]; err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{nil, {"/etc/apt/sources.list.d/a.list", "/etc/apt/old", "/etc/apt/sources.list.d/l.list"}}
+	if !reflect.DeepEqual(h.RepoRemoved, want) {
+		t.Errorf("removed paths = %q, want %q", h.RepoRemoved, want)
+	}
 }

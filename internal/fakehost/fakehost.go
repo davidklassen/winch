@@ -61,6 +61,8 @@ type Hosts struct {
 	// Trace lists the connects, applies, health gates, and closes of all
 	// hosts, in order.
 	Trace []string
+	// RepoRemoved lists the Removed paths of each checked repo step.
+	RepoRemoved [][]string
 }
 
 func New() *Hosts {
@@ -301,6 +303,15 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	}
 	if d, ok := m.(*module.Debconf); ok {
 		return c.checkAnswer(d), nil
+	}
+	if _, ok := m.(*module.Link); ok {
+		return module.Result{Status: module.OK}, nil
+	}
+	if r, ok := m.(*module.Repo); ok {
+		c.hosts.mu.Lock()
+		c.hosts.RepoRemoved = append(c.hosts.RepoRemoved, r.Removed)
+		c.hosts.mu.Unlock()
+		return module.Result{Status: module.OK}, nil
 	}
 	if sv, ok := m.(*module.Service); ok {
 		c.hosts.mu.Lock()

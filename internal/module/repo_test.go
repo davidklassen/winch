@@ -362,6 +362,13 @@ Enabled: yes
 
 Types: deb
 Suites: broken
+
+Types: deb-src
+URIs: https://e.example/
+Suites: stable
+
+URIs: https://f.example/
+Suites: stable
 `
 	list := `deb [signed-by=/usr/share/keyrings/docker.gpg arch=amd64] https://download.docker.com/linux/debian trixie stable
 # deb http://x.example/ y main
@@ -380,7 +387,6 @@ deb [arch=amd64 http://broken.example/ trixie main
 		}},
 		{"one-line", "a.list", list, []source{
 			{uris: []string{"https://download.docker.com/linux/debian"}, suites: []string{"trixie"}},
-			{uris: []string{"http://deb.debian.org/debian"}, suites: []string{"trixie"}},
 		}},
 		{"empty", "a.sources", "", nil},
 	}
@@ -390,6 +396,78 @@ deb [arch=amd64 http://broken.example/ trixie main
 				t.Errorf("parseSources =\n%+v\nwant\n%+v", got, tt.want)
 			}
 		})
+	}
+}
+
+// The image's /etc/apt/sources.list.d/debian.sources.
+const imageSources = `Types: deb deb-src
+URIs: mirror+file:///etc/apt/mirrors/debian.list
+Suites: trixie trixie-updates trixie-backports
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb deb-src
+URIs: mirror+file:///etc/apt/mirrors/debian-security.list
+Suites: trixie-security
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+`
+
+// spec: Modules/repo
+func TestRepoCheckOwnFile(t *testing.T) {
+	r := &Repo{Name: "debian", URL: "http://deb.debian.org/debian", Suite: "trixie", Components: []string{"main"}}
+	const p = "/etc/apt/sources.list.d/debian.sources"
+	own := string(r.source())
+	tests := []struct {
+		name, old, want string
+	}{
+		{"the step's file", own, ""},
+		{"an older suite", strings.Replace(own, "trixie", "bookworm", 1), ""},
+		{"another URI", strings.Replace(own, "deb.debian.org", "ftp.debian.org", 1), p + " holds deb http://ftp.debian.org/debian trixie, which is not this step's source; move it to another file"},
+		{"the URI with a final slash", strings.Replace(own, "debian\n", "debian/\n", 1), ""},
+		{"one other source", "Types: deb\nURIs: mirror+file:///etc/apt/mirrors/debian-security.list\nSuites: trixie-security\n", p + " holds deb mirror+file:///etc/apt/mirrors/debian-security.list trixie-security, which is not this step's source; move it to another file"},
+		{"only a deb-src entry", strings.Replace(own, "Types: deb", "Types: deb-src", 1), p + " holds deb-src http://deb.debian.org/debian trixie, which is not this step's source; move it to another file"},
+		{"the step's entry twice", own + "\n" + own, ""},
+		{"empty", "", ""},
+		{"the image's file", imageSources, p + " holds deb mirror+file:///etc/apt/mirrors/debian.list trixie, which is not this step's source; move it to another file"},
+		{"another suite", strings.Replace(own, "Suites: trixie", "Suites: trixie trixie-updates", 1), p + " holds deb http://deb.debian.org/debian trixie-updates, which is not this step's source; move it to another file"},
+		{"a deb-src entry", strings.Replace(own, "Types: deb", "Types: deb deb-src", 1), p + " holds deb-src http://deb.debian.org/debian trixie, which is not this step's source; move it to another file"},
+		{"a disabled entry", own + "\nTypes: deb\nURIs: http://x.example/\nSuites: stable\nEnabled: no\n", p + " holds deb http://x.example/ stable, which is not this step's source; move it to another file"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ""
+			if err := r.checkOwnFile([]byte(tt.old)); err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("checkOwnFile = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	removed := *r
+	removed.Removed = []string{"/etc/apt/sources.list.d"}
+	if err := removed.checkOwnFile([]byte(imageSources)); err != nil {
+		t.Errorf("checkOwnFile of a removed file = %v, want nil", err)
+	}
+}
+
+func TestRepoRemoved(t *testing.T) {
+	r := &Repo{Removed: []string{"/etc/apt/sources.list.d/a.list", "/etc/apt/b/"}}
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/etc/apt/sources.list.d/a.list", true},
+		{"/etc/apt/b/x.list", true},
+		{"/etc/apt/sources.list.d/a.list2", false},
+		{"/etc/apt/b2/x.list", false},
+		{"/etc/apt/sources.list", false},
+	}
+	for _, tt := range tests {
+		if got := r.removed(tt.path); got != tt.want {
+			t.Errorf("removed(%q) = %v, want %v", tt.path, got, tt.want)
+		}
 	}
 }
 

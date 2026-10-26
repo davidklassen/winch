@@ -2,6 +2,7 @@ package integration
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/module"
@@ -44,7 +45,7 @@ func TestRepoModule(t *testing.T) {
 	refresh := "refresh the index of source winch-signed"
 	keyLine := "add key " + fpr + " winch test repository"
 	reset := "pkill -f 'fcntl[.]lockf'; rm -f " + signedFile + " " + signedAsc + " /etc/apt/sources.list.d/vendor.* /var/lib/apt/lists/10.0.2.100_signed_* /root/locked; " +
-		"sed -i '/10.0.2.100.signed/d' /etc/apt/sources.list 2>/dev/null; rm -rf /root/saved; mkdir -p /etc/apt/keyrings"
+		"rm -rf /etc/apt/sources.list.d/vendor.list /etc/apt/sources.list.d/debian.sources; sed -i '/10.0.2.100.signed/d' /etc/apt/sources.list 2>/dev/null; rm -rf /root/saved; mkdir -p /etc/apt/keyrings"
 	withOther := func() *module.Repo {
 		r := args()
 		r.KeyData = otherKey
@@ -167,5 +168,74 @@ func TestRepoModule(t *testing.T) {
 			Args:  args(),
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
 		},
+		{
+			Name:  "a deb-src entry in another file",
+			Setup: "echo 'deb-src " + signedURL + " trixie main' > /etc/apt/sources.list.d/vendor.list",
+			Args:  args(),
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
+		},
+		{
+			Name:  "a directory with the name of a sources file",
+			Setup: "mkdir /etc/apt/sources.list.d/vendor.list",
+			Args:  args(),
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
+		},
+		{
+			Name:    "the image's debian.sources at the step's path",
+			Setup:   "cat > /etc/apt/sources.list.d/debian.sources <<'EOF'\n" + imageSources + "EOF",
+			Args:    &module.Repo{Name: "debian", URL: "http://deb.debian.org/debian", Suite: "trixie", Components: []string{"main"}},
+			WantErr: "/etc/apt/sources.list.d/debian.sources holds deb mirror+file:///etc/apt/mirrors/debian.list trixie, which is not this step's source; move it to another file",
+		},
 	})
+}
+
+// The /etc/apt/sources.list.d/debian.sources of the Debian cloud image.
+const imageSources = `Types: deb deb-src
+URIs: mirror+file:///etc/apt/mirrors/debian.list
+Suites: trixie trixie-updates trixie-backports
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb deb-src
+URIs: mirror+file:///etc/apt/mirrors/debian-security.list
+Suites: trixie-security
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+`
+
+// spec: Modules/repo
+func TestRepoAfterAbsentStep(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "repo-absent")
+	vm.MustRun(t, "echo 'deb [signed-by=/usr/share/keyrings/x.gpg] "+signedURL+" trixie main' > /etc/apt/sources.list.d/vendor.list")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  repo-absent: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: apt\n    hosts: all\n    steps:\n      - recipe: signed\n",
+		"recipes/signed/recipe.yaml": `steps:
+  - file:
+      path: /etc/apt/sources.list.d/vendor.list
+      absent: true
+  - repo:
+      name: winch-signed
+      url: ` + signedURL + `
+      suite: trixie
+      components: [main]
+      key: signed.asc
+`,
+		"recipes/signed/files/signed.asc": string(vmtest.RepoKey),
+	})
+	r := lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "+ repo winch-signed") {
+		t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 0 {
+		t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, "[ ! -e /etc/apt/sources.list.d/vendor.list ] && apt-cache policy winch-signed | grep -q 'Candidate: 1'")
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
 }
