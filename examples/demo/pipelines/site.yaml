@@ -2,6 +2,16 @@ stages:
   - name: base
     hosts: all
     steps:
+      - recipe: admin
+      - group:
+          name: deploy
+          gid: 2000
+      - user:
+          name: deploy
+          uid: 2000
+          group: deploy
+          shell: /bin/bash
+          authorized_keys: !expr vars.admin_authorized_keys
       - file:
           path: /etc/motd
           content: !tpl "{{ .host.name }} is managed by winch.\n"

@@ -1,7 +1,7 @@
 // Package fakehost is a test double for hosts: it keeps files, packages, and
-// facts in memory and checks and applies file, dir, pkg, and service steps
-// against them. It keeps pending handlers and then records, and runs
-// commands as records.
+// facts in memory and checks and applies file, dir, pkg, service, user, and
+// group steps against them. It keeps pending handlers and then records, and
+// runs commands as records.
 package fakehost
 
 import (
@@ -43,6 +43,8 @@ type Hosts struct {
 	// Connects counts the connects per host.
 	Connects map[string]int
 	down     map[string]bool
+	users    map[string]bool
+	groups   map[string]bool
 	results  map[string]module.Result
 	// OnCheck and OnApply run before each check and each apply of a step,
 	// with the host and the main argument of the step.
@@ -79,6 +81,8 @@ func New() *Hosts {
 		Connects:   map[string]int{},
 		Users:      map[string]string{},
 		down:       map[string]bool{},
+		users:      map[string]bool{},
+		groups:     map[string]bool{},
 	}
 }
 
@@ -87,6 +91,20 @@ func (h *Hosts) SetResult(host, path string, res module.Result) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.results[host+" "+path] = res
+}
+
+// SetUser makes the user name exist on a host.
+func (h *Hosts) SetUser(host, name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.users[host+" "+name] = true
+}
+
+// SetGroup makes the group name exist on a host.
+func (h *Hosts) SetGroup(host, name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.groups[host+" "+name] = true
 }
 
 func (h *Hosts) SetPending(host string, names ...string) {
@@ -261,6 +279,16 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if d, ok := m.(*module.Dir); ok {
 		return c.checkDir(d), nil
 	}
+	if u, ok := m.(*module.User); ok {
+		res := c.checkAccount(c.hosts.users, u.Name)
+		if g := c.checkAccount(c.hosts.groups, u.Name); res.Action == module.Create && u.Group == "" && g.Action == module.Create {
+			res.Changes = []string{"group " + u.Name + " (new)"}
+		}
+		return res, nil
+	}
+	if g, ok := m.(*module.Group); ok {
+		return c.checkAccount(c.hosts.groups, g.Name), nil
+	}
 	if sv, ok := m.(*module.Service); ok {
 		if !sv.Reloaded && !sv.Restarted {
 			return module.Result{}, errors.New("fakehost: a service step needs reloaded or restarted")
@@ -287,6 +315,16 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		return module.Result{Status: module.Change, Action: module.Modify, Old: &cur}, nil
 	}
 	return module.Result{Status: module.OK}, nil
+}
+
+// checkAccount creates only.
+func (c *Conn) checkAccount(m map[string]bool, name string) module.Result {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	if m[c.host+" "+name] {
+		return module.Result{Status: module.OK}
+	}
+	return module.Result{Status: module.Change, Action: module.Create}
 }
 
 // checkDir creates only.
@@ -397,6 +435,14 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 		c.hosts.mu.Lock()
 		defer c.hosts.mu.Unlock()
 		c.makeDirs(d.Path)
+		return res, nil
+	}
+	switch m := m.(type) {
+	case *module.User:
+		c.hosts.SetUser(c.host, m.Name)
+		return res, nil
+	case *module.Group:
+		c.hosts.SetGroup(c.host, m.Name)
 		return res, nil
 	}
 	f := m.(*module.File)

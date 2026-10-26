@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"path"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
@@ -131,6 +133,9 @@ type hostRun struct {
 	pending *protocol.Pending
 	// conn is the session with the host, open across its stages.
 	conn Conn
+	// needs are the users and groups, as "user <name>" or "group <name>",
+	// that changed steps need, with the first such step.
+	needs map[string]string
 }
 
 // close closes the session with the host, if one is open.
@@ -182,7 +187,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -264,6 +269,9 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		if err != nil {
 			return nil, fmt.Errorf("%s: %s: %w", scope(stage, p), label(p.Step), err)
 		}
+		if err := hr.order(p.Step.Args, steps[i].Result, scope(stage, p)+": "+label(p.Step)); err != nil {
+			return nil, err
+		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
 		if steps[i].Result.Status == module.Change {
 			changed = true
@@ -282,6 +290,50 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		changed = false
 	}
 	return steps, nil
+}
+
+// order fails a user or group step that creates a user or a group that an
+// earlier changed step needs as its owner or group: that step fails in
+// apply. Otherwise it records what the step at where needs.
+func (hr *hostRun) order(m module.Module, res module.Result, where string) error {
+	if res.Status != module.Change {
+		return nil
+	}
+	var needs, created []string
+	switch m := m.(type) {
+	case *module.File:
+		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
+	case *module.Dir:
+		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
+	case *module.User:
+		needs = []string{"group " + string(m.Group)}
+		if res.Action == module.Create {
+			created = []string{"user " + m.Name}
+		}
+		// useradd -U creates the group.
+		if slices.Contains(res.Changes, "group "+m.Name+" (new)") {
+			created = append(created, "group "+m.Name)
+		}
+	case *module.Group:
+		if res.Action == module.Create {
+			created = []string{"group " + m.Name}
+		}
+	}
+	for _, c := range created {
+		if w, ok := hr.needs[c]; ok {
+			return fmt.Errorf("%s: an earlier step needs it: %s; move this step before it", where, w)
+		}
+	}
+	for _, n := range needs {
+		_, name, _ := strings.Cut(n, " ")
+		if _, err := strconv.ParseUint(name, 10, 32); name == "" || err == nil {
+			continue
+		}
+		if _, ok := hr.needs[n]; !ok {
+			hr.needs[n] = where
+		}
+	}
+	return nil
 }
 
 // dropCreatedParents removes the parent lines of directories that an earlier

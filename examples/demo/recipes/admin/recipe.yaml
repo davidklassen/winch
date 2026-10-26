@@ -1,0 +1,16 @@
+require:
+  - !expr 'facts.os.id == "debian" and facts.os.version == "13"'
+
+vars:
+  admin_authorized_keys:
+
+steps:
+  - user:
+      name: admin
+      shell: /bin/bash
+      authorized_keys: !expr vars.admin_authorized_keys
+  - file:
+      path: /etc/sudoers.d/admin
+      content: "admin ALL=(ALL) NOPASSWD:ALL\n"
+      mode: "0440"
+      validate: visudo -cf /etc/sudoers.d/admin

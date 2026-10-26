@@ -38,6 +38,7 @@ var (
 	posType      = reflect.TypeFor[Pos]()
 	stringsType  = reflect.TypeFor[Strings]()
 	nameOrIDType = reflect.TypeFor[NameOrID]()
+	idType       = reflect.TypeFor[ID]()
 )
 
 type decoder struct {
@@ -79,10 +80,14 @@ func (d *decoder) value(n *Node, v reflect.Value, name string) {
 		}
 		return
 	}
-	if _, ok := n.Value.(string); v.Type() == nameOrIDType && n.Kind == Scalar && !ok {
+	if _, ok := n.Value.(string); (v.Type() == nameOrIDType || v.Type() == idType) && n.Kind == Scalar && !ok {
 		i, ok := n.Value.(int64)
 		if !ok || i < 0 || n.Text != "" && !digitsRe.MatchString(n.Text) {
-			d.errorf(n.Pos, name, `must be a name or a numeric ID, such as "www-data" or "999"`)
+			msg := `must be a name or a numeric ID, such as "www-data" or "999"`
+			if v.Type() == idType {
+				msg = `must be a numeric ID, such as "1000"`
+			}
+			d.errorf(n.Pos, name, "%s", msg)
 			return
 		}
 		v.SetString(strconv.FormatInt(i, 10))
@@ -255,3 +260,7 @@ type Strings []string
 // The integer gives its decimal digits. An integer from a file must be written
 // as plain digits.
 type NameOrID string
+
+// ID decodes as NameOrID does. The module checks that a string holds only
+// digits.
+type ID string

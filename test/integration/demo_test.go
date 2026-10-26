@@ -2,6 +2,7 @@ package integration
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -106,6 +107,14 @@ func checkDemo(t *testing.T, vm *vmtest.VM, peer string) {
 	}
 	if out := vm.MustRun(t, "curl -s http://localhost/"); !strings.Contains(out, "<p>Also served by: "+peer+"</p>") {
 		t.Errorf("the index page does not name the other web host %s: %q", peer, out)
+	}
+	cmd := exec.CommandContext(t.Context(), "ssh", "-l", "deploy", vm.Name, "id")
+	cmd.Env = lab.Env()
+	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "uid=2000(deploy) gid=2000(deploy) groups=2000(deploy)\n" {
+		t.Errorf("ssh as deploy: %v: %q", err, out)
+	}
+	if out := vm.MustRun(t, "stat -c '%a %U' /etc/sudoers.d/admin; getent passwd admin | cut -d: -f7"); out != "440 root\n/bin/bash\n" {
+		t.Errorf("the admin recipe: %q", out)
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"math"
 	"os"
 	"os/user"
 	"path"
@@ -103,10 +102,7 @@ func checkOwner(field string, v yamlx.NameOrID) error {
 	if !numberRe.MatchString(string(v)) {
 		return nil
 	}
-	if n, err := strconv.ParseUint(string(v), 10, 32); err != nil || n == math.MaxUint32 {
-		return &yamlx.FieldError{Field: field, Msg: "an ID must be below 4294967295"}
-	}
-	return nil
+	return checkID(field, yamlx.ID(v))
 }
 
 var modeRe = regexp.MustCompile(`^[0-7]{3,4}$`)
@@ -126,15 +122,21 @@ func checkRelative(field, p string) error {
 }
 
 func checkPath(p string) error {
+	if p == "/" {
+		return &yamlx.FieldError{Field: "path", Msg: "must not be /"}
+	}
+	return checkAbs("path", p)
+}
+
+// checkAbs checks that p is a clean absolute path without "..".
+func checkAbs(field, p string) error {
 	switch {
 	case !path.IsAbs(p):
-		return &yamlx.FieldError{Field: "path", Msg: "must be an absolute path"}
+		return &yamlx.FieldError{Field: field, Msg: "must be an absolute path"}
 	case slices.Contains(strings.Split(p, "/"), ".."):
-		return &yamlx.FieldError{Field: "path", Msg: `".." is not allowed; write the path without it`}
+		return &yamlx.FieldError{Field: field, Msg: `".." is not allowed; write the path without it`}
 	case path.Clean(p) != p:
-		return &yamlx.FieldError{Field: "path", Msg: fmt.Sprintf("must be a clean path, such as %q", path.Clean(p))}
-	case p == "/":
-		return &yamlx.FieldError{Field: "path", Msg: "must not be /"}
+		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf("must be a clean path, such as %q", path.Clean(p))}
 	}
 	return nil
 }
@@ -586,7 +588,7 @@ func mkdirs(dir *os.Root, missing []string) (*os.Root, error) {
 		return nil, err
 	}
 	for _, m := range missing {
-		next, err := mkdir(cur, path.Base(m))
+		next, err := mkdir(cur, path.Base(m), 0, 0, 0o755)
 		cur.Close()
 		if err != nil {
 			return nil, err
@@ -596,7 +598,9 @@ func mkdirs(dir *os.Root, missing []string) (*os.Root, error) {
 	return cur, nil
 }
 
-func mkdir(dir *os.Root, name string) (*os.Root, error) {
+// mkdir creates the directory name in dir with the owner, group, and mode,
+// and opens it.
+func mkdir(dir *os.Root, name string, uid, gid, mode uint32) (*os.Root, error) {
 	if err := dir.Mkdir(name, 0o700); err != nil {
 		return nil, err
 	}
@@ -608,16 +612,20 @@ func mkdir(dir *os.Root, name string) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := sub.Open(".")
-	if err == nil {
-		err = setAttrs(f, 0, 0, 0o755)
-		f.Close()
-	}
-	if err != nil {
+	if err := setRootAttrs(sub, uid, gid, mode); err != nil {
 		sub.Close()
 		return nil, err
 	}
 	return sub, nil
+}
+
+func setRootAttrs(r *os.Root, uid, gid, mode uint32) error {
+	f, err := r.Open(".")
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return setAttrs(f, uid, gid, mode)
 }
 
 // openSame opens name in dir and checks that it is still the file that fi

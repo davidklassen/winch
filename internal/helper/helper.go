@@ -20,8 +20,9 @@ import (
 )
 
 // Serve answers requests. dir is the state directory, self the path of the
-// running helper binary in dir/bin.
-func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) error {
+// running helper binary in dir/bin, and login the UID of the session's login
+// user.
+func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, login uint32) error {
 	dec := json.NewDecoder(in)
 	enc := json.NewEncoder(out)
 	var lock *os.File
@@ -66,9 +67,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) e
 		case req.Method == "health":
 			err = runHealth(ctx, req.Params)
 		case req.Method == "check":
-			result, err = step(ctx, req.Params, false, handlers, thens, note)
+			result, err = step(ctx, req.Params, false, login, handlers, thens, note)
 		case req.Method == "apply":
-			result, err = step(ctx, req.Params, true, handlers, thens, note)
+			result, err = step(ctx, req.Params, true, login, handlers, thens, note)
 		default:
 			err = fmt.Errorf("unknown method %q", req.Method)
 		}
@@ -162,11 +163,12 @@ func deleteOthers(bin, self string) error {
 
 // step checks a step. With apply, it then records the handlers that the step
 // notifies and its then, and makes the changes the check found.
-func step(ctx context.Context, params json.RawMessage, apply bool, handlers, thens records, note func(string)) (protocol.StepResult, error) {
+func step(ctx context.Context, params json.RawMessage, apply bool, login uint32, handlers, thens records, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
 	}
+	s.State.LoginUID = login
 	m, ok := module.New(s.Module)
 	if !ok {
 		return protocol.StepResult{}, fmt.Errorf("unknown module %q", s.Module)

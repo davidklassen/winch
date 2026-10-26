@@ -45,6 +45,8 @@ type State struct {
 	// IndexFresh is true after an install of the run refreshed the package
 	// index.
 	IndexFresh bool `json:"index_fresh,omitempty"`
+	// LoginUID is the UID of the session's login user. The helper sets it.
+	LoginUID uint32 `json:"-"`
 }
 
 // Module is the decoded arguments of one step. Main returns the main
@@ -68,9 +70,11 @@ type WithContent interface {
 var modules = map[string]func() Module{
 	"dir":     func() Module { return new(Dir) },
 	"file":    func() Module { return new(File) },
+	"group":   func() Module { return new(Group) },
 	"link":    func() Module { return new(Link) },
 	"pkg":     func() Module { return new(Pkg) },
 	"service": func() Module { return new(Service) },
+	"user":    func() Module { return new(User) },
 }
 
 // New returns empty arguments for the module name.

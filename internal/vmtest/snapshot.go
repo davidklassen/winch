@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,18 @@ runcmd:
 `
 
 const metaData = "instance-id: base\nlocal-hostname: base\n"
+
+// The SSH key of the lab's users. examples/demo names the public key.
+var (
+	//go:embed testdata/fake_secrets/key
+	privateKey []byte
+	//go:embed testdata/fake_secrets/key.pub
+	PublicKey string
+)
+
+func seedUserData() string {
+	return fmt.Sprintf(userData, strings.TrimSpace(PublicKey))
+}
 
 type snapshotInputs struct {
 	Image, Seed, QEMU, Flags string
@@ -72,47 +85,41 @@ func (l *Lab) snapshotInputs(ctx context.Context) (snapshotInputs, error) {
 	}
 	return snapshotInputs{
 		Image: hex.EncodeToString(h.Sum(nil)),
-		Seed:  userData + metaData,
+		Seed:  seedUserData() + metaData,
 		QEMU:  strings.SplitN(string(version), "\n", 2)[0],
 		Flags: strings.Join(args, "\n"),
 	}, nil
 }
 
 // ensureSnapshot finds the snapshot of the lab's inputs in the cache, or
-// builds it. The lab gets the snapshot's SSH key.
+// builds it.
 func (l *Lab) ensureSnapshot(ctx context.Context) error {
 	in, err := l.snapshotInputs(ctx)
 	if err != nil {
 		return err
 	}
 	l.snapshot = snapshotName(l.Arch, in)
-	dir := filepath.Join(l.cfg.Cache, l.snapshot)
-	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
-		return l.buildSnapshot(ctx, dir)
-	} else if err != nil {
+	if err := l.useKey(); err != nil {
 		return err
 	}
-	return l.useKey(dir)
+	dir := filepath.Join(l.cfg.Cache, l.snapshot)
+	_, err = os.Stat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return l.buildSnapshot(ctx, dir)
+	}
+	return err
 }
 
-// useKey gives the lab the SSH key in dir, and serves the seed with it. A
-// reboot of a VM reads the seed again; with the same instance-id, cloud-init
-// does not run again.
-func (l *Lab) useKey(dir string) error {
-	key, err := os.ReadFile(filepath.Join(dir, "key"))
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(l.Dir, "key"), key, 0o600); err != nil {
-		return err
-	}
-	pub, err := os.ReadFile(filepath.Join(dir, "key.pub"))
-	if err != nil {
+// useKey gives the lab the SSH key, and serves the seed with it. A reboot of
+// a VM reads the seed again; with the same instance-id, cloud-init does not
+// run again.
+func (l *Lab) useKey() error {
+	if err := os.WriteFile(filepath.Join(l.Dir, "key"), privateKey, 0o600); err != nil {
 		return err
 	}
 	seed := map[string]string{
 		"meta-data":   metaData,
-		"user-data":   fmt.Sprintf(userData, strings.TrimSpace(string(pub))),
+		"user-data":   seedUserData(),
 		"vendor-data": "",
 	}
 	for name, content := range seed {
@@ -132,12 +139,6 @@ func (l *Lab) buildSnapshot(ctx context.Context, dir string) error {
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	if out, err := exec.CommandContext(ctx, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", filepath.Join(tmp, "key")).CombinedOutput(); err != nil {
-		return fmt.Errorf("ssh-keygen: %v: %s", err, out)
-	}
-	if err := l.useKey(tmp); err != nil {
-		return err
-	}
 	vm, err := l.boot(ctx, "base", tmp, l.cfg.Image, true, "")
 	if err != nil {
 		return err
@@ -154,7 +155,7 @@ func (l *Lab) buildSnapshot(ctx context.Context, dir string) error {
 	if err := os.Rename(tmp, dir); err != nil {
 		// Another process has built the snapshot first.
 		if _, serr := os.Stat(dir); serr == nil {
-			return l.useKey(dir)
+			return nil
 		}
 		return err
 	}
