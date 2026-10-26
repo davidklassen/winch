@@ -1,0 +1,18 @@
+stdout:
+[1mweb1, web2 (2 hosts)[0m
+  [1mweb[0m
+    [1mnginx[0m
+      [33m~[0m Configure nginx: file /etc/nginx/nginx.conf
+          [36m@@ -1,2 +1,2 @@[0m
+           user www-data;
+          [31m-listen 80;[0m
+          [32m+listen 8080;[0m
+          then: nginx -t
+      [36m![0m handler nginx.reload
+    [31m-[0m file /etc/issue
+    [36m*[0m health: curl -sf http://localhost/
+
+3 hosts: 2 to change, 0 unchanged, 0 unknown, 1 failed
+plan d98b1a981c74fb5f
+stderr:
+[31mweb3: nginx: Configure nginx: file /etc/nginx/nginx.conf: permission denied[0m

@@ -1,7 +1,6 @@
 package secret
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -141,27 +140,6 @@ func TestFilterManyValues(t *testing.T) {
 	}
 }
 
-// spec: Variables/Secrets in output (text filter)
-func TestFilterWriter(t *testing.T) {
-	f := NewFilter()
-	var b bytes.Buffer
-	w := f.Writer(&b)
-	f.Add("hunter2")
-	fmt.Fprintf(w, "web1: failed: %s\n", "echo hunter2")
-	fmt.Fprint(w, "-----BEGIN PRIVATE KEY-----\nMIIE")
-	fmt.Fprint(w, "after the write\n")
-	want := "web1: failed: echo (secret)\n(secret)\n(secret)after the write\n"
-	if b.String() != want {
-		t.Errorf("written %q, want %q", b.String(), want)
-	}
-	if n, err := w.Write([]byte("hunter2")); n != 7 || err != nil {
-		t.Errorf("Write = %d, %v; want the length of the input", n, err)
-	}
-	if strings.Contains(b.String(), "hunter2") {
-		t.Error("the secret was written")
-	}
-}
-
 // spec: CLI/Output
 func TestPrintable(t *testing.T) {
 	tests := []struct {
@@ -177,5 +155,35 @@ func TestPrintable(t *testing.T) {
 		if got := Printable(tt.in); got != tt.want {
 			t.Errorf("Printable(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+// spec: CLI/Output (the text filter runs before winch adds color)
+func TestFilterParts(t *testing.T) {
+	f := NewFilter()
+	f.Add("hunter2")
+	key := fakeSecret(t, "rsa.txt")
+	tests := []struct {
+		name  string
+		parts []string
+		want  []string
+	}{
+		{"none", nil, []string{}},
+		{"in one part", []string{"a ", "x hunter2 y", "\n"}, []string{"a ", "x (secret) y", "\n"}},
+		{"across parts", []string{"x hun", "ter2", " y"}, []string{"x (secret)", "", " y"}},
+		{"key over lines", []string{"  ", "+" + strings.ReplaceAll(key, "\n", "\n  +") + "\n", "  ", "after\n"},
+			[]string{"  ", "+(secret)\n  (secret)\n  (secret)\n", "  ", "after\n"}},
+		{"empty parts", []string{"", "hunter2", ""}, []string{"", "(secret)", ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := f.Parts(tt.parts)
+			if fmt.Sprintf("%q", got) != fmt.Sprintf("%q", tt.want) {
+				t.Errorf("Parts(%q) = %q, want %q", tt.parts, got, tt.want)
+			}
+			if j := strings.Join(got, ""); j != f.Text(strings.Join(tt.parts, "")) {
+				t.Errorf("joined parts %q differ from Text", j)
+			}
+		})
 	}
 }

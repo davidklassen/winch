@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/davidklassen/winch/internal/cli"
+	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/helperbin"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
@@ -22,7 +23,7 @@ import (
 
 func main() {
 	filter := secret.NewFilter()
-	stderr := filter.Writer(os.Stderr)
+	stderr := color.NewWriter(os.Stderr, filter.Parts, false)
 	// The first Ctrl-C ends ctx: no new step starts. The second ends the
 	// sessions.
 	ctx, stop := context.WithCancel(context.Background())
@@ -50,6 +51,8 @@ func main() {
 		Out:      os.Stdout,
 		Err:      os.Stderr,
 		Terminal: cli.IsTerminal(os.Stdin) && cli.IsTerminal(os.Stderr),
+		ColorOut: cli.UseColor(cli.IsTerminal(os.Stdout), os.Getenv),
+		ColorErr: cli.UseColor(cli.IsTerminal(os.Stderr), os.Getenv),
 		Connect: func(batch bool) run.Connect {
 			return connect(sessions, stderr, batch)
 		},

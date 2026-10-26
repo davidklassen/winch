@@ -3,7 +3,6 @@ package secret
 import (
 	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/url"
 	"strings"
 	"sync"
@@ -51,6 +50,13 @@ func (f *Filter) Add(value string) {
 // matches give one Mark. A newline stays, and a match inside a Mark of s
 // does not count.
 func (f *Filter) Text(s string) string {
+	return f.Parts([]string{s})[0]
+}
+
+// Parts filters the text that parts make together, and returns it in the
+// same parts. A Mark shows in the part where its match starts.
+func (f *Filter) Parts(parts []string) []string {
+	s := strings.Join(parts, "")
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	marked := make([]bool, len(s))
@@ -94,18 +100,21 @@ func (f *Filter) Text(s string) string {
 		}
 	}
 	keyBlocks(s, set)
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		if !marked[i] || s[i] == '\n' {
-			b.WriteByte(s[i])
-			continue
+	out := make([]string, len(parts))
+	i := 0
+	for k, p := range parts {
+		var b strings.Builder
+		for end := i + len(p); i < end; i++ {
+			switch {
+			case !marked[i] || s[i] == '\n':
+				b.WriteByte(s[i])
+			case i == 0 || !marked[i-1] || s[i-1] == '\n':
+				b.WriteString(Mark)
+			}
 		}
-		b.WriteString(Mark)
-		for i+1 < len(s) && marked[i+1] && s[i+1] != '\n' {
-			i++
-		}
+		out[k] = b.String()
 	}
-	return b.String()
+	return out
 }
 
 // keyBlocks marks each private key block: from its header to its footer, or
@@ -147,23 +156,6 @@ func keyBlocks(s string, set func(from, to int)) {
 		}
 		ls = le + 1
 	}
-}
-
-// Writer returns a writer that filters each write to w.
-func (f *Filter) Writer(w io.Writer) io.Writer {
-	return writer{f, w}
-}
-
-type writer struct {
-	f *Filter
-	w io.Writer
-}
-
-func (w writer) Write(p []byte) (int, error) {
-	if _, err := io.WriteString(w.w, w.f.Text(string(p))); err != nil {
-		return 0, err
-	}
-	return len(p), nil
 }
 
 // Unprintable reports whether r is a control, format, or line separator

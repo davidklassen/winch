@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/run"
 	"github.com/davidklassen/winch/internal/secret"
@@ -48,6 +49,8 @@ type Env struct {
 	Out, Err io.Writer
 	// Terminal is true when stdin and stderr are terminals.
 	Terminal bool
+	// ColorOut and ColorErr turn on color on stdout and stderr.
+	ColorOut, ColorErr bool
 	// Connect returns the function that opens sessions. With batch, ssh asks
 	// no questions.
 	Connect func(batch bool) run.Connect
@@ -207,7 +210,8 @@ type flags struct {
 
 // Main runs the command in args. All output passes through env.Filter.
 func Main(ctx context.Context, args []string, env Env) int {
-	env.Out, env.Err = env.Filter.Writer(env.Out), env.Filter.Writer(env.Err)
+	env.Out = color.NewWriter(env.Out, env.Filter.Parts, env.ColorOut)
+	env.Err = color.NewWriter(env.Err, env.Filter.Parts, env.ColorErr)
 	if len(args) == 0 {
 		fmt.Fprint(env.Err, mainHelp)
 		return exitInvalid
@@ -223,7 +227,8 @@ func Main(ctx context.Context, args []string, env Env) int {
 	cmd, ok := commands[name]
 	switch {
 	case !ok && strings.HasPrefix(name, "secret "):
-		fmt.Fprintf(env.Err, "winch: unknown secret command %q\n\n%s", args[0], secretHelp)
+		printError(env.Err, fmt.Sprintf("winch: unknown secret command %q", args[0]))
+		fmt.Fprintf(env.Err, "\n%s", secretHelp)
 		return exitInvalid
 	case !ok:
 		var names []string
@@ -233,7 +238,8 @@ func Main(ctx context.Context, args []string, env Env) int {
 			}
 		}
 		slices.Sort(names)
-		fmt.Fprintf(env.Err, "winch: unknown command %q%s\n\n%s", args[0], yamlx.Suggest(args[0], names), mainHelp)
+		printError(env.Err, fmt.Sprintf("winch: unknown command %q%s", args[0], yamlx.Suggest(args[0], names)))
+		fmt.Fprintf(env.Err, "\n%s", mainHelp)
 		return exitInvalid
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -272,10 +278,16 @@ func Main(ctx context.Context, args []string, env Env) int {
 		return exitOK
 	}
 	if err != nil {
-		fmt.Fprintf(env.Err, "winch %s: %v\nRun \"winch %s --help\" for the flags.\n", name, err, name)
+		printError(env.Err, fmt.Sprintf("winch %s: %v", name, err))
+		fmt.Fprintf(env.Err, "Run \"winch %s --help\" for the flags.\n", name)
 		return exitInvalid
 	}
 	return cmd.run(ctx, env, &f, pos)
+}
+
+// printError writes an error line, red on a terminal.
+func printError(w io.Writer, msg string) {
+	color.Fprint(w, color.Text{{Style: color.Red, Text: msg + "\n"}})
 }
 
 // notEmpty returns a flag function that sets *v and rejects an empty value.

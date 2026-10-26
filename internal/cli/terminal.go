@@ -13,3 +13,9 @@ func IsTerminal(f *os.File) bool {
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), ioctlGetTermios, uintptr(unsafe.Pointer(&t)))
 	return errno == 0
 }
+
+// UseColor reports whether a stream gets color: it is a terminal,
+// NO_COLOR is empty, and TERM is not dumb.
+func UseColor(terminal bool, getenv func(string) string) bool {
+	return terminal && getenv("NO_COLOR") == "" && getenv("TERM") != "dumb"
+}

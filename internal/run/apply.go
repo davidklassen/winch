@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
@@ -92,20 +93,24 @@ func Text(out, errOut io.Writer) Reporter { return text{out, errOut} }
 type text struct{ out, errOut io.Writer }
 
 func (t text) Step(ev StepEvent) {
+	var line color.Text
 	switch {
 	case ev.Health != "" && ev.Status == "ok":
-		fmt.Fprintf(t.out, "%s: %s: * health:%s\n", ev.Host, ev.Stage, command(ev.Health, "    "))
+		markLine(&line, ev.Host+": "+ev.Stage+": ", "*", " health:"+command(ev.Health, "    ")+"\n")
 	case ev.Status != "change":
 	case ev.Then != "" && ev.ThenPending:
-		fmt.Fprintf(t.out, "%s: %s: ! then:%s\n", ev.Host, ev.scope(), command(ev.Then, "    "))
+		markLine(&line, ev.Host+": "+ev.scope()+": ", "!", " then:"+command(ev.Then, "    ")+"\n")
 	case ev.Then == "":
-		fmt.Fprintf(t.out, "%s: %s: %s %s%s\n", ev.Host, ev.scope(), marks[module.Action(ev.Action)], ev.label(), linkNote(ev.Link))
+		markLine(&line, ev.Host+": "+ev.scope()+": ", marks[module.Action(ev.Action)], " "+ev.label()+linkNote(ev.Link)+"\n")
+	}
+	if line != nil {
+		color.Fprint(t.out, line)
 	}
 }
 
 func (t text) Host(ev HostEvent) {
 	if ev.Error != "" {
-		fmt.Fprintf(t.errOut, "%s: %s\n", ev.Host, secret.PrintableLines(ev.Error))
+		hostError(t.errOut, ev.Host, ev.Error)
 	}
 }
 

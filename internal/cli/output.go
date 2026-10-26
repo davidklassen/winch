@@ -46,7 +46,7 @@ type diagnostic struct {
 // fail reports an error: on stderr, or as diagnostic events.
 func (o *output) fail(err error) {
 	if o.ev == nil {
-		fmt.Fprintln(o.env.Err, err)
+		printError(o.env.Err, err.Error())
 		return
 	}
 	for _, e := range leaves(err) {

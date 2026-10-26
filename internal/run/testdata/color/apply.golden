@@ -1,0 +1,11 @@
+stdout:
+web1: nginx: [33m~[0m Configure nginx: file /etc/nginx/nginx.conf
+web1: nginx: [33m~[0m handler nginx.reload: service nginx
+web1: web: [31m-[0m file /etc/issue
+web1: web: [36m*[0m health: curl -sf http://localhost/
+web2: nginx: [33m~[0m Configure nginx: file /etc/nginx/nginx.conf
+web2: nginx: [33m~[0m handler nginx.reload: service nginx
+
+3 hosts: 1 changed, 0 unchanged, 2 failed
+stderr:
+[31mweb2: web: failed: file /etc/issue: write /etc/issue: read-only file system[0m

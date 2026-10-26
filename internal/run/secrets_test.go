@@ -19,8 +19,9 @@ import (
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
-// secretProject loads a project whose recipe reads the secret hunter2.
-func secretProject(t *testing.T) *project.Project {
+// secretProject loads a project whose recipe reads the secret hunter2, and
+// returns the filter that knows its secrets.
+func secretProject(t *testing.T) (*project.Project, *secret.Filter) {
 	t.Helper()
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
@@ -62,16 +63,17 @@ steps:
 `,
 		"recipes/monit/templates/settings.tmpl": "set httpd port 2812\n  allow {{ .vars.monit_user }}:{{ .vars.monit_password }}\n# {{ title .vars.monit_password }}\n",
 	})
-	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
+	filter := secret.NewFilter()
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: filter})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return p
+	return p, filter
 }
 
 // spec: Variables/Secrets in output; CLI/Output
 func TestSecrets(t *testing.T) {
-	p := secretProject(t)
+	p, _ := secretProject(t)
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/monit/conf.d/settings", "set httpd port 2812\n  allow admin:old-pass\n# Old-Pass\n")
 	h.SetThen("web1", protocol.Then{Recipe: "monit", SHA256: sum("monit-passwd hunter2")})
@@ -98,7 +100,8 @@ func TestSecrets(t *testing.T) {
 
 // spec: Variables/Secrets in output; CLI/Output
 func TestSecretThen(t *testing.T) {
-	plan := run.MakePlan(context.Background(), secretProject(t), fakehost.New().Connector(), run.Options{})
+	p, _ := secretProject(t)
+	plan := run.MakePlan(context.Background(), p, fakehost.New().Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(&out, &errOut)
 	golden.Assert(t, filepath.Join("testdata", "secrets", "plan-then.golden"), output(&out, &errOut))
@@ -106,7 +109,7 @@ func TestSecretThen(t *testing.T) {
 
 // spec: Variables/Secrets in output; CLI/Output
 func TestSecretsFailedStep(t *testing.T) {
-	p := secretProject(t)
+	p, _ := secretProject(t)
 	h := fakehost.New()
 	h.FailApply("web1 /etc/monit/hunter2.key")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/diff"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
@@ -43,7 +44,7 @@ func (p *Plan) changes(host string) bool {
 // Write prints the changes per host, hosts with the same changes together,
 // then the summary and the plan hash. Failures go to errOut.
 func (p *Plan) Write(out, errOut io.Writer) {
-	bodies := map[string]*strings.Builder{}
+	bodies := map[string]*color.Text{}
 	for _, sp := range p.Stages {
 		for _, hp := range sp.Hosts {
 			if !hp.changes() {
@@ -51,10 +52,10 @@ func (p *Plan) Write(out, errOut io.Writer) {
 			}
 			b := bodies[hp.Host.Name]
 			if b == nil {
-				b = &strings.Builder{}
+				b = &color.Text{}
 				bodies[hp.Host.Name] = b
 			}
-			fmt.Fprintf(b, "  %s\n", sp.Stage.Name)
+			header(b, "  ", sp.Stage.Name)
 			var in *project.Step
 			for _, p := range hp.Steps {
 				if !p.shows() {
@@ -63,13 +64,13 @@ func (p *Plan) Write(out, errOut io.Writer) {
 				indent := "    "
 				if p.In != nil {
 					if p.In != in {
-						fmt.Fprintf(b, "    %s\n", recipeLabel(p.In))
+						header(b, "    ", recipeLabel(p.In))
 					}
 					indent = "      "
 				}
 				in = p.In
 				if p.Handler != nil {
-					fmt.Fprintf(b, "%s! handler %s\n", indent, p.Handler.Handler.FullName())
+					markLine(b, indent, "!", " handler "+p.Handler.Handler.FullName()+"\n")
 					continue
 				}
 				if p.Result.Status == module.Change {
@@ -77,19 +78,21 @@ func (p *Plan) Write(out, errOut io.Writer) {
 				}
 				switch {
 				case p.PendingThen:
-					fmt.Fprintf(b, "%s! then:%s\n", indent, command(p.Step.ShownThen(), indent+"    "))
+					markLine(b, indent, "!", " then:"+command(p.Step.ShownThen(), indent+"    ")+"\n")
 				case p.ThenRuns:
 					fmt.Fprintf(b, "%s    then:%s\n", indent, command(p.Step.ShownThen(), indent+"      "))
 				}
 			}
 			if h := sp.Stage.Health; h != nil {
-				fmt.Fprintf(b, "    * health:%s\n", command(h.Command, "        "))
+				markLine(b, "    ", "*", " health:"+command(h.Command, "        ")+"\n")
 			}
 		}
 	}
 	type group struct {
 		hosts []string
-		body  string
+		body  color.Text
+		// key is the body without styles.
+		key string
 	}
 	var groups []*group
 	for _, h := range p.Hosts {
@@ -97,28 +100,54 @@ func (p *Plan) Write(out, errOut io.Writer) {
 		if b == nil || p.Failed[h.Name] != nil {
 			continue
 		}
-		i := slices.IndexFunc(groups, func(g *group) bool { return g.body == b.String() })
+		key := b.String()
+		i := slices.IndexFunc(groups, func(g *group) bool { return g.key == key })
 		if i < 0 {
-			groups = append(groups, &group{body: b.String()})
+			groups = append(groups, &group{body: *b, key: key})
 			i = len(groups) - 1
 		}
 		groups[i].hosts = append(groups[i].hosts, h.Name)
 	}
 	for _, g := range groups {
-		header := strings.Join(g.hosts, ", ")
+		name := strings.Join(g.hosts, ", ")
 		if len(g.hosts) > 1 {
-			header += fmt.Sprintf(" (%d hosts)", len(g.hosts))
+			name += fmt.Sprintf(" (%d hosts)", len(g.hosts))
 		}
-		fmt.Fprintf(out, "%s\n%s\n", header, g.body)
+		var t color.Text
+		header(&t, "", name)
+		t = append(t, g.body...)
+		t.Add(color.Plain, "\n")
+		color.Fprint(out, t)
 	}
 	for _, h := range p.Hosts {
 		if err := p.Failed[h.Name]; err != nil {
-			fmt.Fprintf(errOut, "%s: %s\n", h.Name, secret.PrintableLines(err.Error()))
+			hostError(errOut, h.Name, err.Error())
 		}
 	}
 	change, unchanged, failed := p.Counts()
 	fmt.Fprintf(out, "%s: %d to change, %d unchanged, 0 unknown%s\nplan %s\n",
 		hosts(len(p.Hosts)), change, unchanged, failures(failed), p.Hash())
+}
+
+var markStyles = map[string]color.Style{"+": color.Green, "-": color.Red, "~": color.Yellow, "!": color.Cyan, "*": color.Cyan}
+
+// markLine adds a line with a mark in its color after prefix.
+func markLine(t *color.Text, prefix, mark, rest string) {
+	t.Add(color.Plain, prefix)
+	t.Add(markStyles[mark], mark)
+	t.Add(color.Plain, rest)
+}
+
+// header adds a bold line of a host, stage, or recipe.
+func header(t *color.Text, indent, name string) {
+	t.Add(color.Plain, indent)
+	t.Add(color.Bold, name)
+	t.Add(color.Plain, "\n")
+}
+
+// hostError writes the error of a host in red.
+func hostError(w io.Writer, host, err string) {
+	color.Fprint(w, color.Text{{Style: color.Red, Text: host + ": " + secret.PrintableLines(err) + "\n"}})
 }
 
 // command returns a command for the end of a line: after a space when it has
@@ -154,14 +183,28 @@ func linkNote(link string) string {
 	return " (link to " + secret.Printable(link) + ")"
 }
 
-func writeStep(w io.Writer, indent string, st project.Step, res module.Result) {
-	fmt.Fprintf(w, "%s%s %s%s\n", indent, marks[res.Action], label(st), linkNote(res.Link))
+func writeStep(t *color.Text, indent string, st project.Step, res module.Result) {
+	markLine(t, indent, marks[res.Action], " "+label(st)+linkNote(res.Link)+"\n")
 	for _, c := range res.Changes {
-		fmt.Fprintf(w, "%s    %s\n", indent, secret.Printable(c))
+		fmt.Fprintf(t, "%s    %s\n", indent, secret.Printable(c))
 	}
 	for _, l := range diffLines(st, res) {
-		fmt.Fprintf(w, "%s    %s\n", indent, l)
+		t.Add(color.Plain, indent+"    ")
+		t.Add(diffStyle(l), l)
+		t.Add(color.Plain, "\n")
 	}
+}
+
+func diffStyle(line string) color.Style {
+	switch {
+	case strings.HasPrefix(line, "@@"):
+		return color.Cyan
+	case strings.HasPrefix(line, "+"):
+		return color.Green
+	case strings.HasPrefix(line, "-"):
+		return color.Red
+	}
+	return color.Plain
 }
 
 // diffLines returns the diff of the content of a step, as the output shows
