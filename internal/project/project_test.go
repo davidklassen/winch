@@ -476,6 +476,9 @@ func TestLoadRecipes(t *testing.T) {
 		{name: "require-errors", files: map[string]string{
 			"recipes/nginx/recipe.yaml": "require:\n  - !expr 'facts.os.id =='\n  - !expr 'fact.os.id == \"debian\"'\n  - !expr 'facts.os.idd == \"debian\"'\n  - !expr facts.os.id\n  - !expr 'facts.os.version == 13'\nsteps: []\n",
 		}},
+		{name: "require-env", files: map[string]string{
+			"recipes/nginx/recipe.yaml": "require:\n  - !expr '$env.facts.os.id == \"debian\"'\nsteps: []\n",
+		}},
 		{name: "require-snippet", files: map[string]string{
 			"recipes/nginx/recipe.yaml": "require:\n  - !expr facts.os.id == \"debian\" &&& true\nsteps: []\n",
 		}},

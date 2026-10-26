@@ -1,0 +1,3 @@
+recipes/web/recipe.yaml:2:13: $env is not allowed
+ | $env.vars.domain
+ | ^

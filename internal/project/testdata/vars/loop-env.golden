@@ -1,0 +1,3 @@
+recipes/web/recipe.yaml:10:11: $env is not allowed
+ | $env.vars.web_sites
+ | ^

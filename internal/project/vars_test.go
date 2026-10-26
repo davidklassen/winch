@@ -207,6 +207,15 @@ func TestLoadVars(t *testing.T) {
 		{name: "when-env", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr '$env.vars.mail_server'", 1),
 		}},
+		{name: "arg-env", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "content: !expr 'string(vars.web_port)", "content: !expr 'string($env.vars.web_port)", 1),
+		}},
+		{name: "loop-env", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "loop: !expr vars.web_sites", "loop: !expr $env.vars.web_sites", 1),
+		}},
+		{name: "default-env", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !expr $env.vars.domain", 1),
+		}},
 		{name: "when-whole-host", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'toJSON(host) != \"\"'", 1),
 		}},

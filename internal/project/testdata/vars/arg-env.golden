@@ -1,0 +1,3 @@
+recipes/web/recipe.yaml:18:16: $env is not allowed
+ | string($env.vars.web_port) + " " + facts.os.codename + " " + vars.tools_name + "\n"
+ | .......^

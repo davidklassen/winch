@@ -160,8 +160,8 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 }
 
 // exprCheck finds the variables that an expression reads by name, and
-// reports undeclared variables, an item that is not defined, and a read of
-// vars other than by name where the scope forbids it.
+// reports $env, undeclared variables, an item that is not defined, and a
+// read of vars other than by name where the scope forbids it.
 type exprCheck struct {
 	sc    scope
 	src   file.Source
@@ -184,8 +184,8 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		if n.Value == "item" && c.sc.noItem != "" {
 			c.fail(n, c.sc.noItem)
 		}
-		if n.Value == "$env" && c.sc.byName != "" {
-			c.fail(n, c.sc.byName)
+		if n.Value == "$env" {
+			c.fail(n, "$env is not allowed")
 		}
 		if n.Value == "match" && c.sc.noMatch != "" {
 			c.fail(n, c.sc.noMatch)

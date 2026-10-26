@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/expr-lang/expr"
+	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/vm"
 
 	"github.com/davidklassen/winch/internal/facts"
@@ -338,6 +339,11 @@ func compileRequire(n *yamlx.Node) (Require, error) {
 	prog, err := expr.Compile(text, expr.Env(requireEnv{}), expr.AsBool())
 	if err != nil {
 		return Require{}, yamlx.Errorf(n.Pos, "require: %s", exprMessage(err, []string{"facts"}))
+	}
+	check := &exprCheck{src: prog.Source(), named: map[ast.Node]bool{}}
+	ast.Walk(new(prog.Node()), check)
+	if len(check.errs) > 0 {
+		return Require{}, yamlx.Errorf(n.Pos, "require: %s", check.errs[0])
 	}
 	return Require{Text: text, Pos: n.Pos, program: prog}, nil
 }
