@@ -116,6 +116,15 @@ func checkDemo(t *testing.T, vm *vmtest.VM, peer string) {
 	if out := vm.MustRun(t, "stat -c '%a %U' /etc/sudoers.d/admin; getent passwd admin | cut -d: -f7"); out != "440 root\n/bin/bash\n" {
 		t.Errorf("the admin recipe: %q", out)
 	}
+	if out := vm.MustRun(t, "systemctl is-active rspamd valkey-server; stat -c '%a %U' /var/lib/rspamd/dkim/example.com.dkim.key"); out != "active\nactive\n600 _rspamd\n" {
+		t.Errorf("the rspamd recipe: %q", out)
+	}
+	if out := vm.MustRun(t, "apt-cache policy rspamd | grep -c 10.0.2.100/signed"); out == "0\n" {
+		t.Errorf("rspamd does not come from the signed source")
+	}
+	if out := vm.MustRun(t, "echo 'GET unattended-upgrades/enable_auto_updates' | debconf-communicate 2>/dev/null"); out != "0 true\n" {
+		t.Errorf("the answer of unattended-upgrades: %q", out)
+	}
 }
 
 // rotatePassword gives the website a new password in the inventory of the

@@ -1,0 +1,6 @@
+Package: winch-signed
+Version: 1
+Architecture: all
+Maintainer: winch
+Depends: debconf
+Description: test package of the signed source

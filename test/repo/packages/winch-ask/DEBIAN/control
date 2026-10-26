@@ -1,0 +1,6 @@
+Package: winch-ask
+Version: 1
+Architecture: all
+Maintainer: winch
+Depends: debconf
+Description: test package with a debconf question of each type

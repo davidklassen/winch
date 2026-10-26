@@ -19,6 +19,8 @@ stages:
           name: curl
       - recipe: unbound
       - recipe: dkimpy_milter
+      - recipe: unattended_upgrades
+      - recipe: rspamd
 
   # One web host at a time; the next starts when the site answers.
   - name: web

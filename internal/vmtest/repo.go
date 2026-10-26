@@ -13,18 +13,13 @@ import (
 	"path/filepath"
 )
 
-// repoInput is a tar of the list and the package definitions. It names
-// the repository and goes to the VM that fills it.
-func repoInput(list []byte, defs fs.FS) ([]byte, error) {
+// repoInput is a tar of the repository definition: the package lists and the
+// package definitions. It names the repository and goes to the VM that fills
+// it.
+func repoInput(defs fs.FS) ([]byte, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	if err := tw.WriteHeader(&tar.Header{Name: "debian.list", Mode: 0o644, Size: int64(len(list))}); err != nil {
-		return nil, err
-	}
-	if _, err := tw.Write(list); err != nil {
-		return nil, err
-	}
-	if err := writeTree(tw, defs, "packages"); err != nil {
+	if err := writeTree(tw, defs); err != nil {
 		return nil, err
 	}
 	if err := tw.Close(); err != nil {
@@ -40,11 +35,7 @@ func repoName(arch, snapshot string, input []byte) string {
 // ensureRepo finds the repository of the lab's inputs in the cache, or
 // builds it, and serves it from the lab's HTTP server.
 func (l *Lab) ensureRepo(ctx context.Context) error {
-	list, err := os.ReadFile(l.list)
-	if err != nil {
-		return err
-	}
-	input, err := repoInput(list, os.DirFS(filepath.Join(l.cfg.Repo, "packages")))
+	input, err := repoInput(os.DirFS(l.cfg.Repo))
 	if err != nil {
 		return err
 	}
@@ -56,7 +47,7 @@ func (l *Lab) ensureRepo(ctx context.Context) error {
 	} else if err != nil {
 		return err
 	}
-	for _, part := range []string{"debian", "test"} {
+	for _, part := range []string{"debian", "test", "signed"} {
 		if err := os.Symlink(filepath.Join(dir, part), filepath.Join(l.Dir, "www", part)); err != nil {
 			return err
 		}
@@ -66,22 +57,50 @@ func (l *Lab) ensureRepo(ctx context.Context) error {
 
 // fillScript downloads each listed package with the dependencies that the
 // VM lacks, one at a time, so packages that conflict all arrive. It builds
-// the test packages and writes an index for each part.
+// the test packages and writes an index for each part. The part signed holds
+// the packages of signed.list and of signed/, in a suite trixie with a signed
+// InRelease. It also holds the public key of the suite as key.asc, key.gpg
+// (binary), and key.fpr (the fingerprint), and an unrelated key as other.asc
+// and other.fpr.
 const fillScript = `set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q >/dev/null
-for p in $(sed 's/#.*//' /root/defs/debian.list); do
+for p in $(sed 's/#.*//' /root/defs/debian.list /root/defs/signed.list); do
 	apt-get install -q -y --download-only --reinstall "$p" >/dev/null
 done
-mkdir -p /root/repo/debian/pool /root/repo/test/pool
+mkdir -p /root/repo/debian/pool /root/repo/test/pool /root/repo/signed/pool
+for p in $(sed 's/#.*//' /root/defs/signed.list); do
+	mv /var/cache/apt/archives/"$p"_*.deb /root/repo/signed/pool/
+done
 cp /var/cache/apt/archives/*.deb /root/repo/debian/pool/
 for d in /root/defs/packages/*/; do
 	dpkg-deb -b "$d" /root/repo/test/pool/ >/dev/null
+done
+for d in /root/defs/signed/*/; do
+	dpkg-deb -b "$d" /root/repo/signed/pool/ >/dev/null
 done
 for part in debian test; do
 	cd /root/repo/$part
 	apt-ftparchive packages pool > Packages
 done
+apt-get install -q -y gnupg >/dev/null
+arch=$(dpkg --print-architecture)
+cd /root/repo/signed
+mkdir -p dists/trixie/main/binary-$arch
+apt-ftparchive packages pool > dists/trixie/main/binary-$arch/Packages
+apt-ftparchive -o APT::FTPArchive::Release::Suite=trixie -o APT::FTPArchive::Release::Codename=trixie \
+	-o APT::FTPArchive::Release::Components=main -o APT::FTPArchive::Release::Architectures=$arch \
+	release dists/trixie > /root/Release
+mv /root/Release dists/trixie/Release
+export GNUPGHOME=$(mktemp -d)
+gpg --batch -q --passphrase '' --quick-gen-key 'winch test repository' ed25519 sign never 2>/dev/null
+gpg --batch -q --passphrase '' --quick-gen-key 'winch other key' ed25519 sign never 2>/dev/null
+gpg --batch -q -u 'winch test repository' --clearsign -o dists/trixie/InRelease dists/trixie/Release
+gpg --armor --export 'winch test repository' > key.asc
+gpg --export 'winch test repository' > key.gpg
+gpg --armor --export 'winch other key' > other.asc
+gpg --with-colons --list-keys 'winch test repository' | awk -F: '/^fpr/ {print $10; exit}' > key.fpr
+gpg --with-colons --list-keys 'winch other key' | awk -F: '/^fpr/ {print $10; exit}' > other.fpr
 cd /root/repo
 tar -c .
 `
@@ -130,14 +149,17 @@ func (l *Lab) buildRepo(ctx context.Context, dir string, input []byte) error {
 	return removeOthers(l.cfg.Cache, "repo-"+l.Arch+"-", dir)
 }
 
-// writeTree writes the files of fsys to tw below prefix, as root, with mode
-// 0755 for an executable file and for a directory, else 0644.
-func writeTree(tw *tar.Writer, fsys fs.FS, prefix string) error {
+// writeTree writes the files of fsys to tw below ".", as root, with mode 0755
+// for an executable file and for a directory, else 0644.
+func writeTree(tw *tar.Writer, fsys fs.FS) error {
 	return fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		name := prefix + "/" + path
+		if path == "." {
+			return nil
+		}
+		name := "./" + path
 		if d.IsDir() {
 			return tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: name + "/", Mode: 0o755})
 		}

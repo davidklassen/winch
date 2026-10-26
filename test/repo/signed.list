@@ -1,0 +1,4 @@
+# The packages of the signed part of the local test repository, one per
+# line. Only the signed source has them; their dependencies are in the
+# Debian part.
+rspamd

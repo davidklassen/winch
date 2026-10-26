@@ -1,0 +1,52 @@
+vars:
+  rspamd_dkim_key:
+  # The source of the packages. The demo uses the lab's signed source.
+  rspamd_repo_url: https://rspamd.com/apt-stable
+  rspamd_repo_key: https://rspamd.com/apt-stable/gpg.key
+
+steps:
+  - name: Rspamd upstream (Debian's 3.12 gets no security fixes)
+    repo:
+      name: rspamd
+      url: !expr vars.rspamd_repo_url
+      suite: !expr facts.os.codename
+      components: [main]
+      key: !expr vars.rspamd_repo_key
+  - file:
+      path: /etc/apt/apt.conf.d/52unattended-upgrades-rspamd
+      content: |
+        Unattended-Upgrade::Origins-Pattern {
+                "site=rspamd.com";
+        };
+  - pkg:
+      name: [rspamd, valkey-server]
+  - file:
+      path: !tpl /etc/rspamd/local.d/{{ .item }}
+      source: !expr item
+      validate: rspamadm configtest
+    loop: [dmarc.conf, greylist.conf, milter_headers.conf, redis.conf]
+    notify: reload
+  - dir:
+      path: /var/lib/rspamd/dkim
+      owner: _rspamd
+      group: _rspamd
+      mode: "0700"
+  - name: DKIM key, selector "dkim", Rspamd's default path
+    file:
+      path: !tpl /var/lib/rspamd/dkim/{{ .vars.domain }}.dkim.key
+      content: !expr vars.rspamd_dkim_key
+      owner: _rspamd
+      group: _rspamd
+      mode: "0600"
+    notify: reload
+  - service:
+      name: !expr item
+      enabled: true
+      running: true
+    loop: [valkey-server, rspamd]
+
+handlers:
+  reload:
+    - service:
+        name: rspamd
+        reloaded: true

@@ -259,16 +259,8 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 		return nil
 	}
 	if p.refresh {
-		// apt-get update does not wait for the index lock. It creates a missing
-		// index directory, where no other run holds the lock.
-		_, err := os.Stat(filepath.Dir(indexLock))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := waitIndexLock(ctx, note); err != nil {
 			return err
-		}
-		if err == nil {
-			if err := waitLocks(ctx, []string{indexLock}, note); err != nil {
-				return err
-			}
 		}
 		if _, err := run(ctx, aptEnv, "apt-get", "update", "-q", "--error-on=any"); err != nil {
 			return err
@@ -292,6 +284,20 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 	}
 	_, err := run(ctx, aptEnv, "apt-get", slices.Concat(args, p.todo, p.configure)...)
 	return err
+}
+
+// waitIndexLock waits until no other apt run holds the lock of the package
+// index. apt-get update does not wait for it. It creates a missing index
+// directory, where no other run holds the lock.
+func waitIndexLock(ctx context.Context, note func(string)) error {
+	_, err := os.Stat(filepath.Dir(indexLock))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return waitLocks(ctx, []string{indexLock}, note)
 }
 
 // waitLocks waits until no other apt or dpkg run holds the locks. apt waits

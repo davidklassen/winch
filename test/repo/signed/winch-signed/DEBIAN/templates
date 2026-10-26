@@ -1,0 +1,4 @@
+Template: winch-signed/greeting
+Type: string
+Default: hello
+Description: The greeting

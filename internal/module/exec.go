@@ -21,18 +21,30 @@ const (
 // run runs a command and returns its output. On a failure, the error holds
 // the end of the output.
 func run(ctx context.Context, env []string, name string, args ...string) (string, error) {
-	return runLimited(ctx, commandLimit, KillDelay, env, name, args...)
+	return runLimited(ctx, commandLimit, KillDelay, env, "", name, args...)
 }
 
-func runLimited(ctx context.Context, limit, killDelay time.Duration, env []string, name string, args ...string) (string, error) {
+// runInput is run with stdin from input.
+func runInput(ctx context.Context, env []string, input, name string, args ...string) (string, error) {
+	return runLimited(ctx, commandLimit, KillDelay, env, input, name, args...)
+}
+
+func runLimited(ctx context.Context, limit, killDelay time.Duration, env []string, input, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(cmd.Environ(), env...)
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := wait(ctx, cmd, killDelay); err != nil {
-		return stdout.String(), fmt.Errorf("%s %s: %w: %s", name, args[0], err, tail(stdout.String()+stderr.String(), 10))
+		what := name
+		if len(args) > 0 {
+			what += " " + args[0]
+		}
+		return stdout.String(), fmt.Errorf("%s: %w: %s", what, err, tail(stdout.String()+stderr.String(), 10))
 	}
 	return stdout.String(), nil
 }

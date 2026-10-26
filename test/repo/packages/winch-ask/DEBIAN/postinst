@@ -1,0 +1,4 @@
+#!/bin/sh
+# Loads the templates.
+set -e
+. /usr/share/debconf/confmodule

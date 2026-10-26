@@ -15,3 +15,6 @@ unbound
 # Two providers of mail-transport-agent.
 exim4-daemon-light
 postfix
+# The demo's rspamd recipe and unattended_upgrades recipe.
+valkey-server
+unattended-upgrades

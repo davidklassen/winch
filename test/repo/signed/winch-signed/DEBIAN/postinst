@@ -1,0 +1,6 @@
+#!/bin/sh
+# Writes the answer to /etc/winch-signed.conf.
+set -e
+. /usr/share/debconf/confmodule
+db_get winch-signed/greeting
+echo "$RET" > /etc/winch-signed.conf

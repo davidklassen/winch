@@ -273,6 +273,11 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 			return nil, err
 		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
+		// The old answer can be an older secret, which the text filter does
+		// not know.
+		if _, ok := p.Step.Args.(*module.Debconf); ok && p.Step.Secret && steps[i].Result.Status == module.Change {
+			steps[i].Result.Changes = []string{"answer (secret)"}
+		}
 		if steps[i].Result.Status == module.Change {
 			changed = true
 			for _, n := range p.Notify {

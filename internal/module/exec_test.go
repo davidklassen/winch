@@ -56,7 +56,7 @@ func limitRunners(killDelay time.Duration) []struct {
 		run  func(ctx context.Context, command string) error
 	}{
 		{"module command", func(ctx context.Context, command string) error {
-			_, err := runLimited(ctx, time.Second, killDelay, nil, "sh", "-c", command)
+			_, err := runLimited(ctx, time.Second, killDelay, nil, "", "sh", "-c", command)
 			return err
 		}},
 		{"project command", func(ctx context.Context, command string) error {
@@ -146,7 +146,7 @@ func TestTimeLimitAfterExit(t *testing.T) {
 	command := "sleep 3 & echo done"
 	t.Run("module command", func(t *testing.T) {
 		t.Parallel()
-		if _, err := runLimited(t.Context(), time.Second, 2*time.Second, nil, "sh", "-c", command); err != nil && strings.Contains(err.Error(), "no result") {
+		if _, err := runLimited(t.Context(), time.Second, 2*time.Second, nil, "", "sh", "-c", command); err != nil && strings.Contains(err.Error(), "no result") {
 			t.Errorf("error = %v, want no time limit", err)
 		}
 	})

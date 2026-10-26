@@ -118,3 +118,55 @@ func TestSecretsFailedStep(t *testing.T) {
 	// filter of the CLI.
 	golden.Assert(t, filepath.Join("testdata", "secrets", "apply-fails.golden"), applyOutput(&out, &errOut))
 }
+
+// spec: Variables/Secrets in output; Modules/debconf
+func TestSecretAnswer(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := filepath.Join(t.TempDir(), "age.key")
+	if err := os.WriteFile(identity, []byte(id.String()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := secret.ParseRecipients([]string{id.Recipient().String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := secret.Encrypt("new-token", rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + id.Recipient().String() + "]\nvars:\n  token:\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: !secret " + text + "\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - debconf:
+          package: app
+          question: app/token
+          type: string
+          value: !expr vars.token
+`,
+	})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	// The host has the old token.
+	h.SetAnswer("web1", "app/token", "old-token")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(&out, &errOut)
+	if !strings.Contains(out.String(), "    ~ debconf (secret)\n        answer (secret)\n") {
+		t.Errorf("plan:\n%s%s", out.String(), errOut.String())
+	}
+	for _, s := range []string{"old-token", "new-token"} {
+		if strings.Contains(out.String()+errOut.String(), s) {
+			t.Errorf("the plan shows %q", s)
+		}
+	}
+}

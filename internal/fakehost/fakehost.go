@@ -1,7 +1,7 @@
-// Package fakehost is a test double for hosts: it keeps files, packages, and
-// facts in memory and checks and applies file, dir, pkg, service, user, and
-// group steps against them. It keeps pending handlers and then records, and
-// runs commands as records.
+// Package fakehost is a test double for hosts: it keeps files, packages,
+// answers, and facts in memory and checks and applies file, dir, pkg,
+// service, user, group, and debconf steps against them. It keeps pending
+// handlers and then records, and runs commands as records.
 package fakehost
 
 import (
@@ -45,6 +45,7 @@ type Hosts struct {
 	down     map[string]bool
 	users    map[string]bool
 	groups   map[string]bool
+	answers  map[string]string
 	results  map[string]module.Result
 	// OnCheck and OnApply run before each check and each apply of a step,
 	// with the host and the main argument of the step.
@@ -83,7 +84,15 @@ func New() *Hosts {
 		down:       map[string]bool{},
 		users:      map[string]bool{},
 		groups:     map[string]bool{},
+		answers:    map[string]string{},
 	}
+}
+
+// SetAnswer sets the debconf answer of a question on a host.
+func (h *Hosts) SetAnswer(host, question, value string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.answers[host+" "+question] = value
 }
 
 // SetResult makes the check of the dir step for path on a host return res.
@@ -289,6 +298,9 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if g, ok := m.(*module.Group); ok {
 		return c.checkAccount(c.hosts.groups, g.Name), nil
 	}
+	if d, ok := m.(*module.Debconf); ok {
+		return c.checkAnswer(d), nil
+	}
 	if sv, ok := m.(*module.Service); ok {
 		if !sv.Reloaded && !sv.Restarted {
 			return module.Result{}, errors.New("fakehost: a service step needs reloaded or restarted")
@@ -315,6 +327,19 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		return module.Result{Status: module.Change, Action: module.Modify, Old: &cur}, nil
 	}
 	return module.Result{Status: module.OK}, nil
+}
+
+func (c *Conn) checkAnswer(d *module.Debconf) module.Result {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	cur, ok := c.hosts.answers[c.host+" "+d.Question]
+	switch {
+	case !ok:
+		return module.Result{Status: module.Change, Action: module.Create, Changes: []string{fmt.Sprintf("answer (none) → %q", d.Value)}}
+	case cur != d.Value:
+		return module.Result{Status: module.Change, Action: module.Modify, Changes: []string{fmt.Sprintf("answer %q → %q", cur, d.Value)}}
+	}
+	return module.Result{Status: module.OK}
 }
 
 // checkAccount creates only.
@@ -443,6 +468,9 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 		return res, nil
 	case *module.Group:
 		c.hosts.SetGroup(c.host, m.Name)
+		return res, nil
+	case *module.Debconf:
+		c.hosts.SetAnswer(c.host, m.Question, m.Value)
 		return res, nil
 	}
 	f := m.(*module.File)

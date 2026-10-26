@@ -49,13 +49,14 @@ func TestSnapshotName(t *testing.T) {
 func TestRepoName(t *testing.T) {
 	defs := func() fstest.MapFS {
 		return fstest.MapFS{
-			"winch-a/DEBIAN/control":  {Data: []byte("Package: winch-a\nVersion: 1\n")},
-			"winch-a/DEBIAN/postinst": {Data: []byte("#!/bin/sh\n"), Mode: 0o755},
+			"packages/winch-a/DEBIAN/control":  {Data: []byte("Package: winch-a\nVersion: 1\n")},
+			"packages/winch-a/DEBIAN/postinst": {Data: []byte("#!/bin/sh\n"), Mode: 0o755},
 		}
 	}
 	name := func(t *testing.T, arch, snapshot string, list []byte, defs fstest.MapFS) string {
 		t.Helper()
-		input, err := repoInput(list, defs)
+		defs["debian.list"] = &fstest.MapFile{Data: list}
+		input, err := repoInput(defs)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,17 +81,20 @@ func TestRepoName(t *testing.T) {
 		{name: "snapshot", snapshot: "snapshot-arm64-2"},
 		{name: "architecture", arch: "amd64"},
 		{name: "definition content", edit: func(fs fstest.MapFS) {
-			fs["winch-a/DEBIAN/control"] = &fstest.MapFile{Data: []byte("Package: winch-a\nVersion: 2\n")}
+			fs["packages/winch-a/DEBIAN/control"] = &fstest.MapFile{Data: []byte("Package: winch-a\nVersion: 2\n")}
+		}},
+		{name: "signed list", edit: func(fs fstest.MapFS) {
+			fs["signed.list"] = &fstest.MapFile{Data: []byte("rspamd\n")}
 		}},
 		{name: "new definition", edit: func(fs fstest.MapFS) {
-			fs["winch-b/DEBIAN/control"] = &fstest.MapFile{Data: []byte("Package: winch-b\nVersion: 1\n")}
+			fs["packages/winch-b/DEBIAN/control"] = &fstest.MapFile{Data: []byte("Package: winch-b\nVersion: 1\n")}
 		}},
 		{name: "file mode", edit: func(fs fstest.MapFS) {
-			fs["winch-a/DEBIAN/postinst"] = &fstest.MapFile{Data: []byte("#!/bin/sh\n"), Mode: 0o644}
+			fs["packages/winch-a/DEBIAN/postinst"] = &fstest.MapFile{Data: []byte("#!/bin/sh\n"), Mode: 0o644}
 		}},
 		{name: "file name", edit: func(fs fstest.MapFS) {
-			fs["winch-a/DEBIAN/preinst"] = fs["winch-a/DEBIAN/postinst"]
-			delete(fs, "winch-a/DEBIAN/postinst")
+			fs["packages/winch-a/DEBIAN/preinst"] = fs["packages/winch-a/DEBIAN/postinst"]
+			delete(fs, "packages/winch-a/DEBIAN/postinst")
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {

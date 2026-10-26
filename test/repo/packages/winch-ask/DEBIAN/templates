@@ -1,0 +1,31 @@
+Template: winch-ask/name
+Type: string
+Default: x
+Description: A name
+
+Template: winch-ask/enabled
+Type: boolean
+Default: false
+Description: Enabled?
+
+Template: winch-ask/mode
+Type: select
+Choices: one, two, three
+Default: one
+Description: A mode
+
+Template: winch-ask/level
+Type: select
+Choices-C: low, high
+Choices: Low level, High level
+Default: low
+Description: A level
+
+Template: winch-ask/features
+Type: multiselect
+Choices: a, b, c
+Description: Features
+
+Template: winch-ask/secret
+Type: password
+Description: A password

@@ -8,9 +8,17 @@ package vmtest
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -26,8 +34,9 @@ type Config struct {
 	Arch  string
 	// Cache holds the snapshot and the repository.
 	Cache string
-	// Repo is the directory with debian.list and the test package
-	// definitions in packages/.
+	// Repo is the directory with the package lists debian.list and
+	// signed.list, and the test package definitions in packages/ and
+	// signed/.
 	Repo string
 	// Online gives the VMs the internet and Debian's apt sources.
 	Online bool
@@ -69,6 +78,10 @@ type Lab struct {
 	snapshot string
 	http     *http.Server
 	httpPort int
+	// https serves the same files as http, with the certificate cert.
+	https     *http.Server
+	httpsPort int
+	cert      []byte
 }
 
 // The guest reaches the lab's HTTP server at this address.
@@ -102,10 +115,20 @@ Host *
 	if err := os.WriteFile(filepath.Join(dir, "bin", "ssh"), []byte(wrapper), 0o755); err != nil {
 		return nil, err
 	}
+	cert, tlsCert, err := labCert()
+	if err != nil {
+		return nil, err
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
+	tlsLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		ln.Close()
+		return nil, err
+	}
+	files := http.FileServer(http.Dir(filepath.Join(dir, "www")))
 	l := &Lab{
 		Dir:  dir,
 		Arch: cfg.Arch,
@@ -114,10 +137,14 @@ Host *
 		list: filepath.Join(cfg.Repo, "debian.list"),
 		// Each guest connection holds an nc process until the server
 		// closes it.
-		http:     &http.Server{Handler: http.FileServer(http.Dir(filepath.Join(dir, "www"))), IdleTimeout: 10 * time.Second},
-		httpPort: ln.Addr().(*net.TCPAddr).Port,
+		http:      &http.Server{Handler: files, IdleTimeout: 10 * time.Second},
+		httpPort:  ln.Addr().(*net.TCPAddr).Port,
+		https:     &http.Server{Handler: files, IdleTimeout: 10 * time.Second, TLSConfig: &tls.Config{Certificates: []tls.Certificate{tlsCert}}},
+		httpsPort: tlsLn.Addr().(*net.TCPAddr).Port,
+		cert:      cert,
 	}
-	go l.http.Serve(ln) //nolint:errcheck // Serve returns when Close closes the server
+	go l.http.Serve(ln)                //nolint:errcheck // Serve returns when Close closes the server
+	go l.https.ServeTLS(tlsLn, "", "") //nolint:errcheck // ServeTLS returns when Close closes the server
 	defer func() {
 		if err != nil {
 			l.Close()
@@ -132,9 +159,35 @@ Host *
 	return l, nil
 }
 
-// Close stops the lab's HTTP server.
+// Close stops the lab's HTTP servers.
 func (l *Lab) Close() {
 	l.http.Close()
+	l.https.Close()
+}
+
+// labCert returns a self-signed certificate for the lab's address, in PEM
+// and for the server.
+func labCert() ([]byte, tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, tls.Certificate{}, err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "winch lab"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(30 * 24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:           []net.IP{net.ParseIP(labAddr)},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, tls.Certificate{}, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
 }
 
 // Online reports whether the VMs have the internet and Debian's sources.
@@ -182,8 +235,8 @@ type VM struct {
 	exited  chan struct{}
 }
 
-// Start starts a VM from the snapshot and gives it the apt sources of the
-// lab's mode.
+// Start starts a VM from the snapshot, gives it the apt sources of the lab's
+// mode, and makes it trust the certificate of the lab's HTTPS server.
 func (l *Lab) Start(ctx context.Context, name string) (*VM, error) {
 	vm, err := l.clone(ctx, name, l.cfg.Online)
 	if err != nil {
@@ -195,6 +248,9 @@ func (l *Lab) Start(ctx context.Context, name string) (*VM, error) {
 		debian := strings.ReplaceAll(test, "/test/", "/debian/")
 		sources = "rm /etc/apt/sources.list.d/debian.sources && printf '" + debian + "' > /etc/apt/sources.list.d/winch-debian.sources && " + sources
 	}
+	// update-ca-certificates keeps the certificate when a package runs it
+	// again.
+	sources += " && printf '%s' " + Quote(string(l.cert)) + " > /usr/local/share/ca-certificates/winch-lab.crt && update-ca-certificates >/dev/null"
 	if _, err := vm.Run(ctx, sources); err != nil {
 		vm.Stop()
 		return nil, err
@@ -287,7 +343,7 @@ func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, 
 	if vm.qmpPort, err = freePort(); err != nil {
 		return nil, err
 	}
-	args, err := qemuArgs(l.Arch, disk, vm.dir, ports{SSH: sshPort, QMP: vm.qmpPort, HTTP: l.httpPort}, online)
+	args, err := qemuArgs(l.Arch, disk, vm.dir, ports{SSH: sshPort, QMP: vm.qmpPort, HTTP: l.httpPort, HTTPS: l.httpsPort}, online)
 	if err != nil {
 		return nil, err
 	}
@@ -370,13 +426,13 @@ func tail(s string, n int) string {
 }
 
 type ports struct {
-	SSH, QMP, HTTP int
+	SSH, QMP, HTTP, HTTPS int
 }
 
 // qemuArgs returns the QEMU command of a VM. Offline, restrict=on cuts the
-// VM off from every address but the guestfwd to the lab's HTTP server.
+// VM off from every address but the guestfwds to the lab's HTTP servers.
 func qemuArgs(arch, disk, dir string, p ports, online bool) ([]string, error) {
-	netdev := fmt.Sprintf("user,id=net0,hostfwd=tcp:127.0.0.1:%d-:22,guestfwd=tcp:%s:80-cmd:nc 127.0.0.1 %d", p.SSH, labAddr, p.HTTP)
+	netdev := fmt.Sprintf("user,id=net0,hostfwd=tcp:127.0.0.1:%[1]d-:22,guestfwd=tcp:%[2]s:80-cmd:nc 127.0.0.1 %[3]d,guestfwd=tcp:%[2]s:443-cmd:nc 127.0.0.1 %[4]d", p.SSH, labAddr, p.HTTP, p.HTTPS)
 	if !online {
 		netdev += ",restrict=on"
 	}
