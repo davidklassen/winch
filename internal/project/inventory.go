@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -83,7 +84,7 @@ func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) 
 	}
 	for i := range inv.Groups {
 		g := &inv.Groups[i]
-		errs = append(errs, patternName("group", g.Name, g.Pos))
+		errs = append(errs, patternName("group", g.Name, g.Pos), printableName("group", g.Name, g.Pos))
 		var verrs []error
 		g.vars, verrs = l.values(g.VarsNode)
 		errs = append(errs, verrs...)
@@ -105,7 +106,7 @@ func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) 
 		if h.Name == "all" {
 			errs = append(errs, yamlx.Errorf(h.Pos, "host %q has the name of a group", h.Name))
 		}
-		errs = append(errs, patternName("host", h.Name, h.Pos))
+		errs = append(errs, patternName("host", h.Name, h.Pos), printableName("host", h.Name, h.Pos))
 		if h.Address == "" {
 			h.Address = h.Name
 		} else if !validAddress(h.Address) {
@@ -153,6 +154,15 @@ func patternName(kind, name string, pos yamlx.Pos) error {
 		return nil
 	}
 	return yamlx.Errorf(pos, `%s %q: a %s name cannot hold ",", "&", "!", or white space; a host pattern could not name it`, kind, name, kind)
+}
+
+// printableName returns the load error for a name with a tab or an
+// unprintable character.
+func printableName(kind, name string, pos yamlx.Pos) error {
+	if !strings.ContainsFunc(name, func(r rune) bool { return r == '\t' || secret.Unprintable(r) }) {
+		return nil
+	}
+	return yamlx.Errorf(pos, "%s %q: a name cannot hold a control or format character", kind, name)
 }
 
 // numberName returns the load error for a host name that YAML reads as a

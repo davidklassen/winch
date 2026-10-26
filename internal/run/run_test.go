@@ -396,14 +396,6 @@ func TestPlanRecipes(t *testing.T) {
 			setup: func(h *fakehost.Hosts) {
 				h.SetFacts("web1", facts.Facts{OS: facts.OS{ID: "debian", Codename: "forky"}})
 			}},
-		{name: "recipes-name-control-characters", failed: nil,
-			files: map[string]string{"pipelines/site.yaml": `stages:
-  - name: web
-    hosts: all
-    steps:
-      - name: "x\e]0;owned\a"
-        recipe: nginx
-`}},
 		{name: "recipes-check-fails", failed: []string{"web1"},
 			files: map[string]string{"recipes/tools/templates/tools.tmpl": "{{ .host.short }}\n"},
 			setup: func(h *fakehost.Hosts) { h.FailCheck("web1 /etc/nginx/site") }},
@@ -554,49 +546,4 @@ func TestPlanVars(t *testing.T) {
 			t.Errorf("web1 has %s", path)
 		}
 	}
-}
-
-// spec: CLI/Output
-func TestPlanStageNameControlCharacters(t *testing.T) {
-	h := fakehost.New()
-	p := loadFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
-		"pipelines/site.yaml": `stages:
-  - name: "x\e]0;owned\a"
-    hosts: all
-    steps:
-      - file:
-          path: /etc/motd
-          content: "x\n"
-`,
-	})
-	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
-	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
-	golden.Assert(t, filepath.Join("testdata", "plan", "stage-name-control-characters.golden"),
-		[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
-}
-
-// spec: CLI/Output
-func TestApplyStageNameControlCharacters(t *testing.T) {
-	h := fakehost.New()
-	h.FailApply("web2")
-	p := loadFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
-		"pipelines/site.yaml": `stages:
-  - name: "x\e]0;owned\a"
-    hosts: all
-    steps:
-      - file:
-          path: /etc/motd
-          content: "x\n"
-`,
-	})
-	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
-	var out, errOut bytes.Buffer
-	run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK()
-	golden.Assert(t, filepath.Join("testdata", "apply", "stage-name-control-characters.golden"),
-		[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
 }

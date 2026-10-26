@@ -81,7 +81,7 @@ func writePlanned(e *Events, host string, stage *project.Stage, steps []Planned)
 		ev := stepEvent(host, stage, p)
 		if s := p.Handler; s != nil {
 			if s.Runs {
-				ev.Handler, ev.Status = secret.Printable(s.Handler.FullName()), "change"
+				ev.Handler, ev.Status = s.Handler.FullName(), "change"
 				e.Write("planned", ev)
 			}
 			continue

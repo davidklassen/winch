@@ -413,7 +413,7 @@ func TestNotesGoToProgress(t *testing.T) {
 read -r line
 echo '{"id":1}'
 read -r line
-echo '{"id":2,"note":"waiting for another apt run (pid 42)"}'
+echo '{"id":2,"note":"\\u001b[2Kwaiting for another apt run (pid 42)"}'
 echo '{"id":2,"result":{"status":"ok"}}'
 cat >/dev/null
 `))
@@ -432,7 +432,7 @@ cat >/dev/null
 	if err != nil || res.Status != module.OK {
 		t.Fatalf("check = %+v, %v", res, err)
 	}
-	if want := "web1: waiting for another apt run (pid 42)\n"; progress.String() != want {
+	if want := "web1: ?[2Kwaiting for another apt run (pid 42)\n"; progress.String() != want {
 		t.Errorf("progress = %q, want %q", progress.String(), want)
 	}
 }

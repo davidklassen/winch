@@ -54,7 +54,7 @@ func (p *Plan) Write(out, errOut io.Writer) {
 				b = &strings.Builder{}
 				bodies[hp.Host.Name] = b
 			}
-			fmt.Fprintf(b, "  %s\n", secret.Printable(sp.Stage.Name))
+			fmt.Fprintf(b, "  %s\n", sp.Stage.Name)
 			var in *project.Step
 			for _, p := range hp.Steps {
 				if !p.shows() {
@@ -69,7 +69,7 @@ func (p *Plan) Write(out, errOut io.Writer) {
 				}
 				in = p.In
 				if p.Handler != nil {
-					fmt.Fprintf(b, "%s! handler %s\n", indent, secret.Printable(p.Handler.Handler.FullName()))
+					fmt.Fprintf(b, "%s! handler %s\n", indent, p.Handler.Handler.FullName())
 					continue
 				}
 				if p.Result.Status == module.Change {
@@ -113,7 +113,7 @@ func (p *Plan) Write(out, errOut io.Writer) {
 	}
 	for _, h := range p.Hosts {
 		if err := p.Failed[h.Name]; err != nil {
-			fmt.Fprintf(errOut, "%s: %v\n", h.Name, err)
+			fmt.Fprintf(errOut, "%s: %s\n", h.Name, secret.PrintableLines(err.Error()))
 		}
 	}
 	change, unchanged, failed := p.Counts()
@@ -126,7 +126,7 @@ func recipeLabel(st *project.Step) string {
 	if st.Name != "" {
 		l += ": " + st.Name
 	}
-	return secret.Printable(l)
+	return l
 }
 
 // linkNote names the symbolic link that a step follows.

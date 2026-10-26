@@ -166,12 +166,27 @@ func (w writer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Printable replaces control and format characters in text from a host, so
-// the text cannot move the cursor, change the terminal, or show its
-// characters in another order.
+// Unprintable reports whether r is a control, format, or line separator
+// character other than tab, which could move the cursor, change the
+// terminal, or show text in another order.
+func Unprintable(r rune) bool {
+	return r != '\t' && unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp)
+}
+
+// Printable replaces each Unprintable character in text from a host with "?".
 func Printable(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r != '\t' && unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
+		if Unprintable(r) {
+			return '?'
+		}
+		return r
+	}, s)
+}
+
+// PrintableLines is Printable for text with lines: it keeps each newline.
+func PrintableLines(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && Unprintable(r) {
 			return '?'
 		}
 		return r

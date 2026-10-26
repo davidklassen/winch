@@ -104,7 +104,7 @@ func (t text) Step(ev StepEvent) {
 
 func (t text) Host(ev HostEvent) {
 	if ev.Error != "" {
-		fmt.Fprintf(t.errOut, "%s: %s\n", ev.Host, ev.Error)
+		fmt.Fprintf(t.errOut, "%s: %s\n", ev.Host, secret.PrintableLines(ev.Error))
 	}
 }
 
@@ -278,15 +278,14 @@ func (a *hostApply) health(ctx context.Context, stage *project.Stage) error {
 // healthEvent returns the event of the health gate of stage on host, as it
 // passes.
 func healthEvent(host string, stage *project.Stage) StepEvent {
-	name := secret.Printable(stage.Name)
-	return StepEvent{Host: host, Address: host + ":" + name + "#health", Stage: name, Health: secret.Printable(stage.Health.Command), Status: "ok"}
+	return StepEvent{Host: host, Address: host + ":" + stage.Name + "#health", Stage: stage.Name, Health: secret.Printable(stage.Health.Command), Status: "ok"}
 }
 
 // stepEvent returns the event of p on host in stage, without its result.
 func stepEvent(host string, stage *project.Stage, p Planned) StepEvent {
-	ev := StepEvent{Host: host, Address: host + ":" + secret.Printable(p.Address), Stage: secret.Printable(stage.Name)}
+	ev := StepEvent{Host: host, Address: host + ":" + p.Address, Stage: stage.Name}
 	if p.In != nil {
-		ev.Recipe = secret.Printable(p.In.Recipe.Name)
+		ev.Recipe = p.In.Recipe.Name
 	}
 	return ev
 }
@@ -322,7 +321,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 			continue
 		}
 		ev := stepEvent(a.host, stage, p)
-		ev.Handler, ev.Step, ev.Module = secret.Printable(handler), label(p.Step), p.Step.Module
+		ev.Handler, ev.Step, ev.Module = handler, label(p.Step), p.Step.Module
 		l := ev.label()
 		c, err := a.step(ctx, ev, l, p)
 		changed = changed || c
@@ -371,7 +370,7 @@ func (a *hostApply) handler(ctx context.Context, stage *project.Stage, s *Slot) 
 		return changed, err
 	}
 	if err := a.conn.Handled(context.WithoutCancel(ctx), name); err != nil {
-		return changed, fmt.Errorf("%s: failed: handler %s: %w", secret.Printable(s.Handler.Recipe.Name), secret.Printable(name), err)
+		return changed, fmt.Errorf("%s: failed: handler %s: %w", s.Handler.Recipe.Name, name, err)
 	}
 	delete(a.notified, name)
 	return changed, nil

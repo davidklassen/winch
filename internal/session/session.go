@@ -19,6 +19,7 @@ import (
 	"github.com/davidklassen/winch/internal/helperbin"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
+	"github.com/davidklassen/winch/internal/secret"
 )
 
 const StateDir = "/var/lib/winch"
@@ -305,7 +306,7 @@ func (s *Session) call(method string, params, result any) error {
 		if resp.Note == "" {
 			break
 		}
-		fmt.Fprintf(s.progress, "%s: %s\n", s.host, resp.Note)
+		fmt.Fprintf(s.progress, "%s: %s\n", s.host, secret.Printable(resp.Note))
 	}
 	if resp.NeedContent {
 		return errNeedContent

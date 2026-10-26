@@ -470,6 +470,7 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 			errs = append(errs, yamlx.Errorf(sf.Pos, "duplicate stage name %q", sf.Name))
 		}
 		seen[sf.Name] = true
+		errs = append(errs, printableName("stage", sf.Name, sf.Pos))
 		s := Stage{Name: sf.Name, Hosts: sf.Hosts, HostsPos: sf.HostsPos}
 		if sf.Parallelism != nil {
 			if *sf.Parallelism < 1 {
@@ -531,6 +532,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 		switch {
 		case p.Key == "name":
 			errs = append(errs, yamlx.Decode(p.Value, &st.Name))
+			errs = append(errs, printableName("step", st.Name, p.Value.Pos))
 			continue
 		case p.Key == "when":
 			var err error

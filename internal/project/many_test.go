@@ -562,3 +562,51 @@ func TestUserBeatsInventory(t *testing.T) {
 		}
 	}
 }
+
+// spec: CLI/Output
+func TestNameCharacters(t *testing.T) {
+	recipe := "steps:\n  - name: \"%s\"\n    file:\n      path: /etc/motd\n      content: hi\n"
+	handler := "steps: []\nhandlers:\n  reload:\n    - name: \"%s\"\n      file:\n        path: /etc/motd\n        content: hi\n"
+	stageStep := "stages:\n  - name: web\n    hosts: all\n    steps:\n      - name: \"%s\"\n        file:\n          path: /etc/motd\n          content: hi\n"
+	recipeStep := "stages:\n  - name: web\n    hosts: all\n    steps:\n      - name: \"%s\"\n        recipe: tools\n"
+	tests := []struct {
+		name  string
+		files map[string]string
+		want  string
+	}{
+		{"host with address", map[string]string{"inventories/test.yaml": "hosts:\n  \"web\\e]0;x\\a\": {address: 192.0.2.1}\n"},
+			`inventories/test.yaml:2:3: host "web\x1b]0;x\a": a name cannot hold a control or format character`},
+		{"host without address", map[string]string{"inventories/test.yaml": "hosts:\n  \"web\\u202Eevil\": {}\n"},
+			`inventories/test.yaml:2:3: host "web\u202eevil": a name cannot hold a control or format character`},
+		{"group", map[string]string{"inventories/test.yaml": "hosts:\n  web1: {}\ngroups:\n  \"web\\u200B\":\n    hosts: [web1]\n"},
+			`inventories/test.yaml:4:3: group "web\u200b": a name cannot hold a control or format character`},
+		{"stage", map[string]string{"pipelines/site.yaml": "stages:\n  - name: \"x\\e[2K\"\n    hosts: all\n    steps: []\n"},
+			`pipelines/site.yaml:2:5: stage "x\x1b[2K": a name cannot hold a control or format character`},
+		{"stage with a line separator", map[string]string{"pipelines/site.yaml": "stages:\n  - name: \"x\\u2028\"\n    hosts: all\n    steps: []\n"},
+			`pipelines/site.yaml:2:5: stage "x\u2028": a name cannot hold a control or format character`},
+		{"stage with a tab", map[string]string{"pipelines/site.yaml": "stages:\n  - name: \"x\\ty\"\n    hosts: all\n    steps: []\n"},
+			`pipelines/site.yaml:2:5: stage "x\ty": a name cannot hold a control or format character`},
+		{"stage step", map[string]string{"pipelines/site.yaml": strings.ReplaceAll(stageStep, "%s", `x\e[1A`)},
+			`pipelines/site.yaml:5:15: step "x\x1b[1A": a name cannot hold a control or format character`},
+		{"recipe step in a stage", map[string]string{
+			"pipelines/site.yaml":       strings.ReplaceAll(recipeStep, "%s", `x\u202e`),
+			"recipes/tools/recipe.yaml": "steps: []\n",
+		}, `pipelines/site.yaml:5:15: step "x\u202e": a name cannot hold a control or format character`},
+		{"step of a recipe", map[string]string{
+			"pipelines/site.yaml":       strings.ReplaceAll(recipeStep, "%s", "tools"),
+			"recipes/tools/recipe.yaml": strings.ReplaceAll(recipe, "%s", `x\n`),
+		}, `recipes/tools/recipe.yaml:2:11: step "x\n": a name cannot hold a control or format character`},
+		{"step of a handler", map[string]string{
+			"pipelines/site.yaml":       strings.ReplaceAll(recipeStep, "%s", "tools"),
+			"recipes/tools/recipe.yaml": strings.ReplaceAll(handler, "%s", `x\a`),
+		}, `recipes/tools/recipe.yaml:4:13: step "x\a": a name cannot hold a control or format character`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(writeProject(t, with(manyProject, tt.files)), "", "site", nil, Keys{})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}

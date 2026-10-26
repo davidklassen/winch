@@ -395,9 +395,9 @@ func (p *Plan) HasChanges() bool {
 // scope is the recipe of a step, or the stage for a module step of a stage.
 func scope(stage *project.Stage, p Planned) string {
 	if p.In != nil {
-		return secret.Printable(p.In.Recipe.Name)
+		return p.In.Recipe.Name
 	}
-	return secret.Printable(stage.Name)
+	return stage.Name
 }
 
 // thenRecord is the record of the then of st in the recipe step in, or nil
