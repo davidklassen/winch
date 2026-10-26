@@ -207,7 +207,7 @@ func TestLoadHandlers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, handlerFiles(tt.files))
-			p, err := Load(dir, "", "site", nil, Keys{})
+			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
 			got := ""
 			if err != nil {
 				got = err.Error() + "\n"
@@ -225,7 +225,7 @@ func TestEvalThenAndRuns(t *testing.T) {
 	dir := writeProject(t, handlerFiles(map[string]string{
 		"pipelines/site.yaml": strings.Replace(pl, "      - recipe: site\n", "      - recipe: site\n        when: !expr 'host.name == \"web2\"'\n", 1),
 	}))
-	p, err := Load(dir, "", "site", nil, Keys{})
+	p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestEvalThenAndRuns(t *testing.T) {
 	}
 
 	// Without the when, site runs on web1.
-	p, err = Load(writeProject(t, handlersProject), "", "site", nil, Keys{})
+	p, err = Load(t.Context(), writeProject(t, handlersProject), "", "site", nil, Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestThenEvalErrors(t *testing.T) {
 	dir := writeProject(t, handlerFiles(map[string]string{
 		"recipes/db/recipe.yaml": strings.Replace(db, "then: echo db", "then: !expr 'len(host.name)'", 1),
 	}))
-	p, err := Load(dir, "", "site", nil, Keys{})
+	p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestThenOfAnEmptyLoop(t *testing.T) {
 	dir := writeProject(t, handlerFiles(map[string]string{
 		"recipes/db/recipe.yaml": strings.Replace(db, "then: echo db", "loop: []\n    then: !expr 'len(host.name)'", 1),
 	}))
-	p, err := Load(dir, "", "site", nil, Keys{})
+	p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}

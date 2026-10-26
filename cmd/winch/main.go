@@ -41,8 +41,8 @@ func main() {
 			kill()
 		}()
 	}
-	// Without a home directory and WINCH_AGE_KEY, only a project with
-	// secrets fails: it cannot read the identity.
+	// Without a home directory and the WINCH_AGE_ variables, only a project
+	// with secrets fails: it cannot read the identity.
 	home, _ := os.UserHomeDir()
 	os.Exit(cli.Main(ctx, os.Args[1:], cli.Env{
 		Dir:      ".",
@@ -55,6 +55,7 @@ func main() {
 		},
 		Home:   home,
 		AgeKey: os.Getenv("WINCH_AGE_KEY"),
+		AgeCmd: os.Getenv("WINCH_AGE_IDENTITY_CMD"),
 		Filter: filter,
 	}))
 }

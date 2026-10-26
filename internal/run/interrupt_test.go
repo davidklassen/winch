@@ -38,7 +38,7 @@ handlers:
         reloaded: true
 `,
 	})
-	p, err := project.Load(dir, "", "site", nil, project.Keys{})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}

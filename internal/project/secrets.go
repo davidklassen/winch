@@ -2,6 +2,7 @@ package project
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -20,8 +21,7 @@ import (
 
 // Keys decrypt the secrets of a project. Filter learns each secret value.
 type Keys struct {
-	// Identity is the path of the age identity file.
-	Identity string
+	Identity secret.Identity
 	Filter   *secret.Filter
 }
 
@@ -88,11 +88,11 @@ func walkTags(n *yamlx.Node, f func(*yamlx.Node)) {
 
 // unsealAll decrypts every sealed value with the identity of keys, and adds
 // each plaintext to the filter.
-func (l *loader) unsealAll(keys Keys) error {
+func (l *loader) unsealAll(ctx context.Context, keys Keys) error {
 	if len(l.sealed) == 0 {
 		return nil
 	}
-	ids, err := secret.ReadIdentities(keys.Identity)
+	ids, err := keys.Identity.Read(ctx)
 	if err != nil {
 		return err
 	}
@@ -109,10 +109,10 @@ func (l *loader) unsealAll(keys Keys) error {
 	return errors.Join(errs...)
 }
 
-func decrypt(text string, ids []age.Identity, identity string) (string, error) {
+func decrypt(text string, ids []age.Identity, identity secret.Identity) (string, error) {
 	plain, err := secret.Decrypt(text, ids)
 	if errors.Is(err, secret.ErrNotRecipient) {
-		return "", fmt.Errorf("the identity in %s is not a recipient", identity)
+		return "", fmt.Errorf("the identity %s is not a recipient", identity)
 	}
 	return plain, err
 }
@@ -277,7 +277,7 @@ func inventories(dir string, cfg *Config) ([]string, error) {
 // Rekey encrypts every secret in winch.yaml, the inventories, and the recipes
 // again for the recipients in winch.yaml. It writes no file when a secret
 // fails. It returns the number of secrets and of files.
-func Rekey(dir, identity string) (int, int, error) {
+func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, int, error) {
 	cfg, err := loadConfig(dir)
 	if err != nil {
 		return 0, 0, err
@@ -338,7 +338,7 @@ func Rekey(dir, identity string) (int, int, error) {
 			continue
 		}
 		if ids == nil {
-			if ids, err = secret.ReadIdentities(identity); err != nil {
+			if ids, err = identity.Read(ctx); err != nil {
 				return 0, 0, err
 			}
 		}

@@ -1,11 +1,13 @@
 package secret
 
 import (
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 )
@@ -83,27 +85,44 @@ func TestRecipients(t *testing.T) {
 }
 
 // spec: Variables/Secrets
-func TestReadIdentities(t *testing.T) {
+func TestIdentityRead(t *testing.T) {
 	id := newIdentity(t)
 	dir := t.TempDir()
 	good := filepath.Join(dir, "age.key")
 	if err := os.WriteFile(good, []byte("# created: today\n# public key: x\n"+id.String()+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ids, err := ReadIdentities(good)
-	if err != nil || len(ids) != 1 {
-		t.Fatalf("ReadIdentities = %d, %v", len(ids), err)
-	}
 	bad := filepath.Join(dir, "bad.key")
 	if err := os.WriteFile(bad, []byte("not a key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadIdentities(bad); err == nil || !strings.Contains(err.Error(), bad) {
-		t.Errorf("ReadIdentities(bad) = %v, want an error that names the file", err)
-	}
 	missing := filepath.Join(dir, "missing.key")
-	if _, err := ReadIdentities(missing); err == nil || !strings.Contains(err.Error(), missing) {
-		t.Errorf("ReadIdentities(missing) = %v, want an error that names the file", err)
+	tests := []struct {
+		name    string
+		id      Identity
+		wantErr string
+	}{
+		{"file", Identity{Path: good}, ""},
+		{"file that is not a key", Identity{Path: bad}, "read the age identity in " + bad + ": "},
+		{"missing file", Identity{Path: missing}, "read the age identity: open " + missing + ": "},
+		{"command", Identity{Cmd: "cat age.key", Dir: dir}, ""},
+		{"failing command", Identity{Cmd: "echo locked >&2; exit 3"}, "read the age identity: echo locked >&2; exit 3: exit status 3: locked"},
+		{"failing command without stderr", Identity{Cmd: "exit 3"}, "read the age identity: exit 3: exit status 3"},
+		{"command that prints no key", Identity{Cmd: "echo not a key"}, "read the age identity from echo not a key: "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ids, err := tt.id.Read(t.Context())
+			if tt.wantErr == "" {
+				if err != nil || len(ids) != 1 {
+					t.Errorf("Read = %d, %v; want one identity", len(ids), err)
+				}
+				return
+			}
+			if err == nil || !strings.HasPrefix(err.Error(), tt.wantErr) {
+				t.Errorf("Read = %v, want an error that starts with %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -138,5 +157,18 @@ func TestOneLine(t *testing.T) {
 		if (err != nil) != tt.err || got != tt.want {
 			t.Errorf("OneLine(%q) = %q, %v; want %q, error %v", tt.in, got, err, tt.want, tt.err)
 		}
+	}
+}
+
+// A child of the command can keep stdout open after the end of ctx.
+func TestIdentityReadCanceled(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := (Identity{Cmd: "sleep 30; true"}).Read(ctx); err == nil {
+		t.Error("Read after the end of ctx: no error")
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("Read returned after %v", d)
 	}
 }

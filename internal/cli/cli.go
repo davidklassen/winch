@@ -55,6 +55,8 @@ type Env struct {
 	Home string
 	// AgeKey is the value of WINCH_AGE_KEY.
 	AgeKey string
+	// AgeCmd is the value of WINCH_AGE_IDENTITY_CMD.
+	AgeCmd string
 	Filter *secret.Filter
 	// Now is the clock of the JSON events. Nil means time.Now.
 	Now func() time.Time
@@ -322,25 +324,34 @@ func validate(ctx context.Context, env Env, f *flags, args []string) int {
 	return o.end(exitOK, summary{})
 }
 
-// identity returns the path of the age identity file.
-func (env Env) identity() string {
+// identity returns the source of the age identity.
+func (env Env) identity() (secret.Identity, error) {
 	switch {
+	case env.AgeCmd != "" && env.AgeKey != "":
+		return secret.Identity{}, errors.New("winch: WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set")
+	case env.AgeCmd != "":
+		return secret.Identity{Cmd: env.AgeCmd, Dir: env.Dir}, nil
 	case filepath.IsAbs(env.AgeKey):
-		return env.AgeKey
+		return secret.Identity{Path: env.AgeKey}, nil
 	case env.AgeKey != "":
-		return filepath.Join(env.Dir, env.AgeKey)
+		return secret.Identity{Path: filepath.Join(env.Dir, env.AgeKey)}, nil
 	case env.Home != "":
-		return filepath.Join(env.Home, ".config", "winch", "age.key")
+		return secret.Identity{Path: filepath.Join(env.Home, ".config", "winch", "age.key")}, nil
 	}
-	return ""
+	return secret.Identity{}, nil
 }
 
-func (o *output) load(f *flags, cmd string, args []string) (*project.Project, bool) {
+func (o *output) load(ctx context.Context, f *flags, cmd string, args []string) (*project.Project, bool) {
 	if len(args) != 1 {
 		o.fail(fmt.Errorf("winch: %s needs one pipeline", cmd))
 		return nil, false
 	}
-	p, err := project.Load(o.env.Dir, f.inventory, args[0], f.set, project.Keys{Identity: o.env.identity(), Filter: o.env.Filter})
+	identity, err := o.env.identity()
+	if err != nil {
+		o.fail(err)
+		return nil, false
+	}
+	p, err := project.Load(ctx, o.env.Dir, f.inventory, args[0], f.set, project.Keys{Identity: identity, Filter: o.env.Filter})
 	if err != nil {
 		o.fail(err)
 		return nil, false
@@ -377,7 +388,7 @@ func failedCode(failed map[string]error) int {
 
 func plan(ctx context.Context, env Env, f *flags, args []string) int {
 	o := newOutput(env, f)
-	p, ok := o.load(f, "plan", args)
+	p, ok := o.load(ctx, f, "plan", args)
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
@@ -399,7 +410,7 @@ func apply(ctx context.Context, env Env, f *flags, args []string) int {
 		o.fail(fmt.Errorf("winch: --check %q: a plan hash has 16 hex characters, such as a3f9c2e1d07b4c58", *f.check))
 		return o.end(exitInvalid, summary{})
 	}
-	p, ok := o.load(f, "apply", args)
+	p, ok := o.load(ctx, f, "apply", args)
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}

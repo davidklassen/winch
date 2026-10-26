@@ -22,7 +22,7 @@ import (
 // manyProject has three hosts, and a pipeline with the stages in stages.
 func manyProject(t *testing.T, stages string) *project.Project {
 	t.Helper()
-	p, err := project.Load(vmtest.WriteProject(t, map[string]string{
+	p, err := project.Load(t.Context(), vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n  web3: {}\n",
 		"pipelines/site.yaml":   "stages:\n" + stages,
@@ -379,7 +379,7 @@ func TestSkippedStageRequirement(t *testing.T) {
 		"pipelines/site.yaml":        "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: ubuntu\n" + motdStage,
 		"recipes/ubuntu/recipe.yaml": "require:\n  - !expr 'facts.os.id == \"ubuntu\"'\nsteps: []\n",
 	})
-	p, err := project.Load(dir, "", "site", nil, project.Keys{})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -62,7 +62,7 @@ steps:
 `,
 		"recipes/monit/templates/settings.tmpl": "set httpd port 2812\n  allow {{ .vars.monit_user }}:{{ .vars.monit_password }}\n# {{ title .vars.monit_password }}\n",
 	})
-	p, err := project.Load(dir, "", "site", nil, project.Keys{Identity: identity, Filter: secret.NewFilter()})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
 	if err != nil {
 		t.Fatal(err)
 	}

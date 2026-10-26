@@ -5,12 +5,15 @@ package secret
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"filippo.io/age"
 )
@@ -50,16 +53,48 @@ func Encrypt(plain string, recipients []age.Recipient) (string, error) {
 	return base64.StdEncoding.EncodeToString(b.Bytes()), nil
 }
 
-// ReadIdentities reads an age identity file.
-func ReadIdentities(path string) ([]age.Identity, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("read the age identity: %w", err)
+// Identity is the source of the age identity: the stdout of Cmd when Cmd
+// is not empty, else the file Path.
+type Identity struct {
+	Path string
+	// Cmd runs through sh -c in Dir.
+	Cmd, Dir string
+}
+
+// String names the source for an error message.
+func (id Identity) String() string {
+	if id.Cmd != "" {
+		return "from " + id.Cmd
 	}
-	defer f.Close()
-	ids, err := age.ParseIdentities(f)
+	return "in " + id.Path
+}
+
+// Read reads the identities from the source.
+func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
+	var data []byte
+	if id.Cmd == "" {
+		var err error
+		if data, err = os.ReadFile(id.Path); err != nil {
+			return nil, fmt.Errorf("read the age identity: %w", err)
+		}
+	} else {
+		cmd := exec.CommandContext(ctx, "sh", "-c", id.Cmd)
+		cmd.Dir = id.Dir
+		// A child of sh can keep stdout open after ctx ends.
+		cmd.WaitDelay = time.Second
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		var err error
+		if data, err = cmd.Output(); err != nil {
+			if msg := strings.TrimSpace(stderr.String()); msg != "" {
+				err = fmt.Errorf("%w: %s", err, msg)
+			}
+			return nil, fmt.Errorf("read the age identity: %s: %w", id.Cmd, err)
+		}
+	}
+	ids, err := age.ParseIdentities(bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("read the age identity %s: %w", path, err)
+		return nil, fmt.Errorf("read the age identity %s: %w", id, err)
 	}
 	return ids, nil
 }

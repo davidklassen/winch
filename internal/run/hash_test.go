@@ -86,7 +86,7 @@ func replaceWWW(files int) module.Result {
 // planHash plans the project of files on hosts that setup prepares.
 func planHash(t *testing.T, files map[string]string, setup func(h *fakehost.Hosts)) *run.Plan {
 	t.Helper()
-	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
+	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func hashSecretProject(t *testing.T, value, pipeline string, recipe string) *pro
 	if recipe != "" {
 		files["recipes/app/recipe.yaml"] = recipe
 	}
-	p, err := project.Load(vmtest.WriteProject(t, files), "", "site", nil, project.Keys{Identity: identity, Filter: secret.NewFilter()})
+	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
 	if err != nil {
 		t.Fatal(err)
 	}

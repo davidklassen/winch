@@ -100,11 +100,11 @@ func TestSecretEncrypt(t *testing.T) {
 	if r.code != exitInvalid || !strings.Contains(r.err, "winch.yaml has no recipients") {
 		t.Errorf("no recipients: exit %d, stderr %q", r.code, r.err)
 	}
-	r = winchWith(t, dir, "", identity, fakehost.New(), false, "", "secret", "nope")
+	r = winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "nope")
 	if r.code != exitInvalid || !strings.Contains(r.err, `unknown secret command "nope"`) {
 		t.Errorf("unknown command: exit %d, stderr %q", r.code, r.err)
 	}
-	r = winchWith(t, dir, "", identity, fakehost.New(), false, "", "secret", "encrypt", "extra")
+	r = winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "encrypt", "extra")
 	if r.code != exitInvalid || !strings.Contains(r.err, "secret encrypt takes no arguments") {
 		t.Errorf("argument: exit %d, stderr %q", r.code, r.err)
 	}
@@ -117,12 +117,12 @@ func TestSecretPlan(t *testing.T) {
 	setPassword(t, dir, encrypt(t, dir, "hunter2\n"))
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/pw", "pw=old-password\n")
-	r := winchWith(t, dir, "", identity, h, false, "", "plan", "site")
+	r := winchWith(t, dir, "", identity, "", h, false, "", "plan", "site")
 	if r.code != exitOK || !strings.Contains(r.out, "-pw=(secret)\n") || !strings.Contains(r.out, "+pw=(secret) (secret value changed)\n") {
 		t.Errorf("plan: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 	h.FailCommand("web1", "echo hunter2 | chpasswd")
-	r = winchWith(t, dir, "", identity, h, false, "", "apply", "site", "--yes")
+	r = winchWith(t, dir, "", identity, "", h, false, "", "apply", "site", "--yes")
 	if r.code != exitFailed || !strings.Contains(r.err, "then: echo (secret) | chpasswd: exit status 1") {
 		t.Errorf("apply: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
@@ -158,7 +158,7 @@ func TestSecretRekey(t *testing.T) {
 	if err := os.WriteFile(cfg, []byte(strings.Replace(string(data), id.Recipient().String(), next.Recipient().String(), 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r := winchWith(t, dir, "", identity, fakehost.New(), false, "", "secret", "rekey")
+	r := winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "rekey")
 	if r.code != exitOK || r.out != "rekeyed 1 secret in 1 file\n" {
 		t.Errorf("rekey: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
@@ -170,7 +170,7 @@ func TestSecretRekey(t *testing.T) {
 	if got, err := secret.Decrypt(text, []age.Identity{next}); err != nil || got != "hunter2" {
 		t.Errorf("after rekey: %q, %v", got, err)
 	}
-	r = winchWith(t, dir, "", identity, fakehost.New(), false, "", "secret", "rekey")
+	r = winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "rekey")
 	if r.code != exitInvalid || !strings.Contains(r.err, "inventories/test.yaml:4:11: !secret: the identity in "+identity+" is not a recipient") {
 		t.Errorf("rekey with an old identity: exit %d, stderr %q", r.code, r.err)
 	}
@@ -220,10 +220,71 @@ func TestAgeKey(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := winchWith(t, dir, tt.home, tt.ageKey, fakehost.New(), false, "", "plan", "site")
+			r := winchWith(t, dir, tt.home, tt.ageKey, "", fakehost.New(), false, "", "plan", "site")
 			if r.code != tt.wantCode || !strings.Contains(r.err, tt.wantErr) {
 				t.Errorf("exit %d, stderr %q; want exit %d and %q", r.code, r.err, tt.wantCode, tt.wantErr)
 			}
 		})
 	}
+}
+
+// spec: Variables/Secrets (WINCH_AGE_IDENTITY_CMD)
+func TestAgeIdentityCmd(t *testing.T) {
+	identity, id := newIdentity(t)
+	dir := secretProject(t, id)
+	setPassword(t, dir, encrypt(t, dir, "hunter2\n"))
+	if err := os.WriteFile(filepath.Join(dir, "demo.key"), []byte(id.String()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := newIdentity(t)
+	fail := "echo locked >&2; exit 3"
+	tests := []struct {
+		name, ageKey, ageCmd string
+		args                 []string
+		wantCode             int
+		wantErr              string
+	}{
+		{"plan", "", "cat demo.key", []string{"plan", "site"}, exitOK, ""},
+		{"rekey", "", "cat demo.key", []string{"secret", "rekey"}, exitOK, ""},
+		{"a failing command", "", fail, []string{"plan", "site"}, exitInvalid, "read the age identity: " + fail + ": exit status 3: locked\n"},
+		{"not a recipient", "", "cat " + other, []string{"plan", "site"}, exitInvalid, "!secret: the identity from cat " + other + " is not a recipient"},
+		{"both variables", identity, "cat demo.key", []string{"plan", "site"}, exitInvalid, "WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set"},
+		{"both variables in rekey", identity, "cat demo.key", []string{"secret", "rekey"}, exitInvalid, "WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := winchWith(t, dir, "", tt.ageKey, tt.ageCmd, fakehost.New(), false, "", tt.args...)
+			if r.code != tt.wantCode || !strings.Contains(r.err, tt.wantErr) {
+				t.Errorf("exit %d, stderr %q; want exit %d and %q", r.code, r.err, tt.wantCode, tt.wantErr)
+			}
+		})
+	}
+	t.Run("the command before the home directory", func(t *testing.T) {
+		_, wrong := newIdentity(t)
+		home := vmtest.WriteProject(t, map[string]string{".config/winch/age.key": wrong.String() + "\n"})
+		r := winchWith(t, dir, home, "", "cat demo.key", fakehost.New(), false, "", "plan", "site")
+		if r.code != exitOK {
+			t.Errorf("exit %d, stderr %q", r.code, r.err)
+		}
+	})
+	t.Run("no command without secrets", func(t *testing.T) {
+		plain := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + id.Recipient().String() + "\n",
+			"inventories/test.yaml": "hosts:\n  web1:\n",
+			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/a\n          content: a\n",
+		})
+		for _, args := range [][]string{{"plan", "site"}, {"secret", "rekey"}} {
+			r := winchWith(t, plain, "", "", "touch ran", fakehost.New(), false, "", args...)
+			if r.code != exitOK {
+				t.Errorf("%v: exit %d, stderr %q", args, r.code, r.err)
+			}
+			if _, err := os.Stat(filepath.Join(plain, "ran")); err == nil {
+				t.Errorf("%v: the command ran", args)
+			}
+			r = winchWith(t, plain, "", "missing.key", "touch ran", fakehost.New(), false, "", args...)
+			if r.code != exitInvalid || !strings.Contains(r.err, "both set") {
+				t.Errorf("%v with both variables: exit %d, stderr %q", args, r.code, r.err)
+			}
+		}
+	})
 }

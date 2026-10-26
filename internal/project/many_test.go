@@ -40,7 +40,7 @@ func hostNames(hosts []Host) string {
 
 // spec: Inventory/Host patterns
 func TestPattern(t *testing.T) {
-	p, err := Load(writeProject(t, manyProject), "", "site", nil, Keys{})
+	p, err := Load(t.Context(), writeProject(t, manyProject), "", "site", nil, Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestPattern(t *testing.T) {
 
 // spec: Inventory/Host patterns; Pipelines
 func TestStagePattern(t *testing.T) {
-	p, err := Load(writeProject(t, with(manyProject, map[string]string{
+	p, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{
 		"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: web & !web2, db\n    steps: []\n",
 	})), "", "site", nil, Keys{})
 	if err != nil {
@@ -103,7 +103,7 @@ func TestStagePattern(t *testing.T) {
 	if got := hostNames(p.Pipeline.Stages[0].Targets); got != "web1,web3,db1" {
 		t.Errorf("targets = %q", got)
 	}
-	_, err = Load(writeProject(t, with(manyProject, map[string]string{
+	_, err = Load(t.Context(), writeProject(t, with(manyProject, map[string]string{
 		"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: web & !wbe2\n    steps: []\n",
 	})), "", "site", nil, Keys{})
 	if err == nil || !strings.Contains(err.Error(), `pipelines/site.yaml:3:12: unknown host or group "wbe2" in inventories/test.yaml; did you mean "web2"?`) {
@@ -124,7 +124,7 @@ func TestHostNameCharacters(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.inventory, func(t *testing.T) {
-			_, err := Load(writeProject(t, with(manyProject, map[string]string{"inventories/test.yaml": tt.inventory})), "", "site", nil, Keys{})
+			_, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{"inventories/test.yaml": tt.inventory})), "", "site", nil, Keys{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("error = %v, want %q", err, tt.want)
 			}
@@ -169,7 +169,7 @@ func TestSelect(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := Load(writeProject(t, with(manyProject, map[string]string{"pipelines/site.yaml": selectPipeline})), "", "site", nil, Keys{})
+			p, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{"pipelines/site.yaml": selectPipeline})), "", "site", nil, Keys{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -309,7 +309,7 @@ func TestStepVarsSources(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := Load(writeProject(t, with(stepVarsFiles, tt.files)), "", "site", tt.set, Keys{})
+			p, err := Load(t.Context(), writeProject(t, with(stepVarsFiles, tt.files)), "", "site", tt.set, Keys{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -349,7 +349,7 @@ func TestStepVarsLoad(t *testing.T) {
 			if tt.winch != "" {
 				files["winch.yaml"] = tt.winch
 			}
-			_, err := Load(writeProject(t, with(stepVarsFiles, files)), "", "site", nil, Keys{})
+			_, err := Load(t.Context(), writeProject(t, with(stepVarsFiles, files)), "", "site", nil, Keys{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("error = %v, want %q", err, tt.want)
 			}
@@ -411,7 +411,7 @@ func TestMatch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := Load(writeProject(t, with(matchFiles, tt.files)), "", "site", tt.set, Keys{})
+			p, err := Load(t.Context(), writeProject(t, with(matchFiles, tt.files)), "", "site", tt.set, Keys{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -449,7 +449,7 @@ steps:
 		"recipes/monit/templates/peers.tmpl": "{{ range .vars.monit_peers }}{{ .name }} {{ .vars.token }}\n{{ end }}",
 	})
 	keys := k.keys()
-	p, err := Load(writeProject(t, k.sealFiles(t, files)), "", "site", nil, keys)
+	p, err := Load(t.Context(), writeProject(t, k.sealFiles(t, files)), "", "site", nil, keys)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +489,7 @@ func TestHealthLoad(t *testing.T) {
 		{"      command: x\n      timeout: 0\n", "timeout: must be 1 or more seconds"},
 	}
 	for _, tt := range tests {
-		_, err := Load(writeProject(t, with(manyProject, map[string]string{
+		_, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{
 			"pipelines/site.yaml": "stages:\n  - name: web\n    hosts: all\n    health:\n" + tt.health + "    steps: []\n",
 		})), "", "site", nil, Keys{})
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -518,7 +518,7 @@ func TestSkippedStageEvaluatesOnlyRequirements(t *testing.T) {
       - recipe: site
 `,
 	})
-	p, err := Load(writeProject(t, files), "", "site", nil, Keys{})
+	p, err := Load(t.Context(), writeProject(t, files), "", "site", nil, Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +535,7 @@ func TestStepVarNull(t *testing.T) {
 	files := with(stepVarsFiles, map[string]string{
 		"pipelines/site.yaml": "stages:\n  - name: web\n    hosts: web\n    steps:\n      - recipe: site\n        vars:\n          site_name: !expr 'nil'\n",
 	})
-	p, err := Load(writeProject(t, files), "", "site", nil, Keys{})
+	p, err := Load(t.Context(), writeProject(t, files), "", "site", nil, Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,7 +547,7 @@ func TestStepVarNull(t *testing.T) {
 
 // spec: CLI (--user); Remote execution/Sessions
 func TestUserBeatsInventory(t *testing.T) {
-	p, err := Load(writeProject(t, with(manyProject, map[string]string{
+	p, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{
 		"inventories/test.yaml": "hosts:\n  web1:\n    user: deploy\n  web2: {}\ngroups:\n  all:\n    user: ops\n",
 	})), "", "site", nil, Keys{})
 	if err != nil {
@@ -603,7 +603,7 @@ func TestNameCharacters(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load(writeProject(t, with(manyProject, tt.files)), "", "site", nil, Keys{})
+			_, err := Load(t.Context(), writeProject(t, with(manyProject, tt.files)), "", "site", nil, Keys{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("error = %v, want %q", err, tt.want)
 			}

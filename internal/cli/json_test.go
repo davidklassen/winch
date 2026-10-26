@@ -241,7 +241,7 @@ func TestJSONSecret(t *testing.T) {
 	// The error of the host holds the real value; only the filter masks it.
 	h.FailCommand("web1", "echo "+password+" | chpasswd")
 	for _, args := range [][]string{{"plan", "site", "--json"}, {"apply", "site", "--json", "--yes"}} {
-		r := winchWith(t, dir, "", identity, h, false, "", args...)
+		r := winchWith(t, dir, "", identity, "", h, false, "", args...)
 		if !strings.Contains(r.out, "(secret)") {
 			t.Errorf("%v: exit %d, stdout %q", args, r.code, r.out)
 		}

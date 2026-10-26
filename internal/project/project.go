@@ -4,6 +4,7 @@ package project
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -130,7 +131,7 @@ type nameAt struct {
 // Load reads the project in dir with one inventory and one pipeline. The
 // inventory is the path in inventory, or the default from winch.yaml. set
 // holds the --set flags.
-func Load(dir, inventory, pipeline string, set []string, keys Keys) (*Project, error) {
+func Load(ctx context.Context, dir, inventory, pipeline string, set []string, keys Keys) (*Project, error) {
 	cfg, cfgErr := loadConfig(dir)
 	if cfg == nil {
 		return nil, cfgErr
@@ -145,7 +146,7 @@ func Load(dir, inventory, pipeline string, set []string, keys Keys) (*Project, e
 	if err := resolve(invs[0], pl); err != nil {
 		return nil, err
 	}
-	if err := l.unsealAll(keys); err != nil {
+	if err := l.unsealAll(ctx, keys); err != nil {
 		return nil, err
 	}
 	warnings, err := scanProject(dir, cfg)

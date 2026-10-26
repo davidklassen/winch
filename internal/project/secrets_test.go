@@ -74,7 +74,9 @@ func (k testKey) sealFiles(t *testing.T, files map[string]string) map[string]str
 	return out
 }
 
-func (k testKey) keys() Keys { return Keys{Identity: k.path, Filter: secret.NewFilter()} }
+func (k testKey) keys() Keys {
+	return Keys{Identity: secret.Identity{Path: k.path}, Filter: secret.NewFilter()}
+}
 
 var secretProject = map[string]string{
 	"winch.yaml": `name: acme
@@ -112,7 +114,7 @@ func loadSecrets(t *testing.T, k testKey, steps string, files map[string]string)
 		all["recipes/r/recipe.yaml"] = recipe(steps)
 	}
 	keys := k.keys()
-	p, err := Load(writeProject(t, k.sealFiles(t, all)), "", "site", nil, keys)
+	p, err := Load(t.Context(), writeProject(t, k.sealFiles(t, all)), "", "site", nil, keys)
 	return p, keys, err
 }
 
@@ -314,7 +316,7 @@ func TestLoadSecretErrors(t *testing.T) {
 			all := with(secretProject, map[string]string{"recipes/r/recipe.yaml": recipe("  - file:\n      path: /a\n      content: x\n")})
 			all = with(all, tt.files)
 			all["winch.yaml"] = strings.Replace(all["winch.yaml"], "RECIPIENT", k.id.Recipient().String(), 1)
-			_, err := Load(writeProject(t, k.sealFiles(t, all)), "", "site", tt.set, k.keys())
+			_, err := Load(t.Context(), writeProject(t, k.sealFiles(t, all)), "", "site", tt.set, k.keys())
 			if err == nil || !strings.HasPrefix(err.Error(), tt.want) {
 				t.Errorf("error %v, want it to start with %q", err, tt.want)
 			}
@@ -329,7 +331,7 @@ func TestLoadSecretIdentity(t *testing.T) {
 	all["winch.yaml"] = strings.Replace(all["winch.yaml"], "RECIPIENT", k.id.Recipient().String(), 1)
 	dir := writeProject(t, k.sealFiles(t, all))
 	missing := filepath.Join(t.TempDir(), "age.key")
-	_, err := Load(dir, "", "site", nil, Keys{Identity: missing, Filter: secret.NewFilter()})
+	_, err := Load(t.Context(), dir, "", "site", nil, Keys{Identity: secret.Identity{Path: missing}, Filter: secret.NewFilter()})
 	if err == nil || !strings.Contains(err.Error(), missing) {
 		t.Errorf("Load without the identity: %v, want an error that names %s", err, missing)
 	}
@@ -339,7 +341,7 @@ func TestLoadSecretIdentity(t *testing.T) {
 	}
 	// A project without secrets needs no identity.
 	plain := writeProject(t, nil)
-	if _, err := Load(plain, "", "site", nil, Keys{Identity: missing, Filter: secret.NewFilter()}); err != nil {
+	if _, err := Load(t.Context(), plain, "", "site", nil, Keys{Identity: secret.Identity{Path: missing}, Filter: secret.NewFilter()}); err != nil {
 		t.Errorf("Load of a project without secrets: %v", err)
 	}
 }
@@ -378,7 +380,7 @@ func TestLoadWarnings(t *testing.T) {
 	all := with(secretProject, files)
 	all["winch.yaml"] = strings.Replace(all["winch.yaml"], "RECIPIENT", k.id.Recipient().String(), 1) + "# " + slack + "\n"
 	dir := writeProject(t, k.sealFiles(t, all))
-	p, err := Load(dir, "", "site", nil, k.keys())
+	p, err := Load(t.Context(), dir, "", "site", nil, k.keys())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +415,7 @@ func TestRekey(t *testing.T) {
 	files["pipelines/site.yaml"] = "stages: []\n"
 	dir := writeProject(t, files)
 
-	n, nfiles, err := Rekey(dir, oldKey.path)
+	n, nfiles, err := Rekey(t.Context(), dir, secret.Identity{Path: oldKey.path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +468,7 @@ func TestRekeyFailsWhole(t *testing.T) {
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + other.encrypt(t, "x") + "\n",
 	})
 	dir := writeProject(t, files)
-	_, _, err := Rekey(dir, k.path)
+	_, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
 	if err == nil || !strings.HasPrefix(err.Error(), "inventories/test.yaml:4:11: !secret: the identity in "+k.path+" is not a recipient") {
 		t.Errorf("Rekey = %v", err)
 	}
@@ -503,7 +505,7 @@ func TestRekeyWritesThroughLink(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if n, files, err := Rekey(dir, k.path); err != nil || n != 1 || files != 1 {
+	if n, files, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path}); err != nil || n != 1 || files != 1 {
 		t.Fatalf("Rekey = %d secrets in %d files, %v; want 1 in 1", n, files, err)
 	}
 	for link, target := range links {
@@ -559,7 +561,7 @@ func TestSecretAlias(t *testing.T) {
 	if _, err := Validate(dir, "", nil); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	p, err := Load(dir, "", "site", nil, k.keys())
+	p, err := Load(t.Context(), dir, "", "site", nil, k.keys())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -589,13 +591,13 @@ func TestRekeyKeepsEqualValuesEqual(t *testing.T) {
 		"inventories/test.yaml": inv,
 		"pipelines/site.yaml":   "stages: []\n",
 	})
-	if _, err := Load(dir, "", "site", nil, k.keys()); err != nil {
+	if _, err := Load(t.Context(), dir, "", "site", nil, k.keys()); err != nil {
 		t.Fatalf("Load before rekey: %v", err)
 	}
-	if _, _, err := Rekey(dir, k.path); err != nil {
+	if _, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(dir, "", "site", nil, k.keys()); err != nil {
+	if _, err := Load(t.Context(), dir, "", "site", nil, k.keys()); err != nil {
 		t.Errorf("Load after rekey: %v", err)
 	}
 }
@@ -609,7 +611,7 @@ func TestInventoryOutsideInventories(t *testing.T) {
 		"inventories/test.yaml": "",
 		"pipelines/site.yaml":   "stages: []\n",
 	})
-	n, _, err := Rekey(dir, k.path)
+	n, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
 	if err != nil || n != 1 {
 		t.Errorf("Rekey = %d, %v; want the secret of prod.yaml", n, err)
 	}
