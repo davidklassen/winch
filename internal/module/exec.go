@@ -49,7 +49,7 @@ func Shell(ctx context.Context, command string) error {
 }
 
 // ShellLimit is Shell with the time limit limit. After the limit, the command
-// gets SIGTERM, and SIGKILL after killDelay.
+// gets SIGTERM, and SIGKILL when it still runs after killDelay.
 func ShellLimit(ctx context.Context, command string, limit, killDelay time.Duration) error {
 	ctx, cancel := context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
 	defer cancel()
@@ -71,15 +71,20 @@ func ShellLimit(ctx context.Context, command string, limit, killDelay time.Durat
 }
 
 // wait runs cmd in its own process group. When ctx ends, the group gets
-// SIGTERM, and SIGKILL after killDelay.
+// SIGTERM, and SIGKILL when it still has a process after killDelay.
 func wait(ctx context.Context, cmd *exec.Cmd, killDelay time.Duration) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var stopped bool
 	cmd.Cancel = func() error {
 		stopped = true
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		time.Sleep(killDelay)
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		group := -cmd.Process.Pid
+		_ = syscall.Kill(group, syscall.SIGTERM)
+		for end := time.Now().Add(killDelay); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+			if errors.Is(syscall.Kill(group, 0), syscall.ESRCH) {
+				return nil
+			}
+		}
+		return syscall.Kill(group, syscall.SIGKILL)
 	}
 	// A daemon that the command starts can keep the output open.
 	cmd.WaitDelay = killDelay

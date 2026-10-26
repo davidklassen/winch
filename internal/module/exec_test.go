@@ -44,21 +44,29 @@ func TestShell(t *testing.T) {
 	}
 }
 
-// spec: Modules
-func TestTimeLimit(t *testing.T) {
-	tests := []struct {
+// limitRunners runs a command as a module command and as a project command,
+// with the time limit 1s.
+func limitRunners(killDelay time.Duration) []struct {
+	name string
+	run  func(ctx context.Context, command string) error
+} {
+	return []struct {
 		name string
 		run  func(ctx context.Context, command string) error
 	}{
 		{"module command", func(ctx context.Context, command string) error {
-			_, err := runLimited(ctx, time.Second, time.Second, nil, "sh", "-c", command)
+			_, err := runLimited(ctx, time.Second, killDelay, nil, "sh", "-c", command)
 			return err
 		}},
 		{"project command", func(ctx context.Context, command string) error {
-			return ShellLimit(ctx, command, time.Second, time.Second)
+			return ShellLimit(ctx, command, time.Second, killDelay)
 		}},
 	}
-	for _, tt := range tests {
+}
+
+// spec: Modules
+func TestTimeLimit(t *testing.T) {
+	for _, tt := range limitRunners(time.Second) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			// The command stops on SIGTERM. Its child records SIGTERM and keeps
@@ -92,6 +100,22 @@ func TestTimeLimit(t *testing.T) {
 				time.Sleep(100 * time.Millisecond)
 			}
 			t.Errorf("the child %d of the command still runs", pid)
+		})
+	}
+}
+
+// spec: Modules
+func TestTimeLimitEndsWhenTheCommandStops(t *testing.T) {
+	for _, tt := range limitRunners(10 * time.Second) {
+		t.Run(tt.name, func(t *testing.T) {
+			start := time.Now()
+			err := tt.run(t.Context(), "sleep 30 & wait")
+			if err == nil || !strings.Contains(err.Error(), "no result after 1s") {
+				t.Fatalf("error = %v, want the time limit", err)
+			}
+			if d := time.Since(start); d > 3*time.Second {
+				t.Errorf("returned after %s, want soon after the limit", d)
+			}
 		})
 	}
 }
