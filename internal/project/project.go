@@ -716,6 +716,7 @@ func (l *loader) loadArgs(st *Step, m module.Module, n *yamlx.Node, sc scope) er
 		st.Args = m
 		return nil
 	}
+	v.args = true
 	st.args = v
 	return yamlx.DecodeLazy(n, m)
 }

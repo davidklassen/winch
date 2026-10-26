@@ -322,6 +322,8 @@ func (c *computed) eval(e *Env) (any, error) {
 type value struct {
 	node     *yamlx.Node
 	computed map[*yamlx.Node]*computed
+	// args is true for module arguments, where a computed null fails.
+	args bool
 }
 
 // compileValue compiles the tagged scalars of n. It returns nil when n has
@@ -377,6 +379,9 @@ func (v *value) eval(e *Env, name string) (*yamlx.Node, error) {
 func (v *value) evalNode(n *yamlx.Node, e *Env, name string) (*yamlx.Node, error) {
 	if c := v.computed[n]; c != nil {
 		out, err := c.eval(e)
+		if err == nil && out == nil && v.args {
+			err = errors.New("the expression gave null")
+		}
 		if err != nil && e.failed != nil {
 			out, err = secret.Placeholder(e.n), nil
 			*e.failed = true

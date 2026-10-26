@@ -231,6 +231,20 @@ func TestSecretContentFailsWithPlaceholders(t *testing.T) {
 	}
 }
 
+// spec: Variables/Secrets in output (two evaluations); Templates and expressions/Data
+func TestSecretArgNullWithPlaceholders(t *testing.T) {
+	files := map[string]string{
+		"recipes/r/recipe.yaml": "vars:\n  r_m: {hunter2: \"check %s\"}\nsteps:\n  - file:\n      path: /a\n      content: x\n      validate: !expr 'vars.r_m[vars.pw]'\n",
+	}
+	steps, _, err := evalSecret(t, "", files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := steps[0].ShownMain(); got != "/a" {
+		t.Errorf("shown main = %q, want /a", got)
+	}
+}
+
 // spec: Variables/Secrets in output (two evaluations, text filter)
 func TestSecretFilterLearns(t *testing.T) {
 	_, keys, err := evalSecret(t, "  - file:\n      path: /a\n      content: !expr 'upper(vars.pw) + \"\\n\" + vars.line'\n", nil)

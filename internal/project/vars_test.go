@@ -447,7 +447,11 @@ func evalOne(t *testing.T, vars, step string, files map[string]string) string {
 	if len(steps) == 0 {
 		return "no steps"
 	}
-	return string(steps[0].Args.(*module.File).Data)
+	f, ok := steps[0].Args.(*module.File)
+	if !ok {
+		return "no error"
+	}
+	return string(f.Data)
 }
 
 const valueVars = `  early: !expr 'vars.late + 1'
@@ -594,6 +598,34 @@ func TestEvalErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := evalOne(t, valueVars+tt.vars, tt.step, tt.files)
+			if got != tt.want {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Templates and expressions/Data
+func TestArgNull(t *testing.T) {
+	tests := []struct {
+		name string
+		step string
+		want string
+	}{
+		{name: "service running", step: "  - service:\n      name: app\n      enabled: true\n      running: !expr vars.m.runing\n",
+			want: "error: recipes/r/recipe.yaml:5:16: running: the expression gave null"},
+		{name: "pointer", step: "  - file:\n      path: /a\n      content: x\n      validate: !expr vars.nothing\n",
+			want: "error: recipes/r/recipe.yaml:5:17: validate: the expression gave null"},
+		{name: "string", step: "  - file:\n      path: !expr vars.nothing\n      content: x\n",
+			want: "error: recipes/r/recipe.yaml:3:13: path: the expression gave null"},
+		{name: "list", step: "  - user:\n      name: a\n      authorized_keys: !expr vars.nothing\n",
+			want: "error: recipes/r/recipe.yaml:4:24: authorized_keys: the expression gave null"},
+		{name: "list element", step: "  - pkg:\n      name: [a, !expr vars.nothing]\n",
+			want: "error: recipes/r/recipe.yaml:3:17: name: the expression gave null"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evalOne(t, valueVars, tt.step, nil)
 			if got != tt.want {
 				t.Errorf("got  %q\nwant %q", got, tt.want)
 			}
