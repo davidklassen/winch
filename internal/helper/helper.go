@@ -162,7 +162,8 @@ func deleteOthers(bin, self string) error {
 }
 
 // step checks a step. With apply, it then records the handlers that the step
-// notifies and its then, and makes the changes the check found.
+// notifies and its then, and makes the changes the check found. When the
+// changes fail, it removes the records that it added.
 func step(ctx context.Context, params json.RawMessage, apply bool, login uint32, handlers, thens records, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
@@ -183,19 +184,24 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login uint32,
 	}
 	// The plan has shown the diff already.
 	out.Old = nil
-	if err := handlers.add(s.Notify); err != nil {
+	notified, err := handlers.add(s.Notify)
+	if err != nil {
 		return out, err
 	}
+	var thenLines []string
 	if s.Then != nil {
 		line, err := json.Marshal(s.Then)
 		if err != nil {
 			return out, err
 		}
-		if err := thens.add([]string{string(line)}); err != nil {
+		if thenLines, err = thens.add([]string{string(line)}); err != nil {
 			return out, err
 		}
 	}
-	return out, m.Apply(ctx, note)
+	if err := m.Apply(ctx, note); err != nil {
+		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+	}
+	return out, nil
 }
 
 func readPending(handlers, thens records) (protocol.Pending, error) {

@@ -276,34 +276,10 @@ func TestPendingHandlers(t *testing.T) {
 		t.Errorf("handlers/acme = %q, %v", data, err)
 	}
 
-	// The record comes before the change: it stays when the change fails.
-	locked := filepath.Join(work, "locked")
-	if err := os.Mkdir(locked, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(locked, "f"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(locked, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.Chmod(locked, 0o755); err != nil {
-			t.Error(err)
-		}
-	})
-	args, _ = json.Marshal(module.File{Path: filepath.Join(locked, "f"), Absent: true})
-	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: args, Notify: []string{"app.restart"}}); r.Error == "" {
-		t.Skip("the remove did not fail; the test runs as root")
-	}
-	if got, want := pending(t, c), []string{"nginx.reload", "nginx.restart", "app.restart"}; !slices.Equal(got, want) {
-		t.Fatalf("pending after a failed apply = %v, want %v", got, want)
-	}
-
 	if r := c.call(t, "handled", protocol.Handled{Name: "nginx.reload"}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	if got, want := pending(t, c), []string{"nginx.restart", "app.restart"}; !slices.Equal(got, want) {
+	if got, want := pending(t, c), []string{"nginx.restart"}; !slices.Equal(got, want) {
 		t.Errorf("pending after handled = %v, want %v", got, want)
 	}
 
@@ -524,6 +500,43 @@ func TestRecordsBeforeApply(t *testing.T) {
 	r := c.call(t, "apply", protocol.Step{Module: "file", Args: args, Notify: []string{"nginx.reload"}, Then: &protocol.Then{Recipe: "nginx", SHA256: "1f"}})
 	if r.Error != "" {
 		t.Errorf("apply: %s", r.Error)
+	}
+}
+
+// spec: Handlers; Steps
+func TestFailedApplyRemovesItsRecords(t *testing.T) {
+	dir := t.TempDir()
+	c := start(t, dir, "")
+	h := hello("r1")
+	h.Project = "acme"
+	if r := c.call(t, "hello", h); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	uid, gid := yamlx.NameOrID(strconv.Itoa(os.Getuid())), yamlx.NameOrID(strconv.Itoa(os.Getgid()))
+	path := filepath.Join(t.TempDir(), "f")
+	file := func(validate string) json.RawMessage {
+		args, _ := json.Marshal(module.File{Path: path, Data: []byte(validate + "\n"), Owner: uid, Group: gid, Validation: &validate})
+		return args
+	}
+	earlier := protocol.Then{Recipe: "nginx", SHA256: "1f"}
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("true"), Notify: []string{"nginx.reload"}, Then: &earlier}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+
+	failing := protocol.Then{Recipe: "nginx", SHA256: "2f"}
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("false"), Notify: []string{"nginx.reload", "nginx.restart"}, Then: &failing}); !strings.Contains(r.Error, "validate: false") {
+		t.Fatalf("apply error = %q, want the validate error", r.Error)
+	}
+	// A failed apply of the same then keeps the record of the earlier apply.
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("false"), Then: &earlier}); !strings.Contains(r.Error, "validate: false") {
+		t.Fatalf("apply error = %q, want the validate error", r.Error)
+	}
+	p := pendingAll(t, c)
+	if want := []string{"nginx.reload"}; !slices.Equal(p.Handlers, want) {
+		t.Errorf("pending handlers = %v, want %v", p.Handlers, want)
+	}
+	if want := []protocol.Then{earlier}; !slices.Equal(p.Then, want) {
+		t.Errorf("then records = %v, want %v", p.Then, want)
 	}
 }
 

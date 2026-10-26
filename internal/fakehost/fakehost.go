@@ -416,6 +416,13 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 	if err != nil || res.Status == module.OK {
 		return res, err
 	}
+	// A failed apply keeps no record of this call.
+	if sv, ok := m.(*module.Service); ok && c.hosts.fails(c.hosts.failApply, c.host, sv.Name) {
+		return module.Result{}, fmt.Errorf("systemctl: %s failed", sv.Name)
+	}
+	if f, ok := m.(*module.File); ok && c.hosts.fails(c.hosts.failApply, c.host, f.Path) {
+		return module.Result{}, fmt.Errorf("write %s: read-only file system", f.Path)
+	}
 	c.hosts.mu.Lock()
 	for _, n := range notify {
 		if !slices.Contains(c.hosts.pending[c.host], n) {
@@ -427,9 +434,6 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 	}
 	c.hosts.mu.Unlock()
 	if sv, ok := m.(*module.Service); ok {
-		if c.hosts.fails(c.hosts.failApply, c.host, sv.Name) {
-			return module.Result{}, fmt.Errorf("systemctl: %s failed", sv.Name)
-		}
 		c.hosts.mu.Lock()
 		defer c.hosts.mu.Unlock()
 		key := sv.Name + " " + serviceAction(sv)
@@ -474,9 +478,6 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 		return res, nil
 	}
 	f := m.(*module.File)
-	if c.hosts.fails(c.hosts.failApply, c.host, f.Path) {
-		return module.Result{}, fmt.Errorf("write %s: read-only file system", f.Path)
-	}
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
 	c.hosts.Applies++

@@ -45,33 +45,34 @@ func (h records) read() ([]string, error) {
 	return strings.Split(text, "\n"), nil
 }
 
-func (h records) add(names []string) error {
+// add returns the names that the file did not have.
+func (h records) add(names []string) ([]string, error) {
 	if len(names) == 0 {
-		return nil
+		return nil, nil
 	}
 	cur, err := h.read()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	added := false
+	var added []string
 	for _, n := range names {
 		if !slices.Contains(cur, n) {
 			cur = append(cur, n)
-			added = true
+			added = append(added, n)
 		}
 	}
-	if !added {
-		return nil
+	if len(added) == 0 {
+		return nil, nil
 	}
-	return h.write(cur)
+	return added, h.write(cur)
 }
 
-func (h records) remove(name string) error {
+func (h records) remove(names ...string) error {
 	cur, err := h.read()
 	if err != nil {
 		return err
 	}
-	out := slices.DeleteFunc(cur, func(n string) bool { return n == name })
+	out := slices.DeleteFunc(cur, func(n string) bool { return slices.Contains(names, n) })
 	if len(out) == len(cur) {
 		return nil
 	}

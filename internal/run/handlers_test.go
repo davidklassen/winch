@@ -643,3 +643,21 @@ func TestCommandLines(t *testing.T) {
 		t.Errorf("web1: error %q, want %q", err, want)
 	}
 }
+
+// spec: Steps; Handlers
+func TestFailedStepKeepsEarlierRecordsOnly(t *testing.T) {
+	h := fakehost.New()
+	present(h, "web1", "web2")
+	h.SetPending("web1", "app.restart")
+	h.SetFile("web1", "/var/www/index.html", "old\n")
+	h.FailApply("web1 /var/www/index.html")
+	if ok, got := applyAll(t, handlerProject(t), h); ok {
+		t.Fatalf("apply succeeded with a failing step\n%s", got)
+	}
+	if got, want := h.PendingOf("web1"), []string{"app.restart"}; !slices.Equal(got, want) {
+		t.Errorf("pending = %v, want %v", got, want)
+	}
+	if got := h.ThenOf("web1"); len(got) != 0 {
+		t.Errorf("then records = %v, want none", got)
+	}
+}

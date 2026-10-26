@@ -67,6 +67,33 @@ handlers:
         restarted: true
 `
 
+const validateRecipe = `vars:
+  v_one: a
+  v_two: a
+  v_check: "true"
+steps:
+  - file:
+      path: /etc/winch-v/1.conf
+      content: !tpl "{{ .vars.v_one }}\n"
+    then: test -e /root/v-ok
+    notify: restart
+  - file:
+      path: /etc/winch-v/2.conf
+      content: !tpl "{{ .vars.v_two }}\n"
+      validate: !expr vars.v_check
+    then: echo two >> /root/v-then
+    notify: [restart, reload]
+handlers:
+  restart:
+    - file:
+        path: /etc/winch-v/restarted
+        content: "x\n"
+  reload:
+    - file:
+        path: /etc/winch-v/reloaded
+        content: "x\n"
+`
+
 // spec: Handlers; Steps; Running a pipeline/Failures; Remote execution/State on the host
 func TestHandlers(t *testing.T) {
 	t.Parallel()
@@ -194,6 +221,37 @@ func TestHandlers(t *testing.T) {
 		r = lab.Winch(t, dir, append([]string{"plan", "site"}, set...)...)
 		if r.Code != 0 || !unchanged(r.Stdout, 2) {
 			t.Errorf("third plan: exit %d, stdout %q", r.Code, r.Stdout)
+		}
+	})
+
+	t.Run("a failed validate leaves only the records of earlier runs", func(t *testing.T) {
+		vdir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: vdemo\ninventory: inventories/test.yaml\n",
+			"inventories/test.yaml": "hosts:\n  handlers: {}\n",
+			"pipelines/site.yaml":   "stages:\n  - name: v\n    hosts: all\n    steps:\n      - recipe: v\n",
+			"recipes/v/recipe.yaml": validateRecipe,
+		})
+		vm.MustRun(t, "touch /root/v-ok")
+		if r := lab.Winch(t, vdir, "apply", "site", "--yes"); r.Code != 0 {
+			t.Fatalf("first apply: exit %d\n%s", r.Code, r.Stderr)
+		}
+		vm.MustRun(t, "rm /root/v-ok")
+		r := lab.Winch(t, vdir, "apply", "site", "--yes", "--set", "vars.v_one=b")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "then: test -e /root/v-ok") {
+			t.Fatalf("apply: exit %d, want the then error\n%s", r.Code, r.Stderr)
+		}
+		vm.MustRun(t, "touch /root/v-ok")
+		r = lab.Winch(t, vdir, "apply", "site", "--yes", "--set", "vars.v_one=b", "--set", "vars.v_two=b", "--set", "vars.v_check=exit 4")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "validate: exit 4") {
+			t.Fatalf("apply: exit %d, want the validate error\n%s", r.Code, r.Stderr)
+		}
+		// The person reverts the template: the step has nothing to change.
+		r = lab.Winch(t, vdir, "plan", "site", "--set", "vars.v_one=b")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "! handler v.restart") || strings.Contains(r.Stdout, "reload") || strings.Contains(r.Stdout, "! then") {
+			t.Errorf("plan after the failed validate: exit %d, want only the handler of the first run\n%s", r.Code, r.Stdout)
+		}
+		if out := vm.MustRun(t, "cat /var/lib/winch/handlers/vdemo /var/lib/winch/then/vdemo"); out != "v.restart\n" {
+			t.Errorf("records = %q, want only v.restart", out)
 		}
 	})
 }
