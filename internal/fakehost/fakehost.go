@@ -95,11 +95,12 @@ func (h *Hosts) SetAnswer(host, question, value string) {
 	h.answers[host+" "+question] = value
 }
 
-// SetResult makes the check of the dir step for path on a host return res.
-func (h *Hosts) SetResult(host, path string, res module.Result) {
+// SetResult makes the check of the dir step for path, or of the service step
+// for the unit name, on a host return res.
+func (h *Hosts) SetResult(host, name string, res module.Result) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.results[host+" "+path] = res
+	h.results[host+" "+name] = res
 }
 
 // SetUser makes the user name exist on a host.
@@ -302,6 +303,12 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		return c.checkAnswer(d), nil
 	}
 	if sv, ok := m.(*module.Service); ok {
+		c.hosts.mu.Lock()
+		res, ok := c.hosts.results[c.host+" "+sv.Name]
+		c.hosts.mu.Unlock()
+		if ok {
+			return res, nil
+		}
 		if !sv.Reloaded && !sv.Restarted {
 			return module.Result{}, errors.New("fakehost: a service step needs reloaded or restarted")
 		}

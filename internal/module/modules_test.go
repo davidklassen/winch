@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -235,9 +236,9 @@ func TestOthersHalfDoneNamesTheArchitecture(t *testing.T) {
 
 // spec: Modules/service and unit
 func TestParseShow(t *testing.T) {
-	got, err := parseShow("Id=nginx.service\nLoadState=loaded\nActiveState=activating\nSubState=auto-restart\nUnitFileState=enabled\nNeedDaemonReload=yes\nDropInPaths=\n")
-	want := unitState{id: "nginx.service", load: "loaded", active: "activating", sub: "auto-restart", file: "enabled", reload: true}
-	if got != want || err != nil {
+	got, err := parseShow("Id=nginx.service\nLoadState=loaded\nActiveState=activating\nSubState=auto-restart\nUnitFileState=enabled\nNeedDaemonReload=yes\nDropInPaths=\nTriggeredBy=nginx.socket nginx.path\n")
+	want := unitState{id: "nginx.service", load: "loaded", active: "activating", sub: "auto-restart", file: "enabled", reload: true, triggeredBy: []string{"nginx.socket", "nginx.path"}}
+	if !reflect.DeepEqual(got, want) || err != nil {
 		t.Errorf("got %+v, %v; want %+v", got, err, want)
 	}
 }

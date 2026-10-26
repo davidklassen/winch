@@ -31,12 +31,15 @@ const (
 // Result is the outcome of a check. Changes are lines for the plan. Old is
 // the current text content when the content changes, for the diff. Link is
 // the target of the symbolic link at the path that the step follows.
+// StartedBy are the active or enabled units that start the unit that a
+// service step stops or disables; the plan needs a step for each.
 type Result struct {
-	Status  Status   `json:"status"`
-	Action  Action   `json:"action,omitempty"`
-	Changes []string `json:"changes,omitempty"`
-	Old     *string  `json:"old,omitempty"`
-	Link    string   `json:"link,omitempty"`
+	Status    Status   `json:"status"`
+	Action    Action   `json:"action,omitempty"`
+	Changes   []string `json:"changes,omitempty"`
+	Old       *string  `json:"old,omitempty"`
+	Link      string   `json:"link,omitempty"`
+	StartedBy []string `json:"started_by,omitempty"`
 }
 
 // State is what earlier steps of the run did on the host. The controller

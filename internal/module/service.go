@@ -33,14 +33,21 @@ var unitRe = regexp.MustCompile(`^[A-Za-z0-9:_.\\@-]+$`)
 
 var unitTypes = []string{"service", "socket", "device", "mount", "automount", "swap", "target", "path", "timer", "slice", "scope"}
 
-func (s *Service) Validate() error {
-	// systemctl adds .service to a name without a unit-type suffix.
-	stem, suffix := s.Name, ".service"
+// Unit returns the unit name with its type. systemctl adds .service to a
+// name without one.
+func (s *Service) Unit() string {
 	if i := strings.LastIndexByte(s.Name, '.'); i >= 0 && slices.Contains(unitTypes, s.Name[i+1:]) {
-		stem, suffix = s.Name[:i], ""
+		return s.Name
 	}
+	return s.Name + ".service"
+}
+
+func (s *Service) Validate() error {
+	unit := s.Unit()
+	added := unit != s.Name
+	stem := unit[:strings.LastIndexByte(unit, '.')]
 	prefix, instance, at := strings.Cut(stem, "@")
-	n := len(s.Name) + len(suffix)
+	n := len(unit)
 	switch {
 	case !unitRe.MatchString(s.Name):
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q is not a unit name", s.Name)}
@@ -50,7 +57,7 @@ func (s *Service) Validate() error {
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs an instance name after \"@\"", s.Name)}
 	case stem == "":
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs a name before the suffix", s.Name)}
-	case n > 255 && suffix != "":
+	case n > 255 && added:
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters with .service added; a unit name has at most 255", n)}
 	case n > 255:
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters; a unit name has at most 255", n)}
@@ -69,7 +76,7 @@ func (s *Service) Validate() error {
 }
 
 func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,FragmentPath,DropInPaths,NeedDaemonReload,Type,RemainAfterExit", "--", s.Name)
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,FragmentPath,DropInPaths,NeedDaemonReload,Type,RemainAfterExit,TriggeredBy", "--", s.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -77,7 +84,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	if err != nil {
 		return Result{}, fmt.Errorf("systemctl show %s: %w", s.Name, err)
 	}
-	if u.id != s.Name && u.id != s.Name+".service" {
+	if u.id != s.Unit() {
 		return Result{}, fmt.Errorf("%s is an alias of %s; use %s", s.Name, u.id, strings.TrimSuffix(u.id, ".service"))
 	}
 	missing := u.load == "not-found"
@@ -91,6 +98,13 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		return Result{}, fmt.Errorf("%s has the load state %q", u.id, u.load)
 	default:
 		return Result{}, withJournal(ctx, u.id, fmt.Errorf("%s has the load state %q", u.id, u.load))
+	}
+	var startedBy []string
+	if u.load == "loaded" && len(u.triggeredBy) > 0 && (s.Running != nil && !*s.Running || s.Enabled != nil && !*s.Enabled) {
+		startedBy, err = activeOrEnabled(ctx, u.triggeredBy)
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	if u.reload {
 		s.todo = append(s.todo, "daemon-reload")
@@ -149,7 +163,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		if *s.Running && u.oneshot && !u.remain {
 			return Result{}, fmt.Errorf("%s is a oneshot unit without RemainAfterExit=yes, so it is never running after its job; start its timer, or use cmd", u.id)
 		}
-		up := u.active == "active" || u.active == "activating" || u.active == "reloading"
+		up := u.up()
 		// A unit that waits to restart is down, but systemd starts it again
 		// unless a stop cancels the restart.
 		crashed := strings.HasPrefix(u.sub, "auto-restart")
@@ -161,7 +175,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		}
 	}
 	if len(s.todo) == 0 {
-		return Result{Status: OK}, nil
+		return Result{Status: OK, StartedBy: startedBy}, nil
 	}
 	var changes []string
 	for _, c := range s.todo {
@@ -170,7 +184,26 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	if missing {
 		changes = append([]string{u.id + " does not exist yet"}, changes...)
 	}
-	return Result{Status: Change, Action: Modify, Changes: changes}, nil
+	return Result{Status: Change, Action: Modify, Changes: changes, StartedBy: startedBy}, nil
+}
+
+// activeOrEnabled returns the units that are active or enabled.
+func activeOrEnabled(ctx context.Context, units []string) ([]string, error) {
+	out, err := run(ctx, nil, "systemctl", append([]string{"show", "--property=Id,LoadState,ActiveState,UnitFileState", "--"}, units...)...)
+	if err != nil {
+		return nil, err
+	}
+	var found []string
+	for block := range strings.SplitSeq(strings.TrimSuffix(out, "\n"), "\n\n") {
+		u, err := parseShow(block)
+		if err != nil {
+			return nil, fmt.Errorf("systemctl show %s: %w", strings.Join(units, " "), err)
+		}
+		if u.up() || u.file == "enabled" {
+			found = append(found, u.id)
+		}
+	}
+	return found, nil
 }
 
 // planLabels are the plan lines of the commands that differ from the
@@ -268,7 +301,12 @@ func hasInstall(paths []string) (bool, error) {
 
 type unitState struct {
 	id, load, active, sub, file, fragment, dropIns string
+	triggeredBy                                    []string
 	reload, oneshot, remain                        bool
+}
+
+func (u unitState) up() bool {
+	return u.active == "active" || u.active == "activating" || u.active == "reloading"
 }
 
 func parseShow(out string) (unitState, error) {
@@ -304,6 +342,8 @@ func parseShow(out string) (unitState, error) {
 			u.oneshot = v == "oneshot"
 		case "RemainAfterExit":
 			u.remain = v == "yes"
+		case "TriggeredBy":
+			u.triggeredBy = strings.Fields(v)
 		}
 	}
 	for _, k := range []string{"Id", "LoadState", "ActiveState"} {

@@ -3,6 +3,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"slices"
@@ -136,6 +137,16 @@ type hostRun struct {
 	// needs are the users and groups, as "user <name>" or "group <name>",
 	// that changed steps need, with the first such step.
 	needs map[string]string
+	// units are the units that service steps name.
+	units map[string]bool
+	// startedBy are the errors for units that start a unit that a service
+	// step stops or disables, while no service step names them.
+	startedBy []startedBy
+}
+
+type startedBy struct {
+	unit string
+	err  error
 }
 
 // close closes the session with the host, if one is open.
@@ -187,7 +198,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}, units: map[string]bool{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -195,6 +206,11 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			hr := runs[hosts[i].Name]
 			var err error
 			steps[i], err = check(ctx, conn, p, hosts[i], stage, hr)
+			if err == nil && last[hosts[i].Name] == si {
+				for _, s := range hr.startedBy {
+					err = errors.Join(err, s.err)
+				}
+			}
 			if err != nil || last[hosts[i].Name] == si {
 				if cerr := hr.close(); err == nil {
 					err = cerr
@@ -269,10 +285,12 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		if err != nil {
 			return nil, fmt.Errorf("%s: %s: %w", scope(stage, p), label(p.Step), err)
 		}
-		if err := hr.order(p.Step.Args, steps[i].Result, scope(stage, p)+": "+label(p.Step)); err != nil {
+		where := scope(stage, p) + ": " + label(p.Step)
+		if err := hr.order(p.Step.Args, steps[i].Result, where); err != nil {
 			return nil, err
 		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
+		hr.trackUnits(p.Step.Args, steps[i].Result, where)
 		// The old answer can be an older secret, which the text filter does
 		// not know.
 		if _, ok := p.Step.Args.(*module.Debconf); ok && p.Step.Secret && steps[i].Result.Status == module.Change {
@@ -339,6 +357,23 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 		}
 	}
 	return nil
+}
+
+// trackUnits records the unit of a service step, and the units that start it
+// while no service step names them.
+func (hr *hostRun) trackUnits(m module.Module, res module.Result, where string) {
+	sv, ok := m.(*module.Service)
+	if !ok {
+		return
+	}
+	unit := sv.Unit()
+	hr.units[unit] = true
+	hr.startedBy = slices.DeleteFunc(hr.startedBy, func(s startedBy) bool { return s.unit == unit })
+	for _, u := range res.StartedBy {
+		if !hr.units[u] {
+			hr.startedBy = append(hr.startedBy, startedBy{u, fmt.Errorf("%s: %s is started by %s; add a step for %s", where, unit, u, u)})
+		}
+	}
 }
 
 // dropCreatedParents removes the parent lines of directories that an earlier
