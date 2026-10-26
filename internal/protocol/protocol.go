@@ -82,3 +82,11 @@ type StepResult struct {
 	module.Result
 	State module.State `json:"state"`
 }
+
+// Health is the params of health: run Command until it exits 0, then keep
+// running it for Stable. The gate fails when it does not pass within Timeout.
+type Health struct {
+	Command string        `json:"command"`
+	Stable  time.Duration `json:"stable"`
+	Timeout time.Duration `json:"timeout"`
+}

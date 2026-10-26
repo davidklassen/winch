@@ -216,7 +216,7 @@ func TestInterruptAtQuestion(t *testing.T) {
 	var out, errOut strings.Builder
 	code := Main(ctx, []string{"apply", "site"}, Env{
 		Dir: writeProject(t, motd), In: interruptReader{cancel}, Out: &out, Err: &errOut, Terminal: true,
-		Connect: h.Connector(), Filter: secret.NewFilter(),
+		Connect: h.ConnectorFor, Filter: secret.NewFilter(),
 	})
 	if code != exitOK || h.Applies != 0 || !strings.HasSuffix(errOut.String(), "Apply these changes? [y/N] \nNothing changed.\n") {
 		t.Errorf("exit %d, applies %d, stderr %q", code, h.Applies, errOut.String())
@@ -245,7 +245,7 @@ func TestInterruptDuringPlan(t *testing.T) {
 	var out, errOut strings.Builder
 	code := Main(ctx, []string{"apply", "site"}, Env{
 		Dir: writeProject(t, motd), In: strings.NewReader("y\n"), Out: &out, Err: &errOut, Terminal: true,
-		Connect: h.Connector(), Filter: secret.NewFilter(),
+		Connect: h.ConnectorFor, Filter: secret.NewFilter(),
 	})
 	if code != exitFailed || h.Applies != 0 || strings.Contains(errOut.String(), "Apply these changes?") {
 		t.Errorf("exit %d, applies %d, stderr %q", code, h.Applies, errOut.String())

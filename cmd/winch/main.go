@@ -50,17 +50,19 @@ func main() {
 		Out:      os.Stdout,
 		Err:      os.Stderr,
 		Terminal: cli.IsTerminal(os.Stdin) && cli.IsTerminal(os.Stderr),
-		Connect:  connect(sessions, stderr),
-		Home:     home,
-		AgeKey:   os.Getenv("WINCH_AGE_KEY"),
-		Filter:   filter,
+		Connect: func(batch bool) run.Connect {
+			return connect(sessions, stderr, batch)
+		},
+		Home:   home,
+		AgeKey: os.Getenv("WINCH_AGE_KEY"),
+		Filter: filter,
 	}))
 }
 
 // connect opens sessions that live until sessions ends, not until the
 // context of the run ends: a session finishes its running step after the
 // first Ctrl-C.
-func connect(sessions context.Context, progress io.Writer) run.Connect {
+func connect(sessions context.Context, progress io.Writer, batch bool) run.Connect {
 	hello := protocol.Hello{Run: rand.Text()[:8], Started: time.Now().UTC()}
 	if u, err := user.Current(); err == nil {
 		hello.User = u.Username
@@ -77,6 +79,7 @@ func connect(sessions context.Context, progress io.Writer) run.Connect {
 			Binaries: bins,
 			Hello:    hello,
 			Progress: progress,
+			Batch:    batch,
 		})
 		if errors.Is(err, session.ErrUnreachable) {
 			err = run.MarkUnreachable(err)

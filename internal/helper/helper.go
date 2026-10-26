@@ -62,6 +62,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string) e
 			err = handled(req.Params, handlers)
 		case req.Method == "command":
 			err = command(ctx, req.Params, thens)
+		case req.Method == "health":
+			err = runHealth(ctx, req.Params)
 		case req.Method == "check":
 			result, err = step(ctx, req.Params, false, handlers, thens, note)
 		case req.Method == "apply":

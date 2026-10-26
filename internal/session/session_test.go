@@ -546,3 +546,75 @@ func TestSSHIgnoresInterrupt(t *testing.T) {
 		t.Errorf("error = %v, want the helper to run", err)
 	}
 }
+
+// spec: Remote execution/Sessions
+func TestOpenBatch(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(map[bool]string{false: "terminal", true: "batch"}[batch], func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			argsFile := filepath.Join(t.TempDir(), "args")
+			t.Setenv("SSH_ARGS", argsFile)
+			s, err := Open(context.Background(), Config{
+				Host: "web1", Address: "web1", Dir: t.TempDir(), Batch: batch,
+				Binaries: []helperbin.Binary{fakeHelper("arm64")}, Hello: protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
+			})
+			if s != nil {
+				s.Close()
+			}
+			if err == nil || !strings.Contains(err.Error(), "ran arm64") {
+				t.Fatalf("error = %v", err)
+			}
+			data, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(data), "-o\nBatchMode=yes\n"); got != batch {
+				t.Errorf("ssh arguments have BatchMode=yes: %v, want %v", got, batch)
+			}
+		})
+	}
+}
+
+// spec: Remote execution/Sessions ("the error says to run ssh <host> once")
+func TestOpenBatchHint(t *testing.T) {
+	tests := []struct {
+		name, stderr string
+		batch        bool
+		address      string
+		want         string
+	}{
+		{"host key", "Host key verification failed.", true, "web1",
+			`Host key verification failed. (in batch mode ssh asks nothing; run "ssh web1" once)`},
+		{"refused login", "admin@web1: Permission denied (publickey).", true, "192.0.2.1",
+			`admin@web1: Permission denied (publickey). (in batch mode ssh asks nothing; run "ssh -o HostName=192.0.2.1 web1" once)`},
+		{"refused login of a user", "deploy@web1: Permission denied (publickey).", true, "web1",
+			`deploy@web1: Permission denied (publickey). (in batch mode ssh asks nothing; run "ssh -l deploy web1" once)`},
+		{"changed host key", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.", true, "web1",
+			"@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed."},
+		{"refused connection", "ssh: connect to host web1 port 22: Connection refused", true, "web1",
+			"ssh: connect to host web1 port 22: Connection refused"},
+		{"host key with a terminal", "Host key verification failed.", false, "web1",
+			"Host key verification failed."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			failOnce(t, "", tt.stderr, 255)
+			_, err := Open(context.Background(), Config{
+				Host: "web1", Address: tt.address, Dir: t.TempDir(), Batch: tt.batch, User: user(tt.stderr),
+				Binaries: []helperbin.Binary{fakeHelper("arm64")}, Hello: protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
+			})
+			if err == nil || err.Error() != tt.want || !errors.Is(err, ErrUnreachable) {
+				t.Errorf("error %v, want %q and unreachable", err, tt.want)
+			}
+		})
+	}
+}
+
+// user is the login user that an ssh error names, or "" for admin.
+func user(stderr string) string {
+	if strings.HasPrefix(stderr, "deploy@") {
+		return "deploy"
+	}
+	return ""
+}

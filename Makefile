@@ -1,5 +1,6 @@
 ARCH ?= arm64
 PARALLEL ?= 4
+N ?= 1
 ONLINE ?=
 CACHE := $(HOME)/.cache/winch
 IMAGE := $(CACHE)/debian-13-genericcloud-$(ARCH).qcow2
@@ -38,4 +39,4 @@ $(IMAGE):
 	mv $@.part $@
 
 vm: build vm-image
-	$(VMENV) go run ./internal/vmtest/vmrun
+	$(VMENV) go run ./internal/vmtest/vmrun -n $(N)

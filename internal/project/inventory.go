@@ -83,6 +83,7 @@ func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) 
 	}
 	for i := range inv.Groups {
 		g := &inv.Groups[i]
+		errs = append(errs, patternName("group", g.Name, g.Pos))
 		var verrs []error
 		g.vars, verrs = l.values(g.VarsNode)
 		errs = append(errs, verrs...)
@@ -104,6 +105,7 @@ func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) 
 		if h.Name == "all" {
 			errs = append(errs, yamlx.Errorf(h.Pos, "host %q has the name of a group", h.Name))
 		}
+		errs = append(errs, patternName("host", h.Name, h.Pos))
 		if h.Address == "" {
 			h.Address = h.Name
 		} else if !validAddress(h.Address) {
@@ -142,6 +144,15 @@ func (l *loader) values(n *yamlx.Node) ([]source, []error) {
 		}
 	}
 	return out, errs
+}
+
+// patternName returns the load error for a host or group name that a host
+// pattern cannot name.
+func patternName(kind, name string, pos yamlx.Pos) error {
+	if !strings.ContainsAny(name, ",&!") && !strings.ContainsFunc(name, unicode.IsSpace) {
+		return nil
+	}
+	return yamlx.Errorf(pos, `%s %q: a %s name cannot hold ",", "&", "!", or white space; a host pattern could not name it`, kind, name, kind)
 }
 
 // numberName returns the load error for a host name that YAML reads as a
@@ -263,25 +274,4 @@ func (inv *Inventory) required(vars []*Var) error {
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// match returns the hosts of a pattern: a group or a host, in inventory order.
-func (inv *Inventory) match(pattern string, pos yamlx.Pos) ([]Host, error) {
-	var out []Host
-	for _, h := range inv.Hosts {
-		if h.Name == pattern || slices.Contains(h.Groups, pattern) {
-			out = append(out, h)
-		}
-	}
-	names := []string{"all"}
-	for _, g := range inv.Groups {
-		names = append(names, g.Name)
-	}
-	if out != nil || slices.Contains(names, pattern) {
-		return out, nil
-	}
-	for _, h := range inv.Hosts {
-		names = append(names, h.Name)
-	}
-	return nil, yamlx.Errorf(pos, "unknown host or group %q in %s%s", pattern, inv.File, yamlx.Suggest(pattern, names))
 }

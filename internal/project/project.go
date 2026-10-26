@@ -31,6 +31,10 @@ type Project struct {
 	filter *secret.Filter
 	// secrets is true when the inventory or a default holds a !secret.
 	secrets bool
+	// set holds the names that --set gives.
+	set map[string]bool
+	// peers are the vars of each host for match(), with sealed values.
+	peers map[string]map[string]any
 }
 
 type Config struct {
@@ -66,7 +70,18 @@ type Stage struct {
 	HostsPos yamlx.Pos
 	Steps    []Step
 	// Targets are the hosts of the stage in the loaded inventory.
-	Targets []Host
+	Targets     []Host
+	Parallelism int
+	Health      *Health
+	// Skipped is true for a stage that the selection leaves out.
+	Skipped bool
+}
+
+// Health is the health gate of a stage. Stable and Timeout are seconds.
+type Health struct {
+	Command string
+	Stable  int
+	Timeout int
 }
 
 // Step is a module step, or a recipe step with Recipe set.
@@ -89,7 +104,9 @@ type Step struct {
 	// secret.
 	Secret bool
 	// in is the recipe that holds the step, or nil in a stage.
-	in   *Recipe
+	in *Recipe
+	// vars are the vars of a recipe step.
+	vars []*Var
 	args *value
 	when *computed
 	loop *value
@@ -135,7 +152,12 @@ func Load(dir, inventory, pipeline string, set []string, keys Keys) (*Project, e
 	if err != nil {
 		return nil, err
 	}
-	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, Warnings: warnings, vars: l.order, filter: keys.Filter, secrets: len(l.sealed) > 0}, nil
+	setNames := map[string]bool{}
+	for _, v := range sets {
+		setNames[v.name] = true
+	}
+	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, Warnings: warnings, vars: l.order, filter: keys.Filter, secrets: len(l.sealed) > 0,
+		set: setNames, peers: peerVars(invs[0], l.decls)}, nil
 }
 
 // Validate loads every pipeline in dir against an inventory: the one in
@@ -244,8 +266,9 @@ func resolve(inv *Inventory, pl *Pipeline) error {
 	for i := range pl.Stages {
 		s := &pl.Stages[i]
 		var err error
-		s.Targets, err = inv.match(s.Hosts, s.HostsPos)
-		errs = append(errs, err)
+		if s.Targets, err = inv.Match(s.Hosts); err != nil {
+			errs = append(errs, yamlx.Errorf(s.HostsPos, "%s", err))
+		}
 		for _, st := range s.Steps {
 			if st.Recipe == nil {
 				continue
@@ -373,11 +396,41 @@ type pipelineFile struct {
 }
 
 type stageFile struct {
-	Name     string `yaml:"name,required"`
-	Hosts    string `yaml:"hosts,required"`
-	HostsPos yamlx.Pos
-	Steps    []*yamlx.Node `yaml:"steps,required"`
-	Pos      yamlx.Pos
+	Name           string `yaml:"name,required"`
+	Hosts          string `yaml:"hosts,required"`
+	HostsPos       yamlx.Pos
+	Parallelism    *int `yaml:"parallelism"`
+	ParallelismPos yamlx.Pos
+	Health         *healthFile   `yaml:"health"`
+	Steps          []*yamlx.Node `yaml:"steps,required"`
+	Pos            yamlx.Pos
+}
+
+type healthFile struct {
+	Command string `yaml:"command,required"`
+	Stable  int    `yaml:"stable"`
+	Timeout *int   `yaml:"timeout"`
+}
+
+// defaultTimeout is the timeout of a health gate in seconds.
+const defaultTimeout = 60
+
+func (h *healthFile) Validate() error {
+	timeout := defaultTimeout
+	if h.Timeout != nil {
+		timeout = *h.Timeout
+	}
+	switch {
+	case strings.TrimSpace(h.Command) == "":
+		return &yamlx.FieldError{Field: "command", Msg: "must not be empty"}
+	case h.Stable < 0:
+		return &yamlx.FieldError{Field: "stable", Msg: "must be 0 or more seconds"}
+	case timeout < 1:
+		return &yamlx.FieldError{Field: "timeout", Msg: "must be 1 or more seconds"}
+	case h.Stable >= timeout:
+		return fmt.Errorf("health: stable must be less than timeout (%d seconds); the gate could never pass", timeout)
+	}
+	return nil
 }
 
 func (l *loader) loadPipeline(name string) (*Pipeline, error) {
@@ -418,6 +471,18 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 		}
 		seen[sf.Name] = true
 		s := Stage{Name: sf.Name, Hosts: sf.Hosts, HostsPos: sf.HostsPos}
+		if sf.Parallelism != nil {
+			if *sf.Parallelism < 1 {
+				errs = append(errs, yamlx.Errorf(sf.ParallelismPos, "parallelism: must be 1 or more"))
+			}
+			s.Parallelism = *sf.Parallelism
+		}
+		if h := sf.Health; h != nil {
+			s.Health = &Health{Command: h.Command, Stable: h.Stable, Timeout: defaultTimeout}
+			if h.Timeout != nil {
+				s.Health.Timeout = *h.Timeout
+			}
+		}
 		for _, sn := range sf.Steps {
 			st, err := l.loadStep(sn, nil, false)
 			if err == nil {
@@ -439,7 +504,7 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 	return pl, nil
 }
 
-var stepFields = []string{"name", "recipe", "when", "loop", "then", "notify"}
+var stepFields = []string{"name", "recipe", "vars", "when", "loop", "then", "notify"}
 
 const thenInLoop = "then runs once after the last element; it cannot use item"
 
@@ -479,8 +544,16 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 			errs = append(errs, yamlx.Decode(p.Value, &recipe))
 			recipePos = p.Value.Pos
 			continue
+		case p.Key == "vars" && isRecipe:
+			var err error
+			st.vars, err = l.stepVars(p.Value)
+			errs = append(errs, err)
+			continue
+		case p.Key == "vars":
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "vars: only a recipe step has vars"))
+			continue
 		case isRecipe:
-			errs = append(errs, yamlx.Errorf(p.KeyPos, "a recipe step has only name, recipe, and when, not %q", p.Key))
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "a recipe step has only name, recipe, vars, and when, not %q", p.Key))
 			continue
 		case p.Key == "loop":
 			var err error
@@ -554,6 +627,39 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 		st.tmplReads = r.templateReads(argsNode)
 	}
 	return st, nil
+}
+
+// stepVars loads the vars of a recipe step: declared variables and their
+// values, which can be computed.
+func (l *loader) stepVars(n *yamlx.Node) ([]*Var, error) {
+	if n.Kind != yamlx.Map {
+		return nil, yamlx.Errorf(n.Pos, "vars: expected a map, got %s", yamlx.Describe(n))
+	}
+	var out []*Var
+	var errs []error
+	for _, p := range n.Pairs {
+		switch {
+		case l.vars[p.Key] == nil:
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "%s", unknownVariable(p.Key, l.vars)))
+			continue
+		case p.Value.Kind == yamlx.Null:
+			errs = append(errs, yamlx.Errorf(p.Value.Pos, "variable %q: null is not a value", p.Key))
+			continue
+		}
+		if t := findTag(p.Value); t != nil && t.Tag == "!secret" {
+			errs = append(errs, yamlx.Errorf(t.Pos, "variable %q: a recipe step gives no !secret values; put the secret in the inventory", p.Key))
+			continue
+		}
+		c, err := compileValue(p.Value, scope{vars: l.vars, noItem: itemOutsideLoop})
+		errs = append(errs, err)
+		out = append(out, &Var{Name: p.Key, Pos: p.KeyPos, node: p.Value, computed: c})
+	}
+	return out, errors.Join(errs...)
+}
+
+// sets reports whether the vars of the recipe step st set the variable name.
+func (st Step) sets(name string) bool {
+	return slices.ContainsFunc(st.vars, func(v *Var) bool { return v.Name == name })
 }
 
 // loadArgs decodes the arguments of a module step into m. Arguments with

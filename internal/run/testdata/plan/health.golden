@@ -1,0 +1,12 @@
+stdout:
+web1
+  base
+    + file /etc/motd
+        owner root, group root, mode 0644
+        @@ -0,0 +1,1 @@
+        +hi
+    * health: curl -sf http://localhost/
+
+3 hosts: 1 to change, 2 unchanged, 0 unknown
+plan 4016a170
+stderr:

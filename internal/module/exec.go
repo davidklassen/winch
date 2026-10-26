@@ -13,13 +13,15 @@ import (
 
 const (
 	commandLimit = 10 * time.Minute
-	killDelay    = 10 * time.Second
+	// KillDelay is the time between SIGTERM and SIGKILL for a command that
+	// runs too long.
+	KillDelay = 10 * time.Second
 )
 
 // run runs a command and returns its output. On a failure, the error holds
 // the end of the output.
 func run(ctx context.Context, env []string, name string, args ...string) (string, error) {
-	return runLimited(ctx, commandLimit, killDelay, env, name, args...)
+	return runLimited(ctx, commandLimit, KillDelay, env, name, args...)
 }
 
 func runLimited(ctx context.Context, limit, killDelay time.Duration, env []string, name string, args ...string) (string, error) {
@@ -43,10 +45,12 @@ func tail(s string, n int) string {
 // Shell runs a command of the project through sh -c, in / and with stdin
 // from /dev/null. On a failure, the error holds the end of the output.
 func Shell(ctx context.Context, command string) error {
-	return shell(ctx, command, commandLimit, killDelay)
+	return ShellLimit(ctx, command, commandLimit, KillDelay)
 }
 
-func shell(ctx context.Context, command string, limit, killDelay time.Duration) error {
+// ShellLimit is Shell with the time limit limit. After the limit, the command
+// gets SIGTERM, and SIGKILL after killDelay.
+func ShellLimit(ctx context.Context, command string, limit, killDelay time.Duration) error {
 	ctx, cancel := context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)

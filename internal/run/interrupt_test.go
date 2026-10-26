@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/fakehost"
@@ -18,7 +20,8 @@ func interruptProject(t *testing.T) *project.Project {
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
-		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
+		// With parallelism 1, web2 starts only after web1.
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    parallelism: 1\n    steps:\n      - recipe: app\n",
 		"recipes/app/recipe.yaml": `steps:
   - file:
       path: /etc/a
@@ -46,7 +49,7 @@ handlers:
 func TestApplyInterrupted(t *testing.T) {
 	p := interruptProject(t)
 	h := fakehost.New()
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	h.OnApply = func(host, main string) {
@@ -90,7 +93,7 @@ func TestPlanInterrupted(t *testing.T) {
 	h := fakehost.New()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	plan := run.MakePlan(ctx, interruptProject(t), h.Connector())
+	plan := run.MakePlan(ctx, interruptProject(t), h.Connector(), run.Options{})
 	for _, host := range []string{"web1", "web2"} {
 		if !errors.Is(plan.Failed[host], run.ErrInterrupted) {
 			t.Errorf("%s: error %v, want interrupted", host, plan.Failed[host])
@@ -106,14 +109,19 @@ func TestPlanInterruptedBetweenChecks(t *testing.T) {
 	h := fakehost.New()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var mu sync.Mutex
 	var checks []string
 	h.OnCheck = func(host, main string) {
+		mu.Lock()
+		defer mu.Unlock()
 		checks = append(checks, host+" "+main)
 		cancel()
 	}
-	plan := run.MakePlan(ctx, interruptProject(t), h.Connector())
-	if !slices.Equal(checks, []string{"web1 /etc/a"}) {
-		t.Errorf("checks %q, want only the first", checks)
+	plan := run.MakePlan(ctx, interruptProject(t), h.Connector(), run.Options{})
+	// The plan checks both hosts at the same time; each stops after its
+	// running check.
+	if len(checks) == 0 || slices.ContainsFunc(checks, func(c string) bool { return !strings.HasSuffix(c, " /etc/a") }) {
+		t.Errorf("checks %q, want only the first step of each host", checks)
 	}
 	for _, host := range []string{"web1", "web2"} {
 		if !errors.Is(plan.Failed[host], run.ErrInterrupted) {

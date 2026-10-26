@@ -17,7 +17,15 @@ type hashHost struct {
 }
 
 type hashStage struct {
-	Stage string `json:"stage"`
+	Stage       string      `json:"stage"`
+	Parallelism int         `json:"parallelism,omitempty"`
+	Health      *hashHealth `json:"health,omitempty"`
+}
+
+type hashHealth struct {
+	Command string `json:"command"`
+	Stable  int    `json:"stable"`
+	Timeout int    `json:"timeout"`
 }
 
 type hashStep struct {
@@ -61,7 +69,11 @@ func (p *Plan) HashInput() []byte {
 				if hp.Host.Name != h.Name {
 					continue
 				}
-				write(hashStage{Stage: sp.Stage.Name})
+				hs := hashStage{Stage: sp.Stage.Name, Parallelism: sp.Stage.Parallelism}
+				if h := sp.Stage.Health; h != nil {
+					hs.Health = &hashHealth{Command: h.Command, Stable: h.Stable, Timeout: h.Timeout}
+				}
+				write(hs)
 				for _, pl := range hp.Steps {
 					write(stepHash(pl))
 				}

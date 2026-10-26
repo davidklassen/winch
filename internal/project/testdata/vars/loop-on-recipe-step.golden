@@ -1,1 +1,1 @@
-pipelines/site.yaml:6:9: a recipe step has only name, recipe, and when, not "loop"
+pipelines/site.yaml:6:9: a recipe step has only name, recipe, vars, and when, not "loop"

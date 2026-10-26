@@ -11,5 +11,8 @@
       <li><a href="/{{ . }}">{{ title . }}</a></li>
 {{- end }}
     </ul>
+{{- with .vars.website_peers }}
+    <p>Also served by:{{ range . }} {{ .name }}{{ end }}</p>
+{{- end }}
   </body>
 </html>

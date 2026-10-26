@@ -54,8 +54,12 @@ func (p *Plan) WriteJSON(e *Events) {
 		}
 		for _, sp := range p.Stages {
 			for _, hp := range sp.Hosts {
-				if hp.Host.Name == h.Name {
-					writePlanned(e, h.Name, sp.Stage, hp.Steps)
+				if hp.Host.Name != h.Name {
+					continue
+				}
+				writePlanned(e, h.Name, sp.Stage, hp.Steps)
+				if sp.Stage.Health != nil && hp.changes() {
+					e.Write("planned", healthEvent(h.Name, sp.Stage))
 				}
 			}
 		}

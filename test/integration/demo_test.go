@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/davidklassen/winch/internal/secret"
+	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 // demoPassword is the password of the demo's /private page, and demoKeyLine
@@ -27,8 +28,10 @@ func noSecrets(t *testing.T, what, out string, secrets ...string) {
 
 func TestDemo(t *testing.T) {
 	t.Parallel()
-	vm := lab.StartVM(t, "demo")
-	vm.MustRun(t, quietApt)
+	vms := []*vmtest.VM{lab.StartVM(t, "demo"), lab.StartVM(t, "demo2")}
+	for _, vm := range vms {
+		vm.MustRun(t, quietApt)
+	}
 	dir := "../../examples/demo"
 	env := []string{"WINCH_AGE_KEY=age.key", "HOME=" + t.TempDir()}
 
@@ -40,6 +43,37 @@ func TestDemo(t *testing.T) {
 	if !strings.Contains(r.Stdout, "file /etc/nginx/htpasswd-example.com") {
 		t.Errorf("apply does not show the password file:\n%s", r.Stdout)
 	}
+	// parallelism: 1 runs the web stage on demo, then its gate, then on demo2.
+	gate := strings.Index(r.Stdout, "demo: web: * health: ")
+	if gate < 0 || strings.Index(r.Stdout, "demo2: nginx: ") < gate {
+		t.Errorf("demo2 started the web stage before the health gate of demo:\n%s", r.Stdout)
+	}
+	for i, vm := range vms {
+		checkDemo(t, vm, vms[1-i].Name)
+	}
+
+	r = lab.WinchEnv(t, dir, env, "plan", "site")
+	if r.Code != 0 || !unchanged(r.Stdout, 2) {
+		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+
+	// A new password: the plan masks the old and the new value.
+	copyDir := t.TempDir()
+	if err := os.CopyFS(copyDir, os.DirFS(dir)); err != nil {
+		t.Fatal(err)
+	}
+	rotatePassword(t, copyDir, "n3w-demo-pass")
+	r = lab.WinchEnv(t, copyDir, env, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "-demo:{PLAIN}(secret)\n") || !strings.Contains(r.Stdout, "+demo:{PLAIN}(secret) (secret value changed)\n") {
+		t.Errorf("plan after a new password: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+	noSecrets(t, "plan", r.Stdout+r.Stderr, demoPassword, "n3w-demo-pass")
+}
+
+// checkDemo checks the site and the services of the demo on vm. peer is the
+// other web host.
+func checkDemo(t *testing.T, vm *vmtest.VM, peer string) {
+	t.Helper()
 	// systemctl reload returns before nginx reads the new config.
 	vm.MustRun(t, "for i in $(seq 50); do curl -s -o /dev/null http://localhost/ && exit 0; sleep 0.2; done; exit 1")
 	for path, want := range map[string]string{
@@ -70,26 +104,12 @@ func TestDemo(t *testing.T) {
 	if out := vm.MustRun(t, "stat -c '%a %G' /var/www/example.com"); out != "750 www-data\n" {
 		t.Errorf("site directory: %q, want mode 750 and group www-data", out)
 	}
-	if out := vm.MustRun(t, "cat /etc/motd"); out != "demo is managed by winch.\n" {
+	if out := vm.MustRun(t, "cat /etc/motd"); out != vm.Name+" is managed by winch.\n" {
 		t.Errorf("/etc/motd = %q", out)
 	}
-
-	r = lab.WinchEnv(t, dir, env, "plan", "site")
-	if r.Code != 0 || !unchanged(r.Stdout, 1) {
-		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	if out := vm.MustRun(t, "curl -s http://localhost/"); !strings.Contains(out, "<p>Also served by: "+peer+"</p>") {
+		t.Errorf("the index page does not name the other web host %s: %q", peer, out)
 	}
-
-	// A new password: the plan masks the old and the new value.
-	copyDir := t.TempDir()
-	if err := os.CopyFS(copyDir, os.DirFS(dir)); err != nil {
-		t.Fatal(err)
-	}
-	rotatePassword(t, copyDir, "n3w-demo-pass")
-	r = lab.WinchEnv(t, copyDir, env, "plan", "site")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "-demo:{PLAIN}(secret)\n") || !strings.Contains(r.Stdout, "+demo:{PLAIN}(secret) (secret value changed)\n") {
-		t.Errorf("plan after a new password: exit %d, stdout %q", r.Code, r.Stdout)
-	}
-	noSecrets(t, "plan", r.Stdout+r.Stderr, demoPassword, "n3w-demo-pass")
 }
 
 // rotatePassword gives the website a new password in the inventory of the

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/fakehost"
@@ -124,6 +125,35 @@ func output(out, errOut *bytes.Buffer) []byte {
 	return []byte("stdout:\n" + out.String() + "stderr:\n" + errOut.String())
 }
 
+// applyOutput is output of apply with the lines of each host together. The
+// hosts of a stage run at the same time, so only the order of the lines of
+// one host is fixed.
+func applyOutput(out, errOut *bytes.Buffer) []byte {
+	return []byte("stdout:\n" + byHost(out.String()) + "stderr:\n" + byHost(errOut.String()))
+}
+
+// byHost sorts the lines before the first blank line by their host, and
+// keeps the order of the lines of each host.
+func byHost(s string) string {
+	body, rest, blank := strings.Cut(s, "\n\n")
+	if !blank {
+		body, rest = strings.TrimSuffix(s, "\n"), ""
+	}
+	if body == "" {
+		return s
+	}
+	lines := strings.Split(body, "\n")
+	slices.SortStableFunc(lines, func(a, b string) int {
+		ha, _, _ := strings.Cut(a, ": ")
+		hb, _, _ := strings.Cut(b, ": ")
+		return strings.Compare(ha, hb)
+	})
+	if !blank {
+		return strings.Join(lines, "\n") + "\n"
+	}
+	return strings.Join(lines, "\n") + "\n\n" + rest
+}
+
 // spec: Handlers; Running a pipeline/Plan; CLI/Output
 func TestPlanHandlers(t *testing.T) {
 	tests := []struct {
@@ -153,7 +183,7 @@ func TestPlanHandlers(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(h)
 			}
-			plan := run.MakePlan(context.Background(), handlerProject(t), h.Connector())
+			plan := run.MakePlan(context.Background(), handlerProject(t), h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
 			plan.Write(&out, &errOut)
 			golden.Assert(t, filepath.Join("testdata", "handlers", "plan-"+tt.name+".golden"), output(&out, &errOut))
@@ -163,10 +193,10 @@ func TestPlanHandlers(t *testing.T) {
 
 func applyAll(t *testing.T, p *project.Project, h *fakehost.Hosts) (bool, []byte) {
 	t.Helper()
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	ok := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK()
-	return ok, output(&out, &errOut)
+	return ok, applyOutput(&out, &errOut)
 }
 
 // spec: Handlers; Steps; Running a pipeline/Apply; CLI/Output
@@ -195,7 +225,7 @@ func TestApplyHandlers(t *testing.T) {
 			t.Errorf("%s has then records %v after the run", host, th)
 		}
 	}
-	if plan := run.MakePlan(context.Background(), p, h.Connector()); plan.HasChanges() {
+	if plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{}); plan.HasChanges() {
 		t.Error("a second plan has changes")
 	}
 }
@@ -207,7 +237,7 @@ func TestHandlerFollowsApply(t *testing.T) {
 		present(h, "web1", "web2")
 		h.SetFile("web1", "/etc/nginx/a.conf", "old\n")
 		p := handlerProject(t)
-		plan := run.MakePlan(context.Background(), p, h.Connector())
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 		h.SetFile("web1", "/etc/nginx/a.conf", "a\n")
 		var out, errOut bytes.Buffer
 		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
@@ -222,7 +252,7 @@ func TestHandlerFollowsApply(t *testing.T) {
 		present(h, "web1", "web2")
 		h.SetFile("web1", "/etc/nginx/a.conf", "old\n")
 		p := handlerProject(t)
-		plan := run.MakePlan(context.Background(), p, h.Connector())
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 		h.SetFile("web1", "/etc/nginx/a.conf", "a\n")
 		h.SetFile("web1", "/etc/nginx/c.conf", "old\n")
 		var out, errOut bytes.Buffer
@@ -251,7 +281,7 @@ func TestFailedHandlerStaysPending(t *testing.T) {
 	}
 
 	h.Fix("web1 nginx")
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(&out, &errOut)
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-after-failed-handler.golden"), output(&out, &errOut))
@@ -339,7 +369,7 @@ func TestThen(t *testing.T) {
 			t.Fatalf("then records = %v, want %v", got, want)
 		}
 		h.Fix("web1 reindex")
-		plan := run.MakePlan(context.Background(), p, h.Connector())
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 		var out, errOut bytes.Buffer
 		plan.Write(&out, &errOut)
 		golden.Assert(t, filepath.Join("testdata", "handlers", "plan-after-failed-then.golden"), output(&out, &errOut))
@@ -352,7 +382,7 @@ func TestThen(t *testing.T) {
 		if got := h.ThenOf("web1"); len(got) != 0 {
 			t.Errorf("then records after the second run = %v", got)
 		}
-		if plan := run.MakePlan(context.Background(), p, h.Connector()); plan.HasChanges() {
+		if plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{}); plan.HasChanges() {
 			t.Error("a third plan has changes")
 		}
 	})
@@ -427,7 +457,7 @@ func TestStageStepNotifiesEarlierRecipe(t *testing.T) {
 	}
 	h := fakehost.New()
 	present(h, "web1", "web2")
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(&out, &errOut)
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-stage-step.golden"), output(&out, &errOut))
@@ -465,7 +495,7 @@ func TestPendingThen(t *testing.T) {
 		{Recipe: "apps", SHA256: sum("newaliases")},
 	}
 	h.SetThen("web2", other...)
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(&out, &errOut)
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-pending-then.golden"), output(&out, &errOut))
@@ -488,7 +518,7 @@ func TestPendingThen(t *testing.T) {
 	if got := h.ThenOf("web2"); !slices.Equal(got, other) {
 		t.Errorf("then records on web2 = %v, want %v", got, other)
 	}
-	if plan := run.MakePlan(context.Background(), p, h.Connector()); plan.HasChanges() {
+	if plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{}); plan.HasChanges() {
 		t.Error("a second plan has changes")
 	}
 }
@@ -500,7 +530,7 @@ func TestPendingThenOfAChangedStep(t *testing.T) {
 	h.SetFile("web1", "/var/www/about.html", "old\n")
 	h.SetThen("web1", protocol.Then{Recipe: "site", SHA256: sum("reindex")})
 	p := handlerProject(t)
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(&out, &errOut)
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-pending-then-change.golden"), output(&out, &errOut))

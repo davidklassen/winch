@@ -48,6 +48,11 @@ var hashFiles = map[string]string{
       - recipe: app
   - name: extra
     hosts: all
+    parallelism: 2
+    health:
+      command: check
+      stable: 1
+      timeout: 10
     steps:
       - file:
           path: /etc/issue
@@ -93,7 +98,7 @@ func planHash(t *testing.T, files map[string]string, setup func(h *fakehost.Host
 	if setup != nil {
 		setup(h)
 	}
-	return run.MakePlan(context.Background(), p, h.Connector())
+	return run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 }
 
 // edit returns hashFiles with old replaced by new in file.
@@ -162,6 +167,18 @@ func TestHashChanges(t *testing.T) {
 		{name: "the counts of dir absent", setup: func(h *fakehost.Hosts) { h.SetResult("web2", "/srv/old", removeOld(3)) }},
 		{name: "the counts of replace", setup: func(h *fakehost.Hosts) { h.SetResult("web2", "/srv/www", replaceWWW(3)) }},
 		{name: "a failed host", setup: func(h *fakehost.Hosts) { h.FailCheck("web2 /etc/issue") }},
+		{name: "parallelism", files: func(t *testing.T) map[string]string {
+			return edit(t, "pipelines/site.yaml", "parallelism: 2", "parallelism: 1")
+		}},
+		{name: "the health command", files: func(t *testing.T) map[string]string {
+			return edit(t, "pipelines/site.yaml", "command: check", "command: check2")
+		}},
+		{name: "the health stable time", files: func(t *testing.T) map[string]string {
+			return edit(t, "pipelines/site.yaml", "stable: 1", "stable: 2")
+		}},
+		{name: "the health timeout", files: func(t *testing.T) map[string]string {
+			return edit(t, "pipelines/site.yaml", "timeout: 10", "timeout: 11")
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -259,7 +276,7 @@ handlers:
 				// The old content holds the value too.
 				h.SetFile("web1", "/etc/pw", "password "+value+" old\n")
 				h.SetFile("web1", "/etc/"+value+".key", "password "+value+" old\n")
-				return run.MakePlan(context.Background(), hashSecretProject(t, value, tt.pipeline, tt.recipe), h.Connector())
+				return run.MakePlan(context.Background(), hashSecretProject(t, value, tt.pipeline, tt.recipe), h.Connector(), run.Options{})
 			}
 			for _, short := range []bool{false, true} {
 				old, new := "hunter2", "hunter3"

@@ -52,7 +52,7 @@ func winchWith(t *testing.T, dir, home, ageKey string, h *fakehost.Hosts, termin
 		Out:      &out,
 		Err:      &errOut,
 		Terminal: terminal,
-		Connect:  h.Connector(),
+		Connect:  h.ConnectorFor,
 		Home:     home,
 		AgeKey:   ageKey,
 		Filter:   secret.NewFilter(),
@@ -224,7 +224,7 @@ func TestApply(t *testing.T) {
 		var out, errOut bytes.Buffer
 		code := Main(context.Background(), []string{"apply", "site"}, Env{
 			Dir: dir, In: in, Out: &out, Err: &errOut, Terminal: true,
-			Connect: h.Connector(), Filter: secret.NewFilter(),
+			Connect: h.ConnectorFor, Filter: secret.NewFilter(),
 		})
 		if code != exitOK || h.Applies != 2 {
 			t.Errorf("exit %d, applies %d", code, h.Applies)

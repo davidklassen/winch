@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -115,7 +116,7 @@ func TestJSON(t *testing.T) {
 			}
 			r := winch(t, tt.dir(t), h, tt.terminal, "", tt.args...)
 			golden.Assert(t, filepath.Join("testdata", "json", tt.name+".golden"),
-				[]byte("stdout:\n"+r.out+"stderr:\n"+r.err))
+				[]byte("stdout:\n"+applyByHost(r.out)+"stderr:\n"+r.err))
 			lines := jsonLines(t, r.out)
 			if lines[0]["type"] != "version" || lines[len(lines)-1]["type"] != "summary" {
 				t.Errorf("first line %v, last line %v", lines[0]["type"], lines[len(lines)-1]["type"])
@@ -215,7 +216,7 @@ func TestJSONOneWrite(t *testing.T) {
 		var errOut strings.Builder
 		code := Main(context.Background(), args, Env{
 			Dir: jsonProject(t), In: strings.NewReader(""), Out: &out, Err: &errOut,
-			Connect: h.Connector(), Filter: secret.NewFilter(), Now: fixedNow,
+			Connect: h.ConnectorFor, Filter: secret.NewFilter(), Now: fixedNow,
 		})
 		if code != exitUnreachable || len(out) < 3 {
 			t.Fatalf("%v: exit %d, %d writes, stderr %q", args, code, len(out), errOut.String())
@@ -251,4 +252,29 @@ func TestJSONSecret(t *testing.T) {
 	if c, _ := h.File("web1", "/etc/pw"); c != "pw="+password+"\n" {
 		t.Errorf("/etc/pw = %q", c)
 	}
+}
+
+// applyByHost sorts the applied events and the host events of apply by their
+// host, and keeps the order of the events of each host. The hosts of a stage
+// run at the same time.
+func applyByHost(out string) string {
+	lines := strings.SplitAfter(out, "\n")
+	inApply := func(l string) bool {
+		return strings.Contains(l, `"type":"applied"`) || strings.Contains(l, `"phase":"apply"`)
+	}
+	from := slices.IndexFunc(lines, inApply)
+	if from < 0 {
+		return out
+	}
+	to := from
+	for to < len(lines) && inApply(lines[to]) {
+		to++
+	}
+	host := func(l string) string {
+		_, after, _ := strings.Cut(l, `"host":"`)
+		h, _, _ := strings.Cut(after, `"`)
+		return h
+	}
+	slices.SortStableFunc(lines[from:to], func(a, b string) int { return strings.Compare(host(a), host(b)) })
+	return strings.Join(lines, "")
 }

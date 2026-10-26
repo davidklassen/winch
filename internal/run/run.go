@@ -28,7 +28,16 @@ type Conn interface {
 	Handled(ctx context.Context, handler string) error
 	// Command runs the command of a then, and then removes its record.
 	Command(ctx context.Context, command string, then protocol.Then) error
+	// Health runs a health gate.
+	Health(ctx context.Context, h protocol.Health) error
 	Close() error
+}
+
+// Options are the choices of a run.
+type Options struct {
+	// Serial starts the sessions one at a time, in inventory order, so ssh
+	// can ask its questions on the terminal.
+	Serial bool
 }
 
 // Connect opens a session with a host for the project named proj.
@@ -44,6 +53,7 @@ type Plan struct {
 	// Pending are the records of each host, as the host reported them.
 	Pending map[string]protocol.Pending
 	hash    string
+	opts    Options
 }
 
 type StagePlan struct {
@@ -114,34 +124,54 @@ type hostRun struct {
 	notified map[string]bool
 	// thens are the pending then records that no step matched yet.
 	thens map[protocol.Then]bool
+	// pending are the records that the host reported at the first contact.
+	pending *protocol.Pending
 }
 
-// MakePlan checks every step on every host, stage by stage. At the first
-// contact with a host, it reads the facts and starts the host's evaluation.
-// A host that fails stops there.
-func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
-	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}}
+// MakePlan checks every step on every host, stage by stage. The hosts of a
+// stage run at the same time. At the first contact with a host, it reads the
+// facts and starts the host's evaluation. A host that fails stops there.
+func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Options) *Plan {
+	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}, opts: opts}
 	inStages := map[string]bool{}
 	runs := map[string]*hostRun{}
+	open := func(h project.Host) (Conn, error) { return connect(context.WithoutCancel(ctx), p.Name, h) }
 	for i := range p.Pipeline.Stages {
 		stage := &p.Pipeline.Stages[i]
-		sp := StagePlan{Stage: stage}
+		if stage.Skipped {
+			continue
+		}
+		var hosts []project.Host
 		for _, h := range stage.Targets {
 			inStages[h.Name] = true
 			if plan.Failed[h.Name] != nil {
 				continue
 			}
+			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
 				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}}
 			}
-			steps, err := check(ctx, connect, p, h, stage, runs[h.Name], plan.Pending)
-			if err != nil {
-				plan.Failed[h.Name] = err
+		}
+		steps := make([][]Planned, len(hosts))
+		errs := rollout(ctx, stage.Name, hosts, 0, opts.Serial, open, func(i int, conn Conn) error {
+			var err error
+			steps[i], err = check(ctx, conn, p, hosts[i], stage, runs[hosts[i].Name])
+			return err
+		})
+		sp := StagePlan{Stage: stage}
+		for i, h := range hosts {
+			if errs[i] != nil {
+				plan.Failed[h.Name] = errs[i]
 				continue
 			}
-			sp.Hosts = append(sp.Hosts, HostPlan{Host: h, Steps: steps})
+			sp.Hosts = append(sp.Hosts, HostPlan{Host: h, Steps: steps[i]})
 		}
 		plan.Stages = append(plan.Stages, sp)
+	}
+	for name, hr := range runs {
+		if hr.pending != nil {
+			plan.Pending[name] = *hr.pending
+		}
 	}
 	for _, h := range p.Inventory.Hosts {
 		if inStages[h.Name] {
@@ -152,17 +182,10 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect) *Plan {
 	return plan
 }
 
-// check checks the steps of a stage on one host. At the first contact, it
-// reads the facts and the pending handlers, and starts the host's
-// evaluation.
-func check(ctx context.Context, connect Connect, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun, pending map[string]protocol.Pending) (steps []Planned, err error) {
-	if ctx.Err() != nil {
-		return nil, ErrInterrupted
-	}
-	conn, err := connect(context.WithoutCancel(ctx), p.Name, h)
-	if err != nil {
-		return nil, err
-	}
+// check checks the steps of a stage on one host, and then closes conn. At the
+// first contact, it reads the facts and the pending handlers, and starts the
+// host's evaluation.
+func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun) (steps []Planned, err error) {
 	defer func() {
 		if cerr := conn.Close(); err == nil && cerr != nil {
 			err = cerr
@@ -176,13 +199,15 @@ func check(ctx context.Context, connect Connect, p *project.Project, h project.H
 		if hr.env, err = p.Start(h, f); err != nil {
 			return nil, err
 		}
-		if pending[h.Name], err = conn.Pending(context.WithoutCancel(ctx)); err != nil {
+		pending, err := conn.Pending(context.WithoutCancel(ctx))
+		if err != nil {
 			return nil, err
 		}
-		for _, n := range pending[h.Name].Handlers {
+		hr.pending = &pending
+		for _, n := range pending.Handlers {
 			hr.notified[n] = true
 		}
-		for _, t := range pending[h.Name].Then {
+		for _, t := range pending.Then {
 			hr.thens[t] = true
 		}
 	}
@@ -255,8 +280,8 @@ func (hr *hostRun) dropCreatedParents(m module.Module, res *module.Result) {
 func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 	var out []Planned
 	late := map[*project.Handler]bool{}
-	add := func(st project.Step, in *project.Step, addr string) error {
-		steps, err := st.Eval(hr.env)
+	add := func(env *project.Env, st project.Step, in *project.Step, addr string) error {
+		steps, err := st.Eval(env)
 		if err != nil {
 			return err
 		}
@@ -279,7 +304,7 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 	for i := range stage.Steps {
 		st := &stage.Steps[i]
 		if st.Recipe == nil {
-			if err := add(*st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1)); err != nil {
+			if err := add(hr.env, *st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1)); err != nil {
 				return nil, err
 			}
 			continue
@@ -291,13 +316,14 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 		if !ok {
 			continue
 		}
+		env := hr.env.For(st)
 		for j, rs := range st.Recipe.Steps {
-			if err := add(rs, st, fmt.Sprintf("%s#%d", st.Recipe.Name, j+1)); err != nil {
+			if err := add(env, rs, st, fmt.Sprintf("%s#%d", st.Recipe.Name, j+1)); err != nil {
 				return nil, err
 			}
 		}
 		for _, h := range st.Recipe.Handlers {
-			slot, err := handlerSlot(stage, h, hr.env, st)
+			slot, err := handlerSlot(stage, h, env, st)
 			if err != nil {
 				return nil, err
 			}
@@ -310,7 +336,7 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 			if !late[h] {
 				continue
 			}
-			slot, err := handlerSlot(stage, h, hr.env, r)
+			slot, err := handlerSlot(stage, h, hr.env.For(r), r)
 			if err != nil {
 				return nil, err
 			}

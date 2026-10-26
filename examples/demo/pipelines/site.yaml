@@ -10,8 +10,16 @@ stages:
       - recipe: unbound
       - recipe: dkimpy_milter
 
+  # One web host at a time; the next starts when the site answers.
   - name: web
     hosts: web
+    parallelism: 1
+    health:
+      command: curl -sf -o /dev/null http://localhost/
+      stable: 2
+      timeout: 30
     steps:
       - recipe: nginx
       - recipe: website
+        vars:
+          website_peers: !expr 'filter(match("web"), .name != host.name)'

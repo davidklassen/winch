@@ -48,6 +48,8 @@ type Config struct {
 	Progress io.Writer
 	// RetryDelay is the wait before the second ssh start. Zero means 2s.
 	RetryDelay time.Duration
+	// Batch makes ssh ask no questions.
+	Batch bool
 }
 
 // Session is one ssh process with the helper at the other end.
@@ -144,6 +146,9 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 		dir = StateDir
 	}
 	args := []string{"-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15"}
+	if cfg.Batch {
+		args = append(args, "-o", "BatchMode=yes")
+	}
 	// The host name stays the target, so the Host blocks of the SSH config
 	// match it. ssh expands % tokens in HostName.
 	if cfg.Address != cfg.Host {
@@ -176,7 +181,7 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	if err != nil {
 		err = s.fail(err)
 		if s.cmd.ProcessState.ExitCode() == 255 {
-			err = unreachable{err}
+			err = unreachable{hint(cfg, err)}
 		}
 		return nil, s.dropped(), err
 	}
@@ -187,6 +192,25 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 		return nil, false, err
 	}
 	return s, false, nil
+}
+
+// hint adds to err, an error of ssh in batch mode, the command that answers
+// the questions of ssh, when ssh failed on a host key or a login.
+func hint(cfg Config, err error) error {
+	msg := err.Error()
+	// A changed host key is no question that ssh asks.
+	if !cfg.Batch || strings.Contains(msg, "HAS CHANGED") ||
+		!strings.Contains(msg, "Host key verification failed") && !strings.Contains(msg, "Permission denied") {
+		return err
+	}
+	cmd := "ssh"
+	if cfg.Address != cfg.Host {
+		cmd += " -o HostName=" + cfg.Address
+	}
+	if cfg.User != "" {
+		cmd += " -l " + cfg.User
+	}
+	return fmt.Errorf("%w (in batch mode ssh asks nothing; run %q once)", err, cmd+" "+cfg.Host)
 }
 
 // dropped reports whether ssh failed because the host closed or reset the
@@ -339,6 +363,11 @@ func (s *Session) Handled(ctx context.Context, handler string) error {
 // its record.
 func (s *Session) Command(ctx context.Context, command string, then protocol.Then) error {
 	return s.call("command", protocol.Command{Command: command, Then: then}, nil)
+}
+
+// Health runs a health gate on the host.
+func (s *Session) Health(ctx context.Context, h protocol.Health) error {
+	return s.call("health", h, nil)
 }
 
 func (s *Session) step(method, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {

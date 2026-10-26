@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
+	"time"
 
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
@@ -25,6 +27,8 @@ type StepEvent struct {
 	Stage   string `json:"stage"`
 	Recipe  string `json:"recipe,omitempty"`
 	Handler string `json:"handler,omitempty"`
+	// Health is the command of a health gate.
+	Health string `json:"health,omitempty"`
 	// Step is the label of the step in the plan.
 	Step    string   `json:"step,omitempty"`
 	Module  string   `json:"module,omitempty"`
@@ -88,6 +92,8 @@ type text struct{ out, errOut io.Writer }
 
 func (t text) Step(ev StepEvent) {
 	switch {
+	case ev.Health != "" && ev.Status == "ok":
+		fmt.Fprintf(t.out, "%s: %s: * health: %s\n", ev.Host, ev.Stage, ev.Health)
 	case ev.Status != "change":
 	case ev.Then != "" && ev.ThenPending:
 		fmt.Fprintf(t.out, "%s: %s: ! then: %s\n", ev.Host, ev.scope(), ev.Then)
@@ -110,8 +116,10 @@ func (t text) Done(o *Outcome) {
 // Apply applies every stage of a plan on the hosts with a change in the plan.
 // A stage can undo what an earlier stage does, so a stage without a change
 // runs too. Each step is checked again right before it is applied, and the
-// handlers follow what apply changes.
+// handlers follow what apply changes. The hosts of a stage run at the same
+// time, at most the stage's parallelism.
 func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outcome {
+	rep = &lockedReporter{rep: rep}
 	o := &Outcome{Hosts: len(plan.Hosts), Changed: map[string]bool{}, Failed: map[string]error{}}
 	for name, err := range plan.Failed {
 		o.Failed[name] = err
@@ -124,13 +132,23 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 		}
 	}
+	open := func(h project.Host) (Conn, error) {
+		c, err := connect(context.WithoutCancel(ctx), plan.Project, h)
+		if err != nil {
+			return nil, fmt.Errorf("failed: %w", err)
+		}
+		return c, nil
+	}
 	runs := map[string]*hostApply{}
 	for _, sp := range plan.Stages {
+		var hps []HostPlan
+		var hosts []project.Host
 		for _, hp := range sp.Hosts {
 			name := hp.Host.Name
 			if !toApply[name] || o.Failed[name] != nil {
 				continue
 			}
+			hps, hosts = append(hps, hp), append(hosts, hp.Host)
 			if runs[name] == nil {
 				runs[name] = &hostApply{host: name, rep: rep, notified: map[string]bool{}, thens: map[protocol.Then]bool{}}
 				for _, n := range plan.Pending[name].Handlers {
@@ -140,15 +158,23 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 					runs[name].thens[t] = true
 				}
 			}
-			ok, err := runs[name].apply(ctx, connect, plan.Project, sp.Stage, hp)
-			if err != nil {
-				o.Failed[name] = err
-				delete(o.Changed, name)
-				rep.Host(HostEvent{Phase: "apply", Host: name, Status: hostStatus(err), Error: err.Error()})
+		}
+		changed := make([]bool, len(hps))
+		stage := sp.Stage
+		errs := rollout(ctx, stage.Name, hosts, stage.Parallelism, plan.opts.Serial, open, func(i int, conn Conn) error {
+			var err error
+			changed[i], err = runs[hosts[i].Name].apply(ctx, conn, stage, hps[i])
+			return err
+		})
+		for i, h := range hosts {
+			if err := errs[i]; err != nil {
+				o.Failed[h.Name] = err
+				delete(o.Changed, h.Name)
+				rep.Host(HostEvent{Phase: "apply", Host: h.Name, Status: hostStatus(err), Error: err.Error()})
 				continue
 			}
-			if ok {
-				o.Changed[name] = true
+			if changed[i] {
+				o.Changed[h.Name] = true
 			}
 		}
 	}
@@ -164,6 +190,30 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 	}
 	rep.Done(o)
 	return o
+}
+
+// lockedReporter lets the hosts of a stage report at the same time.
+type lockedReporter struct {
+	mu  sync.Mutex
+	rep Reporter
+}
+
+func (r *lockedReporter) Step(ev StepEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rep.Step(ev)
+}
+
+func (r *lockedReporter) Host(ev HostEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rep.Host(ev)
+}
+
+func (r *lockedReporter) Done(o *Outcome) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rep.Done(o)
 }
 
 // hostStatus is the status of a host that failed with err.
@@ -187,22 +237,49 @@ type hostApply struct {
 	conn  Conn
 }
 
-// apply runs the steps and the handlers of a stage on one host. It reports
-// whether a step changed something.
-func (a *hostApply) apply(ctx context.Context, connect Connect, proj string, stage *project.Stage, hp HostPlan) (changed bool, err error) {
-	if ctx.Err() != nil {
-		return false, ErrInterrupted
-	}
-	a.conn, err = connect(context.WithoutCancel(ctx), proj, hp.Host)
-	if err != nil {
-		return false, fmt.Errorf("failed: %w", err)
-	}
+// apply runs the steps and the handlers of a stage on one host, then its
+// health gate when the stage shows a change in the plan. It closes conn. It
+// reports whether a step changed something.
+func (a *hostApply) apply(ctx context.Context, conn Conn, stage *project.Stage, hp HostPlan) (changed bool, err error) {
+	a.conn = conn
 	defer func() {
 		if cerr := a.conn.Close(); err == nil && cerr != nil {
 			err = fmt.Errorf("failed: %w", cerr)
 		}
 	}()
-	return a.steps(ctx, stage, "", hp.Steps)
+	if changed, err = a.steps(ctx, stage, "", hp.Steps); err != nil {
+		return changed, err
+	}
+	if stage.Health != nil && hp.changes() {
+		if ctx.Err() != nil {
+			return changed, ErrInterrupted
+		}
+		return changed, a.health(ctx, stage)
+	}
+	return changed, nil
+}
+
+// health runs the health gate of a stage.
+func (a *hostApply) health(ctx context.Context, stage *project.Stage) error {
+	h := stage.Health
+	ev := healthEvent(a.host, stage)
+	err := a.conn.Health(context.WithoutCancel(ctx), protocol.Health{Command: h.Command,
+		Stable: time.Duration(h.Stable) * time.Second, Timeout: time.Duration(h.Timeout) * time.Second})
+	if err != nil {
+		ev.Status, ev.Error = "failed", err.Error()
+	}
+	a.rep.Step(ev)
+	if err != nil {
+		return fmt.Errorf("%s: failed: health: %s: %w", ev.Stage, ev.Health, err)
+	}
+	return nil
+}
+
+// healthEvent returns the event of the health gate of stage on host, as it
+// passes.
+func healthEvent(host string, stage *project.Stage) StepEvent {
+	name := secret.Printable(stage.Name)
+	return StepEvent{Host: host, Address: host + ":" + name + "#health", Stage: name, Health: secret.Printable(stage.Health.Command), Status: "ok"}
 }
 
 // stepEvent returns the event of p on host in stage, without its result.

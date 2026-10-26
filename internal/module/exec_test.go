@@ -55,7 +55,7 @@ func TestTimeLimit(t *testing.T) {
 			return err
 		}},
 		{"project command", func(ctx context.Context, command string) error {
-			return shell(ctx, command, time.Second, time.Second)
+			return ShellLimit(ctx, command, time.Second, time.Second)
 		}},
 	}
 	for _, tt := range tests {
@@ -116,7 +116,7 @@ func TestTimeLimitAfterExit(t *testing.T) {
 	if _, err := runLimited(t.Context(), time.Second, 2*time.Second, nil, "sh", "-c", command); err != nil && strings.Contains(err.Error(), "no result") {
 		t.Errorf("module command: error = %v, want no time limit", err)
 	}
-	if err := shell(t.Context(), command, time.Second, 2*time.Second); err != nil {
+	if err := ShellLimit(t.Context(), command, time.Second, 2*time.Second); err != nil {
 		t.Errorf("project command: error = %v, want nil", err)
 	}
 }

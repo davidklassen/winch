@@ -80,7 +80,7 @@ func TestPlanOutput(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(h)
 			}
-			plan := run.MakePlan(context.Background(), load(t, tt.web3), h.Connector())
+			plan := run.MakePlan(context.Background(), load(t, tt.web3), h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
 			plan.Write(&out, &errOut)
 			golden.Assert(t, filepath.Join("testdata", "plan", tt.name+".golden"),
@@ -111,11 +111,10 @@ func TestApply(t *testing.T) {
 				tt.setup(h)
 			}
 			p := load(t, "web3")
-			plan := run.MakePlan(context.Background(), p, h.Connector())
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
 			ok := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK()
-			golden.Assert(t, filepath.Join("testdata", "apply", tt.name+".golden"),
-				[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
+			golden.Assert(t, filepath.Join("testdata", "apply", tt.name+".golden"), applyOutput(&out, &errOut))
 			failed := tt.setup != nil
 			if ok == failed {
 				t.Errorf("Apply = %v, want %v", ok, !failed)
@@ -129,7 +128,7 @@ func TestApply(t *testing.T) {
 			if h.Open != 0 {
 				t.Errorf("%d connections are still open", h.Open)
 			}
-			again := run.MakePlan(context.Background(), p, h.Connector())
+			again := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			if again.HasChanges() != (tt.setup != nil) {
 				t.Errorf("second plan has changes = %v", again.HasChanges())
 			}
@@ -146,7 +145,7 @@ func TestHasChangesIgnoresFailedHosts(t *testing.T) {
 	}
 	h.FailCheck("web1")
 	h.FailCheck("web3")
-	plan := run.MakePlan(context.Background(), load(t, "web3"), h.Connector())
+	plan := run.MakePlan(context.Background(), load(t, "web3"), h.Connector(), run.Options{})
 	if plan.HasChanges() {
 		t.Error("a plan whose changes are all on failed hosts has changes")
 	}
@@ -177,7 +176,7 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := fakehost.New()
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(&out, &errOut)
 	golden.Assert(t, filepath.Join("testdata", "plan", "index-refresh.golden"),
@@ -260,7 +259,7 @@ func TestPlanParents(t *testing.T) {
 				h.RemoveDir(host, "/srv/static")
 				h.RemoveDir(host, "/srv/static/img")
 			}
-			plan := run.MakePlan(context.Background(), p, h.Connector())
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
 			plan.Write(&out, &errOut)
 			golden.Assert(t, filepath.Join("testdata", "plan", tt.name+".golden"),
@@ -294,7 +293,7 @@ func TestApplyChecksStagesWithoutChange(t *testing.T) {
 	}
 	h := fakehost.New()
 	h.SetPkgFile("nginx", "/etc/nginx/sites-enabled/default", "server {}\n")
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	if st := plan.Stages[1].Hosts[0].Steps[0].Result.Status; st != module.OK {
 		t.Fatalf("plan of stage configure = %v, want ok", st)
 	}
@@ -305,7 +304,7 @@ func TestApplyChecksStagesWithoutChange(t *testing.T) {
 	if _, ok := h.File("web1", "/etc/nginx/sites-enabled/default"); ok {
 		t.Errorf("apply did not run stage configure; apply output:\n%s", out.String())
 	}
-	again := run.MakePlan(context.Background(), p, h.Connector())
+	again := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	if again.HasChanges() || len(again.Failed) != 0 {
 		t.Errorf("second plan: changes %v, failed %v", again.HasChanges(), again.Failed)
 	}
@@ -430,7 +429,7 @@ func TestPlanRecipes(t *testing.T) {
 					files[k] = v
 				}
 			}
-			plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector())
+			plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
 			plan.Write(&out, &errOut)
 			golden.Assert(t, filepath.Join("testdata", "plan", tt.name+".golden"),
@@ -467,11 +466,10 @@ func TestApplyRecipes(t *testing.T) {
 				tt.setup(h)
 			}
 			p := loadFiles(t, recipes)
-			plan := run.MakePlan(context.Background(), p, h.Connector())
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
 			run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK()
-			golden.Assert(t, filepath.Join("testdata", "apply", tt.name+".golden"),
-				[]byte("stdout:\n"+out.String()+"stderr:\n"+errOut.String()))
+			golden.Assert(t, filepath.Join("testdata", "apply", tt.name+".golden"), applyOutput(&out, &errOut))
 			if c, _ := h.File("web1", "/etc/nginx/logo.png"); c != "\x89PNG\r\n\x1a\n\x00\x00\xff" {
 				t.Errorf("logo.png = %q", c)
 			}
@@ -530,7 +528,7 @@ steps:
 // spec: Templates and expressions/When they run; Steps; Running a pipeline/Plan; CLI/Output
 func TestPlanVars(t *testing.T) {
 	h := fakehost.New()
-	plan := run.MakePlan(context.Background(), loadFiles(t, varsFiles), h.Connector())
+	plan := run.MakePlan(context.Background(), loadFiles(t, varsFiles), h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(&out, &errOut)
 	golden.Assert(t, filepath.Join("testdata", "plan", "vars.golden"),
@@ -573,7 +571,7 @@ func TestPlanStageNameControlCharacters(t *testing.T) {
           content: "x\n"
 `,
 	})
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(&out, &errOut)
 	golden.Assert(t, filepath.Join("testdata", "plan", "stage-name-control-characters.golden"),
@@ -596,7 +594,7 @@ func TestApplyStageNameControlCharacters(t *testing.T) {
           content: "x\n"
 `,
 	})
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK()
 	golden.Assert(t, filepath.Join("testdata", "apply", "stage-name-control-characters.golden"),

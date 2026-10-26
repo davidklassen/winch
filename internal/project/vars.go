@@ -3,6 +3,7 @@ package project
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -67,10 +68,11 @@ func (l *loader) declare(n *yamlx.Node, recipe string) []error {
 func (l *loader) compileDefaults() error {
 	var errs []error
 	sc := scope{
-		vars:   l.vars,
-		noItem: "a default cannot use item",
-		byName: "a default reads vars only by name, such as vars.nginx_port",
-		sealed: true,
+		vars:    l.vars,
+		noItem:  "a default cannot use item",
+		byName:  "a default reads vars only by name, such as vars.nginx_port",
+		sealed:  true,
+		noMatch: "a default cannot use match()",
 	}
 	for _, v := range l.decls {
 		if v.node == nil {
@@ -196,11 +198,36 @@ type Env struct {
 	// runs are the recipes that run on the host in the pipeline.
 	runs   map[string]bool
 	filter *secret.Filter
+	// parent is the data of the host in the data of a recipe step with vars,
+	// else nil. host.vars reads it.
+	parent *Env
+	// steps holds the data of each recipe step with vars.
+	steps map[*Step]*Env
+	inv   *Inventory
+	peers map[string]map[string]any
 }
 
 // Runs reports whether the recipe runs on the host in the pipeline: a stage
 // of the host has a step for it whose when is true.
 func (e *Env) Runs(recipe string) bool { return e.runs[recipe] }
+
+// For returns the data of the recipe step st on the host of e: its own when
+// the step has vars, else e.
+func (e *Env) For(st *Step) *Env {
+	if se := e.steps[st]; se != nil {
+		return se
+	}
+	return e
+}
+
+// hostVars returns the variables of the host, without the vars of a recipe
+// step.
+func (e *Env) hostVars() map[string]any {
+	if e.parent != nil {
+		return e.parent.vars[e.n]
+	}
+	return e.vars[e.n]
+}
 
 func (e *Env) with(items [3]any) *Env {
 	c := *e
@@ -242,10 +269,7 @@ func (e *Env) templateData() map[string]any {
 	d := map[string]any{
 		"vars":  e.vars[e.n],
 		"facts": e.facts.Map(),
-		"host": map[string]any{
-			"name": e.host.Name, "short": e.short, "address": e.host.Address,
-			"groups": e.host.Groups, "vars": e.vars[e.n],
-		},
+		"host":  hostMap(e.host, e.hostVars()),
 	}
 	if e.hasItem {
 		d["item"] = e.item[e.n]
@@ -257,34 +281,71 @@ func (e *Env) exprEnv() exprEnv {
 	return exprEnv{
 		Vars:  e.vars[e.n],
 		Facts: e.facts,
-		Host:  hostEnv{Name: e.host.Name, Short: e.short, Address: e.host.Address, Groups: e.host.Groups, Vars: e.vars[e.n]},
+		Host:  hostEnv{Name: e.host.Name, Short: e.short, Address: e.host.Address, Groups: e.host.Groups, Vars: e.hostVars()},
 		Item:  e.item[e.n],
+		Match: e.match,
 	}
+}
+
+// match returns the hosts of a host pattern with the fields of host.
+func (e *Env) match(pattern string) ([]any, error) {
+	hosts, err := e.inv.Match(pattern)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]any, len(hosts))
+	for i, h := range hosts {
+		out[i] = hostMap(h, unseal(e.peers[h.Name], e.n))
+	}
+	return out, nil
+}
+
+// hostMap returns the fields of host h for templates and match(), with
+// vars.
+func hostMap(h Host, vars any) map[string]any {
+	short, _, _ := strings.Cut(h.Name, ".")
+	return map[string]any{"name": h.Name, "short": short, "address": h.Address, "groups": h.Groups, "vars": vars}
+}
+
+// peerVars returns the vars of each host for match(): the defaults that are
+// plain values, the inventory values, and --set.
+func peerVars(inv *Inventory, decls []*Var) map[string]map[string]any {
+	defaults := map[string]any{}
+	for _, v := range decls {
+		if v.node != nil && v.computed == nil {
+			defaults[v.Name] = yamlx.Value(v.node)
+		}
+	}
+	out := map[string]map[string]any{}
+	for _, h := range inv.Hosts {
+		vars := maps.Clone(defaults)
+		maps.Copy(vars, h.Vars)
+		out[h.Name] = vars
+	}
+	return out
 }
 
 // Start returns the data of host h with facts f: it evaluates the defaults
 // that h uses. It checks the requirements and the required variables of each
-// recipe that runs on h in the pipeline, also in later stages.
+// recipe that runs on h in the pipeline, also in later stages and in stages
+// that the selection leaves out.
 func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
 	short, _, _ := strings.Cut(h.Name, ".")
-	e := &Env{host: h, short: short, facts: f, secret: map[string]bool{}, secrets: p.secrets, runs: map[string]bool{}, filter: p.filter}
-	for n := range e.vars {
-		e.vars[n] = unseal(h.Vars, n).(map[string]any)
-		if !e.secrets {
-			e.vars[1], e.vars[2] = e.vars[0], e.vars[0]
-			break
-		}
-	}
-	for name, v := range h.Vars {
-		e.secret[name] = hasSealed(v)
-	}
-	for _, s := range p.Pipeline.Stages {
+	e := &Env{host: h, short: short, facts: f, secrets: p.secrets, runs: map[string]bool{}, filter: p.filter,
+		steps: map[*Step]*Env{}, inv: p.Inventory, peers: p.peers}
+	e.setHostValues()
+	for i := range p.Pipeline.Stages {
+		s := &p.Pipeline.Stages[i]
 		if !slices.ContainsFunc(s.Targets, func(t Host) bool { return t.Name == h.Name }) {
 			continue
 		}
-		for _, st := range s.Steps {
+		for j := range s.Steps {
+			st := &s.Steps[j]
+			if st.Recipe == nil && s.Skipped {
+				continue
+			}
 			if st.Recipe == nil {
-				if err := p.use(e, st); err != nil {
+				if err := p.use(e, *st); err != nil {
 					return nil, err
 				}
 				continue
@@ -310,21 +371,106 @@ func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
 				}
 			}
 			e.runs[st.Recipe.Name] = true
+			// A stage that the selection leaves out counts only for the
+			// requirements and the handlers of its recipes.
+			if s.Skipped {
+				continue
+			}
+			re := e
+			if st.vars != nil {
+				if re, err = p.stepEnv(e, st); err != nil {
+					return nil, err
+				}
+				e.steps[st] = re
+			}
 			for _, rs := range st.Recipe.Steps {
-				if err := p.use(e, rs); err != nil {
+				if err := p.use(re, rs); err != nil {
 					return nil, err
 				}
 			}
 			for _, hd := range st.Recipe.Handlers {
 				for _, hs := range hd.Steps {
-					if err := p.use(e, hs); err != nil {
+					if err := p.use(re, hs); err != nil {
 						return nil, err
 					}
+				}
+			}
+			if re != e {
+				if err := p.evalDefaults(e, p.unchanged(re, st)); err != nil {
+					return nil, err
 				}
 			}
 		}
 	}
 	return e, nil
+}
+
+// setHostValues sets the variables of e to the values of its host: the
+// inventory and --set.
+func (e *Env) setHostValues() {
+	e.secret = map[string]bool{}
+	for n := range e.vars {
+		e.vars[n] = unseal(e.host.Vars, n).(map[string]any)
+		if !e.secrets {
+			e.vars[1], e.vars[2] = e.vars[0], e.vars[0]
+			break
+		}
+	}
+	for name, v := range e.host.Vars {
+		e.secret[name] = hasSealed(v)
+	}
+}
+
+// stepEnv returns the data of the recipe step st with vars on the host of e:
+// the host's values, then the step values, unless --set gives the name. The
+// step values evaluate in e. Defaults evaluate again in the new data.
+func (p *Project) stepEnv(e *Env, st *Step) (*Env, error) {
+	var reads []string
+	for _, v := range st.vars {
+		if v.computed != nil {
+			reads = append(reads, v.computed.reads()...)
+		}
+	}
+	if err := p.evalDefaults(e, reads); err != nil {
+		return nil, err
+	}
+	se := &Env{host: e.host, short: e.short, facts: e.facts, secrets: e.secrets, runs: e.runs, filter: e.filter,
+		parent: e, inv: e.inv, peers: e.peers}
+	se.setHostValues()
+	for _, v := range st.vars {
+		if p.set[v.Name] {
+			continue
+		}
+		vals, isSecret, err := p.evalValue(e, v)
+		if err != nil {
+			return nil, err
+		}
+		if vals[0] == nil {
+			return nil, yamlx.Errorf(v.node.Pos, "variable %q: null is not a value", v.Name)
+		}
+		for n := range vals {
+			se.vars[n][v.Name] = vals[n]
+		}
+		se.secret[v.Name] = isSecret
+	}
+	return se, nil
+}
+
+// unchanged returns the defaults that se, the data of the recipe step st,
+// evaluated and whose value reads no variable that the step sets. host.vars
+// in se reads them from the host's data.
+func (p *Project) unchanged(se *Env, st *Step) []string {
+	dep := map[string]bool{}
+	var out []string
+	for _, v := range p.vars {
+		if v.computed != nil && slices.ContainsFunc(v.computed.reads(), func(r string) bool { return dep[r] || st.sets(r) }) {
+			dep[v.Name] = true
+		}
+		if _, ok := se.vars[0][v.Name]; ok && !dep[v.Name] {
+			out = append(out, v.Name)
+		}
+	}
+	return out
 }
 
 // use evaluates the defaults that the when of module step st reads, and,
@@ -365,10 +511,11 @@ func (p *Project) evalDefaults(e *Env, names []string) error {
 		if _, ok := e.vars[0][v.Name]; ok || !need[v.Name] || v.required() {
 			continue
 		}
-		vals, err := p.evalDefault(e, v)
+		vals, isSecret, err := p.evalValue(e, v)
 		if err != nil {
 			return err
 		}
+		e.secret[v.Name] = isSecret
 		if vals[0] == nil {
 			continue
 		}
@@ -379,29 +526,31 @@ func (p *Project) evalDefaults(e *Env, names []string) error {
 	return nil
 }
 
-// evalDefault returns the default of v in the three variants.
-func (p *Project) evalDefault(e *Env, v *Var) ([3]any, error) {
+// evalValue returns the value of v, a default or a value of a recipe step,
+// in the three variants of e. It reports whether the value is secret: it
+// holds a !secret, or it reads a secret variable.
+func (p *Project) evalValue(e *Env, v *Var) ([3]any, bool, error) {
 	var vals [3]any
 	if v.computed == nil {
 		val := yamlx.Value(v.node)
-		e.secret[v.Name] = hasSealed(val)
 		for n := range vals {
 			vals[n] = unseal(val, n)
 		}
-		return vals, nil
+		return vals, hasSealed(val), nil
 	}
 	if !e.secrets {
 		node, err := v.computed.eval(e, "")
 		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
-			return vals, yamlx.Errorf(ye.Pos, "variable %q: %s", v.Name, ye.Msg)
+			return vals, false, yamlx.Errorf(ye.Pos, "variable %q: %s", v.Name, ye.Msg)
 		}
 		if err != nil {
-			return vals, err
+			return vals, false, err
 		}
 		val := yamlx.Value(node)
-		return [3]any{val, val, val}, nil
+		return [3]any{val, val, val}, false, nil
 	}
 	var errs [3]error
+	isSecret := false
 	for n := range vals {
 		node, err := v.computed.eval(e.variant(n), "")
 		if err != nil {
@@ -410,29 +559,29 @@ func (p *Project) evalDefault(e *Env, v *Var) ([3]any, error) {
 		}
 		val := yamlx.Value(node)
 		if n == 0 {
-			e.secret[v.Name] = hasSealed(val) || slices.ContainsFunc(v.computed.reads(), func(r string) bool { return e.secret[r] })
+			isSecret = hasSealed(val) || slices.ContainsFunc(v.computed.reads(), func(r string) bool { return e.secret[r] })
 		}
 		vals[n] = unseal(val, n)
 	}
 	if errs[0] != nil {
 		err := maskError(errs[0], [2]error{errs[1], errs[2]})
 		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
-			return vals, yamlx.Errorf(ye.Pos, "variable %q: %s", v.Name, ye.Msg)
+			return vals, false, yamlx.Errorf(ye.Pos, "variable %q: %s", v.Name, ye.Msg)
 		}
-		return vals, err
+		return vals, false, err
 	}
 	for n := 1; n < 3; n++ {
 		switch {
 		case errs[n] != nil:
 			vals[n] = secret.Placeholder(n)
-		case e.secret[v.Name]:
+		case isSecret:
 			vals[n] = force(vals[0], vals[n], n)
 		}
 	}
-	if e.secret[v.Name] {
+	if isSecret {
 		e.learn(secret.Parts(vals[0], vals[1], vals[2]))
 	}
-	return vals, nil
+	return vals, isSecret, nil
 }
 
 // missing returns an error for each required variable of the recipe of st
@@ -440,7 +589,7 @@ func (p *Project) evalDefault(e *Env, v *Var) ([3]any, error) {
 func (st Step) missing(hosts []Host) error {
 	var errs []error
 	for _, v := range st.Recipe.Vars {
-		if !v.required() {
+		if !v.required() || st.sets(v.Name) {
 			continue
 		}
 		var without []string

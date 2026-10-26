@@ -41,15 +41,18 @@ type scope struct {
 	byName string
 	// sealed is true where a !secret value is allowed: in a default.
 	sealed bool
+	// noMatch is the reason that match() is not allowed, or "" when it is.
+	noMatch string
 }
 
 const itemOutsideLoop = "item is defined only in a step with loop"
 
 type exprEnv struct {
-	Vars  map[string]any `expr:"vars"`
-	Facts facts.Facts    `expr:"facts"`
-	Host  hostEnv        `expr:"host"`
-	Item  any            `expr:"item"`
+	Vars  map[string]any              `expr:"vars"`
+	Facts facts.Facts                 `expr:"facts"`
+	Host  hostEnv                     `expr:"host"`
+	Item  any                         `expr:"item"`
+	Match func(string) ([]any, error) `expr:"match"`
 }
 
 type hostEnv struct {
@@ -144,6 +147,9 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		if n.Value == "$env" && c.sc.byName != "" {
 			c.fail(n, c.sc.byName)
 		}
+		if n.Value == "match" && c.sc.noMatch != "" {
+			c.fail(n, c.sc.noMatch)
+		}
 		if isVars(n) || n.Value == "host" {
 			c.whole = append(c.whole, n)
 		}
@@ -200,7 +206,7 @@ func unknownVariable(name string, vars map[string]*Var) string {
 var (
 	unknownNameRe  = regexp.MustCompile(`^unknown name (\w+)$`)
 	unknownFieldRe = regexp.MustCompile(`^type (\w+\.\w+) has no field (\w+)$`)
-	exprNames      = []string{"vars", "facts", "host", "item"}
+	exprNames      = []string{"vars", "facts", "host", "item", "match"}
 	osFields       = fieldTags(facts.OS{})
 	hostFields     = fieldTags(hostEnv{})
 	// fieldNames are the fields of the typed data, by the type name in

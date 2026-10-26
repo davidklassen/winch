@@ -7,6 +7,8 @@ web1: nginx: ~ handler nginx.reload: service nginx
 web1: site: + file /var/www/index.html
 web1: site: + file /var/www/about.html
 web1: nginx: ~ handler nginx.reload: service nginx
+web1: app: + file /etc/app.conf
+web1: app: ~ handler app.restart: service app
 web2: nginx: + file /etc/nginx/a.conf
 web2: nginx: + file /etc/nginx/b.conf
 web2: nginx: + file /etc/nginx/c.conf
@@ -15,8 +17,6 @@ web2: nginx: ~ handler nginx.reload: service nginx
 web2: site: + file /var/www/index.html
 web2: site: + file /var/www/about.html
 web2: nginx: ~ handler nginx.reload: service nginx
-web1: app: + file /etc/app.conf
-web1: app: ~ handler app.restart: service app
 
 2 hosts: 2 changed, 0 unchanged
 stderr:

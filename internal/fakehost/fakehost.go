@@ -47,6 +47,17 @@ type Hosts struct {
 	// OnCheck and OnApply run before each check and each apply of a step,
 	// with the host and the main argument of the step.
 	OnCheck, OnApply func(host, main string)
+	// OnConnect runs before each connect.
+	OnConnect func(host string)
+	// Batch lists the batch mode of each ConnectorFor call.
+	Batch []bool
+	// Users holds the login user of the last connect of each host.
+	Users map[string]string
+	// MaxOpen is the highest number of open connections.
+	MaxOpen int
+	// Trace lists the connects, applies, health gates, and closes of all
+	// hosts, in order.
+	Trace []string
 }
 
 func New() *Hosts {
@@ -66,6 +77,7 @@ func New() *Hosts {
 		Log:        map[string][]string{},
 		results:    map[string]module.Result{},
 		Connects:   map[string]int{},
+		Users:      map[string]string{},
 		down:       map[string]bool{},
 	}
 }
@@ -191,18 +203,32 @@ func (h *Hosts) SetUnreachable(host string) {
 }
 
 func (h *Hosts) Connect(ctx context.Context, host project.Host) (*Conn, error) {
+	if h.OnConnect != nil {
+		h.OnConnect(host.Name)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if host.Address == "unreachable" || h.down[host.Name] {
 		return nil, run.MarkUnreachable(errors.New("ssh: connect to host " + host.Address + ": Connection refused"))
 	}
 	h.Open++
+	h.MaxOpen = max(h.MaxOpen, h.Open)
 	h.Connects[host.Name]++
+	h.Users[host.Name] = host.User
+	h.Trace = append(h.Trace, "connect "+host.Name)
 	return &Conn{hosts: h, host: host.Name}, nil
 }
 
 func (h *Hosts) fails(m map[string]bool, host, path string) bool {
 	return m[host] || m[host+" "+path]
+}
+
+// ConnectorFor returns Connect as a run.Connect, and records batch.
+func (h *Hosts) ConnectorFor(batch bool) run.Connect {
+	h.mu.Lock()
+	h.Batch = append(h.Batch, batch)
+	h.mu.Unlock()
+	return h.Connector()
 }
 
 // Connector returns Connect as a run.Connect.
@@ -316,6 +342,9 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 	if c.hosts.OnApply != nil {
 		c.hosts.OnApply(c.host, m.Main())
 	}
+	c.hosts.mu.Lock()
+	c.hosts.Trace = append(c.hosts.Trace, "apply "+c.host+" "+m.Main())
+	c.hosts.mu.Unlock()
 	if ctx.Err() != nil {
 		return module.Result{}, fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
 	}
@@ -424,9 +453,24 @@ func (c *Conn) Command(ctx context.Context, command string, then protocol.Then) 
 	return nil
 }
 
+// Health records the gate in Trace. A command that FailCommand names fails.
+func (c *Conn) Health(ctx context.Context, h protocol.Health) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
+	}
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	c.hosts.Trace = append(c.hosts.Trace, fmt.Sprintf("health %s %s %s %s", c.host, h.Command, h.Stable, h.Timeout))
+	if c.hosts.failCmd[c.host+" "+h.Command] {
+		return fmt.Errorf("did not pass within %s: exit status 1", h.Timeout)
+	}
+	return nil
+}
+
 func (c *Conn) Close() error {
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
 	c.hosts.Open--
+	c.hosts.Trace = append(c.hosts.Trace, "close "+c.host)
 	return nil
 }

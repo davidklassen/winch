@@ -3,7 +3,6 @@ package integration
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -73,16 +72,9 @@ func TestHandlers(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "handlers")
 	vm.MustRun(t, appUnit)
-	// A second inventory host on the same VM, without the recipe app.
-	conf, err := os.ReadFile(filepath.Join(lab.Dir, "hosts", vm.Name+".conf"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, err := lab.WriteHost("handlers-b", strings.Replace(string(conf), "Host "+vm.Name, "Host handlers-b", 1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Remove(other) })
+	// A second host without the recipe app. It runs at the same time as the
+	// first, so it needs its own VM.
+	other := lab.StartVM(t, "handlers-b")
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":               "name: hdemo\ninventory: inventories/test.yaml\n",
 		"inventories/test.yaml":    "hosts:\n  handlers: {}\n  handlers-b: {}\ngroups:\n  apps:\n    hosts: [handlers]\n",
@@ -103,8 +95,10 @@ func TestHandlers(t *testing.T) {
 		if r.Code != 1 || !strings.Contains(r.Stdout, "handlers-b: conf: + file /srv/handlers-b/a.conf") {
 			t.Fatalf("apply: exit %d, want 1 with a change on handlers-b", r.Code)
 		}
-		if out := vm.MustRun(t, records); out != "" {
-			t.Errorf("pending handlers = %q, want none", out)
+		for _, vm := range []*vmtest.VM{vm, other} {
+			if out := vm.MustRun(t, records); out != "" {
+				t.Errorf("%s: pending handlers = %q, want none", vm.Name, out)
+			}
 		}
 	})
 

@@ -75,7 +75,7 @@ func TestSecrets(t *testing.T) {
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/monit/conf.d/settings", "set httpd port 2812\n  allow admin:old-pass\n# Old-Pass\n")
 	h.SetThen("web1", protocol.Then{Recipe: "monit", SHA256: sum("monit-passwd hunter2")})
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(&out, &errOut)
 	golden.Assert(t, filepath.Join("testdata", "secrets", "plan.golden"), output(&out, &errOut))
@@ -84,7 +84,7 @@ func TestSecrets(t *testing.T) {
 	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
 		t.Fatalf("apply failed: %s", errOut.String())
 	}
-	golden.Assert(t, filepath.Join("testdata", "secrets", "apply.golden"), output(&out, &errOut))
+	golden.Assert(t, filepath.Join("testdata", "secrets", "apply.golden"), applyOutput(&out, &errOut))
 	if c, _ := h.File("web1", "/etc/monit/conf.d/settings"); !strings.Contains(c, "allow admin:hunter2\n# Hunter2\n") {
 		t.Errorf("settings = %q; the host needs the real values", c)
 	}
@@ -101,12 +101,12 @@ func TestSecretsFailedStep(t *testing.T) {
 	p := secretProject(t)
 	h := fakehost.New()
 	h.FailApply("web1 /etc/monit/hunter2.key")
-	plan := run.MakePlan(context.Background(), p, h.Connector())
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	if run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
 		t.Fatal("apply did not fail")
 	}
 	// The label masks the path; the error text of the host passes only the
 	// filter of the CLI.
-	golden.Assert(t, filepath.Join("testdata", "secrets", "apply-fails.golden"), output(&out, &errOut))
+	golden.Assert(t, filepath.Join("testdata", "secrets", "apply-fails.golden"), applyOutput(&out, &errOut))
 }

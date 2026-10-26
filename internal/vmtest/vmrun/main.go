@@ -1,6 +1,6 @@
-// vmrun starts one VM named "demo" for a demo by hand and keeps it running
-// until Ctrl-C. With -refresh, it builds the test apt repository again and
-// exits.
+// vmrun starts the VMs demo, demo2, ... for a demo by hand and keeps them
+// running until Ctrl-C. With -refresh, it builds the test apt repository
+// again and exits.
 package main
 
 import (
@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/davidklassen/winch/internal/vmtest"
@@ -23,7 +25,11 @@ func main() {
 
 func run() error {
 	refresh := flag.Bool("refresh", false, "build the test apt repository again and exit")
+	n := flag.Int("n", 1, "the number of VMs")
 	flag.Parse()
+	if *n < 1 {
+		return fmt.Errorf("-n %d: start at least one VM", *n)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	cfg, err := vmtest.FromEnv("test/repo")
@@ -44,13 +50,21 @@ func run() error {
 	if *refresh {
 		return nil
 	}
-	fmt.Println("starting the VM demo ...")
-	vm, err := lab.Start(ctx, "demo")
-	if err != nil {
-		return err
+	var names []string
+	for i := range *n {
+		name := "demo"
+		if i > 0 {
+			name += strconv.Itoa(i + 1)
+		}
+		fmt.Printf("starting the VM %s ...\n", name)
+		vm, err := lab.Start(ctx, name)
+		if err != nil {
+			return err
+		}
+		defer vm.Stop()
+		names = append(names, name)
 	}
-	defer vm.Stop()
-	fmt.Printf("VM demo is ready. In another terminal:\n  export PATH=%s/bin:$PATH\n  ssh demo\nCtrl-C stops it.\n", dir)
+	fmt.Printf("VMs %s are ready. In another terminal:\n  export PATH=%s/bin:$PATH\n  ssh %s\nCtrl-C stops them.\n", strings.Join(names, ", "), dir, names[0])
 	<-ctx.Done()
 	return nil
 }

@@ -1,8 +1,6 @@
 package integration
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,16 +11,9 @@ import (
 func TestVarsWhenLoop(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "vars")
-	// A second inventory host on the same VM, in another group.
-	conf, err := os.ReadFile(filepath.Join(lab.Dir, "hosts", vm.Name+".conf"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, err := lab.WriteHost("vars-relay", strings.Replace(string(conf), "Host "+vm.Name, "Host vars-relay", 1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Remove(other) })
+	// A second host in another group. It runs at the same time as the first,
+	// so it needs its own VM.
+	relay := lab.StartVM(t, "vars-relay")
 
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml": `name: demo
@@ -74,7 +65,11 @@ steps:
 		"/srv/vars-relay/bob":        "bob on vars-relay\n",
 		"/srv/vars-relay/relay.conf": "relay for ann, bob\n",
 	} {
-		if out := vm.MustRun(t, "cat "+path); out != want {
+		host := vm
+		if strings.HasPrefix(path, "/srv/vars-relay/") {
+			host = relay
+		}
+		if out := host.MustRun(t, "cat "+path); out != want {
 			t.Errorf("%s = %q, want %q", path, out, want)
 		}
 	}

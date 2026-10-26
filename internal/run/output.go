@@ -79,6 +79,9 @@ func (p *Plan) Write(out, errOut io.Writer) {
 					fmt.Fprintf(b, "%s! then: %s\n", indent, secret.Printable(p.Step.ShownThen()))
 				}
 			}
+			if h := sp.Stage.Health; h != nil {
+				fmt.Fprintf(b, "    * health: %s\n", secret.Printable(h.Command))
+			}
 		}
 	}
 	type group struct {

@@ -48,7 +48,9 @@ type Env struct {
 	Out, Err io.Writer
 	// Terminal is true when stdin and stderr are terminals.
 	Terminal bool
-	Connect  run.Connect
+	// Connect returns the function that opens sessions. With batch, ssh asks
+	// no questions.
+	Connect func(batch bool) run.Connect
 	// Home is the home directory, or empty when it is not known.
 	Home string
 	// AgeKey is the value of WINCH_AGE_KEY.
@@ -84,13 +86,16 @@ type command struct {
 	apply bool
 	// exitCode is true when the command takes --exit-code.
 	exitCode bool
-	run      func(ctx context.Context, env Env, f *flags, args []string) int
+	// hosts is true when the command connects to hosts: it takes --hosts,
+	// --stages, --user, and --batch.
+	hosts bool
+	run   func(ctx context.Context, env Env, f *flags, args []string) int
 }
 
 var commands = map[string]command{
 	"validate":       {help: validateHelp, project: true, run: validate},
-	"plan":           {help: planHelp, project: true, exitCode: true, run: plan},
-	"apply":          {help: applyHelp, project: true, apply: true, run: apply},
+	"plan":           {help: planHelp, project: true, exitCode: true, hosts: true, run: plan},
+	"apply":          {help: applyHelp, project: true, apply: true, hosts: true, run: apply},
 	"secret":         {help: secretHelp, run: secretUsage},
 	"secret encrypt": {help: encryptHelp, run: secretEncrypt},
 	"secret rekey":   {help: rekeyHelp, run: secretRekey},
@@ -119,6 +124,7 @@ const planHelp = `Examples:
   winch plan site
   winch plan site --inventory inventories/production.yaml
   winch plan site --set vars.nginx_port=8080
+  winch plan site --hosts 'web & !web3' --stages nginx,site
   winch plan site --exit-code
 
 Show the changes that apply would make, and the plan hash. Change
@@ -128,8 +134,16 @@ Usage: winch plan <pipeline> [flags]
 
 Flags:
   --inventory <path>            The inventory file for this run.
+  --hosts <pattern>             Run only on these hosts: a group or a host,
+                                with "," for union, "&" for intersection,
+                                and "!" for exclusion.
+  --stages <names>              Run only these stages, such as mail,monit.
+  --user [<host>=]<name>        SSH login user, for all hosts or one host.
+                                Repeatable.
   --set vars.<name>=<value>     Set a variable for this run. The value
                                 parses as YAML. Repeatable.
+  --batch                       ssh asks no questions, and sessions start
+                                in parallel.
   --exit-code                   Exit with code 2 when the plan has
                                 changes or pending handlers.
   --json                        Write JSON events on stdout.
@@ -138,6 +152,7 @@ Flags:
 const applyHelp = `Examples:
   winch apply site
   winch apply site --inventory inventories/test.yaml --yes
+  winch apply site --hosts mail --stages mail
   winch apply site --check a3f9c2e1
 
 Show the changes, ask, then make them.
@@ -148,13 +163,25 @@ winch asks only when stdin and stderr are terminals. Without a terminal,
 and without --yes or --check, apply prints the plan and exits with code
 5. Its last line is the command that applies the plan with its hash.
 
+With a terminal, ssh can ask questions, and sessions start one at a
+time. Without one, or with --batch, ssh asks nothing, and sessions start
+in parallel.
+
 The first Ctrl-C lets the running step on each host finish and starts no
 new step. A second Ctrl-C ends the sessions at once.
 
 Flags:
   --inventory <path>            The inventory file for this run.
+  --hosts <pattern>             Run only on these hosts: a group or a host,
+                                with "," for union, "&" for intersection,
+                                and "!" for exclusion.
+  --stages <names>              Run only these stages, such as mail,monit.
+  --user [<host>=]<name>        SSH login user, for all hosts or one host.
+                                Repeatable.
   --set vars.<name>=<value>     Set a variable for this run. The value
                                 parses as YAML. Repeatable.
+  --batch                       ssh asks no questions, and sessions start
+                                in parallel. The apply question stays.
   --yes                         Apply without the question.
   --check <hash>                Apply only when the plan has this hash.
                                 Otherwise exit with code 6 and change
@@ -165,6 +192,10 @@ Flags:
 type flags struct {
 	inventory string
 	set       []string
+	hosts     string
+	stages    string
+	users     []string
+	batch     bool
 	yes       bool
 	// check is the value of --check, or nil without it.
 	check    *string
@@ -224,6 +255,15 @@ func Main(ctx context.Context, args []string, env Env) int {
 	if cmd.exitCode {
 		fs.BoolVar(&f.exitCode, "exit-code", false, "")
 	}
+	if cmd.hosts {
+		fs.Func("hosts", "", notEmpty(&f.hosts))
+		fs.Func("stages", "", notEmpty(&f.stages))
+		fs.Func("user", "", func(s string) error {
+			f.users = append(f.users, s)
+			return nil
+		})
+		fs.BoolVar(&f.batch, "batch", false, "")
+	}
 	pos, err := parse(fs, args[1:])
 	if errors.Is(err, flag.ErrHelp) {
 		fmt.Fprint(env.Out, cmd.help)
@@ -234,6 +274,18 @@ func Main(ctx context.Context, args []string, env Env) int {
 		return exitInvalid
 	}
 	return cmd.run(ctx, env, &f, pos)
+}
+
+// notEmpty returns a flag function that sets *v and rejects an empty value.
+// An empty --hosts must not select every host.
+func notEmpty(v *string) func(string) error {
+	return func(s string) error {
+		if strings.TrimSpace(s) == "" {
+			return errors.New("must not be empty")
+		}
+		*v = s
+		return nil
+	}
 }
 
 // parse parses flags before and after positional arguments.
@@ -294,7 +346,19 @@ func (o *output) load(f *flags, cmd string, args []string) (*project.Project, bo
 		return nil, false
 	}
 	o.warn(p.Warnings)
+	if err := p.Select(project.Selection{Hosts: f.hosts, Stages: f.stages, Users: f.users}); err != nil {
+		o.fail(fmt.Errorf("winch %s: %w", cmd, err))
+		return nil, false
+	}
 	return p, true
+}
+
+// sessions returns the function that opens sessions, and the options of the
+// run. ssh asks questions only when winch can ask its own: then the sessions
+// start one at a time.
+func (env Env) sessions(f *flags) (run.Connect, run.Options) {
+	serial := env.Terminal && !f.batch
+	return env.Connect(!serial), run.Options{Serial: serial}
 }
 
 // failedCode is the exit code of the failed hosts: 1 when one failed, 4
@@ -317,7 +381,8 @@ func plan(ctx context.Context, env Env, f *flags, args []string) int {
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
-	pl := run.MakePlan(ctx, p, env.Connect)
+	connect, opts := env.sessions(f)
+	pl := run.MakePlan(ctx, p, connect, opts)
 	o.plan(pl)
 	code := failedCode(pl.Failed)
 	if f.exitCode && pl.HasChanges() {
@@ -338,7 +403,8 @@ func apply(ctx context.Context, env Env, f *flags, args []string) int {
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
-	pl := run.MakePlan(ctx, p, env.Connect)
+	connect, opts := env.sessions(f)
+	pl := run.MakePlan(ctx, p, connect, opts)
 	o.plan(pl)
 	s := summary{plan: pl}
 	code := failedCode(pl.Failed)
@@ -346,11 +412,12 @@ func apply(ctx context.Context, env Env, f *flags, args []string) int {
 		o.fail(fmt.Errorf("winch: the plan hash is %s, not %s; nothing changed", hash, *f.check))
 		return o.end(worst(code, exitHash), s)
 	}
-	// After an interrupt, apply starts no step, so there is nothing to ask.
-	if !pl.HasChanges() || ctx.Err() != nil {
+	if !pl.HasChanges() {
 		return o.end(code, s)
 	}
-	if f.check == nil && !f.yes {
+	// After an interrupt, apply starts no host, so there is nothing to ask:
+	// the hosts with changes fail as interrupted.
+	if f.check == nil && !f.yes && ctx.Err() == nil {
 		if !env.Terminal {
 			s.command = applyCommand(args[0], f, pl.Hash())
 			if o.ev == nil {
@@ -367,7 +434,7 @@ func apply(ctx context.Context, env Env, f *flags, args []string) int {
 	if o.ev != nil {
 		rep = o.ev
 	}
-	s.apply = run.Apply(ctx, pl, env.Connect, rep)
+	s.apply = run.Apply(ctx, pl, connect, rep)
 	return o.end(worst(code, failedCode(s.apply.Failed)), s)
 }
 
@@ -394,6 +461,15 @@ func applyCommand(pipeline string, f *flags, hash string) string {
 	cmd := "winch apply " + quote(pipeline)
 	if f.inventory != "" {
 		cmd += " --inventory " + quote(f.inventory)
+	}
+	if f.hosts != "" {
+		cmd += " --hosts " + quote(f.hosts)
+	}
+	if f.stages != "" {
+		cmd += " --stages " + quote(f.stages)
+	}
+	for _, u := range f.users {
+		cmd += " --user " + quote(u)
 	}
 	for _, s := range f.set {
 		cmd += " --set " + quote(s)
