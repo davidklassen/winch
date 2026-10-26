@@ -47,8 +47,10 @@ sed -i '/^wtbob:/d' /etc/passwd /etc/shadow
 for g in wtalice wtbob wtsvc wtgrp wtnew wtother; do groupdel $g 2>/dev/null; done
 gpasswd -d admin wtalice 2>/dev/null
 rm -rf /home/wtalice /home/wtbob /srv/w /var/lib/wtsvc /opt/wt /root/.ssh /etc/ssh/sshd_config.d/wt.conf
+sed -i '/ one$/d' /home/admin/.ssh/authorized_keys
 true`
 	k1, k2, k3 := fakeKey('1', "one"), fakeKey('2', "two"), fakeKey('3', "three")
+	admin := strings.TrimSpace(vmtest.PublicKey)
 	create := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Create, Changes: changes}
 	}
@@ -153,6 +155,12 @@ wtbob wtgrp 700" ]`,
 			Want: change("create directory /root/.ssh (owner root, group root, mode 0700)", "create file /root/.ssh/authorized_keys (owner root, group root, mode 0600)", "add key "+keyLine(k1)),
 			After: `[ "$(getent passwd root)" = "root:x:0:0:root:/root:/bin/bash" ] && [ "$(stat -c '%U %G %a' /root/.ssh /root/.ssh/authorized_keys)" = "root root 700
 root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
+		},
+		{
+			Name:  "keys of the login user",
+			Args:  &module.User{Name: "admin", AuthorizedKeys: keys(admin, k1)},
+			Want:  change("changes the keys of the login user admin", "add key "+keyLine(k1)),
+			After: `printf '%s\n%s\n' '` + admin + `' '` + k1 + `' | cmp - /home/admin/.ssh/authorized_keys`,
 		},
 		{
 			Name:  "change uid, group, home, and shell",

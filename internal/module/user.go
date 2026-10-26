@@ -133,6 +133,9 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 	}
 	if len(lines) > 0 {
 		u.keys = true
+		if exists && cur.uid == st.LoginUID {
+			lines = append([]string{"changes the keys of the login user " + u.Name}, lines...)
+		}
 		res.Changes = append(res.Changes, lines...)
 		if res.Status == OK {
 			res = Result{Status: Change, Action: Modify, Changes: lines}
