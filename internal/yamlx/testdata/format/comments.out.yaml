@@ -1,0 +1,12 @@
+# head
+a:
+  # about b
+  b: 1   # line comment
+  # end of b
+
+  c:
+    - x
+    # after x
+# before d
+d: 2
+# end of file

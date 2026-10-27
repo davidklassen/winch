@@ -737,6 +737,7 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 // recipeOnly are the arguments that read a recipe's files or templates.
 var recipeOnly = map[string][]string{"file": {"template", "source"}, "repo": {"key"}, "unit": {"source"}}
 
+// stepFields are the step keys in the order of winch fmt.
 var stepFields = []string{"name", "recipe", "vars", "when", "loop", "then", "confirm_access", "notify"}
 
 const thenInLoop = "then runs once after the last element; it cannot use item"

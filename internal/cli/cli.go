@@ -79,6 +79,7 @@ Usage: winch <command> [arguments] [flags]
 
 Commands:
   validate   Load the project and check it. Connects to no host.
+  fmt        Fix the indentation and the step key order of project files.
   plan       Show the changes. Change nothing.
   apply      Show the changes, ask, then make them.
   run        Plan, ask, and apply one module step on some hosts.
@@ -113,6 +114,7 @@ type command struct {
 
 var commands = map[string]command{
 	"validate":        {help: validateHelp, inventory: true, set: true, json: true, run: validate},
+	"fmt":             {help: fmtHelp, inventory: true, run: format},
 	"plan":            {help: planHelp, inventory: true, set: true, json: true, exitCode: true, selection: true, sessions: true, run: plan},
 	"apply":           {help: applyHelp, inventory: true, set: true, json: true, apply: true, selection: true, sessions: true, run: apply},
 	"run":             {help: runHelp, inventory: true, json: true, apply: true, sessions: true, run: runModule},

@@ -1,0 +1,13 @@
+defaults: &defaults
+    user: root
+    groups: &groups
+    - adm
+    - sudo
+web:
+    settings: *defaults
+    groups: *groups
+items:
+-   &first
+    name: one
+-   *first
+-   !tpl "{{ .vars.x }}"

@@ -9,7 +9,6 @@ import (
 	"io"
 	"math"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -51,11 +50,26 @@ type Pair struct {
 
 // Parse reads one YAML document. An empty file is a Null node.
 func Parse(file string, data []byte) (*Node, error) {
+	root, err := parseRoot(file, data)
+	if err != nil {
+		return nil, err
+	}
+	if root == nil {
+		return &Node{Kind: Null, Pos: Pos{File: file, Line: 1, Col: 1}}, nil
+	}
+	c := converter{file: file, seen: map[*yaml.Node]*Node{}, open: map[*yaml.Node]bool{}}
+	n := c.convert(root)
+	return n, errors.Join(c.errs...)
+}
+
+// parseRoot reads one YAML document and returns its root node, or nil for an
+// empty file.
+func parseRoot(file string, data []byte) (*yaml.Node, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
 	if err := dec.Decode(&doc); err != nil {
 		if errors.Is(err, io.EOF) {
-			return &Node{Kind: Null, Pos: Pos{File: file, Line: 1, Col: 1}}, nil
+			return nil, nil
 		}
 		return nil, parseError(file, err)
 	}
@@ -65,25 +79,13 @@ func Parse(file string, data []byte) (*Node, error) {
 	} else if !errors.Is(err, io.EOF) {
 		return nil, parseError(file, err)
 	}
-	c := converter{file: file, seen: map[*yaml.Node]*Node{}, open: map[*yaml.Node]bool{}}
-	n := c.convert(doc.Content[0])
-	return n, errors.Join(c.errs...)
+	return doc.Content[0], nil
 }
 
 // HasComment reports whether the YAML in data holds a comment.
 func HasComment(data []byte) bool {
 	var doc yaml.Node
-	if yaml.Unmarshal(data, &doc) != nil {
-		return false
-	}
-	var has func(n *yaml.Node) bool
-	has = func(n *yaml.Node) bool {
-		if n.HeadComment != "" || n.LineComment != "" || n.FootComment != "" {
-			return true
-		}
-		return slices.ContainsFunc(n.Content, has)
-	}
-	return has(&doc)
+	return yaml.Unmarshal(data, &doc) == nil && len(comments(&doc)) > 0
 }
 
 var lineRe = regexp.MustCompile(`^yaml: line (\d+): (.*)$`)

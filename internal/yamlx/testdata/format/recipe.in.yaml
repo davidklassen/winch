@@ -1,0 +1,43 @@
+require:
+- !expr 'facts.os.id == "debian"'
+
+vars:
+    port: 80
+
+steps:
+# packages first
+-   pkg:
+        name: nginx
+    name: Install nginx
+
+-   notify: reload
+    # the main config
+    file:
+        path: /etc/nginx/nginx.conf
+        content: |
+            user www-data;
+    when: !expr vars.port == 80
+    name: Configure nginx
+    # trailing note
+
+- vars:
+      site: example.com
+  recipe: site
+  when: !expr true
+  name: Site
+- {service: {name: nginx}, name: Flow}
+-   pkg: htop
+    # why
+    name: Tools
+- name: In order
+  cmd: "true"
+  then: echo done
+  loop: [a]
+  confirm_access: true
+
+handlers:
+    reload:
+    -   service:
+            name: nginx
+            reloaded: true
+        name: Reload

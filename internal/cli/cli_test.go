@@ -158,7 +158,7 @@ func TestExamples(t *testing.T) {
 
 // spec: CLI
 func TestHelp(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"plan", "--help"}, {"apply", "-h"}, {"validate", "--help"}, {"secret", "--help"}, {"secret", "encrypt", "--help"}, {"secret", "generate", "--help"}, {"secret", "rekey", "-h"}} {
+	for _, args := range [][]string{{"--help"}, {"plan", "--help"}, {"apply", "-h"}, {"validate", "--help"}, {"secret", "--help"}, {"secret", "encrypt", "--help"}, {"secret", "generate", "--help"}, {"secret", "rekey", "-h"}, {"fmt", "--help"}} {
 		r := winch(t, t.TempDir(), fakehost.New(), false, "", args...)
 		if r.code != exitOK {
 			t.Errorf("%v: exit %d", args, r.code)

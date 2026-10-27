@@ -1,0 +1,20 @@
+# top comment
+name:    acme
+vars:
+  domain: example.com
+  users:
+    - alice
+    - bob
+  nested:
+    deep:
+      x: 1
+list:
+  - a
+  - b:  1
+    c: 2
+  -
+    d: 3
+  - - e
+    - f
+  - - g
+    - h

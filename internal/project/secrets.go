@@ -375,18 +375,11 @@ func Rekey(ctx context.Context, dir, inventory string, identity secret.Identity)
 	if err != nil {
 		return 0, nil, err
 	}
-	recipes, err := filepath.Glob(filepath.Join(dir, "recipes", "*", "recipe.yaml"))
+	recipes, err := recipeFiles(dir)
 	if err != nil {
 		return 0, nil, err
 	}
-	files := append([]string{"winch.yaml"}, invs...)
-	for _, r := range recipes {
-		rel, err := filepath.Rel(dir, r)
-		if err != nil {
-			return 0, nil, err
-		}
-		files = append(files, filepath.ToSlash(rel))
-	}
+	files := append(append([]string{"winch.yaml"}, invs...), recipes...)
 	var ids []age.Identity
 	// next keeps one value that two places hold the same after rekey.
 	next := map[string]string{}
@@ -511,15 +504,14 @@ func scanProject(dir, inventory string, cfg *Config) ([]*yamlx.Error, error) {
 	if err != nil {
 		return nil, err
 	}
-	files := []string{filepath.Join(dir, "winch.yaml")}
-	for _, y := range append(invs, pipelines...) {
-		files = append(files, filepath.Join(dir, y))
-	}
-	recipes, err := filepath.Glob(filepath.Join(dir, "recipes", "*", "recipe.yaml"))
+	recipes, err := recipeFiles(dir)
 	if err != nil {
 		return nil, err
 	}
-	files = append(files, recipes...)
+	files := []string{filepath.Join(dir, "winch.yaml")}
+	for _, y := range slices.Concat(invs, pipelines, recipes) {
+		files = append(files, filepath.Join(dir, y))
+	}
 	for _, sub := range []string{"templates", "files"} {
 		roots, err := filepath.Glob(filepath.Join(dir, "recipes", "*", sub))
 		if err != nil {

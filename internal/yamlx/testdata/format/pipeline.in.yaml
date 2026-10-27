@@ -1,0 +1,14 @@
+stages:
+-   name: base
+    hosts: all
+    steps:
+    -   timezone:
+            name: Etc/UTC
+        when: !expr true
+    -   vars:
+            x: 1
+        recipe: ssh
+-   steps:
+    - recipe: web
+    name: web
+    hosts: web

@@ -1,0 +1,27 @@
+a:
+    lit: |
+            line one
+              indented
+            # not a comment
+
+            last
+    fold: >-
+        folded
+        text
+    keep: |+
+        kept
+
+    ind: |2
+          two
+    plain: first
+        second
+    single: 'it''s
+        two lines'
+    double: "a \"b\"
+        # c"
+    q1: "quoted"
+    q2: 'yes'
+list:
+-   |
+    item
+b: end

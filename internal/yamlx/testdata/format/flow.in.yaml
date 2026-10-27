@@ -1,0 +1,7 @@
+a:
+    list: [1, 2,
+        3]
+    map: {x: 1, y: [a, b]}
+    items:
+    - {name: htop}
+b: {c: 1}
