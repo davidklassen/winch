@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"math/big"
 	"reflect"
 	"strings"
 	"testing"
@@ -24,6 +25,23 @@ func keyBlob(typ, inner, comment string) string {
 		line += " " + comment
 	}
 	return line
+}
+
+// rsaKey returns an ssh-rsa authorized_keys line whose modulus has bits bits.
+func rsaKey(bits int) string {
+	mpint := func(b []byte, n *big.Int) []byte {
+		v := n.Bytes()
+		if v[0]&0x80 != 0 {
+			v = append([]byte{0}, v...)
+		}
+		return append(binary.BigEndian.AppendUint32(b, uint32(len(v))), v...)
+	}
+	blob := binary.BigEndian.AppendUint32(nil, 7)
+	blob = append(blob, "ssh-rsa"...)
+	blob = mpint(blob, big.NewInt(65537))
+	n := new(big.Int).Lsh(big.NewInt(1), uint(bits-1))
+	blob = mpint(blob, n.Or(n, big.NewInt(1)))
+	return "ssh-rsa " + base64.StdEncoding.EncodeToString(blob)
 }
 
 // spec: Modules/user and group
@@ -54,8 +72,13 @@ func TestUserValidate(t *testing.T) {
 		{"absent", "name: a\nabsent: true\n", ""},
 		{"absent with uid", "name: a\nabsent: true\nuid: 5\n", `t.yaml:3:6: uid: absent: true takes no uid`},
 		{"absent with keys", "name: a\nabsent: true\nauthorized_keys: []\n", `t.yaml:3:18: authorized_keys: absent: true takes no authorized_keys`},
-		{"keys", "name: a\nauthorized_keys:\n  - " + ed + "\n  - " + key("ssh-rsa", "") + "\n  - " + key("ecdsa-sha2-nistp256", "a b c") + "\n", ""},
+		{"keys", "name: a\nauthorized_keys:\n  - " + ed + "\n  - " + rsaKey(3072) + "\n  - " + key("ecdsa-sha2-nistp256", "a b c") + "\n", ""},
 		{"no keys", "name: a\nauthorized_keys: []\n", ""},
+		{"rsa 1024", "name: a\nauthorized_keys:\n  - " + rsaKey(1024) + "\n", ""},
+		{"rsa 1023", "name: a\nauthorized_keys:\n  - " + ed + "\n  - " + rsaKey(1023) + "\n", `t.yaml:3:3: authorized_keys: element 2 is a 1023-bit RSA key; Debian 13's sshd rejects RSA keys under 1024 bits`},
+		{"rsa without modulus", "name: a\nauthorized_keys:\n  - " + key("ssh-rsa", "") + "\n", `t.yaml:3:3: authorized_keys: element 1 is not a key: the key data is not an ssh-rsa key`},
+		{"rsa modulus past the end", "name: a\nauthorized_keys:\n  - " + rsaKey(2048)[:len("ssh-rsa ")+40] + "\n", `t.yaml:3:3: authorized_keys: element 1 is not a key: the key data is not an ssh-rsa key`},
+		{"dss", "name: a\nauthorized_keys:\n  - " + key("ssh-dss", "") + "\n", `t.yaml:3:3: authorized_keys: element 1 is an ssh-dss key; Debian 13's sshd rejects ssh-dss keys`},
 		{"options", "name: a\nauthorized_keys:\n  - 'command=\"echo a b\",no-pty " + ed + "'\n", ""},
 		{"security key", "name: a\nauthorized_keys:\n  - " + key("sk-ssh-ed25519@openssh.com", "") + "\n", ""},
 		{"a string", "name: a\nauthorized_keys: x\n", `t.yaml:2:18: authorized_keys: expected a list, got the string "x"`},
@@ -168,7 +191,7 @@ func TestKeyPlan(t *testing.T) {
 
 // spec: Modules/user and group
 func TestKeyChanges(t *testing.T) {
-	a, b, c := key("ssh-ed25519", "a"), key("ssh-ed25519", "b"), key("ssh-rsa", "c")
+	a, b, c := key("ssh-ed25519", "a"), key("ssh-ed25519", "b"), rsaKey(3072)+" c"
 	tests := []struct {
 		name      string
 		cur, want []string

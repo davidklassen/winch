@@ -57,6 +57,8 @@ true`
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
+	addK1 := change("create directory /home/wtalice/.ssh (owner wtalice, group wtalice, mode 0700)",
+		"create file /home/wtalice/.ssh/authorized_keys (owner wtalice, group wtalice, mode 0600)", "add key "+keyLine(k1))
 	vmtest.RunCases(t, vm, "user", reset, []vmtest.Case{
 		{
 			Name:      "create with defaults",
@@ -294,6 +296,77 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			WantErr: "sshd reads the keys of wtalice from /etc/ssh/keys/%u (AuthorizedKeysFile), not from ~/.ssh/authorized_keys",
 		},
 		{
+			Name:    "a home of another user with StrictModes",
+			Setup:   `echo 'StrictModes yes' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice && chown admin /home/wtalice`,
+			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			WantErr: "with StrictModes yes, sshd ignores the keys of wtalice: admin owns /home/wtalice, not root or wtalice",
+		},
+		{
+			Name:    "a home that the group can write with StrictModes",
+			Setup:   `echo 'StrictModes yes' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice && chgrp users /home/wtalice && chmod 775 /home/wtalice`,
+			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			WantErr: "with StrictModes yes, sshd ignores the keys of wtalice: the group or others can write /home/wtalice (mode 0775)",
+		},
+		{
+			Name:    "an existing home of a new user with StrictModes",
+			Setup:   `echo 'StrictModes yes' > /etc/ssh/sshd_config.d/wt.conf && mkdir -p /srv/w/alice && chown admin /srv/w/alice`,
+			Args:    &module.User{Name: "wtalice", Home: "/srv/w/alice", AuthorizedKeys: keys(k1)},
+			WantErr: "with StrictModes yes, sshd ignores the keys of wtalice: admin owns /srv/w/alice, not root or wtalice",
+		},
+		{
+			Name:    "a home that others can write with StrictModes",
+			Setup:   `echo 'StrictModes yes' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice && chmod 757 /home/wtalice`,
+			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			WantErr: "with StrictModes yes, sshd ignores the keys of wtalice: the group or others can write /home/wtalice (mode 0757)",
+		},
+		{
+			Name:  "a home of the old uid with StrictModes",
+			Setup: `echo 'StrictModes yes' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U -u 2200 wtalice`,
+			Args:  &module.User{Name: "wtalice", UID: "2300", AuthorizedKeys: keys(k1)},
+			Want: change("uid 2200 → 2300, also of the files in the home",
+				"create directory /home/wtalice/.ssh (owner wtalice, group wtalice, mode 0700)",
+				"create file /home/wtalice/.ssh/authorized_keys (owner wtalice, group wtalice, mode 0600)", "add key "+keyLine(k1)),
+			After: `[ "$(stat -c %u /home/wtalice)" = 2300 ]`,
+		},
+		{
+			Name:  "an existing home of the new uid with StrictModes",
+			Setup: `echo 'StrictModes yes' > /etc/ssh/sshd_config.d/wt.conf && mkdir -p /srv/w/alice && chown 2300 /srv/w/alice`,
+			Args:  &module.User{Name: "wtalice", UID: "2300", Home: "/srv/w/alice", AuthorizedKeys: keys(k1)},
+			Want: create("uid 2300", "group wtalice (new)", "home /srv/w/alice exists (owner 2300, group root, mode 0755)", "shell /bin/sh",
+				"create directory /srv/w/alice/.ssh (owner wtalice, group wtalice, mode 0700)",
+				"create file /srv/w/alice/.ssh/authorized_keys (owner wtalice, group wtalice, mode 0600)", "add key "+keyLine(k1)),
+		},
+		{
+			Name:  "a home that others can write without StrictModes",
+			Setup: `echo 'StrictModes no' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice && chmod 777 /home/wtalice`,
+			Args:  &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			Want:  addK1,
+		},
+		{
+			Name:    "a new user with UsePAM no",
+			Setup:   `echo 'UsePAM no' > /etc/ssh/sshd_config.d/wt.conf`,
+			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			WantErr: `with UsePAM no, sshd refuses the login of wtalice: its password is locked with "!"`,
+		},
+		{
+			Name:    "a locked password with UsePAM no",
+			Setup:   `echo 'UsePAM no' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice && usermod -p '!x' wtalice`,
+			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			WantErr: `with UsePAM no, sshd refuses the login of wtalice: its password is locked with "!"`,
+		},
+		{
+			Name:  "a password without login with UsePAM no",
+			Setup: `echo 'UsePAM no' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice && usermod -p '*' wtalice`,
+			Args:  &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			Want:  addK1,
+		},
+		{
+			Name:  "a Match Address block",
+			Setup: `printf 'Match Address 10.9.9.9\n  PasswordAuthentication yes\n' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice`,
+			Args:  &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			Want:  addK1,
+		},
+		{
 			Name:      "absent",
 			Setup:     `useradd -m -U wtalice`,
 			Args:      &module.User{Name: "wtalice", Absent: true},
@@ -434,5 +507,38 @@ func TestUsers(t *testing.T) {
 	r = lab.Winch(t, dir, "plan", "site")
 	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+}
+
+// spec: Modules/user and group
+func TestUserKeysLogin(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "keys-login")
+	// UsePAM no refuses a password locked with "!", as cloud-init sets for
+	// admin.
+	vm.MustRun(t, `printf 'UsePAM no\nStrictModes yes\n' > /etc/ssh/sshd_config.d/wt.conf && usermod -p '*' admin
+useradd -m -U -s /bin/bash wtdev && usermod -p '*' wtdev && chown root /home/wtdev && chmod 755 /home/wtdev
+systemctl reload ssh`)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  " + vm.Name + ": {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: people
+    hosts: all
+    steps:
+      - user:
+          name: wtdev
+          authorized_keys:
+            - ` + strings.TrimSpace(vmtest.PublicKey) + `
+`,
+	})
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d: %s", r.Code, r.Stderr)
+	}
+	cmd := exec.CommandContext(t.Context(), "ssh", "-l", "wtdev", vm.Name, "id -un")
+	cmd.Env = lab.Env()
+	out, err := cmd.CombinedOutput()
+	if err != nil || string(out) != "wtdev\n" {
+		t.Errorf("ssh as wtdev: %v: %q", err, out)
 	}
 }

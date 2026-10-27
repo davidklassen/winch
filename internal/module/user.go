@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -77,7 +78,7 @@ func (u *User) Validate() error {
 		return &yamlx.FieldError{Field: "authorized_keys", Msg: "a system user without home has no home for its keys; set home"}
 	}
 	for i, k := range *u.AuthorizedKeys {
-		switch _, err := parseKey(k); {
+		switch key, err := parseKey(k); {
 		case slices.Contains((*u.AuthorizedKeys)[:i], k):
 			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d repeats element %d", i+1, slices.Index(*u.AuthorizedKeys, k)+1)}
 		case k == "":
@@ -86,6 +87,10 @@ func (u *User) Validate() error {
 			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d has more than one line", i+1)}
 		case err != nil:
 			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is not a key: %s", i+1, err)}
+		case key.typ == "ssh-dss":
+			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is an ssh-dss key; Debian 13's sshd rejects ssh-dss keys", i+1)}
+		case key.typ == "ssh-rsa" && key.rsaBits < 1024:
+			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is a %d-bit RSA key; Debian 13's sshd rejects RSA keys under 1024 bits", i+1, key.rsaBits)}
 		}
 	}
 	return nil
@@ -124,7 +129,7 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 	case "/":
 		return Result{}, fmt.Errorf("the home of %s is /; authorized_keys needs another home; set home", u.Name)
 	}
-	if err := sshdReadsKeys(ctx, u.Name); err != nil {
+	if err := u.sshdUsesKeys(ctx, cur, exists, home); err != nil {
 		return Result{}, err
 	}
 	lines, err := u.keyLines(home, group)
@@ -355,29 +360,89 @@ func homeState(home string) ([]string, fs.FileInfo, error) {
 	return nil, fi, err
 }
 
-// sshdReadsKeys fails when sshd does not read ~/.ssh/authorized_keys for the
-// user name.
-func sshdReadsKeys(ctx context.Context, name string) error {
+// sshdUsesKeys fails when sshd, as configured before the run, would not use
+// the keys of the user in home after the step.
+func (u *User) sshdUsesKeys(ctx context.Context, cur passwdEntry, exists bool, home string) error {
 	if _, err := os.Stat("/usr/sbin/sshd"); err != nil {
 		return nil
 	}
-	out, err := run(ctx, nil, "sshd", "-T", "-C", "user="+name)
+	out, err := run(ctx, nil, "sshd", "-T", "-C", "user="+u.Name)
 	if err != nil {
 		return err
 	}
+	conf := map[string]string{}
 	for line := range strings.Lines(out) {
 		key, value, _ := strings.Cut(strings.TrimSpace(line), " ")
-		if key != "authorizedkeysfile" {
-			continue
+		conf[key] = value
+	}
+	files := strings.Fields(conf["authorizedkeysfile"])
+	if !slices.ContainsFunc(files, func(f string) bool {
+		return f == ".ssh/authorized_keys" || f == "%h/.ssh/authorized_keys" || f == "~/.ssh/authorized_keys"
+	}) {
+		return fmt.Errorf("sshd reads the keys of %s from %s (AuthorizedKeysFile), not from ~/.ssh/authorized_keys", u.Name, conf["authorizedkeysfile"])
+	}
+	if conf["strictmodes"] == "yes" {
+		if err := u.safeHome(cur, exists, home); err != nil {
+			return err
 		}
-		for _, f := range strings.Fields(value) {
-			if f == ".ssh/authorized_keys" || f == "%h/.ssh/authorized_keys" || f == "~/.ssh/authorized_keys" {
-				return nil
+	}
+	if conf["usepam"] == "no" {
+		// useradd locks the password of a new user.
+		locked := true
+		if exists {
+			if locked, err = passwordLocked(u.Name); err != nil {
+				return err
 			}
 		}
-		return fmt.Errorf("sshd reads the keys of %s from %s (AuthorizedKeysFile), not from ~/.ssh/authorized_keys", name, value)
+		if locked {
+			return fmt.Errorf(`with UsePAM no, sshd refuses the login of %s: its password is locked with "!"`, u.Name)
+		}
 	}
 	return nil
+}
+
+// safeHome fails when sshd with StrictModes ignores the keys in home after the
+// step.
+func (u *User) safeHome(cur passwdEntry, exists bool, home string) error {
+	fi, err := os.Stat(home)
+	if errors.Is(err, fs.ErrNotExist) {
+		// The step creates the home with mode 0700.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	owners := []uint32{0}
+	if exists {
+		// usermod -u also changes the owner of the home.
+		owners = append(owners, cur.uid)
+	}
+	if u.UID != "" {
+		owners = append(owners, u.uid())
+	}
+	if !slices.Contains(owners, st.Uid) {
+		return fmt.Errorf("with StrictModes yes, sshd ignores the keys of %s: %s owns %s, not root or %s", u.Name, userName(st.Uid), home, u.Name)
+	}
+	if st.Mode&0o022 != 0 {
+		return fmt.Errorf("with StrictModes yes, sshd ignores the keys of %s: the group or others can write %s (mode %04o)", u.Name, home, st.Mode&0o7777)
+	}
+	return nil
+}
+
+func passwordLocked(name string) (bool, error) {
+	data, err := os.ReadFile("/etc/shadow")
+	if err != nil {
+		return false, err
+	}
+	locked := false
+	err = rows("/etc/shadow", data, 9, func(f []string) error {
+		if f[0] == name {
+			locked = strings.HasPrefix(f[1], "!")
+		}
+		return nil
+	})
+	return locked, err
 }
 
 func (u *User) keyText() []byte {

@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 	"slices"
 	"strings"
 )
@@ -21,6 +22,7 @@ var keyTypes = []string{
 type authorizedKey struct {
 	options, typ, comment string
 	blob                  []byte
+	rsaBits               int
 }
 
 // parseKey reads a line as sshd does: optional options, the key type, the
@@ -44,11 +46,31 @@ func parseKey(line string) (authorizedKey, error) {
 		return k, errors.New("the key data is not base64")
 	}
 	prefix := append(binary.BigEndian.AppendUint32(nil, uint32(len(k.typ))), k.typ...)
-	if !bytes.HasPrefix(blob, prefix) || len(blob) == len(prefix) {
+	if bytes.HasPrefix(blob, prefix) && k.typ == "ssh-rsa" {
+		k.rsaBits = rsaBits(blob[len(prefix):])
+	}
+	if !bytes.HasPrefix(blob, prefix) || len(blob) == len(prefix) || k.typ == "ssh-rsa" && k.rsaBits == 0 {
 		return k, fmt.Errorf("the key data is not an %s key", k.typ)
 	}
 	k.blob, k.comment = blob, strings.TrimSpace(rest)
 	return k, nil
+}
+
+// rsaBits returns the size of the modulus of the RSA key data b after the
+// key type, or 0 when b is not RSA key data.
+func rsaBits(b []byte) int {
+	var n []byte
+	for range 2 {
+		if len(b) < 4 {
+			return 0
+		}
+		size := uint64(binary.BigEndian.Uint32(b))
+		if uint64(len(b)-4) < size {
+			return 0
+		}
+		n, b = b[4:4+size], b[4+size:]
+	}
+	return new(big.Int).SetBytes(n).BitLen()
 }
 
 // cutField splits s at the first space or tab, and drops the white space
