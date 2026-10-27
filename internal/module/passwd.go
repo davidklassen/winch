@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -13,6 +14,7 @@ import (
 type passwdEntry struct {
 	name     string
 	uid, gid uint32
+	comment  string
 	home     string
 	shell    string
 }
@@ -63,7 +65,7 @@ func parsePasswd(file string, data []byte) ([]passwdEntry, error) {
 			return err
 		}
 		// login uses / for an empty home and /bin/sh for an empty shell.
-		e := passwdEntry{name: f[0], uid: uid, gid: gid, home: f[5], shell: f[6]}
+		e := passwdEntry{name: f[0], uid: uid, gid: gid, comment: f[4], home: f[5], shell: f[6]}
 		if e.home == "" {
 			e.home = "/"
 		}
@@ -142,6 +144,18 @@ func (a accounts) group(nameOrID string) (groupEntry, bool) {
 		}
 	}
 	return groupEntry{}, false
+}
+
+// groupsOf returns the names of the supplementary groups of user, sorted.
+func (a accounts) groupsOf(user string) []string {
+	var out []string
+	for _, g := range a.groups {
+		if slices.Contains(g.members, user) {
+			out = append(out, g.name)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // groupName returns the name of the group gid, or the number.

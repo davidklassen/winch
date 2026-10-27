@@ -30,6 +30,12 @@ func keyLine(line string) string {
 	return strings.Join(append([]string{f[0], "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])}, f[2:]...), " ")
 }
 
+// Fake crypt hashes: the module only compares them.
+const (
+	hash1 = "$6$wtsalt1$fakehash1"
+	hash2 = "$6$wtsalt2$fakehash2"
+)
+
 func keys(k ...string) *[]string {
 	if k == nil {
 		k = []string{}
@@ -254,6 +260,113 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			Args:  &module.User{Name: "wtalice"},
 			Want:  change("create home /home/wtalice (owner wtalice, group wtalice, mode 0700)"),
 			After: `[ "$(stat -c '%U %G %a' /home/wtalice)" = "wtalice wtalice 700" ]`,
+		},
+		{
+			Name:  "create with groups, password, and comment",
+			Setup: `groupadd wtgrp && groupadd wtother`,
+			Args:  &module.User{Name: "wtalice", Groups: &[]string{"wtother", "wtgrp"}, Password: hash1, Comment: "Alice Smith"},
+			Want: create("group wtalice (new)", "home /home/wtalice (owner wtalice, group wtalice, mode 0700, files from /etc/skel)", "shell /bin/sh",
+				"groups wtother, wtgrp", `comment "Alice Smith"`, "set password"),
+			After: `[ "$(id -nG wtalice)" = "wtalice wtgrp wtother" ] && [ "$(getent passwd wtalice | cut -d: -f5)" = "Alice Smith" ] && [ "$(getent shadow wtalice | cut -d: -f2)" = '` + hash1 + `' ]`,
+		},
+		{
+			Name:         "a new user in a group that does not exist yet",
+			Setup:        `groupadd wtgrp`,
+			Args:         &module.User{Name: "wtalice", Groups: &[]string{"wtgrp", "wtnew"}},
+			Want:         create("group wtalice (new)", "home /home/wtalice (owner wtalice, group wtalice, mode 0700, files from /etc/skel)", "shell /bin/sh", "groups wtgrp, wtnew (does not exist yet)"),
+			WantApplyErr: "group 'wtnew' does not exist",
+			After:        `! getent passwd wtalice`,
+		},
+		{
+			Name:  "change groups",
+			Setup: `groupadd wtgrp && groupadd wtother && groupadd wtnew && useradd -m -U -G wtgrp,wtother wtalice`,
+			Args:  &module.User{Name: "wtalice", Groups: &[]string{"wtother", "wtnew"}},
+			Want:  change("add to group wtnew", "remove from group wtgrp"),
+			After: `[ "$(id -nG wtalice)" = "wtalice wtother wtnew" ]`,
+		},
+		{
+			Name:  "no groups",
+			Setup: `groupadd wtgrp && useradd -m -U -G wtgrp wtalice`,
+			Args:  &module.User{Name: "wtalice", Groups: &[]string{}},
+			Want:  change("remove from group wtgrp"),
+			After: `[ "$(id -nG wtalice)" = wtalice ]`,
+		},
+		{
+			Name:  "groups in another order",
+			Setup: `groupadd wtgrp && groupadd wtother && useradd -m -U -G wtgrp,wtother wtalice`,
+			Args:  &module.User{Name: "wtalice", Groups: &[]string{"wtother", "wtgrp"}},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:    "the groups of the login user",
+			Setup:   `groupadd wtgrp`,
+			Args:    &module.User{Name: "admin", Groups: &[]string{"wtgrp"}},
+			WantErr: "admin is the login user of this session; log in as another user to change its groups",
+		},
+		{
+			Name:         "a group that does not exist yet in groups",
+			Setup:        `useradd -m -U wtalice`,
+			Args:         &module.User{Name: "wtalice", Groups: &[]string{"wtnew"}},
+			Want:         change("add to group wtnew (does not exist yet)"),
+			WantApplyErr: "group 'wtnew' does not exist",
+			After:        `[ "$(id -nG wtalice)" = wtalice ]`,
+		},
+		{
+			Name:  "change groups, comment, and password",
+			Setup: `groupadd wtgrp && useradd -m -U -c Alice -p '` + hash1 + `' wtalice`,
+			Args:  &module.User{Name: "wtalice", Groups: &[]string{"wtgrp"}, Comment: "Alice Smith", Password: hash2},
+			Want:  change("add to group wtgrp", `comment "Alice" → "Alice Smith"`, "change password"),
+			After: `[ "$(id -nG wtalice)" = "wtalice wtgrp" ] && [ "$(getent passwd wtalice | cut -d: -f5)" = "Alice Smith" ] && [ "$(getent shadow wtalice | cut -d: -f2)" = '` + hash2 + `' ]`,
+		},
+		{
+			Name:    "a password that is not a crypt hash",
+			Setup:   `useradd -m -U wtalice`,
+			Args:    &module.User{Name: "wtalice", Password: "hunter2"},
+			WantErr: "password is not a crypt hash, such as one from mkpasswd -m yescrypt",
+		},
+		{
+			Name:  "change password",
+			Setup: `useradd -m -U -p '` + hash1 + `' wtalice`,
+			Args:  &module.User{Name: "wtalice", Password: hash2},
+			Want:  change("change password"),
+			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '` + hash2 + `' ]`,
+		},
+		{
+			Name:  "the same password",
+			Setup: `useradd -m -U -p '` + hash1 + `' wtalice`,
+			Args:  &module.User{Name: "wtalice", Password: hash1},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "change comment",
+			Setup: `useradd -m -U -c Alice wtalice`,
+			Args:  &module.User{Name: "wtalice", Comment: "Alice Smith"},
+			Want:  change(`comment "Alice" → "Alice Smith"`),
+			After: `[ "$(getent passwd wtalice | cut -d: -f5)" = "Alice Smith" ]`,
+		},
+		{
+			Name:  "a new user with a password and UsePAM no",
+			Setup: `echo 'UsePAM no' > /etc/ssh/sshd_config.d/wt.conf`,
+			Args:  &module.User{Name: "wtalice", Password: hash1, AuthorizedKeys: keys(k1)},
+			Want: create("group wtalice (new)", "home /home/wtalice (owner wtalice, group wtalice, mode 0700, files from /etc/skel)", "shell /bin/sh", "set password",
+				"create directory /home/wtalice/.ssh (owner wtalice, group wtalice, mode 0700)",
+				"create file /home/wtalice/.ssh/authorized_keys (owner wtalice, group wtalice, mode 0600)",
+				"add key "+keyLine(k1)),
+		},
+		{
+			Name:  "a password from the step for a locked password with UsePAM no",
+			Setup: `echo 'UsePAM no' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice && usermod -p '!x' wtalice`,
+			Args:  &module.User{Name: "wtalice", Password: hash1, AuthorizedKeys: keys(k1)},
+			Want: change("change password",
+				"create directory /home/wtalice/.ssh (owner wtalice, group wtalice, mode 0700)",
+				"create file /home/wtalice/.ssh/authorized_keys (owner wtalice, group wtalice, mode 0600)",
+				"add key "+keyLine(k1)),
+		},
+		{
+			Name:    "a locked password from the step with UsePAM no",
+			Setup:   `echo 'UsePAM no' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U -p '` + hash1 + `' wtalice`,
+			Args:    &module.User{Name: "wtalice", Password: "!" + hash1, AuthorizedKeys: keys(k1)},
+			WantErr: `with UsePAM no, sshd refuses the login of wtalice: its password is locked with "!"`,
 		},
 		{
 			Name: "keys of a new user",

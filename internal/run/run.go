@@ -347,8 +347,8 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 }
 
 // order fails a user or group step that creates a user or a group that an
-// earlier changed step needs as its owner or group: that step fails in
-// apply. Otherwise it records what the step at where needs.
+// earlier changed step needs as its owner, group, or one of its groups: that
+// step fails in apply. Otherwise it records what the step at where needs.
 func (hr *hostRun) order(m module.Module, res module.Result, where string) error {
 	if res.Status != module.Change {
 		return nil
@@ -363,6 +363,11 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
 	case *module.User:
 		needs = []string{"group " + string(m.Group)}
+		if m.Groups != nil {
+			for _, g := range *m.Groups {
+				needs = append(needs, "group "+g)
+			}
+		}
 		if res.Action == module.Create {
 			created = []string{"user " + m.Name}
 		}

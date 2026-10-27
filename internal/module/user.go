@@ -11,10 +11,12 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode"
 
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -26,15 +28,31 @@ type User struct {
 	System         bool           `yaml:"system" json:"system,omitempty"`
 	Home           string         `yaml:"home" json:"home,omitempty"`
 	Shell          string         `yaml:"shell" json:"shell,omitempty"`
+	Groups         *[]string      `yaml:"groups" json:"groups,omitempty"`
+	Password       string         `yaml:"password" json:"password,omitempty"`
+	Comment        string         `yaml:"comment" json:"comment,omitempty"`
 	AuthorizedKeys *[]string      `yaml:"authorized_keys" json:"authorized_keys,omitempty"`
 	Absent         bool           `yaml:"absent" json:"absent,omitempty"`
 
 	// Check sets these for Apply: the useradd, usermod, or userdel command,
-	// the home to create for a user that exists, and whether to write the
-	// keys.
-	account []string
-	mkHome  string
-	keys    bool
+	// the home to create for a user that exists, and whether to set the
+	// password and write the keys.
+	account  []string
+	mkHome   string
+	password bool
+	keys     bool
+}
+
+// hashRe matches a crypt hash, such as $y$… or $6$…, also locked with "!".
+var hashRe = regexp.MustCompile(`^!?\$[0-9a-z]+\$[./0-9A-Za-z$=,+-]+$`)
+
+// checkHash fails for a password that is not a crypt hash. Check, not
+// Validate, runs it: a password from a secret is a placeholder in Validate.
+func checkHash(pw string) error {
+	if !hashRe.MatchString(pw) {
+		return errors.New("password is not a crypt hash, such as one from mkpasswd -m yescrypt")
+	}
+	return nil
 }
 
 // noHome is the home of a system user without home. winch never creates it.
@@ -47,7 +65,7 @@ func (u *User) Validate() error {
 		return err
 	}
 	if u.Absent {
-		return absentTakesNone(arg{"uid", u.UID != ""}, arg{"group", u.Group != ""}, arg{"system", u.System}, arg{"home", u.Home != ""}, arg{"shell", u.Shell != ""}, arg{"authorized_keys", u.AuthorizedKeys != nil})
+		return absentTakesNone(arg{"uid", u.UID != ""}, arg{"group", u.Group != ""}, arg{"system", u.System}, arg{"home", u.Home != ""}, arg{"shell", u.Shell != ""}, arg{"groups", u.Groups != nil}, arg{"password", u.Password != ""}, arg{"comment", u.Comment != ""}, arg{"authorized_keys", u.AuthorizedKeys != nil})
 	}
 	if err := checkID("uid", u.UID); err != nil {
 		return err
@@ -71,6 +89,24 @@ func (u *User) Validate() error {
 		if err := checkAbs("shell", u.Shell); err != nil {
 			return err
 		}
+	}
+	if u.Groups != nil {
+		seen := map[string]int{}
+		for i, g := range *u.Groups {
+			if err := checkAccountName("groups", "group", g); err != nil {
+				return err
+			}
+			if j, ok := seen[g]; ok {
+				return &yamlx.FieldError{Field: "groups", Msg: fmt.Sprintf("element %d repeats element %d", i+1, j+1)}
+			}
+			seen[g] = i
+		}
+	}
+	switch {
+	case strings.ContainsFunc(u.Comment, unicode.IsControl):
+		return &yamlx.FieldError{Field: "comment", Msg: "has a control character"}
+	case strings.Contains(u.Comment, ":"):
+		return &yamlx.FieldError{Field: "comment", Msg: `must not have ":"`}
 	}
 	if u.AuthorizedKeys == nil {
 		return nil
@@ -110,6 +146,11 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 	if u.Absent {
 		return u.checkAbsent(a, cur, exists, st.LoginUID)
 	}
+	if u.Password != "" {
+		if err := checkHash(u.Password); err != nil {
+			return Result{}, err
+		}
+	}
 	if u.UID != "" && (!exists || cur.uid != u.uid()) {
 		if other, ok := a.userByID(u.uid()); ok && other.name != u.Name {
 			return Result{}, fmt.Errorf("uid %s belongs to user %s", u.UID, other.name)
@@ -118,7 +159,7 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 	var res Result
 	var home, group string
 	if exists {
-		if err := u.checkLogin(cur, st.LoginUID); err != nil {
+		if err := u.checkLogin(a, cur, st.LoginUID); err != nil {
 			return Result{}, err
 		}
 		res, home, group, err = u.checkExisting(a, cur)
@@ -156,7 +197,7 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 
 // checkLogin fails when the step changes a field of the login user that the
 // next session needs.
-func (u *User) checkLogin(cur passwdEntry, login uint32) error {
+func (u *User) checkLogin(a accounts, cur passwdEntry, login uint32) error {
 	if cur.uid != login {
 		return nil
 	}
@@ -168,6 +209,8 @@ func (u *User) checkLogin(cur passwdEntry, login uint32) error {
 		field = "shell"
 	case u.Home != "" && u.Home != cur.home:
 		field = "home"
+	case u.Groups != nil && !slices.Equal(a.groupsOf(u.Name), slices.Sorted(slices.Values(*u.Groups))):
+		field = "groups"
 	default:
 		return nil
 	}
@@ -300,7 +343,26 @@ func (u *User) checkNew(a accounts) (Result, string, string, error) {
 		return Result{}, "", "", err
 	}
 	changes = append(changes, "shell "+shell+note)
-	u.account = append(args, "-s", shell, u.Name)
+	args = append(args, "-s", shell)
+	if u.Groups != nil && len(*u.Groups) > 0 {
+		names := slices.Clone(*u.Groups)
+		for i, g := range names {
+			if _, ok := a.group(g); !ok {
+				names[i] += " (does not exist yet)"
+			}
+		}
+		changes = append(changes, "groups "+strings.Join(names, ", "))
+		args = append(args, "-G", strings.Join(*u.Groups, ","))
+	}
+	if u.Comment != "" {
+		changes = append(changes, fmt.Sprintf("comment %q", u.Comment))
+		args = append(args, "-c", u.Comment)
+	}
+	if u.Password != "" {
+		changes = append(changes, "set password")
+		u.password = true
+	}
+	u.account = append(args, u.Name)
 	return Result{Status: Change, Action: Create, Changes: changes}, home, group, nil
 }
 
@@ -351,7 +413,43 @@ func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, strin
 		changes = append(changes, "shell "+cur.shell+" → "+u.Shell+note)
 		args = append(args, "-s", u.Shell)
 	}
-	if slices.Contains(args, "-u") || slices.Contains(args, "-d") {
+	if u.Groups != nil {
+		have := a.groupsOf(u.Name)
+		want := slices.Sorted(slices.Values(*u.Groups))
+		if !slices.Equal(have, want) {
+			for _, g := range *u.Groups {
+				if slices.Contains(have, g) {
+					continue
+				}
+				line := "add to group " + g
+				if _, ok := a.group(g); !ok {
+					line += " (does not exist yet)"
+				}
+				changes = append(changes, line)
+			}
+			for _, g := range have {
+				if !slices.Contains(want, g) {
+					changes = append(changes, "remove from group "+g)
+				}
+			}
+			args = append(args, "-G", strings.Join(*u.Groups, ","))
+		}
+	}
+	if u.Comment != "" && u.Comment != cur.comment {
+		changes = append(changes, fmt.Sprintf("comment %q → %q", cur.comment, u.Comment))
+		args = append(args, "-c", u.Comment)
+	}
+	if u.Password != "" {
+		pw, err := shadowPassword(u.Name)
+		if err != nil {
+			return Result{}, "", "", err
+		}
+		if pw != u.Password {
+			changes = append(changes, "change password")
+			u.password = true
+		}
+	}
+	if u.UID != "" && u.uid() != cur.uid || u.Home != "" && u.Home != cur.home {
 		procs, err := userProcesses("/proc", cur.uid)
 		if err != nil {
 			return Result{}, "", "", err
@@ -487,13 +585,16 @@ func (u *User) sshdUsesKeys(ctx context.Context, a accounts, cur passwdEntry, ex
 	}
 	if conf["usepam"] == "no" {
 		// useradd locks the password of a new user.
-		locked := true
-		if exists {
-			if locked, err = passwordLocked(u.Name); err != nil {
+		pw := "!"
+		switch {
+		case u.Password != "":
+			pw = u.Password
+		case exists:
+			if pw, err = shadowPassword(u.Name); err != nil {
 				return err
 			}
 		}
-		if locked {
+		if strings.HasPrefix(pw, "!") {
 			return fmt.Errorf(`with UsePAM no, sshd refuses the login of %s: its password is locked with "!"`, u.Name)
 		}
 	}
@@ -573,19 +674,20 @@ func sshdPort(conf string) string {
 	return ""
 }
 
-func passwordLocked(name string) (bool, error) {
+// shadowPassword returns the password hash of the user name in /etc/shadow.
+func shadowPassword(name string) (string, error) {
 	data, err := os.ReadFile("/etc/shadow")
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	locked := false
+	var pw string
 	err = rows("/etc/shadow", data, 9, func(f []string) error {
 		if f[0] == name {
-			locked = strings.HasPrefix(f[1], "!")
+			pw = f[1]
 		}
 		return nil
 	})
-	return locked, err
+	return pw, err
 }
 
 func (u *User) keyText() []byte {
@@ -699,6 +801,12 @@ func prefixed(p string, fi fs.FileInfo, owner, group string, mode uint32) ([]str
 func (u *User) Apply(ctx context.Context, _ func(string)) error {
 	if u.account != nil {
 		if _, err := run(ctx, nil, u.account[0], u.account[1:]...); err != nil {
+			return err
+		}
+	}
+	if u.password {
+		// chpasswd reads the hash on stdin, so no command line shows it.
+		if _, err := runInput(ctx, nil, u.Name+":"+u.Password+"\n", "chpasswd", "-e"); err != nil {
 			return err
 		}
 	}

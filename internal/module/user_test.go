@@ -99,10 +99,51 @@ func TestUserValidate(t *testing.T) {
 		{"same key, other comment", "name: a\nauthorized_keys:\n  - " + ed + "\n  - " + rsaKey(2048) + "\n  - 'no-pty " + strings.TrimSuffix(ed, "alice@laptop") + "bob'\n", `t.yaml:3:3: authorized_keys: element 3 has the key of element 1`},
 		{"system keys without home", "name: a\nsystem: true\nauthorized_keys: []\n", `t.yaml:3:18: authorized_keys: a system user without home has no home for its keys; set home`},
 		{"system keys with home", "name: a\nsystem: true\nhome: /var/a\nauthorized_keys: []\n", ""},
-		{"unknown key", "name: a\ngroups: [sudo]\n", `t.yaml:2:1: unknown key "groups"; did you mean "group"?`},
+		{"unknown key", "name: a\ngroupz: [sudo]\n", `t.yaml:2:1: unknown key "groupz"; did you mean "group"?`},
+		{"groups", "name: a\ngroups: [sudo, docker]\n", ""},
+		{"no groups", "name: a\ngroups: []\n", ""},
+		{"groups a string", "name: a\ngroups: sudo\n", `t.yaml:2:9: groups: expected a list, got the string "sudo"`},
+		{"bad group in groups", "name: a\ngroups: [sudo, \"A\"]\n", `t.yaml:2:9: groups: "A" is not a group name; a name has lower-case letters, digits, "_", and "-", and starts with a letter or "_"`},
+		{"repeated group", "name: a\ngroups: [sudo, docker, sudo]\n", `t.yaml:2:9: groups: element 3 repeats element 1`},
+		{"password", "name: a\npassword: $y$j9T$abc$def\n", ""},
+		{"locked password", "name: a\npassword: '!$6$abc$def'\n", ""},
+		{"comment", "name: a\ncomment: Alice Smith,,,\n", ""},
+		{"comment with a colon", "name: a\ncomment: \"a:b\"\n", `t.yaml:2:10: comment: must not have ":"`},
+		{"comment with a newline", "name: a\ncomment: \"a\\nb\"\n", `t.yaml:2:10: comment: has a control character`},
+		{"absent with groups", "name: a\nabsent: true\ngroups: []\n", `t.yaml:3:9: groups: absent: true takes no groups`},
+		{"absent with password", "name: a\nabsent: true\npassword: $6$a$b\n", `t.yaml:3:11: password: absent: true takes no password`},
+		{"absent with comment", "name: a\nabsent: true\ncomment: a\n", `t.yaml:3:10: comment: absent: true takes no comment`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &User{}, tt.yaml, tt.want) })
+	}
+}
+
+// spec: Modules/user and group
+func TestCheckHash(t *testing.T) {
+	tests := []struct {
+		pw string
+		ok bool
+	}{
+		{"$y$j9T$salt$hash", true},
+		{"$6$rounds=5000$salt$hash", true},
+		{"$2b$12$abc./XYZ", true},
+		{"!$6$salt$hash", true},
+		{"hunter2", false},
+		{"$6$", false},
+		{"$6$a:b", false},
+		{"$6$a b", false},
+		{"$6$a\nb", false},
+		{"!", false},
+	}
+	for _, tt := range tests {
+		err := checkHash(tt.pw)
+		if (err == nil) != tt.ok {
+			t.Errorf("checkHash(%q) = %v, want ok %v", tt.pw, err, tt.ok)
+		}
+		if err != nil && strings.Contains(err.Error(), tt.pw) {
+			t.Errorf("checkHash(%q) = %v, shows the hash", tt.pw, err)
+		}
 	}
 }
 
@@ -134,8 +175,8 @@ func TestParsePasswd(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []passwdEntry{
-		{name: "root", uid: 0, gid: 0, home: "/root", shell: "/bin/bash"},
-		{name: "alice", uid: 1000, gid: 1000, home: "/home/alice", shell: "/bin/bash"},
+		{name: "root", uid: 0, gid: 0, comment: "root", home: "/root", shell: "/bin/bash"},
+		{name: "alice", uid: 1000, gid: 1000, comment: "Alice,,,", home: "/home/alice", shell: "/bin/bash"},
 		// Empty fields are what login uses.
 		{name: "svc", uid: 999, gid: 999, home: "/", shell: "/bin/sh"},
 	}
@@ -223,6 +264,7 @@ func TestKeyChanges(t *testing.T) {
 // spec: Modules/user and group
 func TestUserCheckLogin(t *testing.T) {
 	admin := passwdEntry{name: "admin", uid: 1000, gid: 1000, home: "/home/admin", shell: "/bin/bash"}
+	a := accounts{users: []passwdEntry{admin}, groups: []groupEntry{{name: "sudo", gid: 27, members: []string{"admin"}}, {name: "adm", gid: 4}, {name: "docker", gid: 990, members: []string{"bob", "admin"}}}}
 	tests := []struct {
 		name  string
 		user  User
@@ -236,11 +278,15 @@ func TestUserCheckLogin(t *testing.T) {
 		{"uid of another user", User{Name: "admin", UID: "2000"}, 0, ""},
 		{"shell of another user", User{Name: "admin", Shell: "/usr/sbin/nologin"}, 0, ""},
 		{"home of another user", User{Name: "admin", Home: "/srv/admin"}, 0, ""},
+		{"same groups", User{Name: "admin", Groups: &[]string{"sudo", "docker"}}, 1000, ""},
+		{"groups", User{Name: "admin", Groups: &[]string{"sudo", "docker", "adm"}}, 1000, "admin is the login user of this session; log in as another user to change its groups"},
+		{"no groups", User{Name: "admin", Groups: &[]string{}}, 1000, "admin is the login user of this session; log in as another user to change its groups"},
+		{"groups of another user", User{Name: "admin", Groups: &[]string{}}, 0, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ""
-			if err := tt.user.checkLogin(admin, tt.login); err != nil {
+			if err := tt.user.checkLogin(a, admin, tt.login); err != nil {
 				got = err.Error()
 			}
 			if got != tt.want {
