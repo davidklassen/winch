@@ -2,6 +2,7 @@ package module
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -66,7 +67,12 @@ func (f *File) Validate() error {
 		}
 	}
 	if set == 0 {
-		return &yamlx.FieldError{Field: "content", Msg: "a file needs content, template, or source, or absent: true"}
+		if f.Owner == "" && f.Group == "" && f.Mode == "" {
+			return &yamlx.FieldError{Field: "content", Msg: "a file needs content, template, or source, one of owner, group, and mode, or absent: true"}
+		}
+		if err := takesNone("a file without content", arg{"validate", f.Validation != nil}, arg{"replace", f.Replace}); err != nil {
+			return err
+		}
 	}
 	if err := checkRelative("template", f.Template); err != nil {
 		return err
@@ -245,6 +251,9 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 		}
 		return Result{Status: Change, Action: Remove}, nil
 	}
+	if !f.hasContent() {
+		return f.checkAttrs(dir, name, fi, exists)
+	}
 	owner, group, mode, err := attrs(f.Owner, f.Group, f.Mode, "0644")
 	if err != nil {
 		return Result{}, err
@@ -303,6 +312,76 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	return res, nil
 }
 
+// hasContent reports whether the step on the host sets the content.
+func (f *File) hasContent() bool {
+	return f.Data != nil || f.DataSHA256 != ""
+}
+
+// checkAttrs checks a step without content: only the owner, group, and mode
+// it gives, of a file that exists.
+func (f *File) checkAttrs(dir *os.Root, name string, fi fs.FileInfo, exists bool) (Result, error) {
+	switch {
+	case !exists:
+		return Result{}, fmt.Errorf("%s does not exist; a file step without content does not create it", f.Path)
+	case !fi.Mode().IsRegular():
+		return Result{}, fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
+	}
+	owner, group, mode, err := f.attrsOr(fi)
+	if err != nil {
+		return Result{}, err
+	}
+	changes, err := attrChanges(fi, owner, group, mode)
+	if err != nil || len(changes) == 0 {
+		return Result{Status: OK}, err
+	}
+	if err := noFlags(dir, name, fi, f.Path); err != nil {
+		return Result{}, err
+	}
+	return Result{Status: Change, Action: Modify, Changes: changes}, nil
+}
+
+// attrsOr returns the owner, group, and mode that the step gives, and those
+// of fi for the ones it does not give.
+func (f *File) attrsOr(fi fs.FileInfo) (string, string, uint32, error) {
+	st := fi.Sys().(*syscall.Stat_t)
+	owner := cmp.Or(string(f.Owner), strconv.FormatUint(uint64(st.Uid), 10))
+	group := cmp.Or(string(f.Group), strconv.FormatUint(uint64(st.Gid), 10))
+	if f.Mode == "" {
+		return owner, group, uint32(st.Mode) & 0o7777, nil
+	}
+	n, err := strconv.ParseUint(f.Mode, 8, 32)
+	return owner, group, uint32(n), err
+}
+
+func (f *File) applyAttrs(name string) error {
+	dir, err := openDir(f.Path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	fi, err := dir.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
+	}
+	r, err := openSame(dir, name, fi)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	owner, group, mode, err := f.attrsOr(fi)
+	if err != nil {
+		return err
+	}
+	uid, gid, err := ids(owner, group)
+	if err != nil {
+		return err
+	}
+	return setAttrs(r, uid, gid, mode)
+}
+
 // attrChanges describes how the owner, group, and mode of fi differ from the
 // wanted ones.
 func attrChanges(fi fs.FileInfo, owner, group string, mode uint32) ([]string, error) {
@@ -336,6 +415,9 @@ func (f *File) Apply(ctx context.Context, _ func(string)) error {
 		}
 		defer dir.Close()
 		return dir.Remove(name)
+	}
+	if !f.hasContent() {
+		return f.applyAttrs(name)
 	}
 	owner, group, mode, err := attrs(f.Owner, f.Group, f.Mode, "0644")
 	if err != nil {
@@ -677,7 +759,16 @@ func openRoot(dir *os.Root, name string, fi fs.FileInfo) (*os.Root, error) {
 	return r, nil
 }
 
+// setAttrs changes nothing when f is already right: the kernel refuses even
+// such a change on an immutable or append-only file.
 func setAttrs(f *os.File, uid, gid, mode uint32) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if st := fi.Sys().(*syscall.Stat_t); st.Uid == uid && st.Gid == gid && uint32(st.Mode)&0o7777 == mode {
+		return nil
+	}
 	if err := f.Chown(int(uid), int(gid)); err != nil {
 		return err
 	}

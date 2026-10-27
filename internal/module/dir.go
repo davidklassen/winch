@@ -8,8 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -20,6 +22,7 @@ type Dir struct {
 	Group   yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
 	Mode    string         `yaml:"mode" json:"mode,omitempty"`
 	ModePos yamlx.Pos      `json:"-"`
+	Recurse bool           `yaml:"recurse" json:"recurse,omitempty"`
 	Absent  bool           `yaml:"absent" json:"absent,omitempty"`
 	Replace bool           `yaml:"replace" json:"replace,omitempty"`
 }
@@ -31,7 +34,7 @@ func (d *Dir) Validate() error {
 		return err
 	}
 	if d.Absent {
-		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"replace", d.Replace})
+		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"recurse", d.Recurse}, arg{"replace", d.Replace})
 	}
 	if err := checkOwner("owner", d.Owner); err != nil {
 		return err
@@ -136,13 +139,136 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 		return Result{}, fmt.Errorf("%s is %s, not a directory", d.Path, kind(fi))
 	}
 	changes, err := attrChanges(fi, owner, group, mode)
-	if err != nil || len(changes) == 0 {
-		return Result{Status: OK}, err
-	}
-	if err := noFlags(at, atName, fi, d.Path); err != nil {
+	if err != nil {
 		return Result{}, err
 	}
+	if len(changes) > 0 {
+		if err := noFlags(at, atName, fi, d.Path); err != nil {
+			return Result{}, err
+		}
+	}
+	if d.Recurse {
+		uid, gid, err := wantIDs(owner, group)
+		if err != nil {
+			return Result{}, err
+		}
+		t, err := countEntries(at, atName, fi, d.Path, uid, gid)
+		if err != nil {
+			return Result{}, err
+		}
+		if t.files+t.dirs > 0 {
+			changes = append(changes, "owner and group of its content: "+t.counts())
+		}
+	}
+	if len(changes) == 0 {
+		return Result{Status: OK}, nil
+	}
 	return Result{Status: Change, Action: Modify, Changes: changes, Link: link}, nil
+}
+
+// wantIDs returns the IDs of owner and group, or -1 for one that does not
+// exist yet: every entry differs from it.
+func wantIDs(owner, group string) (int64, int64, error) {
+	uid, gid := int64(-1), int64(-1)
+	u, ok, err := lookupUser(owner)
+	if err != nil {
+		return 0, 0, err
+	}
+	if ok {
+		uid = int64(u)
+	}
+	g, ok, err := lookupGroup(group)
+	if err != nil {
+		return 0, 0, err
+	}
+	if ok {
+		gid = int64(g)
+	}
+	return uid, gid, nil
+}
+
+// walkOwners calls fn for each entry in the directory fi at name in dir, at
+// any depth, whose owner or group is not uid or gid. fn gets the directory of
+// the entry, its name there, and its path below the walked directory. The
+// walk opens each directory by one name and checks that it is the one it
+// listed, so it never follows a symbolic link. It skips a mount point with
+// its content, and an entry that goes away.
+func walkOwners(dir *os.Root, name string, fi fs.FileInfo, uid, gid int64, fn func(sub *os.Root, name, rel string, info fs.FileInfo) error) error {
+	top, err := openRoot(dir, name, fi)
+	if err != nil {
+		return err
+	}
+	defer top.Close()
+	f, err := top.Open(".")
+	if err != nil {
+		return err
+	}
+	target, mounts, err := mountsAt(f)
+	f.Close()
+	if err != nil {
+		return err
+	}
+	skip := map[string]bool{}
+	for _, mp := range mounts {
+		skip[strings.TrimPrefix(mp, target+"/")] = true
+	}
+	var walk func(sub *os.Root, prefix string) error
+	walk = func(sub *os.Root, prefix string) error {
+		d, err := sub.Open(".")
+		if err != nil {
+			return err
+		}
+		names, err := d.Readdirnames(-1)
+		d.Close()
+		if err != nil {
+			return err
+		}
+		slices.Sort(names)
+		for _, n := range names {
+			rel := path.Join(prefix, n)
+			if skip[rel] {
+				continue
+			}
+			info, err := sub.Lstat(n)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			st := info.Sys().(*syscall.Stat_t)
+			if int64(st.Uid) != uid || int64(st.Gid) != gid {
+				if err := fn(sub, n, rel, info); err != nil {
+					return err
+				}
+			}
+			if !info.IsDir() {
+				continue
+			}
+			next, err := openRoot(sub, n, info)
+			if err != nil {
+				return err
+			}
+			err = walk(next, rel)
+			next.Close()
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walk(top, "")
+}
+
+// chownContent sets the owner and group of every entry in the directory fi at
+// name in dir when the step recurses.
+func (d *Dir) chownContent(dir *os.Root, name string, fi fs.FileInfo, uid, gid uint32) error {
+	if !d.Recurse {
+		return nil
+	}
+	return walkOwners(dir, name, fi, int64(uid), int64(gid), func(sub *os.Root, name, _ string, _ fs.FileInfo) error {
+		return sub.Lchown(name, int(uid), int(gid))
+	})
 }
 
 func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
@@ -197,7 +323,14 @@ func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
 			return err
 		}
 		defer f.Close()
-		return setAttrs(f, uid, gid, mode)
+		fi, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		if err := setAttrs(f, uid, gid, mode); err != nil {
+			return err
+		}
+		return d.chownContent(behind, ".", fi, uid, gid)
 	case d.Replace && (fi.Mode()&fs.ModeSymlink != 0 || fi.Mode().IsRegular()):
 		if err := sub.Remove(name); err != nil {
 			return err
@@ -218,7 +351,10 @@ func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
 		return err
 	}
 	defer f.Close()
-	return setAttrs(f, uid, gid, mode)
+	if err := setAttrs(f, uid, gid, mode); err != nil {
+		return err
+	}
+	return d.chownContent(sub, name, fi, uid, gid)
 }
 
 // openLinked opens the directory behind the symbolic link at p.
@@ -246,14 +382,24 @@ func noMount(dir *os.Root, name string, fi fs.FileInfo, p string) error {
 		return err
 	}
 	defer f.Close()
+	target, mounts, err := mountsAt(f)
+	if err != nil || len(mounts) == 0 {
+		return err
+	}
+	return fmt.Errorf("%s is a mount point", p+mounts[0][len(target):])
+}
+
+// mountsAt returns the real path of f and the mount points at it or below it.
+func mountsAt(f *os.File) (string, []string, error) {
 	target, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", f.Fd()))
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	data, err := os.ReadFile("/proc/self/mountinfo")
 	if err != nil {
-		return err
+		return "", nil, err
 	}
+	var mounts []string
 	for line := range strings.Lines(string(data)) {
 		fields := strings.Fields(line)
 		if len(fields) < 5 {
@@ -261,10 +407,10 @@ func noMount(dir *os.Root, name string, fi fs.FileInfo, p string) error {
 		}
 		mp := mountEscapes.Replace(fields[4])
 		if mp == target || strings.HasPrefix(mp, target+"/") {
-			return fmt.Errorf("%s is a mount point", p+mp[len(target):])
+			mounts = append(mounts, mp)
 		}
 	}
-	return nil
+	return target, mounts, nil
 }
 
 var mountEscapes = strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)

@@ -73,34 +73,23 @@ func walkTree(dir *os.Root, name, p string, fi fs.FileInfo) (tree, error) {
 	if err := noMount(dir, name, fi, p); err != nil {
 		return tree{}, err
 	}
-	if !fi.IsDir() {
-		return tree{}, noFlags(dir, name, fi, p)
-	}
-	sub, err := openRoot(dir, name, fi)
-	if err != nil {
+	if err := noFlags(dir, name, fi, p); err != nil || !fi.IsDir() {
 		return tree{}, err
 	}
-	defer sub.Close()
+	return countEntries(dir, name, fi, p, -1, -1)
+}
+
+// countEntries counts the entries that walkOwners visits, and fails on a
+// flag that stops a change of one.
+func countEntries(dir *os.Root, name string, fi fs.FileInfo, p string, uid, gid int64) (tree, error) {
 	t := tree{dir: true}
-	err = fs.WalkDir(sub.FS(), ".", func(name string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if err := noFlags(sub, name, info, path.Join(p, name)); err != nil {
-			return err
-		}
-		switch {
-		case name == ".":
-		case d.IsDir():
+	err := walkOwners(dir, name, fi, uid, gid, func(sub *os.Root, name, rel string, info fs.FileInfo) error {
+		if info.IsDir() {
 			t.dirs++
-		default:
+		} else {
 			t.files++
 		}
-		return nil
+		return noFlags(sub, name, info, path.Join(p, rel))
 	})
 	return t, err
 }

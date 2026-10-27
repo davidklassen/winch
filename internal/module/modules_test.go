@@ -82,6 +82,8 @@ func TestDirValidate(t *testing.T) {
 		{"purge", "path: /x\npurge: true\n", `t.yaml:2:1: unknown key "purge"`},
 		{"replace", "path: /x\nreplace: true\n", ""},
 		{"replace and absent", "path: /x\nabsent: true\nreplace: true\n", `t.yaml:3:10: replace: absent: true takes no replace`},
+		{"recurse", "path: /x\nowner: www-data\nrecurse: true\n", ""},
+		{"recurse and absent", "path: /x\nabsent: true\nrecurse: true\n", `t.yaml:3:10: recurse: absent: true takes no recurse`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Dir{}, tt.yaml, tt.want) })
