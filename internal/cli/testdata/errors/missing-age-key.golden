@@ -1,0 +1,8 @@
+text:
+no age key in HOME/.config/winch/age.key
+Set WINCH_AGE_KEY to a key file, or WINCH_AGE_IDENTITY_CMD to a command that prints a key.
+To make a key, run winch secret init. A member who can read the secrets must then run winch secret rekey
+json:
+{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","message":"no age key in HOME/.config/winch/age.key\nSet WINCH_AGE_KEY to a key file, or WINCH_AGE_IDENTITY_CMD to a command that prints a key.\nTo make a key, run winch secret init. A member who can read the secrets must then run winch secret rekey"}
+{"type":"summary","time":"2026-10-26T12:00:00Z","exit_code":3}

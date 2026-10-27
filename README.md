@@ -32,8 +32,9 @@ that `make vm` prints, then:
 
 ```
 cd examples/demo
-WINCH_AGE_KEY=age.key ../../bin/winch plan site
-WINCH_AGE_KEY=age.key ../../bin/winch apply site
+export WINCH_AGE_KEY=age.key
+../../bin/winch plan site
+../../bin/winch apply site
 ssh demo "curl -s http://localhost/about"
 ```
 

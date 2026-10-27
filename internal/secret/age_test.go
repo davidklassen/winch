@@ -104,7 +104,8 @@ func TestIdentityRead(t *testing.T) {
 	}{
 		{"file", Identity{Path: good}, ""},
 		{"file that is not a key", Identity{Path: bad}, "read the age identity in " + bad + ": "},
-		{"missing file", Identity{Path: missing}, "read the age identity: open " + missing + ": "},
+		{"missing file", Identity{Path: missing}, "no age key in " + missing + "\nSet WINCH_AGE_KEY"},
+		{"no path", Identity{}, "no age key: the home directory is not known; set WINCH_AGE_KEY or WINCH_AGE_IDENTITY_CMD"},
 		{"command", Identity{Cmd: "cat age.key", Dir: dir}, ""},
 		{"failing command", Identity{Cmd: "echo locked >&2; exit 3"}, "read the age identity: echo locked >&2; exit 3: exit status 3: locked"},
 		{"failing command without stderr", Identity{Cmd: "exit 3"}, "read the age identity: exit 3: exit status 3"},

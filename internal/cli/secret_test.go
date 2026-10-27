@@ -10,6 +10,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/davidklassen/winch/internal/fakehost"
+	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -136,7 +137,7 @@ func TestSecretPlan(t *testing.T) {
 		}
 	}
 	r = winch(t, dir, h, false, "", "plan", "site")
-	if r.code != exitInvalid || !strings.Contains(r.err, "read the age identity: ") {
+	if r.code != exitInvalid || !strings.Contains(r.err, "no age key: the home directory is not known; ") {
 		t.Errorf("plan without an identity: exit %d, stderr %q", r.code, r.err)
 	}
 	r = winch(t, dir, h, false, "", "validate")
@@ -234,8 +235,8 @@ func TestAgeKey(t *testing.T) {
 		{"absolute path", "", identity, exitOK, ""},
 		{"path relative to the current directory", "", "demo.key", exitOK, ""},
 		{"home directory", home, "", exitOK, ""},
-		{"the variable before the home directory", home, missing, exitInvalid, "read the age identity: open " + missing + ": no such file"},
-		{"missing relative path", "", "missing.key", exitInvalid, "read the age identity: open " + filepath.Join(dir, "missing.key") + ": no such file"},
+		{"the variable before the home directory", home, missing, exitInvalid, "no age key in " + missing + "\n"},
+		{"missing relative path", "", "missing.key", exitInvalid, "no age key in " + filepath.Join(dir, "missing.key") + "\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -244,6 +245,32 @@ func TestAgeKey(t *testing.T) {
 				t.Errorf("exit %d, stderr %q; want exit %d and %q", r.code, r.err, tt.wantCode, tt.wantErr)
 			}
 		})
+	}
+}
+
+// spec: Variables/Secrets (no key)
+func TestMissingAgeKey(t *testing.T) {
+	_, id := newIdentity(t)
+	dir := secretProject(t, id)
+	setPassword(t, dir, encrypt(t, dir, "hunter2\n"))
+	home := t.TempDir()
+	text := winchWith(t, dir, home, "", "", fakehost.New(), false, "", "plan", "site")
+	js := winchWith(t, dir, home, "", "", fakehost.New(), false, "", "plan", "site", "--json")
+	got := strings.ReplaceAll("text:\n"+text.err+"json:\n"+js.out, home, "HOME")
+	golden.Assert(t, filepath.Join("testdata", "errors", "missing-age-key.golden"), []byte(got))
+}
+
+// spec: Variables/Secrets (no key)
+func TestUnknownHome(t *testing.T) {
+	_, id := newIdentity(t)
+	dir := secretProject(t, id)
+	setPassword(t, dir, encrypt(t, dir, "hunter2\n"))
+	want := "no age key: the home directory is not known; set WINCH_AGE_KEY or WINCH_AGE_IDENTITY_CMD\n"
+	for _, args := range [][]string{{"plan", "site"}, {"secret", "init"}, {"secret", "rekey"}} {
+		r := winchWith(t, dir, "", "", "", fakehost.New(), false, "", args...)
+		if r.code != exitInvalid || !strings.HasSuffix(r.err, want) {
+			t.Errorf("%v: exit %d, stderr %q; want exit %d and %q", args, r.code, r.err, exitInvalid, want)
+		}
 	}
 }
 

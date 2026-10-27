@@ -71,12 +71,22 @@ func (id Identity) String() string {
 	return "in " + id.Path
 }
 
+const noKeyHelp = "Set WINCH_AGE_KEY to a key file, or WINCH_AGE_IDENTITY_CMD to a command that prints a key.\n" +
+	"To make a key, run winch secret init. A member who can read the secrets must then run winch secret rekey"
+
 // Read reads the identities from the source.
 func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
 	var data []byte
 	if id.Cmd == "" {
+		if id.Path == "" {
+			return nil, errors.New("no age key: the home directory is not known; set WINCH_AGE_KEY or WINCH_AGE_IDENTITY_CMD")
+		}
 		var err error
-		if data, err = os.ReadFile(id.Path); err != nil {
+		data, err = os.ReadFile(id.Path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("no age key %s\n%s", id, noKeyHelp)
+		}
+		if err != nil {
 			return nil, fmt.Errorf("read the age identity: %w", err)
 		}
 	} else {
@@ -105,7 +115,7 @@ func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
 // no file is there, it first writes a new key, in the format of age-keygen;
 // made is true then.
 func (id Identity) Init(ctx context.Context) (key string, made bool, err error) {
-	if id.Cmd == "" {
+	if id.Cmd == "" && id.Path != "" {
 		if made, err = makeKey(id.Path); err != nil {
 			return "", false, fmt.Errorf("make the age key: %w", err)
 		}
