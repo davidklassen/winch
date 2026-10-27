@@ -156,3 +156,20 @@ func record(downloads records, sum, p string) error {
 	})
 	return downloads.write(append(lines, sum+" "+p))
 }
+
+// forget removes the download record of path p.
+func forget(downloads records, p string) error {
+	lines, err := downloads.read()
+	if err != nil {
+		return err
+	}
+	n := len(lines)
+	lines = slices.DeleteFunc(lines, func(l string) bool {
+		_, lp, _ := strings.Cut(l, " ")
+		return lp == p
+	})
+	if len(lines) == n {
+		return nil
+	}
+	return downloads.write(lines)
+}

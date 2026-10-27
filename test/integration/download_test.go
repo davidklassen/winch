@@ -16,11 +16,13 @@ import (
 	"encoding/pem"
 	"io/fs"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
@@ -88,6 +90,7 @@ func TestDownloadModule(t *testing.T) {
 	})
 	urlLate := lab.Serve(t, "download/late.tar.gz", late)
 	unpacked := "curl -sfo /tmp/w/app.tar.gz " + urlTgz + " && mkdir -p /var/lib/winch/downloads && echo '" + sha(tgz) + " /tmp/w/app.tar.gz' > " + record
+	extracted := unpacked + " && mkdir /tmp/w/opt && tar -C /tmp/w/opt -xzf /tmp/w/app.tar.gz"
 	evil := tarGz(t, []entry{{name: "../evil", typ: tar.TypeReg, mode: 0o644, body: "x\n"}})
 	urlEvil := lab.Serve(t, "download/evil.tar.gz", evil)
 	escape := tarGz(t, []entry{
@@ -128,6 +131,29 @@ func TestDownloadModule(t *testing.T) {
 	urlBroken := lab.Serve(t, "download/broken.tar.xz", broken)
 
 	reset := "[ ! -d /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w " + record + " && mkdir /tmp/w"
+	t.Run("a failed unpack stays a change", func(t *testing.T) {
+		ctx := t.Context()
+		s := vm.Session(t)
+		vm.MustRun(t, reset+"\n"+extracted+" && rm /tmp/w/opt/app/bin/tool && mkdir /tmp/w/opt/app/bin/tool")
+		args := &module.Download{URL: urlTgz, SHA256: sha(tgz), Path: "/tmp/w/app.tar.gz", Unpack: "/tmp/w/opt", Owner: "admin"}
+		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, protocol.Guard{}); err == nil || !strings.Contains(err.Error(), "unpack /tmp/w/app.tar.gz into /tmp/w/opt") {
+			t.Fatalf("apply over a directory at a file entry = %v, want an unpack error", err)
+		}
+		want := []string{"download " + urlTgz + " (no record of an earlier download)", "unpack into /tmp/w/opt"}
+		got, err := s.Check(ctx, "download", args, &module.State{})
+		if err != nil || got.Status != module.Change || !slices.Equal(got.Changes, want) {
+			t.Fatalf("check after the failed apply = %+v, %v; want the changes %q", got, err, want)
+		}
+		vm.MustRun(t, "rmdir /tmp/w/opt/app/bin/tool")
+		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, protocol.Guard{}); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		if got, err := s.Check(ctx, "download", args, &module.State{}); err != nil || got.Status != module.OK {
+			t.Fatalf("check after apply = %+v, %v; want ok", got, err)
+		}
+		vm.MustRun(t, `[ "$(/tmp/w/opt/app/bin/tool)" = tool ] && [ "$(stat -c '%U' /tmp/w/opt/app/bin/tool)" = admin ]`)
+	})
+
 	vmtest.RunCases(t, vm, "download", reset, []vmtest.Case{
 		{
 			Name:      "download",
@@ -254,14 +280,14 @@ func TestDownloadModule(t *testing.T) {
 		},
 		{
 			Name:  "an owner change unpacks again",
-			Setup: unpacked + " && mkdir /tmp/w/opt && tar -C /tmp/w/opt -xzf /tmp/w/app.tar.gz",
+			Setup: extracted,
 			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Path: "/tmp/w/app.tar.gz", Unpack: "/tmp/w/opt", Owner: "admin"},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner root → admin", "unpack into /tmp/w/opt"}},
 			After: `[ "$(stat -c '%U' /tmp/w/app.tar.gz /tmp/w/opt/app/bin/tool)" = "$(printf '%s\n' admin admin)" ]`,
 		},
 		{
 			Name:      "a new checksum unpacks the new archive",
-			Setup:     unpacked + " && mkdir /tmp/w/opt && tar -C /tmp/w/opt -xzf /tmp/w/app.tar.gz",
+			Setup:     extracted,
 			Args:      &module.Download{URL: urlTgz2, SHA256: sha(tgz2), Path: "/tmp/w/app.tar.gz", Unpack: "/tmp/w/opt"},
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz2 + " (new sha256)", "unpack into /tmp/w/opt"}},
 			Unchanged: `[ "$(/tmp/w/opt/app/bin/tool)" = tool ]`,

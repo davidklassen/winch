@@ -267,6 +267,13 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	// The plan has shown the diff already.
 	out.Old, out.OldReason = nil, ""
+	// A failed unpack can leave the archive and the unpack directory as the
+	// check wants them, so only the record shows that the unpack is not done.
+	if isDownload && d.Unpack != "" {
+		if err := forget(downloads, d.Path); err != nil {
+			return out, err
+		}
+	}
 	notified, err := handlers.add(s.Notify)
 	if err != nil {
 		return out, err

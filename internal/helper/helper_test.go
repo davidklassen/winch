@@ -666,3 +666,20 @@ func TestApplyDeferred(t *testing.T) {
 		t.Errorf("a failing assert: error %q, want the message", r.Error)
 	}
 }
+
+// spec: Modules/download
+func TestForget(t *testing.T) {
+	downloads := records{dir: t.TempDir(), project: "acme", what: "download records"}
+	if err := downloads.write([]string{"a /opt/a.tar.gz", "b /opt/b.tar.gz"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := forget(downloads, "/opt/a.tar.gz"); err != nil {
+		t.Fatal(err)
+	}
+	if err := forget(downloads, "/opt/missing.tar.gz"); err != nil {
+		t.Fatal(err)
+	}
+	if lines, err := downloads.read(); err != nil || !slices.Equal(lines, []string{"b /opt/b.tar.gz"}) {
+		t.Errorf("records = %q, %v; want only the record of /opt/b.tar.gz", lines, err)
+	}
+}
