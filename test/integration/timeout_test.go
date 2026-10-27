@@ -184,14 +184,21 @@ func TestMaxStartupsRetry(t *testing.T) {
 					t.Errorf("proxy: %v", err)
 					return
 				}
+				sent := make(chan struct{})
 				go func() {
-					io.Copy(vc, c) //nolint:errcheck // the close ends the other copy
-					vc.Close()     //nolint:errcheck // the copy is over
+					io.Copy(vc, c)         //nolint:errcheck // the close ends the other copy
+					vc.Close()             //nolint:errcheck // the copy is over
+					io.Copy(io.Discard, c) //nolint:errcheck // a failed write to sshd leaves data in c
+					close(sent)
 				}()
-				io.Copy(c, vc) //nolint:errcheck // the close of c ends the other copy
+				io.Copy(c, vc) //nolint:errcheck // ssh sees the end and closes c
 				if n == 3 {
 					close(release)
 				}
+				// A close of c with unread data from ssh sends a reset, not
+				// the close of sshd.
+				c.(*net.TCPConn).CloseWrite() //nolint:errcheck // the close of c follows
+				<-sent
 			}()
 		}
 	}()

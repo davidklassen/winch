@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"testing/synctest"
 	"time"
 )
 
@@ -299,15 +300,19 @@ func TestWaitBoot(t *testing.T) {
 		ssh  string
 		// want holds the parts of the error; none means success.
 		want []string
+		// wait is the time between ssh starts.
+		wait time.Duration
+		// The fake clock of a bubble stops while ssh runs, so the time
+		// limit cannot end a running ssh.
+		realClock bool
 	}{
 		{name: "done", ssh: "exit 0"},
-		{name: "ssh fails first", ssh: `[ -e "$0.ran" ] && exit 0; touch "$0.ran"; exit 255`},
+		{name: "ssh fails first", ssh: `[ -e "$0.ran" ] && exit 0; touch "$0.ran"; exit 255`, wait: 2 * time.Second},
 		{name: "error", ssh: report + "exit 1", want: []string{"cloud-init failed", "errors: boom"}},
 		{name: "recoverable error", ssh: report + "exit 2", want: []string{"cloud-init failed", "errors: boom"}},
-		{name: "time limit", ssh: "exec sleep 30", want: []string{"did not start", "deadline exceeded"}},
+		{name: "time limit", ssh: "exec sleep 30", want: []string{"did not start", "deadline exceeded"}, realClock: true},
 	} {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
+		test := func(t *testing.T) {
 			dir := t.TempDir()
 			if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
 				t.Fatal(err)
@@ -318,7 +323,11 @@ func TestWaitBoot(t *testing.T) {
 			vm := &VM{Name: "base", lab: &Lab{Dir: dir}, dir: dir}
 			ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
 			defer cancel()
+			start := time.Now()
 			err := vm.waitBoot(ctx)
+			if elapsed := time.Since(start); !c.realClock && elapsed != c.wait {
+				t.Errorf("waitBoot took %s, want %s", elapsed, c.wait)
+			}
 			if len(c.want) == 0 {
 				if err != nil {
 					t.Fatalf("waitBoot = %v, want nil", err)
@@ -333,6 +342,14 @@ func TestWaitBoot(t *testing.T) {
 					t.Errorf("waitBoot = %v, want %q in it", err, w)
 				}
 			}
+		}
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if c.realClock {
+				test(t)
+				return
+			}
+			synctest.Test(t, test)
 		})
 	}
 }
