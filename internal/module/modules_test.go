@@ -2,9 +2,11 @@ package module
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -277,23 +279,24 @@ func TestParseDpkgBadOutput(t *testing.T) {
 }
 
 // spec: Modules/service and unit
-func TestHasInstall(t *testing.T) {
+func TestInstallKeys(t *testing.T) {
+	type keys = map[string][]string
 	for _, tc := range []struct {
 		name  string
 		units []string
-		want  bool
+		want  keys
 	}{
-		{"no section", []string{"[Service]\nExecStart=/bin/true\n"}, false},
-		{"WantedBy", []string{"[Install]\nWantedBy=multi-user.target\n"}, true},
-		{"Alias with spaces", []string{"[Install]\n  Alias = app2.service\n"}, true},
-		{"only Also", []string{"[Install]\nAlso=other.service\n"}, false},
-		{"key in another section", []string{"[Unit]\nWantedBy=multi-user.target\n[Install]\n"}, false},
-		{"comment", []string{"[Install]\n#WantedBy=multi-user.target\n;RequiredBy=a.target\n"}, false},
-		{"empty value clears", []string{"[Install]\nUpheldBy=a.target\nUpheldBy=\n"}, false},
-		{"a drop-in adds a key", []string{"[Service]\n", "[Install]\nWantedBy=a.target\n"}, true},
-		{"a drop-in keeps a key", []string{"[Install]\nWantedBy=a.target\n", "[Service]\nNice=5\n"}, true},
-		{"a drop-in clears a key", []string{"[Install]\nWantedBy=a.target\n", "[Install]\nWantedBy=\n"}, false},
-		{"value after an empty one", []string{"[Install]\nRequiredBy=\nRequiredBy=a.target\n"}, true},
+		{"no section", []string{"[Service]\nExecStart=/bin/true\n"}, keys{}},
+		{"WantedBy", []string{"[Install]\nWantedBy=multi-user.target\n"}, keys{"WantedBy": {"multi-user.target"}}},
+		{"Alias with spaces", []string{"[Install]\n  Alias = app2.service\n"}, keys{"Alias": {"app2.service"}}},
+		{"Also adds its words", []string{"[Install]\nAlso=a.service b.socket\nAlso=c.service\n"}, keys{"Also": {"a.service", "b.socket", "c.service"}}},
+		{"key in another section", []string{"[Unit]\nWantedBy=multi-user.target\n[Install]\n"}, keys{}},
+		{"comment", []string{"[Install]\n#WantedBy=multi-user.target\n;RequiredBy=a.target\n"}, keys{}},
+		{"empty value clears", []string{"[Install]\nUpheldBy=a.target\nUpheldBy=\n"}, keys{}},
+		{"a drop-in adds a key", []string{"[Service]\n", "[Install]\nWantedBy=a.target\n"}, keys{"WantedBy": {"a.target"}}},
+		{"a drop-in keeps a key", []string{"[Install]\nWantedBy=a.target\n", "[Service]\nNice=5\n"}, keys{"WantedBy": {"a.target"}}},
+		{"a drop-in clears a key", []string{"[Install]\nWantedBy=a.target\n", "[Install]\nWantedBy=\n"}, keys{}},
+		{"value after an empty one", []string{"[Install]\nRequiredBy=\nRequiredBy=a.target\n"}, keys{"RequiredBy": {"a.target"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var paths []string
@@ -304,9 +307,30 @@ func TestHasInstall(t *testing.T) {
 				}
 				paths = append(paths, p)
 			}
-			got, err := hasInstall(paths)
-			if err != nil || got != tc.want {
-				t.Errorf("hasInstall = %v, %v, want %v", got, err, tc.want)
+			got, err := installKeys(paths)
+			if err != nil || !maps.EqualFunc(got, tc.want, slices.Equal[[]string]) {
+				t.Errorf("installKeys = %v, %v, want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// spec: Modules/service and unit
+func TestFailedConditions(t *testing.T) {
+	for _, tc := range []struct {
+		name, out string
+		want      []string
+	}{
+		{"one", "a.service: ConditionPathExists=/ succeeded.\na.service: ConditionPathExists=/x failed.\nConditions failed.\n", []string{"ConditionPathExists=/x"}},
+		{"negated", "a.service: ConditionPathExists=!/ failed.\nConditions failed.\n", []string{"ConditionPathExists=!/"}},
+		{"a failed trigger before a failed plain condition", "a.service: ConditionPathExists=|/x failed.\na.service: ConditionPathExists=/y failed.\nConditions failed.\n", []string{"ConditionPathExists=/y"}},
+		{"all triggers failed", "a.service: ConditionPathExists=|!/ failed.\na.service: ConditionPathExists=|/x failed.\nConditions failed.\n", []string{"ConditionPathExists=|!/", "ConditionPathExists=|/x"}},
+		{"an assert", "a.service: AssertPathExists=/x failed.\nAsserts failed.\n", nil},
+		{"another unit", "b.service: ConditionPathExists=/x failed.\n", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := failedConditions("a.service", tc.out); !slices.Equal(got, tc.want) {
+				t.Errorf("failedConditions = %q, want %q", got, tc.want)
 			}
 		})
 	}

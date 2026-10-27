@@ -1,12 +1,14 @@
 package module
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -149,15 +151,24 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		case u.file == "linked":
 			// systemd reports a unit without [Install] as static, but not
 			// a linked one.
-			ok, err := hasInstall(append([]string{u.fragment}, strings.Fields(u.dropIns)...))
+			in, err := installKeys(append([]string{u.fragment}, strings.Fields(u.dropIns)...))
 			if err != nil {
 				return Result{}, err
 			}
-			if !ok {
+			if len(in["WantedBy"])+len(in["RequiredBy"])+len(in["UpheldBy"])+len(in["Alias"]) == 0 {
 				return Result{}, fmt.Errorf("%s has no [Install] section with WantedBy, RequiredBy, UpheldBy, or Alias; enabled: true cannot enable it", u.id)
 			}
 			s.todo = append(s.todo, "enable")
 		default:
+			if u.file == "indirect" {
+				in, err := installKeys(append([]string{u.fragment}, strings.Fields(u.dropIns)...))
+				if err != nil {
+					return Result{}, err
+				}
+				if len(in["Also"]) > 0 {
+					return Result{}, fmt.Errorf("%s has the unit file state %q; enabled: true cannot enable it; enable the units in its Also=: %s", u.id, u.file, strings.Join(in["Also"], ", "))
+				}
+			}
 			return Result{}, fmt.Errorf("%s has the unit file state %q; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit", u.id, u.file)
 		}
 	}
@@ -228,6 +239,10 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 		}
 		_, err := run(ctx, nil, "systemctl", args...)
 		switch {
+		case err == nil && c == "start":
+			if err := checkConditions(ctx, s.Unit()); err != nil {
+				return err
+			}
 		case err == nil:
 		case c == "start", c == "stop", c == "try-restart", c == "try-reload-or-restart":
 			return withJournal(ctx, s.Name, err)
@@ -236,6 +251,61 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 		}
 	}
 	return nil
+}
+
+// checkConditions fails when unit is down because a Condition failed.
+// systemctl start exits 0 then, and systemd unloads the unit, so the unit
+// state does not show the result.
+func checkConditions(ctx context.Context, unit string) error {
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState", "--", unit)
+	if err != nil {
+		return err
+	}
+	u, err := parseShow(out)
+	if err != nil {
+		return fmt.Errorf("systemctl show %s: %w", unit, err)
+	}
+	if u.up() {
+		return nil
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
+	defer cancel()
+	// systemd-analyze writes the results to stderr.
+	cmd := exec.CommandContext(ctx, "systemd-analyze", "condition", "--unit="+unit)
+	var res bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &res, &res
+	err = wait(ctx, cmd, KillDelay)
+	if err == nil {
+		return nil
+	}
+	failed := failedConditions(unit, res.String())
+	if len(failed) == 0 {
+		return failure("systemd-analyze condition", err, res.String())
+	}
+	return fmt.Errorf("%s did not start: %s failed", unit, strings.Join(failed, ", "))
+}
+
+// failedConditions returns the conditions that kept unit from its start,
+// from the output of systemd-analyze condition. A failed triggering
+// condition, with "|", counts only when no other condition failed.
+func failedConditions(unit, out string) []string {
+	var failed, triggers []string
+	for line := range strings.SplitSeq(out, "\n") {
+		rest, ok := strings.CutPrefix(line, unit+": ")
+		cond, no := strings.CutSuffix(rest, " failed.")
+		if !ok || !no || !strings.HasPrefix(cond, "Condition") {
+			continue
+		}
+		if _, v, _ := strings.Cut(cond, "="); strings.HasPrefix(v, "|") {
+			triggers = append(triggers, cond)
+		} else {
+			failed = append(failed, cond)
+		}
+	}
+	if len(failed) == 0 {
+		return triggers
+	}
+	return failed
 }
 
 // withJournal adds the last 10 lines of the journal of unit to err.
@@ -275,30 +345,38 @@ func enableLinks(id string) ([]string, error) {
 	return links, nil
 }
 
-// hasInstall reports whether the unit files at paths, read in order, have
-// an [Install] key that systemctl enable acts on. An empty value clears the
-// earlier ones.
-func hasInstall(paths []string) (bool, error) {
-	set := map[string]bool{}
+// installKeys returns the [Install] keys of the unit files at paths, read in
+// order. A value adds its words to the key, and an empty value clears it.
+func installKeys(paths []string) (map[string][]string, error) {
+	keys := map[string][]string{}
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
-			return false, fmt.Errorf("read the unit file: %w", err)
+			return nil, fmt.Errorf("read the unit file: %w", err)
 		}
 		var section string
 		for line := range strings.SplitSeq(string(data), "\n") {
 			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+				continue
+			}
 			if strings.HasPrefix(line, "[") {
 				section = line
 				continue
 			}
 			k, v, ok := strings.Cut(line, "=")
-			if ok && section == "[Install]" {
-				set[strings.TrimSpace(k)] = strings.TrimSpace(v) != ""
+			if !ok || section != "[Install]" {
+				continue
+			}
+			k = strings.TrimSpace(k)
+			if words := strings.Fields(v); len(words) > 0 {
+				keys[k] = append(keys[k], words...)
+			} else {
+				delete(keys, k)
 			}
 		}
 	}
-	return set["WantedBy"] || set["RequiredBy"] || set["UpheldBy"] || set["Alias"], nil
+	return keys, nil
 }
 
 type unitState struct {

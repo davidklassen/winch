@@ -96,6 +96,32 @@ ExecStart=/bin/sleep infinity
 [Install]
 WantedBy=multi-user.target
 U
+cat > /etc/systemd/system/winch-cond.service <<'U'
+[Unit]
+ConditionPathExists=/nonexistent
+ConditionPathExists=/
+[Service]
+ExecStart=/bin/sleep infinity
+U
+cat > /etc/systemd/system/winch-quick.service <<'U'
+[Service]
+Type=forking
+ExecStart=/bin/true
+U
+cat > /etc/systemd/system/winch-indirect.service <<'U'
+[Service]
+ExecStart=/bin/sleep infinity
+[Install]
+WantedBy=multi-user.target
+U
+ln -sf winch-indirect.service /etc/systemd/system/winch-indirect2.service
+cat > /etc/systemd/system/winch-also.service <<'U'
+[Service]
+ExecStart=/bin/sleep infinity
+[Install]
+Also=winch-a.service winch-b.socket
+Also=winch-c.service
+U
 cat > /usr/lib/systemd/system/winch-vendor.service <<'U'
 [Service]
 ExecStart=/bin/sleep infinity
@@ -522,6 +548,29 @@ systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
 			Args:         &module.Service{Name: "winch-boom", Running: new(true)},
 			Want:         change("start"),
 			WantApplyErr: "\nboom on start",
+		},
+		{
+			Name:         "a start that a condition skips fails and names the condition",
+			Args:         &module.Service{Name: "winch-cond", Running: new(true)},
+			Want:         change("start"),
+			WantApplyErr: "winch-cond.service did not start: ConditionPathExists=/nonexistent failed",
+		},
+		{
+			Name:       "a unit that ends at once after its start is ok",
+			Args:       &module.Service{Name: "winch-quick", Running: new(true)},
+			Want:       change("start"),
+			NoConverge: true,
+		},
+		{
+			Name:    "enable a unit with only Also= fails and names its units",
+			Args:    &module.Service{Name: "winch-also", Enabled: new(true)},
+			WantErr: `winch-also.service has the unit file state "indirect"; enabled: true cannot enable it; enable the units in its Also=: winch-a.service, winch-b.socket, winch-c.service`,
+		},
+		{
+			Name:    "enable an indirect unit without Also= fails",
+			Setup:   `systemctl is-enabled winch-indirect | grep -qx indirect`,
+			Args:    &module.Service{Name: "winch-indirect", Enabled: new(true)},
+			WantErr: `winch-indirect.service has the unit file state "indirect"; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit`,
 		},
 		{
 			Name:         "a failed restart shows the journal",
