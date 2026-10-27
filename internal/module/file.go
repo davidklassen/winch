@@ -463,7 +463,7 @@ func (f *File) Apply(ctx context.Context, _ func(string)) error {
 		return err
 	}
 	defer sub.Close()
-	return writeFile(sub, name, f.Data, uid, gid, mode, func(tmp string) error {
+	return writeFile(sub, name, bytes.NewReader(f.Data), uid, gid, mode, func(tmp string) error {
 		return put(ctx, dir, missing, sub, tmp, name, f.Validation)
 	})
 }
@@ -795,14 +795,14 @@ func ParentChange(dir string) string {
 
 // writeFile writes content to a temporary file in dir, and calls put to move
 // it to name.
-func writeFile(dir *os.Root, name string, content []byte, uid, gid, mode uint32, put func(tmp string) error) error {
+func writeFile(dir *os.Root, name string, content io.Reader, uid, gid, mode uint32, put func(tmp string) error) error {
 	tmpName := ".winch-" + rand.Text()
 	tmp, err := dir.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
 	defer dir.Remove(tmpName)
-	_, err = tmp.Write(content)
+	_, err = io.Copy(tmp, content)
 	if err == nil {
 		err = tmp.Chown(int(uid), int(gid))
 	}

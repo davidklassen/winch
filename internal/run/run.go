@@ -359,6 +359,8 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
 	case *module.Dir:
 		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
+	case *module.Download:
+		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
 	case *module.User:
 		needs = []string{"group " + string(m.Group)}
 		if res.Action == module.Create {
@@ -432,7 +434,7 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		return nil
 	}
 	switch m := st.Args.(type) {
-	case *module.File, *module.Dir, *module.Link:
+	case *module.File, *module.Dir, *module.Link, *module.Download:
 		return add("the path "+m.Main(), m)
 	case *module.Pkg:
 		for _, n := range m.Name {
@@ -498,12 +500,8 @@ func (hr *hostRun) dropCreatedParents(m module.Module, res *module.Result) {
 	}
 	var p string
 	switch m := m.(type) {
-	case *module.File:
-		p = m.Path
-	case *module.Dir:
-		p = m.Path
-	case *module.Link:
-		p = m.Path
+	case *module.File, *module.Dir, *module.Link, *module.Download:
+		p = m.Main()
 	default:
 		return
 	}

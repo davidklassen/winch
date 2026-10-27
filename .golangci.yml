@@ -11,6 +11,7 @@ linters:
         - (*os.Root).Close
         - (*os.Root).Remove
         - (io.WriteCloser).Close
+        - (io.ReadCloser).Close
         - (*github.com/davidklassen/winch/internal/session.Session).Close
         - (*io.PipeWriter).Close
         - os.Remove

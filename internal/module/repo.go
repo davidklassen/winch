@@ -1,6 +1,7 @@
 package module
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -426,7 +427,7 @@ func writeRoot(p string, content []byte, uid, gid, mode uint32) error {
 		defer sub.Close()
 		dir = sub
 	}
-	return writeFile(dir, path.Base(p), content, uid, gid, mode, func(tmp string) error {
+	return writeFile(dir, path.Base(p), bytes.NewReader(content), uid, gid, mode, func(tmp string) error {
 		return dir.Rename(tmp, path.Base(p))
 	})
 }

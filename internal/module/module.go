@@ -75,15 +75,16 @@ type WithContent interface {
 }
 
 var modules = map[string]func() Module{
-	"debconf": func() Module { return new(Debconf) },
-	"dir":     func() Module { return new(Dir) },
-	"file":    func() Module { return new(File) },
-	"group":   func() Module { return new(Group) },
-	"link":    func() Module { return new(Link) },
-	"pkg":     func() Module { return new(Pkg) },
-	"repo":    func() Module { return new(Repo) },
-	"service": func() Module { return new(Service) },
-	"user":    func() Module { return new(User) },
+	"debconf":  func() Module { return new(Debconf) },
+	"dir":      func() Module { return new(Dir) },
+	"download": func() Module { return new(Download) },
+	"file":     func() Module { return new(File) },
+	"group":    func() Module { return new(Group) },
+	"link":     func() Module { return new(Link) },
+	"pkg":      func() Module { return new(Pkg) },
+	"repo":     func() Module { return new(Repo) },
+	"service":  func() Module { return new(Service) },
+	"user":     func() Module { return new(User) },
 }
 
 // New returns empty arguments for the module name.

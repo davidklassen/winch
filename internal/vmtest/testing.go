@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -43,6 +44,20 @@ func (vm *VM) MustRun(t *testing.T, command string) string {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// Serve serves data from the lab's HTTP server and returns its URL in the
+// guest. name is a path below www/serve/.
+func (l *Lab) Serve(t *testing.T, name string, data []byte) string {
+	t.Helper()
+	p := filepath.Join(l.Dir, "www", "serve", name)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return "http://" + labAddr + "/serve/" + name
 }
 
 // WriteProject writes files into a new directory and returns it.
@@ -128,7 +143,7 @@ func (vm *VM) Session(t *testing.T) *session.Session {
 		Host:     vm.Name,
 		Address:  vm.Name,
 		Binaries: helperbin.Binaries(),
-		Hello:    protocol.Hello{Run: "test-" + t.Name(), User: "test", Machine: "test"},
+		Hello:    protocol.Hello{Project: "test", Run: "test-" + t.Name(), User: "test", Machine: "test"},
 		Progress: color.NewWriter(io.Discard, secret.NewFilter().Parts, false),
 	})
 	if err != nil {

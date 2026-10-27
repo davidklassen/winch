@@ -12,7 +12,8 @@ import (
 )
 
 // records is a file of records of a project, one per line: the pending
-// handlers as <recipe>.<handler>, or the pending then records as JSON.
+// handlers as <recipe>.<handler>, the pending then records as JSON, or the
+// checksums of downloads as <sha256> <path>.
 type records struct {
 	dir     string
 	project string
@@ -126,4 +127,32 @@ func syncDir(dir *os.Root) error {
 	}
 	defer d.Close()
 	return d.Sync()
+}
+
+// recorded returns the checksum that the download records hold for path p,
+// or "".
+func recorded(downloads records, p string) (string, error) {
+	lines, err := downloads.read()
+	if err != nil {
+		return "", err
+	}
+	for _, l := range lines {
+		if sum, lp, _ := strings.Cut(l, " "); lp == p {
+			return sum, nil
+		}
+	}
+	return "", nil
+}
+
+// record replaces the download record of path p.
+func record(downloads records, sum, p string) error {
+	lines, err := downloads.read()
+	if err != nil {
+		return err
+	}
+	lines = slices.DeleteFunc(lines, func(l string) bool {
+		_, lp, _ := strings.Cut(l, " ")
+		return l == "" || lp == p
+	})
+	return downloads.write(append(lines, sum+" "+p))
 }

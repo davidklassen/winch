@@ -40,6 +40,21 @@ func TestOrderUserAfterOwner(t *testing.T) {
 		{"group exists", "", func(h *fakehost.Hosts) { h.SetGroup("web1", "staff") },
 			"users: user alice: an earlier step needs it: files: file /srv/a; move this step before it"},
 		{"both exist", "", func(h *fakehost.Hosts) { h.SetGroup("web1", "staff"); h.SetUser("web1", "alice") }, ""},
+		{"a download", `stages:
+  - name: files
+    hosts: all
+    steps:
+      - download:
+          url: https://example.com/tool
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          path: /srv/tool
+          owner: alice
+  - name: users
+    hosts: all
+    steps:
+      - user:
+          name: alice
+`, nil, "users: user alice: an earlier step needs it: files: download /srv/tool; move this step before it"},
 	}
 	tests = append(tests, orderCases...)
 	for _, tt := range tests {
@@ -230,6 +245,14 @@ handlers:
       - dir:
           path: /etc/a
 `), "", "s: dir /etc/a: the path /etc/a is also in s: file /etc/a, with other arguments"},
+		{"a file and a download on one path", steps(`      - file:
+          path: /etc/a
+          content: "a\n"
+      - download:
+          url: https://example.com/a
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          path: /etc/a
+`), "", "s: download /etc/a: the path /etc/a is also in s: file /etc/a, with other arguments"},
 		{"a dir and a link removed on one path", steps(`      - dir:
           path: /etc/a
           absent: true

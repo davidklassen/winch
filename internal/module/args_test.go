@@ -8,11 +8,12 @@ import (
 )
 
 // controllerOnly are the fields that the controller turns into other fields
-// before it sends a step.
+// before it sends a step, and the fields that the helper sets.
 var controllerOnly = map[string][]string{
-	"dir":  {"ModePos"},
-	"file": {"Content", "Template", "TemplatePos", "Source", "SourcePos"},
-	"repo": {"Key", "KeyPos"},
+	"dir":      {"ModePos"},
+	"download": {"Recorded"},
+	"file":     {"Content", "Template", "TemplatePos", "Source", "SourcePos"},
+	"repo":     {"Key", "KeyPos"},
 }
 
 // fill sets every exported field of v to a value that is not zero.

@@ -2,6 +2,7 @@ package module
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -767,7 +768,7 @@ func (u *User) writeKeys(e passwdEntry) error {
 			return err
 		}
 	}
-	return writeFile(dir, "authorized_keys", u.keyText(), e.uid, e.gid, 0o600, func(tmp string) error {
+	return writeFile(dir, "authorized_keys", bytes.NewReader(u.keyText()), e.uid, e.gid, 0o600, func(tmp string) error {
 		return dir.Rename(tmp, "authorized_keys")
 	})
 }

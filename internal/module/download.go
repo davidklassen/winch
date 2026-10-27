@@ -1,0 +1,597 @@
+package module
+
+import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"unicode"
+
+	"github.com/davidklassen/winch/internal/yamlx"
+)
+
+type Download struct {
+	URL    string         `yaml:"url,required" json:"url"`
+	SHA256 string         `yaml:"sha256,required" json:"sha256"`
+	Path   string         `yaml:"path,required" json:"path"`
+	Unpack string         `yaml:"unpack" json:"unpack,omitempty"`
+	Owner  yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
+	Group  yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
+	Mode   string         `yaml:"mode" json:"mode,omitempty"`
+
+	// Recorded is the checksum that the helper recorded at the last download
+	// of Path, or "".
+	Recorded string `json:"-"`
+}
+
+func (d *Download) Main() string { return d.Path }
+
+var sha256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+var archiveTypes = []string{".tar.gz", ".tar.xz", ".zip"}
+
+func (d *Download) Validate() error {
+	if strings.ContainsFunc(d.URL, unicode.IsControl) {
+		return &yamlx.FieldError{Field: "url", Msg: "has a control character"}
+	}
+	if u, err := url.Parse(d.URL); err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+		return &yamlx.FieldError{Field: "url", Msg: "must be an http or https URL"}
+	}
+	if !sha256Re.MatchString(d.SHA256) {
+		return &yamlx.FieldError{Field: "sha256", Msg: "must be 64 lowercase hexadecimal digits, as sha256sum prints them"}
+	}
+	if err := checkPath(d.Path); err != nil {
+		return err
+	}
+	if d.Unpack != "" {
+		if d.Unpack == "/" {
+			return &yamlx.FieldError{Field: "unpack", Msg: "must not be /"}
+		}
+		if err := checkAbs("unpack", d.Unpack); err != nil {
+			return err
+		}
+		if archiveType(d.Path) == "" {
+			return &yamlx.FieldError{Field: "path", Msg: "unpack needs a path that ends in .tar.gz, .tar.xz, or .zip"}
+		}
+		if d.Unpack == d.Path {
+			return &yamlx.FieldError{Field: "unpack", Msg: "must differ from path"}
+		}
+		if d.Mode != "" {
+			return &yamlx.FieldError{Field: "mode", Msg: "unpack takes the modes of the archive, without write permission for group and others; it takes no mode"}
+		}
+	}
+	if err := checkOwner("owner", d.Owner); err != nil {
+		return err
+	}
+	if err := checkOwner("group", d.Group); err != nil {
+		return err
+	}
+	return checkMode(d.Mode, "0755")
+}
+
+func archiveType(p string) string {
+	for _, t := range archiveTypes {
+		if strings.HasSuffix(p, t) {
+			return t
+		}
+	}
+	return ""
+}
+
+func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result, error) {
+	owner, group, mode, err := attrs(d.Owner, d.Group, d.Mode, "0644")
+	if err != nil {
+		return Result{}, err
+	}
+	if d.Unpack != "" {
+		if _, err := unpackDirExists(d.Unpack); err != nil {
+			return Result{}, err
+		}
+	}
+	dir, missing, err := openParent(d.Path)
+	if err != nil {
+		return Result{}, err
+	}
+	defer dir.Close()
+	name := path.Base(d.Path)
+	fi, exists, err := lstat(dir, name, missing)
+	if err != nil {
+		return Result{}, err
+	}
+	if !exists {
+		changes := append(parentChanges(missing), "download "+d.URL, attrLine(owner, group, mode)+userNote(owner, group))
+		return Result{Status: Change, Action: Create, Changes: d.unpackLine(changes)}, nil
+	}
+	if !fi.Mode().IsRegular() {
+		return Result{}, fmt.Errorf("%s is %s, not a file", d.Path, kind(fi))
+	}
+	why, err := d.why(dir, name, fi)
+	if err != nil {
+		return Result{}, err
+	}
+	res := Result{Status: OK}
+	if why != "" {
+		res = Result{Status: Change, Action: Modify, Changes: d.unpackLine([]string{"download " + d.URL + " (" + why + ")"})}
+	}
+	changes, err := attrChanges(fi, owner, group, mode)
+	if err != nil {
+		return Result{}, err
+	}
+	if len(changes) > 0 {
+		res.Status, res.Action = Change, Modify
+		res.Changes = append(res.Changes, changes...)
+		if why == "" {
+			res.Changes = d.unpackLine(res.Changes)
+		}
+	}
+	if res.Status == Change {
+		if err := noFlags(dir, name, fi, d.Path); err != nil {
+			return Result{}, err
+		}
+	}
+	return res, nil
+}
+
+// why returns the reason to download again, or "" when the file name in dir
+// is the recorded download of the step's checksum and the unpack directory
+// exists.
+func (d *Download) why(dir *os.Root, name string, fi fs.FileInfo) (string, error) {
+	switch {
+	case d.Recorded == "":
+		return "no record of an earlier download", nil
+	case d.Recorded != d.SHA256:
+		return "new sha256", nil
+	}
+	r, err := openSame(dir, name, fi)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+	sum, err := fileSHA(r)
+	if err != nil {
+		return "", err
+	}
+	if sum != d.SHA256 {
+		return "the file changed on the host", nil
+	}
+	if d.Unpack == "" {
+		return "", nil
+	}
+	exists, err := unpackDirExists(d.Unpack)
+	if err != nil || exists {
+		return "", err
+	}
+	return d.Unpack + " does not exist", nil
+}
+
+func (d *Download) unpackLine(changes []string) []string {
+	if d.Unpack == "" {
+		return changes
+	}
+	return append(changes, "unpack into "+d.Unpack)
+}
+
+// unpackDirExists reports whether the directory dir exists. It fails when
+// something other than a directory is at dir.
+func unpackDirExists(dir string) (bool, error) {
+	parent, missing, err := openParent(dir)
+	if err != nil {
+		return false, err
+	}
+	defer parent.Close()
+	fi, exists, err := lstat(parent, path.Base(dir), missing)
+	if err != nil || !exists || fi.IsDir() {
+		return exists, err
+	}
+	return false, fmt.Errorf("%s is %s, not a directory", dir, kind(fi))
+}
+
+func (d *Download) Apply(ctx context.Context, note func(string)) error {
+	owner, group, mode, err := attrs(d.Owner, d.Group, d.Mode, "0644")
+	if err != nil {
+		return err
+	}
+	uid, gid, err := ids(owner, group)
+	if err != nil {
+		return err
+	}
+	dir, missing, err := openParent(d.Path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	name := path.Base(d.Path)
+	fi, exists, err := lstat(dir, name, missing)
+	if err != nil {
+		return err
+	}
+	if exists && fi.Mode().IsRegular() {
+		why, err := d.why(dir, name, fi)
+		if err != nil {
+			return err
+		}
+		if why == "" {
+			r, err := openSame(dir, name, fi)
+			if err != nil {
+				return err
+			}
+			defer r.Close()
+			if err := setAttrs(r, uid, gid, mode); err != nil || d.Unpack == "" {
+				return err
+			}
+			note("unpack into " + d.Unpack)
+			return d.unpack(ctx, r, uid, gid)
+		}
+	}
+	sub, err := mkdirs(dir, missing)
+	if err != nil {
+		return err
+	}
+	defer sub.Close()
+	tmpName := ".winch-" + rand.Text()
+	tmp, err := sub.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer sub.Remove(tmpName)
+	defer tmp.Close()
+	note("download " + d.URL)
+	sum, err := fetch(ctx, d.URL, tmp)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", d.URL, err)
+	}
+	if sum != d.SHA256 {
+		return fmt.Errorf("download %s: the SHA-256 is %s, not %s", d.URL, sum, d.SHA256)
+	}
+	if err := tmp.Chown(int(uid), int(gid)); err != nil {
+		return err
+	}
+	if err := tmp.Chmod(fileMode(mode)); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if d.Unpack != "" {
+		note("unpack into " + d.Unpack)
+		if err := d.unpack(ctx, tmp, uid, gid); err != nil {
+			return err
+		}
+	}
+	return sub.Rename(tmpName, name)
+}
+
+var client = &http.Client{Transport: func() http.RoundTripper {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	// The checksum is of the bytes that the server sends.
+	t.DisableCompression = true
+	return t
+}()}
+
+// fetch writes the body of url to w and returns its SHA-256.
+func fetch(ctx context.Context, url string, w io.Writer) (string, error) {
+	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", errors.New(resp.Status)
+	}
+	h := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(w, h), resp.Body); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// unpack unpacks the archive f into the unpack directory, which it creates
+// when it is missing. Each entry gets the owner uid and the group gid. It
+// checks every entry before it writes one.
+func (d *Download) unpack(ctx context.Context, f *os.File, uid, gid uint32) error {
+	typ := archiveType(d.Path)
+	if err := (unpacker{}).read(ctx, f, typ); err != nil {
+		return fmt.Errorf("unpack %s: %w", d.Path, err)
+	}
+	parent, missing, err := openParent(d.Unpack)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	name := path.Base(d.Unpack)
+	fi, exists, err := lstat(parent, name, missing)
+	if err != nil {
+		return err
+	}
+	var root *os.Root
+	if exists {
+		root, err = openRoot(parent, name, fi)
+	} else {
+		var sub *os.Root
+		if sub, err = mkdirs(parent, missing); err != nil {
+			return err
+		}
+		root, err = mkdir(sub, name, uid, gid, 0o755)
+		sub.Close()
+	}
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if err := (unpacker{root: root, uid: uid, gid: gid}).read(ctx, f, typ); err != nil {
+		return fmt.Errorf("unpack %s into %s: %w", d.Path, d.Unpack, err)
+	}
+	return nil
+}
+
+// unpacker writes the entries of an archive into root. Without a root, it
+// only checks the entries.
+type unpacker struct {
+	root     *os.Root
+	uid, gid uint32
+}
+
+// read reads the archive f of the type typ from its start.
+func (u unpacker) read(ctx context.Context, f *os.File, typ string) error {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	switch typ {
+	case ".tar.gz":
+		zr, err := gzip.NewReader(f)
+		if err != nil {
+			return err
+		}
+		return u.tar(zr)
+	case ".tar.xz":
+		return u.tarXZ(ctx, f)
+	default:
+		fi, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		zr, err := zip.NewReader(f, fi.Size())
+		if err != nil {
+			return err
+		}
+		return u.zip(zr)
+	}
+}
+
+// tarXZ reads the archive through xz, from the package xz-utils.
+func (u unpacker) tarXZ(ctx context.Context, f *os.File) error {
+	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "xz", "-dc")
+	cmd.Dir = "/"
+	cmd.Stdin = f
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); errors.Is(err, exec.ErrNotFound) {
+		return errors.New("xz is missing; install the package xz-utils with an earlier pkg step")
+	} else if err != nil {
+		return err
+	}
+	if err := u.tar(out); err != nil {
+		// xz ends on the closed pipe. An xz that failed first has written
+		// its error, which explains the error of tar.
+		out.Close()
+		if werr := cmd.Wait(); stderr.Len() > 0 {
+			return failure("xz", werr, stderr.String())
+		}
+		return err
+	}
+	// The end of the tar archive can come before the end of the xz stream.
+	_, _ = io.Copy(io.Discard, out)
+	if err := cmd.Wait(); err != nil {
+		return failure("xz", err, stderr.String())
+	}
+	return nil
+}
+
+func (u unpacker) tar(r io.Reader) error {
+	tr := tar.NewReader(r)
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		name, err := entryName(h.Name)
+		if err != nil {
+			return err
+		}
+		switch h.Typeflag {
+		case tar.TypeDir, tar.TypeReg, tar.TypeSymlink, tar.TypeXGlobalHeader:
+		case tar.TypeLink:
+			if _, err := entryName(h.Linkname); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("the entry %q is not a file, a directory, or a link", h.Name)
+		}
+		if u.root == nil || name == "." {
+			continue
+		}
+		mode := uint32(h.Mode) &^ 0o022 & 0o7777
+		switch h.Typeflag {
+		case tar.TypeDir:
+			err = u.dir(name, mode)
+		case tar.TypeReg:
+			err = u.file(name, tr, mode)
+		case tar.TypeSymlink:
+			err = u.symlink(name, h.Linkname)
+		case tar.TypeLink:
+			err = u.link(name, path.Clean(h.Linkname))
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func (u unpacker) zip(zr *zip.Reader) error {
+	for _, f := range zr.File {
+		name, err := entryName(f.Name)
+		if err != nil {
+			return err
+		}
+		m := f.Mode()
+		if !m.IsDir() && !m.IsRegular() && m&fs.ModeSymlink == 0 {
+			return fmt.Errorf("the entry %q is not a file, a directory, or a link", f.Name)
+		}
+		if u.root == nil || name == "." {
+			continue
+		}
+		mode := uint32(m.Perm()) &^ 0o022
+		if m&fs.ModeSetuid != 0 {
+			mode |= 0o4000
+		}
+		if m&fs.ModeSetgid != 0 {
+			mode |= 0o2000
+		}
+		if m&fs.ModeSticky != 0 {
+			mode |= 0o1000
+		}
+		r, err := f.Open()
+		if err != nil {
+			return fmt.Errorf("the entry %q: %w", f.Name, err)
+		}
+		switch {
+		case m.IsDir():
+			err = u.dir(name, mode)
+		case m&fs.ModeSymlink != 0:
+			var target []byte
+			if target, err = io.ReadAll(r); err == nil {
+				err = u.symlink(name, string(target))
+			}
+		default:
+			err = u.file(name, r, mode)
+		}
+		r.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// entryName returns the clean name of an archive entry, which must stay in
+// the directory.
+func entryName(name string) (string, error) {
+	if !filepath.IsLocal(name) {
+		return "", fmt.Errorf("the entry %q is outside the directory", name)
+	}
+	return path.Clean(name), nil
+}
+
+// parents creates the missing parent directories of name.
+func (u unpacker) parents(name string) error {
+	d := path.Dir(name)
+	if d == "." {
+		return nil
+	}
+	if fi, err := u.root.Lstat(d); err == nil && fi.IsDir() {
+		return nil
+	}
+	if err := u.parents(d); err != nil {
+		return err
+	}
+	return u.dir(d, 0o755)
+}
+
+func (u unpacker) dir(name string, mode uint32) error {
+	if err := u.parents(name); err != nil {
+		return err
+	}
+	if err := u.root.Mkdir(name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	fi, err := u.root.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s is %s, not a directory", path.Join(u.root.Name(), name), kind(fi))
+	}
+	d, err := openRoot(u.root, name, fi)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return setRootAttrs(d, u.uid, u.gid, mode)
+}
+
+// file writes a temporary file and renames it to name, so a running program
+// at name keeps its old file.
+func (u unpacker) file(name string, r io.Reader, mode uint32) error {
+	if err := u.parents(name); err != nil {
+		return err
+	}
+	return writeFile(u.root, name, r, u.uid, u.gid, mode, func(tmp string) error {
+		return u.root.Rename(tmp, name)
+	})
+}
+
+func (u unpacker) symlink(name, target string) error {
+	if err := u.replace(name); err != nil {
+		return err
+	}
+	if err := u.root.Symlink(target, name); err != nil {
+		return err
+	}
+	return u.root.Lchown(name, int(u.uid), int(u.gid))
+}
+
+func (u unpacker) link(name, target string) error {
+	if err := u.replace(name); err != nil {
+		return err
+	}
+	return u.root.Link(target, name)
+}
+
+// replace creates the parents of name and removes an entry at name that is
+// not a directory.
+func (u unpacker) replace(name string) error {
+	if err := u.parents(name); err != nil {
+		return err
+	}
+	fi, err := u.root.Lstat(name)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case fi.IsDir():
+		return fmt.Errorf("%s is a directory", path.Join(u.root.Name(), name))
+	}
+	return u.root.Remove(name)
+}

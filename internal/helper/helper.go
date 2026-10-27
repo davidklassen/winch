@@ -31,7 +31,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			lock.Close()
 		}
 	}()
-	var handlers, thens records
+	var handlers, thens, downloads records
 	for {
 		var req protocol.Request
 		if err := dec.Decode(&req); err != nil {
@@ -54,6 +54,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			lock, project, err = takeLock(req.Params, dir, self)
 			handlers = records{dir: filepath.Join(dir, "handlers"), project: project, what: "pending handlers"}
 			thens = records{dir: filepath.Join(dir, "then"), project: project, what: "pending then records"}
+			downloads = records{dir: filepath.Join(dir, "downloads"), project: project, what: "download records"}
 		case lock == nil:
 			err = errors.New("the first request must be hello")
 		case req.Method == "facts":
@@ -67,9 +68,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "health":
 			err = runHealth(ctx, req.Params)
 		case req.Method == "check":
-			result, err = step(ctx, req.Params, false, login, handlers, thens, note)
+			result, err = step(ctx, req.Params, false, login, handlers, thens, downloads, note)
 		case req.Method == "apply":
-			result, err = step(ctx, req.Params, true, login, handlers, thens, note)
+			result, err = step(ctx, req.Params, true, login, handlers, thens, downloads, note)
 		default:
 			err = fmt.Errorf("unknown method %q", req.Method)
 		}
@@ -163,8 +164,9 @@ func deleteOthers(bin, self string) error {
 
 // step checks a step. With apply, it then records the handlers that the step
 // notifies and its then, and makes the changes the check found. When the
-// changes fail, it removes the records that it added.
-func step(ctx context.Context, params json.RawMessage, apply bool, login uint32, handlers, thens records, note func(string)) (protocol.StepResult, error) {
+// changes fail, it removes the records that it added. After a download, it
+// records the checksum of the path.
+func step(ctx context.Context, params json.RawMessage, apply bool, login uint32, handlers, thens, downloads records, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
@@ -176,6 +178,14 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login uint32,
 	}
 	if err := json.Unmarshal(s.Args, m); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode %s arguments: %w", s.Module, err)
+	}
+	d, isDownload := m.(*module.Download)
+	if isDownload {
+		sum, err := recorded(downloads, d.Path)
+		if err != nil {
+			return protocol.StepResult{}, err
+		}
+		d.Recorded = sum
 	}
 	res, err := m.Check(ctx, &s.State, note)
 	out := protocol.StepResult{Result: res, State: s.State}
@@ -200,6 +210,9 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login uint32,
 	}
 	if err := m.Apply(ctx, note); err != nil {
 		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+	}
+	if isDownload {
+		return out, record(downloads, d.SHA256, d.Path)
 	}
 	return out, nil
 }

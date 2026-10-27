@@ -304,6 +304,9 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if d, ok := m.(*module.Debconf); ok {
 		return c.checkAnswer(d), nil
 	}
+	if d, ok := m.(*module.Download); ok {
+		return module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + d.URL}}, nil
+	}
 	if _, ok := m.(*module.Link); ok {
 		return module.Result{Status: module.OK}, nil
 	}
