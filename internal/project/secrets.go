@@ -260,6 +260,60 @@ func recipients(cfg *Config) ([]age.Recipient, error) {
 	return secret.ParseRecipients(cfg.Recipients)
 }
 
+// AddRecipient adds key to recipients in winch.yaml when it is not in the
+// list, and keeps the comments and the layout of the file. It reports whether
+// it added key.
+func AddRecipient(dir, key string) (bool, error) {
+	path, err := filepath.EvalSymlinks(projectPath(dir, "winch.yaml"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, fmt.Errorf("%w; run winch in the project directory", notFound("winch.yaml"))
+	}
+	if err != nil {
+		return false, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("read winch.yaml: %w", err)
+	}
+	n, err := yamlx.Parse("winch.yaml", data)
+	if err != nil {
+		return false, err
+	}
+	var cfg Config
+	if err := yamlx.Decode(n, &cfg); err != nil {
+		return false, err
+	}
+	if slices.Contains(cfg.Recipients, key) {
+		return false, nil
+	}
+	text := string(data)
+	i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "recipients" })
+	if i < 0 {
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		indent := strings.Repeat(" ", n.Pairs[0].KeyPos.Col-1)
+		text += indent + "recipients:\n" + indent + "  - " + key + "\n"
+	} else if v := n.Pairs[i].Value; len(v.Items) > 0 {
+		lines := strings.SplitAfter(text, "\n")
+		last := v.Items[len(v.Items)-1].Pos
+		line := lines[last.Line-1]
+		if !strings.HasSuffix(line, "\n") {
+			lines[last.Line-1] += "\n"
+		}
+		lines = slices.Insert(lines, last.Line, line[:last.Col-1]+key+"\n")
+		text = strings.Join(lines, "")
+	}
+	// The edit assumes a block list of one-line items; a check of the result
+	// catches every other layout.
+	var after Config
+	if n, err := yamlx.Parse("winch.yaml", []byte(text)); err != nil || yamlx.Decode(n, &after) != nil ||
+		!slices.Equal(after.Recipients, append(cfg.Recipients, key)) {
+		return false, errors.New("cannot add the public key to recipients in winch.yaml; add it by hand")
+	}
+	return true, replaceFile(path, []byte(text))
+}
+
 // inventories returns the inventory files of the project: the files in
 // inventories/, the default inventory of winch.yaml, and flag.
 func inventories(dir string, cfg *Config, flag string) ([]string, error) {

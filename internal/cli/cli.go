@@ -81,7 +81,7 @@ Commands:
   validate   Load the project and check it. Connects to no host.
   plan       Show the changes. Change nothing.
   apply      Show the changes, ask, then make them.
-  secret     Encrypt a value, or encrypt all secrets again.
+  secret     Make an age key, encrypt a value, or encrypt all secrets again.
 
 Run "winch <command> --help" for the arguments and flags of a command.
 `
@@ -107,6 +107,7 @@ var commands = map[string]command{
 	"plan":           {help: planHelp, inventory: true, project: true, exitCode: true, hosts: true, run: plan},
 	"apply":          {help: applyHelp, inventory: true, project: true, apply: true, hosts: true, run: apply},
 	"secret":         {help: secretHelp, run: secretUsage},
+	"secret init":    {help: initHelp, run: secretInit},
 	"secret encrypt": {help: encryptHelp, run: secretEncrypt},
 	"secret rekey":   {help: rekeyHelp, inventory: true, run: secretRekey},
 }

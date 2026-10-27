@@ -10,6 +10,7 @@ import (
 )
 
 const secretHelp = `Examples:
+  winch secret init
   winch secret encrypt < dkim.key
   openssl rand -hex 16 | winch secret encrypt
   winch secret rekey
@@ -19,6 +20,7 @@ Encrypt secrets with age for the recipients in winch.yaml.
 Usage: winch secret <command>
 
 Commands:
+  init      Make an age key, and add its public key to the recipients.
   encrypt   Encrypt a value from stdin, and print it as a !secret value.
   rekey     Encrypt all secrets in the project again for the recipients.
 
@@ -26,6 +28,23 @@ winch reads the age identity from the stdout of the command in
 WINCH_AGE_IDENTITY_CMD, which runs through sh -c. Without it, winch reads
 the file that WINCH_AGE_KEY names, or else ~/.config/winch/age.key. Both
 variables set is an error.
+`
+
+const initHelp = `Examples:
+  winch secret init
+  WINCH_AGE_KEY=~/keys/acme.key winch secret init
+
+Make an age key when there is none, print its public key, and add the public
+key to recipients in winch.yaml when it is not in the list.
+
+Usage: winch secret init
+
+The key is the file that WINCH_AGE_KEY names, or else ~/.config/winch/age.key.
+With WINCH_AGE_IDENTITY_CMD, init makes no key and reads the public key from
+the stdout of the command. Both variables set is an error.
+
+The new key can read the secrets only after a member who can read them runs
+winch secret rekey.
 `
 
 const encryptHelp = `Examples:
@@ -64,6 +83,37 @@ file.
 func secretUsage(ctx context.Context, env Env, f *flags, args []string) int {
 	fmt.Fprint(env.stderr, secretHelp)
 	return exitInvalid
+}
+
+func secretInit(ctx context.Context, env Env, f *flags, args []string) int {
+	if len(args) != 0 {
+		printError(env.stderr, "winch: secret init takes no arguments")
+		return exitInvalid
+	}
+	identity, err := env.identity()
+	if err != nil {
+		printError(env.stderr, err.Error())
+		return exitInvalid
+	}
+	key, made, err := identity.Init(ctx)
+	if made {
+		fmt.Fprintf(env.stdout, "made the age key %s\n", identity.Path)
+	}
+	if err != nil {
+		printError(env.stderr, fmt.Sprintf("winch: %v", err))
+		return exitInvalid
+	}
+	fmt.Fprintf(env.stdout, "public key: %s\n", key)
+	added, err := project.AddRecipient(env.Dir, key)
+	if err != nil {
+		printError(env.stderr, err.Error())
+		return exitInvalid
+	}
+	if added {
+		fmt.Fprintln(env.stdout, "added the public key to recipients in winch.yaml")
+		fmt.Fprintln(env.stdout, "a member who can read the secrets must now run winch secret rekey")
+	}
+	return exitOK
 }
 
 func secretEncrypt(ctx context.Context, env Env, f *flags, args []string) int {

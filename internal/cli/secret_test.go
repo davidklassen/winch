@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -303,6 +304,133 @@ func TestAgeIdentityCmd(t *testing.T) {
 			if r.code != exitInvalid || !strings.Contains(r.err, "both set") {
 				t.Errorf("%v with both variables: exit %d, stderr %q", args, r.code, r.err)
 			}
+		}
+	})
+}
+
+// spec: Variables/Secrets (winch secret init)
+func TestSecretInit(t *testing.T) {
+	_, other := newIdentity(t)
+	cfg := "name: acme # the project\nrecipients:\n  # Alice\n  - " + other.Recipient().String() + "\n\n# Variables.\nvars: {}\n"
+	read := func(t *testing.T, path string) string {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	mode := func(t *testing.T, path string) os.FileMode {
+		t.Helper()
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.Mode().Perm()
+	}
+
+	t.Run("a new key", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": cfg})
+		home := t.TempDir()
+		key := filepath.Join(home, ".config", "winch", "age.key")
+		r := winchWith(t, dir, home, "", "", fakehost.New(), false, "", "secret", "init")
+		if r.code != exitOK {
+			t.Fatalf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+		}
+		ids, err := secret.Identity{Path: key}.Read(context.Background())
+		if err != nil || len(ids) != 1 {
+			t.Fatalf("read the new key: %v", err)
+		}
+		pub := ids[0].(*age.X25519Identity).Recipient().String()
+		if got := mode(t, key); got != 0o600 {
+			t.Errorf("key mode %o; want 600", got)
+		}
+		if got := mode(t, filepath.Dir(key)); got != 0o700 {
+			t.Errorf("key directory mode %o; want 700", got)
+		}
+		want := "made the age key " + key + "\npublic key: " + pub + "\nadded the public key to recipients in winch.yaml\n"
+		if !strings.HasPrefix(r.out, want) {
+			t.Errorf("stdout %q; want the prefix %q", r.out, want)
+		}
+		wantCfg := strings.Replace(cfg, other.Recipient().String()+"\n", other.Recipient().String()+"\n  - "+pub+"\n", 1)
+		if got := read(t, filepath.Join(dir, "winch.yaml")); got != wantCfg {
+			t.Errorf("winch.yaml:\n%s\nwant:\n%s", got, wantCfg)
+		}
+		keyData := read(t, key)
+		r = winchWith(t, dir, home, "", "", fakehost.New(), false, "", "secret", "init")
+		if r.code != exitOK || r.out != "public key: "+pub+"\n" {
+			t.Errorf("second run: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+		}
+		if got := read(t, filepath.Join(dir, "winch.yaml")); got != wantCfg {
+			t.Errorf("second run changed winch.yaml:\n%s", got)
+		}
+		if got := read(t, key); got != keyData {
+			t.Errorf("second run changed the key")
+		}
+	})
+
+	t.Run("an existing key", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: acme\n"})
+		path, id := newIdentity(t)
+		if err := os.Chmod(path, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		before := read(t, path)
+		r := winchWith(t, dir, "", path, "", fakehost.New(), false, "", "secret", "init")
+		if r.code != exitOK || !strings.HasPrefix(r.out, "public key: "+id.Recipient().String()+"\n") {
+			t.Fatalf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+		}
+		if got := read(t, path); got != before || mode(t, path) != 0o640 {
+			t.Errorf("the key file changed")
+		}
+		want := "name: acme\nrecipients:\n  - " + id.Recipient().String() + "\n"
+		if got := read(t, filepath.Join(dir, "winch.yaml")); got != want {
+			t.Errorf("winch.yaml %q; want %q", got, want)
+		}
+	})
+
+	t.Run("WINCH_AGE_IDENTITY_CMD", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: acme\nvars: {}"})
+		path, id := newIdentity(t)
+		home := t.TempDir()
+		r := winchWith(t, dir, home, "", "cat "+path, fakehost.New(), false, "", "secret", "init")
+		if r.code != exitOK || r.out != "public key: "+id.Recipient().String()+"\nadded the public key to recipients in winch.yaml\na member who can read the secrets must now run winch secret rekey\n" {
+			t.Fatalf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+		}
+		want := "name: acme\nvars: {}\nrecipients:\n  - " + id.Recipient().String() + "\n"
+		if got := read(t, filepath.Join(dir, "winch.yaml")); got != want {
+			t.Errorf("winch.yaml %q; want %q", got, want)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".config")); err == nil {
+			t.Errorf("init made a key with WINCH_AGE_IDENTITY_CMD")
+		}
+	})
+
+	t.Run("a post-quantum key", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: acme\n"})
+		id, err := age.GenerateHybridIdentity()
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "pq.key")
+		if err := os.WriteFile(path, []byte(id.String()+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		r := winchWith(t, dir, "", path, "", fakehost.New(), false, "", "secret", "init")
+		want := "name: acme\nrecipients:\n  - " + id.Recipient().String() + "\n"
+		if got := read(t, filepath.Join(dir, "winch.yaml")); r.code != exitOK || got != want {
+			t.Errorf("exit %d, stderr %q, winch.yaml %q", r.code, r.err, got)
+		}
+	})
+
+	t.Run("a flow list", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: acme\nrecipients: []\n"})
+		r := winchWith(t, dir, t.TempDir(), "", "", fakehost.New(), false, "", "secret", "init")
+		if r.code != exitInvalid || !strings.Contains(r.err, "cannot add the public key to recipients in winch.yaml; add it by hand") {
+			t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+		}
+		if got := read(t, filepath.Join(dir, "winch.yaml")); got != "name: acme\nrecipients: []\n" {
+			t.Errorf("winch.yaml changed: %q", got)
 		}
 	})
 }

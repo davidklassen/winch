@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -97,6 +99,57 @@ func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
 		return nil, fmt.Errorf("read the age identity %s: %w", id, err)
 	}
 	return ids, nil
+}
+
+// Init returns the public key of the identity. When the source is a file and
+// no file is there, it first writes a new key, in the format of age-keygen;
+// made is true then.
+func (id Identity) Init(ctx context.Context) (key string, made bool, err error) {
+	if id.Cmd == "" {
+		if made, err = makeKey(id.Path); err != nil {
+			return "", false, fmt.Errorf("make the age key: %w", err)
+		}
+	}
+	ids, err := id.Read(ctx)
+	if err != nil {
+		return "", made, err
+	}
+	if len(ids) != 1 {
+		return "", made, fmt.Errorf("the age identity %s holds %d keys; winch needs one", id, len(ids))
+	}
+	switch i := ids[0].(type) {
+	case *age.X25519Identity:
+		return i.Recipient().String(), made, nil
+	case *age.HybridIdentity:
+		return i.Recipient().String(), made, nil
+	}
+	return "", made, fmt.Errorf("the age identity %s has no public key", id)
+}
+
+func makeKey(path string) (bool, error) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return false, err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_, err = fmt.Fprintf(f, "# created: %s\n# public key: %s\n%s\n", time.Now().Format(time.RFC3339), id.Recipient(), id)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(path)
+		return false, err
+	}
+	return true, nil
 }
 
 const ageHeader = "age-encryption.org/v1\n"

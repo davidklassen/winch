@@ -842,3 +842,68 @@ func TestLoadWarningInventoryFlag(t *testing.T) {
 		t.Errorf("Load warnings = %v, want one in envs/prod.yaml", p.Warnings)
 	}
 }
+
+// spec: Variables/Secrets (winch secret init)
+func TestAddRecipient(t *testing.T) {
+	const a = "age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq"
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := id.Recipient().String()
+	tests := []struct {
+		name, cfg, want string
+	}{
+		{"a list at column 1", "name: acme\nrecipients:\n- " + a + "\n", "name: acme\nrecipients:\n- " + a + "\n- " + key + "\n"},
+		{"no final newline", "name: acme\nrecipients:\n  - " + a, "name: acme\nrecipients:\n  - " + a + "\n  - " + key + "\n"},
+		{"an anchored list", "name: acme\nrecipients: &r\n  - " + a + "\n", "name: acme\nrecipients: &r\n  - " + a + "\n  - " + key + "\n"},
+		{"an alias item", "name: acme\nvars:\n  alice: &a " + a + "\nrecipients:\n  - *a\n", ""},
+		{"an item of two lines", "name: acme\nrecipients:\n  - >-\n    " + a + "\n", ""},
+		{"a flow list", "name: acme\nrecipients: [" + a + "]\n", ""},
+		{"an empty flow list", "name: acme\nrecipients: []\n", ""},
+		{"a flow map", "{name: acme}\n", ""},
+		{"a document end", "name: acme\n...\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "winch.yaml")
+			if err := os.WriteFile(path, []byte(tt.cfg), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			added, err := AddRecipient(dir, key)
+			got, rerr := os.ReadFile(path)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			if tt.want == "" {
+				if err == nil || !strings.Contains(err.Error(), "cannot add the public key to recipients in winch.yaml; add it by hand") || string(got) != tt.cfg {
+					t.Errorf("err %v, winch.yaml %q; want an error and no change", err, got)
+				}
+				return
+			}
+			if err != nil || !added || string(got) != tt.want {
+				t.Errorf("added %v, err %v, winch.yaml %q; want %q", added, err, got, tt.want)
+			}
+		})
+	}
+	t.Run("a link", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(t.TempDir(), "winch.yaml")
+		if err := os.WriteFile(target, []byte("name: acme\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(dir, "winch.yaml")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := AddRecipient(dir, key); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := os.ReadFile(target); string(got) != "name: acme\nrecipients:\n  - "+key+"\n" {
+			t.Errorf("target %q", got)
+		}
+		if info, err := os.Lstat(filepath.Join(dir, "winch.yaml")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("winch.yaml is no longer a link: %v", err)
+		}
+	})
+}
