@@ -1,1 +1,1 @@
-test.yaml:1:7: unknown tag "!foo"
+test.yaml:1:7: unknown tag; the tags are !expr, !tpl, and !secret; quote a value that starts with "!"

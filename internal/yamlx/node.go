@@ -146,7 +146,7 @@ func (c *converter) convert(n *yaml.Node) *Node {
 			c.errorf(n, "the %s tag needs a string, got %s", n.Tag, kind)
 			return out
 		case n.Kind != yaml.ScalarNode || n.Tag != "!!str":
-			c.errorf(n, "unknown tag %q", n.Tag)
+			c.errorf(n, `unknown tag; the tags are !expr, !tpl, and !secret; quote a value that starts with "!"`)
 			return out
 		}
 	}
@@ -163,8 +163,12 @@ func (c *converter) convert(n *yaml.Node) *Node {
 				c.errorf(k, "a map key must be a scalar")
 				continue
 			}
-			if k.Style&yaml.TaggedStyle != 0 && k.Tag != "!!str" {
+			if k.Style&yaml.TaggedStyle != 0 && winchTag(k.Tag) {
 				c.errorf(k, "a map key cannot have the tag %q", k.Tag)
+				continue
+			}
+			if k.Style&yaml.TaggedStyle != 0 && k.Tag != "!!str" {
+				c.errorf(k, `a map key cannot have a tag; quote a key that starts with "!"`)
 				continue
 			}
 			if k.Value == "<<" && k.Style == 0 {

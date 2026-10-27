@@ -60,7 +60,7 @@ func TestDecode(t *testing.T) {
 		{"wrong-kind", "name: [a]\n"},
 		{"two-documents", "name: a\n---\nname: b\n"},
 		{"syntax", "name: a\n  bad: [\n"},
-		{"unknown-tag", "name: !foo x\n"},
+		{"unknown-tag", "name: !$6$abc$def\n"},
 		{"validate", "name: a\ncount: -11\n"},
 		{"self-alias", "name: a\ntags: &t [*t]\n"},
 		{"hex", "name: a\ncount: 0x1f\n"},
@@ -172,9 +172,11 @@ func TestTags(t *testing.T) {
 		{"tpl", "x: !tpl '{{ .host.name }}'\n", `!tpl "{{ .host.name }}"`},
 		{"tpl on a list", "x: !tpl [a]\n", `t.yaml:1:4: the !tpl tag needs a string, got a list`},
 		{"tpl on a map", "x: !tpl {a: b}\n", `t.yaml:1:4: the !tpl tag needs a string, got a map`},
-		{"other tag", "x: !foo a\n", `t.yaml:1:4: unknown tag "!foo"`},
+		{"other tag", "x: !foo a\n", `t.yaml:1:4: unknown tag; the tags are !expr, !tpl, and !secret; quote a value that starts with "!"`},
 		{"str", "x: !!str 10\n", ` "10"`},
 		{"tag on a key", "!expr x: a\n", `t.yaml:1:1: a map key cannot have the tag "!expr"`},
+		{"unknown tag on a key", "!$6$abc$def x: a\n", `t.yaml:1:1: a map key cannot have a tag; quote a key that starts with "!"`},
+		{"double-bang hash", "x: !!$6$abc$def\n", `t.yaml:1:4: unknown tag; the tags are !expr, !tpl, and !secret; quote a value that starts with "!"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
