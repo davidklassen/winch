@@ -72,7 +72,7 @@ type hostEnv struct {
 	Vars    map[string]any `expr:"vars"`
 }
 
-// exprOptions add quote, and replace keys, values, and toPairs, whose order
+// exprOptions add quote and sqlquote, and replace keys, values, and toPairs, whose order
 // is random in expr, with versions in sorted key order.
 var exprOptions = []expr.Option{
 	expr.Env(exprEnv{}),
@@ -93,6 +93,13 @@ var exprOptions = []expr.Option{
 		}
 		return quote(s), nil
 	}, quote),
+	expr.Function("sqlquote", func(args ...any) (any, error) {
+		s, ok := args[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("sqlquote: %s is not a string", describeValue(args[0]))
+		}
+		return sqlquote(s), nil
+	}, sqlquote),
 }
 
 // readFunc checks the value of a member read. Its name cannot be written in

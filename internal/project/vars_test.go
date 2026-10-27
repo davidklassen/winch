@@ -593,6 +593,32 @@ func TestQuote(t *testing.T) {
 	}
 }
 
+// spec: Templates and expressions/Template functions
+func TestSQLQuote(t *testing.T) {
+	tests := []struct{ value, want string }{
+		{"", "''"},
+		{"secret", "'secret'"},
+		{"it's", "'it''s'"},
+		{`a\b`, `'a\\b'`},
+		{`\'`, `'\\'''`},
+		{"a\nb", "'a\nb'"},
+	}
+	for _, tt := range tests {
+		vars := "  v: " + strconv.Quote(tt.value) + "\n"
+		for kind, content := range map[string]string{
+			"tpl":  `!tpl "{{ sqlquote .vars.v }}"`,
+			"expr": `!expr sqlquote(vars.v)`,
+		} {
+			t.Run(fmt.Sprintf("%s %q", kind, tt.value), func(t *testing.T) {
+				got := evalOne(t, vars, "  - file:\n      path: /a\n      content: "+content+"\n", nil)
+				if got != tt.want {
+					t.Errorf("got  %q\nwant %q", got, tt.want)
+				}
+			})
+		}
+	}
+}
+
 // spec: Templates and expressions; Templates and expressions/Data
 func TestExprValues(t *testing.T) {
 	tests := []struct {
@@ -651,6 +677,8 @@ func TestEvalErrors(t *testing.T) {
 			want: "error: recipes/r/recipe.yaml:4:16: content: invalid operation: int + string\n | 1 + vars.s\n | ..^"},
 		{name: "quote of a number", step: "  - file:\n      path: /a\n      content: !expr quote(vars.i)\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: quote: the integer 80 is not a string\n | quote(vars.i)\n | ^"},
+		{name: "sqlquote of a number", step: "  - file:\n      path: /a\n      content: !expr sqlquote(vars.i)\n",
+			want: "error: recipes/r/recipe.yaml:4:16: content: sqlquote: the integer 80 is not a string\n | sqlquote(vars.i)\n | ^"},
 		{name: "default fails", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n",
 			want: "error: winch.yaml:15:8: variable \"bad\": invalid operation: int + string\n | 1 + vars.s\n | ..^"},
 		{name: "when fails before a default", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n    when: !expr 'vars.l[5] == \"x\"'\n",
