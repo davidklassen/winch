@@ -10,8 +10,15 @@ import (
 	"github.com/davidklassen/winch/internal/protocol"
 )
 
+type hashRun struct {
+	Project string   `json:"project"`
+	Stages  []string `json:"stages"`
+}
+
 type hashHost struct {
 	Host    string            `json:"host"`
+	Address string            `json:"address"`
+	User    string            `json:"user,omitempty"`
 	Failed  bool              `json:"failed,omitempty"`
 	Pending *protocol.Pending `json:"pending,omitempty"`
 }
@@ -49,8 +56,8 @@ type hashResult struct {
 	Old string `json:"old,omitempty"`
 }
 
-// HashInput returns the text that the plan hash covers: JSON lines per host,
-// in inventory order.
+// HashInput returns the text that the plan hash covers: a JSON line with the
+// project and the stage order, then JSON lines per host, in inventory order.
 func (p *Plan) HashInput() []byte {
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
@@ -58,8 +65,13 @@ func (p *Plan) HashInput() []byte {
 		// The values are plain data; they always encode.
 		_ = enc.Encode(v)
 	}
+	hr := hashRun{Project: p.Project}
+	for _, sp := range p.Stages {
+		hr.Stages = append(hr.Stages, sp.Stage.Name)
+	}
+	write(hr)
 	for _, h := range p.Hosts {
-		hh := hashHost{Host: h.Name, Failed: p.Failed[h.Name] != nil}
+		hh := hashHost{Host: h.Name, Address: h.Address, User: h.User, Failed: p.Failed[h.Name] != nil}
 		if pending, ok := p.Pending[h.Name]; ok {
 			hh.Pending = &pending
 		}

@@ -14,6 +14,6 @@ web1
         +stage step
 
 2 hosts: 1 to change, 0 unchanged, 0 unknown, 1 failed
-plan bec7fdf37a620e1c
+plan 4d2a60c3607b7893
 stderr:
 web2: recipes/tools/templates/tools.tmpl:1:33: index .host.groups 3: error calling index: index 3 out of range for length 1

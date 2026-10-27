@@ -8,7 +8,7 @@ web1
               app-log
 
 2 hosts: 1 to change, 1 unchanged, 0 unknown
-plan b492f5e725f055c3
+plan 79bf885464e59f72
 json:
 {"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:nginx#1","stage":"web","recipe":"nginx","step":"file /etc/nginx/a.conf","module":"file","status":"ok"}
 {"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:nginx#2","stage":"web","recipe":"nginx","step":"file /etc/nginx/b.conf","module":"file","status":"ok"}

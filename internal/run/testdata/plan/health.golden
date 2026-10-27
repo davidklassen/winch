@@ -8,5 +8,5 @@ web1
     * health: curl -sf http://localhost/
 
 3 hosts: 1 to change, 2 unchanged, 0 unknown
-plan 4016a17054f651e5
+plan 3c562997c4459399
 stderr:

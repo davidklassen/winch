@@ -183,6 +183,15 @@ func TestHashChanges(t *testing.T) {
 		{name: "the health timeout", files: func(t *testing.T) map[string]string {
 			return edit(t, "pipelines/site.yaml", "timeout: 10", "timeout: 11")
 		}},
+		{name: "another address", files: func(t *testing.T) map[string]string {
+			return edit(t, "inventories/test.yaml", "web1:\n", "web1:\n    address: 192.0.2.10\n")
+		}},
+		{name: "another user", files: func(t *testing.T) map[string]string {
+			return edit(t, "inventories/test.yaml", "web1:\n", "web1:\n    user: deploy\n")
+		}},
+		{name: "another project name", files: func(t *testing.T) map[string]string {
+			return edit(t, "winch.yaml", "name: acme", "name: acme2")
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -352,5 +361,19 @@ func TestHashSteps(t *testing.T) {
 	}
 	if got := planHash(t, handlerFilesWith(t, "reload", "restarted"), present).Hash(); got == base {
 		t.Error("a new step of a handler that does not run did not change the hash")
+	}
+}
+
+// spec: Running a pipeline/Plan ("the order of the stages")
+func TestHashStageOrderDisjointHosts(t *testing.T) {
+	migrate := "  - name: migrate\n    hosts: web1\n    steps:\n      - file:\n          path: /etc/migrate\n          content: \"m\\n\"\n"
+	deploy := "  - name: deploy\n    hosts: web2\n    steps:\n      - file:\n          path: /etc/deploy\n          content: \"d\\n\"\n"
+	plan := func(pipeline string) string {
+		files := maps.Clone(hashFiles)
+		files["pipelines/site.yaml"] = pipeline
+		return planHash(t, files, nil).Hash()
+	}
+	if a, b := plan("stages:\n"+migrate+deploy), plan("stages:\n"+deploy+migrate); a == b {
+		t.Errorf("two swapped stages on disjoint hosts give one hash %s", a)
 	}
 }

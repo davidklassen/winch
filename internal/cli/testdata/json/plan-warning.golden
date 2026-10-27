@@ -3,5 +3,5 @@ stdout:
 {"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"warning","file":"inventories/test.yaml","line":4,"col":14,"message":"this looks like a GitHub token; use !secret"}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"file /etc/token","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+(secret)","\\ No newline at end of file"]}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"change"}
-{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":1,"unchanged":0,"unknown":0,"failed":0},"hash":"42b9d17627ea1a26","exit_code":0}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":1,"unchanged":0,"unknown":0,"failed":0},"hash":"3e5df670551f98f4","exit_code":0}
 stderr:
