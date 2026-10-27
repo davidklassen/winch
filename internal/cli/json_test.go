@@ -62,7 +62,7 @@ func TestJSON(t *testing.T) {
 			h.SetFile("web2", "/srv/a.html", "page\n")
 			h.SetFile("web2", "/srv/b.html", "page\n")
 			h.SetPending("web2", "app.reload")
-			h.SetThen("web2", protocol.Then{Pipeline: "site", Stage: "base", Step: 1})
+			h.SetThen("web2", protocol.Then{Pipeline: "site", Stage: "base", Step: 1, Module: "file", Main: "/etc/motd"})
 		}, args: []string{"plan", "site", "--json"}},
 		{name: "apply", dir: jsonProject, setup: func(h *fakehost.Hosts) {
 			h.SetFile("web2", "/srv/a.html", "page\n")

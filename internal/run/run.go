@@ -481,8 +481,9 @@ func evaluate(pipeline string, stage *project.Stage, hr *hostRun) ([]Planned, er
 				late[h] = true
 			}
 		}
+		then := thenRecord(steps, place)
 		for i, s := range steps {
-			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify, Then: thenRecord(s, place), Address: address(addr, st, i)})
+			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify, Then: then, Address: address(addr, st, i)})
 		}
 		return nil
 	}
@@ -548,9 +549,9 @@ func handlerSlot(h *project.Handler, env *project.Env, in *project.Step) (*Slot,
 			return nil, err
 		}
 		addr := fmt.Sprintf("%s#%d", h.FullName(), j+1)
-		place := protocol.Then{Recipe: in.Recipe.Name, Handler: h.Name, Step: j + 1}
+		then := thenRecord(steps, protocol.Then{Recipe: in.Recipe.Name, Handler: h.Name, Step: j + 1})
 		for i, s := range steps {
-			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1, Then: thenRecord(s, place), Address: address(addr, hs, i)})
+			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1, Then: then, Address: address(addr, hs, i)})
 		}
 	}
 	return slot, nil
@@ -576,12 +577,14 @@ func scope(stage *project.Stage, p Planned) string {
 	return stage.Name
 }
 
-// thenRecord is the record of the then of the step st at place, or nil for a
-// step without then.
-func thenRecord(st project.Step, place protocol.Then) *protocol.Then {
-	if st.Then == "" {
+// thenRecord is the record of the then of the evaluated steps at place, or nil
+// for a step without then.
+func thenRecord(steps []project.Step, place protocol.Then) *protocol.Then {
+	if len(steps) == 0 || steps[0].Then == "" {
 		return nil
 	}
+	last := steps[len(steps)-1]
+	place.Module, place.Main = last.Module, last.Args.Main()
 	return &place
 }
 

@@ -76,7 +76,7 @@ func TestSecrets(t *testing.T) {
 	p, _ := secretProject(t)
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/monit/conf.d/settings", "set httpd port 2812\n  allow admin:old-pass\n# Old-Pass\n")
-	h.SetThen("web1", protocol.Then{Recipe: "monit", Step: 2})
+	h.SetThen("web1", protocol.Then{Recipe: "monit", Step: 2, Module: "file", Main: "/etc/monit/hunter2.key"})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))

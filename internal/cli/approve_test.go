@@ -152,7 +152,7 @@ func TestExitCode(t *testing.T) {
 	h = fakehost.New()
 	h.SetFile("web1", "/etc/motd", "hello\n")
 	h.SetFile("web2", "/etc/motd", "hello\n")
-	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Step: 1})
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Step: 1, Module: "file", Main: "/etc/motd"})
 	then := writeProject(t, strings.Replace(motd, `content: "hello\n"`, `content: "hello\n"`+"\n        then: echo done", 1))
 	if r := winch(t, then, h, false, "", "plan", "site", "--exit-code"); r.code != exitChanges {
 		t.Errorf("a plan with only a pending then: exit %d, want %d, stdout %q", r.code, exitChanges, r.out)

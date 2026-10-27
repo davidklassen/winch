@@ -373,7 +373,7 @@ func TestThen(t *testing.T) {
 			t.Fatalf("apply succeeded with a failing then:\n%s", got)
 		}
 		// Both elements change, and one record stays.
-		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Step: 1}}; !slices.Equal(got, want) {
+		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Step: 1, Module: "file", Main: "/var/www/about.html"}}; !slices.Equal(got, want) {
 			t.Fatalf("then records = %v, want %v", got, want)
 		}
 		h.Fix("web1 reindex")
@@ -404,7 +404,7 @@ func TestThen(t *testing.T) {
 		if slices.Contains(h.Log["web1"], "command reindex") {
 			t.Error("then ran after a failed element")
 		}
-		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Step: 1}}; !slices.Equal(got, want) {
+		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Step: 1, Module: "file", Main: "/var/www/about.html"}}; !slices.Equal(got, want) {
 			t.Errorf("then records = %v, want %v", got, want)
 		}
 		got := h.PendingOf("web1")
@@ -493,17 +493,21 @@ func TestPendingThen(t *testing.T) {
 	present(h, "web1", "web2")
 	h.SetFile("web1", "/etc/motd", "hi\n")
 	h.SetFile("web2", "/etc/motd", "hi\n")
-	h.SetThen("web1", protocol.Then{Recipe: "site", Step: 1}, protocol.Then{Pipeline: "site", Stage: "apps", Step: 2})
+	h.SetThen("web1", protocol.Then{Recipe: "site", Step: 1, Module: "file", Main: "/var/www/about.html"}, protocol.Then{Pipeline: "site", Stage: "apps", Step: 2, Module: "file", Main: "/etc/motd"})
 	// No step with then is at these places: a step without then, the stage
 	// of a recipe, a place without a step, a recipe named like the stage, a
-	// handler, a stage of another pipeline.
+	// handler, a stage of another pipeline. The steps with then at the last
+	// places have another module or main argument.
 	other := []protocol.Then{
-		{Recipe: "nginx", Step: 1},
-		{Pipeline: "site", Stage: "web", Step: 2},
-		{Recipe: "site", Step: 2},
-		{Recipe: "apps", Step: 2},
-		{Recipe: "site", Handler: "restart", Step: 1},
-		{Pipeline: "deploy", Stage: "apps", Step: 2},
+		{Recipe: "nginx", Step: 1, Module: "file", Main: "/etc/nginx/a.conf"},
+		{Pipeline: "site", Stage: "web", Step: 2, Module: "file", Main: "/etc/motd"},
+		{Recipe: "site", Step: 2, Module: "file", Main: "/var/www/about.html"},
+		{Recipe: "apps", Step: 2, Module: "file", Main: "/etc/motd"},
+		{Recipe: "site", Handler: "restart", Step: 1, Module: "file", Main: "/etc/motd"},
+		{Pipeline: "deploy", Stage: "apps", Step: 2, Module: "file", Main: "/etc/motd"},
+		{Recipe: "site", Step: 1, Module: "dir", Main: "/var/www/about.html"},
+		{Recipe: "site", Step: 1, Module: "file", Main: "/var/www/index.html"},
+		{Pipeline: "site", Stage: "apps", Step: 2, Module: "file", Main: "/etc/issue"},
 	}
 	h.SetThen("web2", other...)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
@@ -539,7 +543,7 @@ func TestPendingThenOfAChangedStep(t *testing.T) {
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetFile("web1", "/var/www/about.html", "old\n")
-	h.SetThen("web1", protocol.Then{Recipe: "site", Step: 1})
+	h.SetThen("web1", protocol.Then{Recipe: "site", Step: 1, Module: "file", Main: "/var/www/about.html"})
 	p := handlerProject(t)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
@@ -570,7 +574,7 @@ func TestPendingThenOfAHandlerStep(t *testing.T) {
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetPending("web1", "app.restart")
-	h.SetThen("web1", protocol.Then{Recipe: "app", Handler: "restart", Step: 1})
+	h.SetThen("web1", protocol.Then{Recipe: "app", Handler: "restart", Step: 1, Module: "service", Main: "app"})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -623,7 +627,7 @@ func TestCommandLines(t *testing.T) {
 	}
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/aliases", "a\n")
-	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Step: 1})
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Step: 1, Module: "file", Main: "/etc/aliases"})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -715,5 +719,51 @@ func TestFixedThenRuns(t *testing.T) {
 	}
 	if got := h.ThenOf("web1"); len(got) != 0 {
 		t.Errorf("then records = %v, want none", got)
+	}
+}
+
+func TestInsertedStepKeepsPendingThen(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: mail
+    hosts: all
+    steps:
+      - file:
+          path: /etc/postfix/virtual
+          content: "a\n"
+        then: postmap /etc/postfix/virtual
+`,
+	}
+	h := fakehost.New()
+	h.FailCommand("web1", "postmap /etc/postfix/virtual")
+	h.SetFile("web1", "/etc/db.conf", "db\n")
+	p := loadFiles(t, files)
+	if ok, got := applyAll(t, p, h); ok {
+		t.Fatalf("apply succeeded with a failing then:\n%s", got)
+	}
+
+	files["pipelines/site.yaml"] = strings.Replace(files["pipelines/site.yaml"], "    steps:\n", `    steps:
+      - file:
+          path: /etc/db.conf
+          content: "db\n"
+        then: systemctl restart db
+`, 1)
+	p = loadFiles(t, files)
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if strings.Contains(out.String(), "!") {
+		t.Errorf("plan shows a pending then:\n%s", out.String())
+	}
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+		t.Fatal(errOut.String())
+	}
+	if want := []string{"command postmap /etc/postfix/virtual"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+	}
+	if got := h.ThenOf("web1"); len(got) != 1 {
+		t.Errorf("then records = %v, want one", got)
 	}
 }

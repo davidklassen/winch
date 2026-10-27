@@ -50,15 +50,18 @@ type Step struct {
 	Then *Then `json:"then,omitempty"`
 }
 
-// Then is a record of a then: the place of its step. Step counts from 1 in the
-// steps of the recipe, of its handler, or of the stage of the pipeline for a
-// step of a stage.
+// Then is a record of a then: the place of its step, and its module and main
+// argument. Step counts from 1 in the steps of the recipe, of its handler, or
+// of the stage of the pipeline for a step of a stage. Main is that of the last
+// element of a loop.
 type Then struct {
 	Recipe   string `json:"recipe,omitempty"`
 	Pipeline string `json:"pipeline,omitempty"`
 	Stage    string `json:"stage,omitempty"`
 	Handler  string `json:"handler,omitempty"`
 	Step     int    `json:"step"`
+	Module   string `json:"module,omitempty"`
+	Main     string `json:"main,omitempty"`
 }
 
 // Command is the params of command, which runs the command and then removes
