@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -13,9 +14,11 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/helperbin"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/session"
 )
 
@@ -126,7 +129,7 @@ func (vm *VM) Session(t *testing.T) *session.Session {
 		Address:  vm.Name,
 		Binaries: helperbin.Binaries(),
 		Hello:    protocol.Hello{Run: "test-" + t.Name(), User: "test", Machine: "test"},
-		Progress: &bytes.Buffer{},
+		Progress: color.NewWriter(io.Discard, secret.NewFilter().Parts, false),
 	})
 	if err != nil {
 		t.Fatal(err)

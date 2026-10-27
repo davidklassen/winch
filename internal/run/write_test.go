@@ -42,7 +42,7 @@ func TestHostErrorControlCharacters(t *testing.T) {
 		t.Errorf("plan error = %q, want %q", errOut.String(), want)
 	}
 	wantJSON := `"error":"base: failed: file /tmp/x: then: exit status 1: one\n?[2K?[1Atwo\tz??"`
-	ev := NewEvents(&out, time.Now)
+	ev := NewEvents(w(&out), time.Now)
 	for name, write := range map[string]func(){
 		"host":    func() { ev.Host(HostEvent{Phase: "apply", Host: "web1", Status: "failed", Error: err}) },
 		"applied": func() { ev.Step(StepEvent{Host: "web1", Status: "failed", Error: err}) },

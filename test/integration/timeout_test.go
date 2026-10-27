@@ -15,9 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/helperbin"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/session"
 )
 
@@ -125,7 +127,7 @@ func TestFrozenHostFails(t *testing.T) {
 			Address:  vm.Name,
 			Binaries: helperbin.Binaries(),
 			Hello:    protocol.Hello{Run: "test-after-thaw", User: "test", Machine: "test"},
-			Progress: &strings.Builder{},
+			Progress: color.NewWriter(io.Discard, secret.NewFilter().Parts, false),
 		})
 		if err == nil {
 			s.Close()
@@ -239,7 +241,7 @@ func TestMaxStartupsRetry(t *testing.T) {
 			Address:  proxy,
 			Binaries: helperbin.Binaries(),
 			Hello:    protocol.Hello{Run: "test-max-startups", User: "test", Machine: "test"},
-			Progress: &strings.Builder{},
+			Progress: color.NewWriter(io.Discard, secret.NewFilter().Parts, false),
 		})
 		if err == nil {
 			s.Close()

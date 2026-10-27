@@ -579,7 +579,7 @@ func TestPendingThenOfAHandlerStep(t *testing.T) {
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
 	out.WriteString("json:\n")
-	plan.WriteJSON(run.NewEvents(&out, func() time.Time { return time.Time{} }))
+	plan.WriteJSON(run.NewEvents(plain(&out), func() time.Time { return time.Time{} }))
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-pending-then-handler.golden"), output(&out, &errOut))
 
 	out.Reset()
@@ -634,7 +634,7 @@ func TestCommandLines(t *testing.T) {
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-command-lines.golden"), output(&out, &errOut))
 
 	out.Reset()
-	plan.WriteJSON(run.NewEvents(&out, func() time.Time { return time.Time{} }))
+	plan.WriteJSON(run.NewEvents(plain(&out), func() time.Time { return time.Time{} }))
 	if n := strings.Count(out.String(), `"then":"newaliases\npostmap /etc/postfix/virtual\n"`); n != 2 {
 		t.Errorf("JSON has the then with its newlines %d times, want 2:\n%s", n, out.String())
 	}

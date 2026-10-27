@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/helperbin"
 	"github.com/davidklassen/winch/internal/module"
@@ -46,7 +47,7 @@ type Config struct {
 	Dir      string
 	Binaries []helperbin.Binary
 	Hello    protocol.Hello
-	Progress io.Writer
+	Progress *color.Writer
 	// RetryDelay is the wait before the second ssh start. Zero means 2s.
 	RetryDelay time.Duration
 	// Batch makes ssh ask no questions.
@@ -61,7 +62,7 @@ type Session struct {
 	stderr   *limitedBuffer
 	id       int
 	host     string
-	progress io.Writer
+	progress *color.Writer
 
 	waitOnce sync.Once
 	waitErr  error

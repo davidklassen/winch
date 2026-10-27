@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"os/user"
@@ -66,7 +65,7 @@ func main() {
 // connect opens sessions that live until sessions ends, not until the
 // context of the run ends: a session finishes its running step after the
 // first Ctrl-C.
-func connect(sessions context.Context, progress io.Writer, batch bool) run.Connect {
+func connect(sessions context.Context, progress *color.Writer, batch bool) run.Connect {
 	hello := protocol.Hello{Run: rand.Text()[:8], Started: time.Now().UTC()}
 	if u, err := user.Current(); err == nil {
 		hello.User = u.Username

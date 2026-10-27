@@ -678,7 +678,7 @@ func TestPlanIndependentOfFinishOrder(t *testing.T) {
 			pl := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			var out, errOut, js bytes.Buffer
 			pl.Write(plain(&out), plain(&errOut))
-			pl.WriteJSON(run.NewEvents(&js, func() time.Time { return time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC) }))
+			pl.WriteJSON(run.NewEvents(plain(&js), func() time.Time { return time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC) }))
 			o = planOut{string(output(&out, &errOut)), pl.Hash(), js.String()}
 		})
 		return o

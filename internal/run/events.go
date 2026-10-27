@@ -2,9 +2,9 @@ package run
 
 import (
 	"encoding/json"
-	"io"
 	"time"
 
+	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/secret"
@@ -13,11 +13,11 @@ import (
 // Events writes JSON events, one object per line. Each event is one write,
 // so the secret filter of the writer sees the whole line.
 type Events struct {
-	w   io.Writer
+	w   *color.Writer
 	now func() time.Time
 }
 
-func NewEvents(w io.Writer, now func() time.Time) *Events {
+func NewEvents(w *color.Writer, now func() time.Time) *Events {
 	return &Events{w: w, now: now}
 }
 

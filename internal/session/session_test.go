@@ -14,11 +14,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/helperbin"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
+	"github.com/davidklassen/winch/internal/secret"
 )
+
+// plain writes to b without color, through a filter without secrets.
+func plain(b *bytes.Buffer) *color.Writer {
+	return color.NewWriter(b, secret.NewFilter().Parts, false)
+}
 
 // fakeHelper answers hello with an error that names its architecture, so a
 // test can see which helper ran.
@@ -113,7 +120,7 @@ func open(t *testing.T, dir string, bins []helperbin.Binary) (string, error) {
 		Dir:        dir,
 		Binaries:   bins,
 		Hello:      protocol.Hello{Run: "r1"},
-		Progress:   &progress,
+		Progress:   plain(&progress),
 		RetryDelay: retryDelay,
 	})
 	if s != nil {
@@ -325,7 +332,7 @@ func TestOpenMuchLoginShellText(t *testing.T) {
 			_, err := Open(ctx, Config{
 				Host: "web1", Address: "web1", Dir: t.TempDir(),
 				Binaries: []helperbin.Binary{fakeHelper("arm64")},
-				Hello:    protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
+				Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
 			})
 			if ctx.Err() != nil {
 				t.Error("Open did not end before the 5s timeout")
@@ -370,7 +377,7 @@ func TestFacts(t *testing.T) {
 	s, err := Open(context.Background(), Config{
 		Host: "web1", Address: "web1", Dir: stateDir,
 		Binaries: []helperbin.Binary{fakeHelper("amd64"), recordingHelper("arm64")},
-		Hello:    protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
+		Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -390,7 +397,7 @@ func TestContentOnlyWhenNeeded(t *testing.T) {
 	s, err := Open(context.Background(), Config{
 		Host: "web1", Address: "web1", Dir: stateDir,
 		Binaries: []helperbin.Binary{fakeHelper("amd64"), recordingHelper("arm64")},
-		Hello:    protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
+		Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -439,7 +446,7 @@ func sshArgs(t *testing.T, host, address string) (options, target string) {
 		Dir:      stateDir,
 		Binaries: []helperbin.Binary{fakeHelper("arm64")},
 		Hello:    protocol.Hello{Run: "r1"},
-		Progress: &bytes.Buffer{},
+		Progress: plain(&bytes.Buffer{}),
 	})
 	if s != nil {
 		s.Close()
@@ -508,7 +515,7 @@ cat >/dev/null
 	s, err := Open(context.Background(), Config{
 		Host: "web1", Address: "web1", Dir: stateDir,
 		Binaries: []helperbin.Binary{helper},
-		Hello:    protocol.Hello{Run: "r1"}, Progress: &progress,
+		Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&progress),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -605,7 +612,7 @@ func TestOpenRetryCancelled(t *testing.T) {
 	s, err := Open(ctx, Config{
 		Host: "web1", Address: "web1", Dir: t.TempDir(),
 		Binaries: []helperbin.Binary{fakeHelper("arm64")},
-		Hello:    protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
+		Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
 		RetryDelay: time.Minute,
 	})
 	if s != nil {
@@ -679,7 +686,7 @@ func TestOpenBatch(t *testing.T) {
 			t.Setenv("SSH_ARGS", argsFile)
 			s, err := Open(context.Background(), Config{
 				Host: "web1", Address: "web1", Dir: stateDir, Batch: batch,
-				Binaries: []helperbin.Binary{fakeHelper("arm64")}, Hello: protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
+				Binaries: []helperbin.Binary{fakeHelper("arm64")}, Hello: protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
 			})
 			if s != nil {
 				s.Close()
@@ -730,7 +737,7 @@ func TestOpenBatchHint(t *testing.T) {
 			failOnce(t, "", tt.stderr, 255)
 			_, err := Open(context.Background(), Config{
 				Host: "web1", Address: tt.address, Dir: t.TempDir(), Batch: tt.batch, User: tt.user,
-				Binaries: []helperbin.Binary{fakeHelper("arm64")}, Hello: protocol.Hello{Run: "r1"}, Progress: &bytes.Buffer{},
+				Binaries: []helperbin.Binary{fakeHelper("arm64")}, Hello: protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
 			})
 			if err == nil || err.Error() != tt.want || !errors.Is(err, ErrUnreachable) {
 				t.Errorf("error %v, want %q and unreachable", err, tt.want)
