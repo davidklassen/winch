@@ -88,7 +88,9 @@ Run "winch <command> --help" for the arguments and flags of a command.
 
 type command struct {
 	help string
-	// project is true when the command takes --inventory and --set.
+	// inventory is true when the command takes --inventory.
+	inventory bool
+	// project is true when the command takes --set and --json.
 	project bool
 	// apply is true when the command takes --yes and --check.
 	apply bool
@@ -101,12 +103,12 @@ type command struct {
 }
 
 var commands = map[string]command{
-	"validate":       {help: validateHelp, project: true, run: validate},
-	"plan":           {help: planHelp, project: true, exitCode: true, hosts: true, run: plan},
-	"apply":          {help: applyHelp, project: true, apply: true, hosts: true, run: apply},
+	"validate":       {help: validateHelp, inventory: true, project: true, run: validate},
+	"plan":           {help: planHelp, inventory: true, project: true, exitCode: true, hosts: true, run: plan},
+	"apply":          {help: applyHelp, inventory: true, project: true, apply: true, hosts: true, run: apply},
 	"secret":         {help: secretHelp, run: secretUsage},
 	"secret encrypt": {help: encryptHelp, run: secretEncrypt},
-	"secret rekey":   {help: rekeyHelp, run: secretRekey},
+	"secret rekey":   {help: rekeyHelp, inventory: true, run: secretRekey},
 }
 
 const validateHelp = `Examples:
@@ -249,8 +251,10 @@ func Main(ctx context.Context, args []string, env Env) int {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var f flags
-	if cmd.project {
+	if cmd.inventory {
 		fs.StringVar(&f.inventory, "inventory", "", "")
+	}
+	if cmd.project {
 		fs.Func("set", "", func(s string) error {
 			f.set = append(f.set, s)
 			return nil

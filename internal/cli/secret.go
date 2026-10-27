@@ -43,11 +43,16 @@ stays as it is.
 
 const rekeyHelp = `Examples:
   winch secret rekey
+  winch secret rekey --inventory envs/prod/hosts.yaml
 
 Encrypt all secrets in winch.yaml, the inventories, and the recipes again
-for the recipients in winch.yaml. Run it after a change of the recipients.
+for the recipients in winch.yaml, and list the files it rewrote. Run it
+after a change of the recipients.
 
-Usage: winch secret rekey
+Usage: winch secret rekey [flags]
+
+Flags:
+  --inventory <path>            Also rekey this inventory file.
 
 winch reads the age identity from the stdout of the command in
 WINCH_AGE_IDENTITY_CMD, which runs through sh -c. Without it, winch reads
@@ -100,12 +105,15 @@ func secretRekey(ctx context.Context, env Env, f *flags, args []string) int {
 		printError(env.stderr, err.Error())
 		return exitInvalid
 	}
-	n, files, err := project.Rekey(ctx, env.Dir, identity)
+	n, files, err := project.Rekey(ctx, env.Dir, f.inventory, identity)
 	if err != nil {
 		printError(env.stderr, err.Error())
 		return exitInvalid
 	}
-	fmt.Fprintf(env.stdout, "rekeyed %s in %s\n", count(n, "secret"), count(files, "file"))
+	fmt.Fprintf(env.stdout, "rekeyed %s in %s\n", count(n, "secret"), count(len(files), "file"))
+	for _, file := range files {
+		fmt.Fprintf(env.stdout, "  %s\n", file)
+	}
 	return exitOK
 }
 

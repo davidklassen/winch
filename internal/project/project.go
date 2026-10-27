@@ -159,7 +159,7 @@ func Load(ctx context.Context, dir, inventory, pipeline string, set []string, ke
 	if err := l.unsealAll(ctx, keys); err != nil {
 		return nil, err
 	}
-	warnings, err := scanProject(dir, cfg)
+	warnings, err := scanProject(dir, inventory, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +207,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-	warnings, err := scanProject(dir, cfg)
+	warnings, err := scanProject(dir, inventory, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -454,11 +454,7 @@ func list(dir, sub string) ([]string, error) {
 }
 
 func parse(dir, file string) (*yamlx.Node, error) {
-	path := file
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(dir, file)
-	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(projectPath(dir, file))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, notFound(file)
 	}
@@ -466,6 +462,14 @@ func parse(dir, file string) (*yamlx.Node, error) {
 		return nil, fmt.Errorf("read %s: %w", file, err)
 	}
 	return yamlx.Parse(file, data)
+}
+
+// projectPath returns the path of file, which is absolute or relative to dir.
+func projectPath(dir, file string) string {
+	if filepath.IsAbs(file) {
+		return file
+	}
+	return filepath.Join(dir, file)
 }
 
 type notFound string

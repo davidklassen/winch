@@ -3,6 +3,7 @@ package project
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -492,12 +493,12 @@ func TestRekey(t *testing.T) {
 	files["pipelines/site.yaml"] = "stages:\n  - {name: a, hosts: all, steps: []}\n"
 	dir := writeProject(t, files)
 
-	n, nfiles, err := Rekey(t.Context(), dir, secret.Identity{Path: oldKey.path})
+	n, rewritten, err := Rekey(t.Context(), dir, "", secret.Identity{Path: oldKey.path})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 5 || nfiles != 3 {
-		t.Errorf("Rekey = %d secrets in %d files, want 5 in 3", n, nfiles)
+	if want := []string{"inventories/test.yaml", "recipes/r/recipe.yaml", "winch.yaml"}; n != 5 || !slices.Equal(rewritten, want) {
+		t.Errorf("Rekey = %d secrets in %v, want 5 in %v", n, rewritten, want)
 	}
 	plain := map[string][]string{
 		"winch.yaml":            {"winch-token"},
@@ -545,7 +546,7 @@ func TestRekeyFailsWhole(t *testing.T) {
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + other.encrypt(t, "x") + "\n",
 	})
 	dir := writeProject(t, files)
-	_, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
+	_, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path})
 	if err == nil || !strings.HasPrefix(err.Error(), "inventories/test.yaml:4:11: !secret: the identity in "+k.path+" is not a recipient") {
 		t.Errorf("Rekey = %v", err)
 	}
@@ -582,8 +583,8 @@ func TestRekeyWritesThroughLink(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if n, files, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path}); err != nil || n != 1 || files != 1 {
-		t.Fatalf("Rekey = %d secrets in %d files, %v; want 1 in 1", n, files, err)
+	if n, files, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path}); err != nil || n != 1 || !slices.Equal(files, []string{"inventories/prod.yaml"}) {
+		t.Fatalf("Rekey = %d secrets in %v, %v; want 1 in inventories/prod.yaml", n, files, err)
 	}
 	for link, target := range links {
 		if got, err := os.Readlink(filepath.Join(dir, link)); err != nil || got != target {
@@ -671,7 +672,7 @@ func TestRekeyKeepsEqualValuesEqual(t *testing.T) {
 	if _, err := Load(t.Context(), dir, "", "site", nil, k.keys()); err != nil {
 		t.Fatalf("Load before rekey: %v", err)
 	}
-	if _, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path}); err != nil {
+	if _, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(t.Context(), dir, "", "site", nil, k.keys()); err != nil {
@@ -688,7 +689,7 @@ func TestInventoryOutsideInventories(t *testing.T) {
 		"inventories/test.yaml": "",
 		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
-	n, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
+	n, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path})
 	if err != nil || n != 1 {
 		t.Errorf("Rekey = %d, %v; want the secret of prod.yaml", n, err)
 	}
@@ -770,5 +771,74 @@ func TestSecretDefaultError(t *testing.T) {
 	_, _, err := evalSecret(t, "", files)
 	if err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), `variable "r_n": invalid operation: int((secret))`) {
 		t.Errorf("error = %v", err)
+	}
+}
+
+// spec: Variables/Secrets (winch secret rekey, --inventory)
+func TestRekeyInventoryFlag(t *testing.T) {
+	k, next := newKey(t), newKey(t)
+	dir := writeProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + k.encrypt(t, "test-pw") + "\n",
+		"envs/prod/hosts.yaml":  "hosts:\n  web2:\n    vars:\n      pw: !secret " + k.encrypt(t, "prod-pw") + "\n",
+		"envs/stage/hosts.yaml": "hosts:\n  web3:\n    vars:\n      pw: !secret " + k.encrypt(t, "stage-pw") + "\n",
+		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
+	})
+	n, files, err := Rekey(t.Context(), dir, "envs/prod/hosts.yaml", secret.Identity{Path: k.path})
+	if want := []string{"envs/prod/hosts.yaml", "inventories/test.yaml"}; err != nil || n != 2 || !slices.Equal(files, want) {
+		t.Fatalf("Rekey = %d secrets in %v, %v; want 2 in %v", n, files, err, want)
+	}
+	for name, plain := range map[string]string{"envs/prod/hosts.yaml": "prod-pw", "inventories/test.yaml": "test-pw"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		texts := secretTexts(string(data))
+		if len(texts) != 1 {
+			t.Fatalf("%s has %d secrets:\n%s", name, len(texts), data)
+		}
+		if got, err := secret.Decrypt(texts[0], []age.Identity{next.id}); err != nil || got != plain {
+			t.Errorf("%s: secret = %q, %v; want %q for the new key", name, got, err, plain)
+		}
+	}
+}
+
+// spec: Variables/Secrets (winch secret rekey, --inventory)
+func TestRekeyInventoryFlagPaths(t *testing.T) {
+	k, next := newKey(t), newKey(t)
+	files := map[string]string{
+		"winch.yaml":           "name: acme\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n",
+		"envs/prod/hosts.yaml": "hosts:\n  web2:\n    vars:\n      pw: !secret " + k.encrypt(t, "prod-pw") + "\n",
+	}
+	dir := writeProject(t, files)
+	abs := filepath.Join(dir, "envs", "prod", "hosts.yaml")
+	if n, got, err := Rekey(t.Context(), dir, abs, secret.Identity{Path: k.path}); err != nil || n != 1 || !slices.Equal(got, []string{filepath.ToSlash(abs)}) {
+		t.Errorf("Rekey with an absolute path = %d secrets in %v, %v; want 1 in %s", n, got, err, abs)
+	}
+	if _, _, err := Rekey(t.Context(), dir, "envs/typo.yaml", secret.Identity{Path: k.path}); err == nil || err.Error() != "envs/typo.yaml: no such file" {
+		t.Errorf("Rekey with a missing inventory = %v", err)
+	}
+}
+
+// spec: Variables/Secrets in output (the load warning); CLI (--inventory)
+func TestLoadWarningInventoryFlag(t *testing.T) {
+	dir := writeProject(t, map[string]string{
+		"winch.yaml":          "name: acme\nvars:\n  token:\n",
+		"envs/prod.yaml":      "hosts:\n  web1:\n    vars:\n      token: " + fakeSecret(t, "ghp.txt") + "\n",
+		"pipelines/site.yaml": "stages:\n  - {name: a, hosts: all, steps: []}\n",
+	})
+	warnings, err := Validate(dir, "envs/prod.yaml", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 || warnings[0].Pos.File != "envs/prod.yaml" {
+		t.Errorf("Validate warnings = %v, want one in envs/prod.yaml", warnings)
+	}
+	p, err := Load(t.Context(), dir, "envs/prod.yaml", "site", nil, Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Warnings) != 1 || p.Warnings[0].Pos.File != "envs/prod.yaml" {
+		t.Errorf("Load warnings = %v, want one in envs/prod.yaml", p.Warnings)
 	}
 }

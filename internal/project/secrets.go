@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -262,69 +261,84 @@ func recipients(cfg *Config) ([]age.Recipient, error) {
 }
 
 // inventories returns the inventory files of the project: the files in
-// inventories/, and the default inventory of winch.yaml.
-func inventories(dir string, cfg *Config) ([]string, error) {
+// inventories/, the default inventory of winch.yaml, and flag.
+func inventories(dir string, cfg *Config, flag string) ([]string, error) {
 	files, err := list(dir, "inventories")
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Inventory != "" && !slices.Contains(files, filepath.ToSlash(filepath.Clean(cfg.Inventory))) {
-		files = append(files, filepath.ToSlash(filepath.Clean(cfg.Inventory)))
+	for _, f := range []string{cfg.Inventory, flag} {
+		if f == "" {
+			continue
+		}
+		if f = filepath.ToSlash(filepath.Clean(f)); !slices.Contains(files, f) {
+			files = append(files, f)
+		}
 	}
 	return files, nil
 }
 
 // Rekey encrypts every secret in winch.yaml, the inventories, and the recipes
-// again for the recipients in winch.yaml. It writes no file when a secret
-// fails. It returns the number of secrets and of files.
-func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, int, error) {
+// again for the recipients in winch.yaml. inventory is the path of
+// --inventory, or empty. It writes no file when a secret fails. It returns
+// the number of secrets and the files it rewrote.
+func Rekey(ctx context.Context, dir, inventory string, identity secret.Identity) (int, []string, error) {
 	cfg, err := loadConfig(dir)
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
 	recs, err := recipients(cfg)
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
-	invs, err := inventories(dir, cfg)
+	invs, err := inventories(dir, cfg, inventory)
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
 	recipes, err := filepath.Glob(filepath.Join(dir, "recipes", "*", "recipe.yaml"))
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
 	files := append([]string{"winch.yaml"}, invs...)
 	for _, r := range recipes {
 		rel, err := filepath.Rel(dir, r)
 		if err != nil {
-			return 0, 0, err
+			return 0, nil, err
 		}
 		files = append(files, filepath.ToSlash(rel))
 	}
 	var ids []age.Identity
 	// next keeps one value that two places hold the same after rekey.
 	next := map[string]string{}
-	// out is keyed by the path after links, so two links to one file write
-	// it once.
-	out := map[string][]byte{}
+	// done holds the paths after links, so two links to one file write it
+	// once.
+	done := map[string]bool{}
+	type rewrite struct {
+		name, path string
+		data       []byte
+	}
+	var out []rewrite
 	count := 0
 	var errs []error
 	for _, file := range files {
-		path, err := filepath.EvalSymlinks(filepath.Join(dir, file))
-		if err != nil {
-			return 0, 0, err
+		path, err := filepath.EvalSymlinks(projectPath(dir, file))
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, nil, notFound(file)
 		}
-		if _, ok := out[path]; ok {
+		if err != nil {
+			return 0, nil, err
+		}
+		if done[path] {
 			continue
 		}
+		done[path] = true
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return 0, 0, err
+			return 0, nil, err
 		}
 		n, err := yamlx.Parse(file, data)
 		if err != nil {
-			return 0, 0, err
+			return 0, nil, err
 		}
 		var sealed []*yamlx.Node
 		seen := map[*yamlx.Node]bool{}
@@ -339,7 +353,7 @@ func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, int,
 		}
 		if ids == nil {
 			if ids, err = identity.Read(ctx); err != nil {
-				return 0, 0, err
+				return 0, nil, err
 			}
 		}
 		lines := strings.SplitAfter(string(data), "\n")
@@ -352,7 +366,7 @@ func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, int,
 			}
 			if next[text] == "" {
 				if next[text], err = secret.Encrypt(plain, recs); err != nil {
-					return 0, 0, err
+					return 0, nil, err
 				}
 			}
 			line := lines[t.Pos.Line-1]
@@ -364,17 +378,20 @@ func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, int,
 			lines[t.Pos.Line-1] = line[:i] + next[text] + line[i+len(text):]
 			count++
 		}
-		out[path] = []byte(strings.Join(lines, ""))
+		out = append(out, rewrite{file, path, []byte(strings.Join(lines, ""))})
 	}
 	if err := errors.Join(errs...); err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
-	for _, path := range slices.Sorted(maps.Keys(out)) {
-		if err := replaceFile(path, out[path]); err != nil {
-			return 0, 0, err
+	slices.SortFunc(out, func(a, b rewrite) int { return strings.Compare(a.name, b.name) })
+	var rewritten []string
+	for _, r := range out {
+		if err := replaceFile(r.path, r.data); err != nil {
+			return 0, nil, err
 		}
+		rewritten = append(rewritten, r.name)
 	}
-	return count, len(out), nil
+	return count, rewritten, nil
 }
 
 // replaceFile writes data to path through a new file in the same directory,
@@ -405,8 +422,8 @@ func replaceFile(path string, data []byte) error {
 
 // scanProject returns a warning for each private key or token in the
 // project files that is not a !secret.
-func scanProject(dir string, cfg *Config) ([]*yamlx.Error, error) {
-	invs, err := inventories(dir, cfg)
+func scanProject(dir, inventory string, cfg *Config) ([]*yamlx.Error, error) {
+	invs, err := inventories(dir, cfg, inventory)
 	if err != nil {
 		return nil, err
 	}

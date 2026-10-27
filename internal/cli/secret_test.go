@@ -159,7 +159,7 @@ func TestSecretRekey(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "rekey")
-	if r.code != exitOK || r.out != "rekeyed 1 secret in 1 file\n" {
+	if r.code != exitOK || r.out != "rekeyed 1 secret in 1 file\n  inventories/test.yaml\n" {
 		t.Errorf("rekey: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 	inv, err := os.ReadFile(filepath.Join(dir, "inventories/test.yaml"))
@@ -173,6 +173,24 @@ func TestSecretRekey(t *testing.T) {
 	r = winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "rekey")
 	if r.code != exitInvalid || !strings.Contains(r.err, "inventories/test.yaml:4:11: !secret: the identity in "+identity+" is not a recipient") {
 		t.Errorf("rekey with an old identity: exit %d, stderr %q", r.code, r.err)
+	}
+}
+
+// spec: Variables/Secrets (winch secret rekey, --inventory)
+func TestSecretRekeyInventory(t *testing.T) {
+	identity, id := newIdentity(t)
+	dir := secretProject(t, id)
+	setPassword(t, dir, encrypt(t, dir, "hunter2"))
+	prod := filepath.Join(dir, "envs", "prod.yaml")
+	if err := os.MkdirAll(filepath.Dir(prod), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(prod, []byte("hosts:\n  web2:\n    vars:\n      pw: "+encrypt(t, dir, "prod-pw")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "rekey", "--inventory", "envs/prod.yaml")
+	if want := "rekeyed 2 secrets in 2 files\n  envs/prod.yaml\n  inventories/test.yaml\n"; r.code != exitOK || r.out != want {
+		t.Errorf("rekey: exit %d, stdout %q, stderr %q; want %q", r.code, r.out, r.err, want)
 	}
 }
 
