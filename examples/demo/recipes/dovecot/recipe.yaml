@@ -1,5 +1,4 @@
-# IMAP for virtual users. The TLS part (99-local.conf) needs certbot's
-# certificates; this demo keeps Debian's self-signed one.
+# IMAP for virtual users, with the mail certificate of certbot.
 steps:
   - group:
       name: vmail
@@ -49,6 +48,11 @@ steps:
       source: 10-auth.conf
       validate: doveconf -n
     notify: restart
+  - file:
+      path: /etc/dovecot/conf.d/99-local.conf
+      template: 99-local.conf.tmpl
+      validate: doveconf -n
+    notify: restart
   - dir:
       path: /etc/dovecot/conf.d
       purge: true
@@ -58,6 +62,19 @@ steps:
       template: users.tmpl
       group: dovecot
       mode: "0640"
+
+  - name: Junk moves teach Rspamd through rspamc
+    link:
+      path: /usr/lib/dovecot/sieve-pipe/rspamc
+      target: /usr/bin/rspamc
+  - name: Global Sieve scripts (vmail cannot compile them here)
+    file:
+      path: !tpl /etc/dovecot/sieve/{{ .item }}
+      source: !tpl sieve/{{ .item }}
+    loop: [spam.sieve, report-spam.sieve, report-ham.sieve]
+    then: >-
+      sievec -P sieve_extprograms -P sieve_imapsieve
+      -x "+vnd.dovecot.pipe +imapsieve" /etc/dovecot/sieve
 
   - service:
       name: dovecot

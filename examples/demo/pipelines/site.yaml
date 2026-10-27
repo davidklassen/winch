@@ -34,8 +34,6 @@ stages:
       - recipe: unattended_upgrades
       - recipe: rspamd
       - recipe: heartbeat
-      - recipe: dovecot
-      - recipe: fail2ban
 
   # One web host at a time; the next starts when the site answers.
   - name: web
@@ -47,6 +45,11 @@ stages:
       timeout: 30
     steps:
       - recipe: nginx
+      - recipe: pebble
+      # Before the site and Dovecot: their configs name these files.
+      - recipe: certbot
       - recipe: website
         vars:
           website_peers: !expr 'filter(match("web"), .name != host.name)'
+      - recipe: dovecot
+      - recipe: fail2ban

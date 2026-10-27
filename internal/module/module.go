@@ -100,6 +100,7 @@ type WithContent interface {
 
 var modules = map[string]func() Module{
 	"assert":   func() Module { return new(Assert) },
+	"certbot":  func() Module { return new(Certbot) },
 	"cmd":      func() Module { return new(Cmd) },
 	"debconf":  func() Module { return new(Debconf) },
 	"dir":      func() Module { return new(Dir) },

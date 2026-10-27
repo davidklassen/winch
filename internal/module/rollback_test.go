@@ -336,6 +336,7 @@ func TestTouches(t *testing.T) {
 		{&Hostname{Name: "mail"}, []Touch{{"/etc/hostname", true}}},
 		{&Timezone{Name: "Etc/UTC"}, []Touch{{"/etc/localtime", true}, {"/etc/timezone", true}}},
 		{&Unit{Name: "app.service"}, []Touch{{"/etc/systemd/system/app.service", true}}},
+		{&Certbot{Name: "mail"}, []Touch{{"/etc/letsencrypt/renewal/mail.conf", true}, {"/etc/letsencrypt/live/mail", true}, {"/etc/letsencrypt/archive/mail", true}}},
 		{&Service{Name: "ssh", Running: &no}, nil},
 	}
 	for _, tt := range tests {

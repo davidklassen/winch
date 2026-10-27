@@ -242,6 +242,29 @@ func TestSameHostnameAndTimezone(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Plan (two steps that manage the same thing);
+// Modules/certbot
+func TestSameCertificate(t *testing.T) {
+	step := func(domains string) string {
+		return "      - certbot:\n          name: example.com\n          domains: [" + domains + "]\n          email: a@example.com\n"
+	}
+	for _, tt := range []struct {
+		name, second string
+		want         string
+	}{
+		{"other domains", step("example.com, www.example.com"), "base: certbot example.com: the certificate example.com is also in base: certbot example.com, with other arguments"},
+		{"the same step", step("example.com"), ""},
+	} {
+		h := fakehost.New()
+		p := loadWeb1(t, map[string]string{"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n" + step("example.com") + tt.second})
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		err := plan.Failed["web1"]
+		if tt.want == "" && err != nil || tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
+			t.Errorf("%s: plan error %v, want %q", tt.name, err, tt.want)
+		}
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (every file that the recipe
 // changed: a step in another recipe or a stage that notifies the handler)
 func TestConfirmAccessAcrossRecipes(t *testing.T) {

@@ -36,9 +36,9 @@ func Touches(m Module) []Touch {
 		return []Touch{{m.Path, true}}
 	case *Unit:
 		return []Touch{{m.Path(), true}}
-	case *Repo:
+	case *Repo, *Certbot:
 		var out []Touch
-		for _, p := range m.Writes() {
+		for _, p := range m.(Writer).Writes() {
 			out = append(out, Touch{p, true})
 		}
 		return out

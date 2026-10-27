@@ -1,0 +1,14 @@
+[Unit]
+Description=Pebble, the ACME test server
+Requires=pebble-dns.service
+After=pebble-dns.service
+
+[Service]
+Environment=PEBBLE_VA_NOSLEEP=1 PEBBLE_WFE_NONCEREJECT=0
+# Pebble keeps its accounts in memory; certbot registers again after a start.
+ExecStartPre=/bin/rm -rf /etc/letsencrypt/accounts/localhost:14000
+ExecStart=/usr/bin/pebble -config /etc/pebble/config.json -dnsserver 127.0.0.1:8053
+ExecStartPost=/bin/sh -c 'until curl -sf -o /dev/null https://localhost:14000/dir; do sleep 0.1; done'
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,41 @@
+# Pebble, the ACME test server, and its DNS server, which answers 127.0.0.1
+# for every name. certbot gets the demo's certificates from it. A real host
+# uses Let's Encrypt and has no such recipe.
+steps:
+  - pkg:
+      name: [pebble, certbot]
+  - dir:
+      path: /etc/pebble
+  - name: Pebble's TLS certificate, which certbot trusts through the system CAs
+    cmd:
+      command: |
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+          -subj /CN=localhost -addext subjectAltName=DNS:localhost \
+          -keyout /etc/pebble/key.pem -out /usr/local/share/ca-certificates/pebble.crt
+        update-ca-certificates
+      creates: /usr/local/share/ca-certificates/pebble.crt
+  - file:
+      path: /etc/pebble/config.json
+      source: config.json
+    notify: restart
+  - unit:
+      name: !expr item
+      source: !expr item
+    loop: [pebble-dns.service, pebble.service]
+    notify: restart
+  - service:
+      name: !expr item
+      enabled: true
+      running: true
+    loop: [pebble-dns, pebble]
+  - name: certbot asks Pebble, not Let's Encrypt
+    line:
+      path: /etc/letsencrypt/cli.ini
+      match: "^server ="
+      line: server = https://localhost:14000/dir
+
+handlers:
+  restart:
+    - service:
+        name: pebble
+        restarted: true

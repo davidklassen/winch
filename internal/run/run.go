@@ -362,6 +362,13 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		if _, ok := p.Step.Args.(*module.Debconf); ok && p.Step.Secret && steps[i].Result.Status == module.Change {
 			steps[i].Result.Changes = []string{"answer (secret)"}
 		}
+		if _, ok := p.Step.Args.(*module.Certbot); ok && p.Step.Secret {
+			for j, c := range steps[i].Result.Changes {
+				if key, _, _ := strings.Cut(c, " "); strings.HasSuffix(key, "_hook") {
+					steps[i].Result.Changes[j] = key + " (secret)"
+				}
+			}
+		}
 		if steps[i].Result.Status != module.OK {
 			changed = true
 			for _, n := range p.Notify {
@@ -505,6 +512,8 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		return add("the host name", m)
 	case *module.Timezone:
 		return add("the time zone", m)
+	case *module.Certbot:
+		return add("the certificate "+m.Name, m)
 	}
 	return nil
 }

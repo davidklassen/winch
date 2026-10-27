@@ -169,7 +169,8 @@ func checkDemo(t *testing.T, vm *vmtest.VM, peer string) {
 		"/etc/sudoers.d":           "README admin",
 		"/etc/fail2ban/jail.d":     "defaults-debian.conf mail.conf",
 		"/etc/monit/conf.d":        "inside outside settings",
-		"/etc/dovecot/conf.d":      "10-auth.conf 10-mail.conf 10-master.conf 10-ssl.conf 15-mailboxes.conf 20-imap.conf 20-lmtp.conf 90-sieve-extprograms.conf 90-sieve.conf",
+		"/etc/dovecot/conf.d":      "10-auth.conf 10-mail.conf 10-master.conf 10-ssl.conf 15-mailboxes.conf 20-imap.conf 20-lmtp.conf 90-sieve-extprograms.conf 90-sieve.conf 99-local.conf",
+		"/etc/letsencrypt/renewal": vm.Name + ".conf example.com.conf mta-sts.example.com.conf",
 	} {
 		if out := vm.MustRun(t, "ls "+dir+" | tr '\\n' ' '"); out != want+" " {
 			t.Errorf("%s holds %q, want %q", dir, out, want)
@@ -180,6 +181,13 @@ func checkDemo(t *testing.T, vm *vmtest.VM, peer string) {
 	}
 	if out := vm.MustRun(t, "fail2ban-client status | grep 'Jail list'"); !strings.Contains(out, "dovecot, postfix-sasl, sshd") {
 		t.Errorf("fail2ban jails: %q", out)
+	}
+	// The certificates come from Pebble, which signs with a root of its own.
+	if out := vm.MustRun(t, "curl -sk https://localhost:15000/roots/0 > /root/pebble-root.pem && curl -s --cacert /root/pebble-root.pem --resolve example.com:443:127.0.0.1 https://example.com/about"); !strings.Contains(out, "<h1>About</h1>") {
+		t.Errorf("https://example.com/about = %q", out)
+	}
+	if out := vm.MustRun(t, "echo | openssl s_client -connect localhost:993 -CAfile /root/pebble-root.pem -verify_return_error 2>/dev/null | openssl x509 -noout -ext subjectAltName | tail -1"); out != "    DNS:"+vm.Name+"\n" {
+		t.Errorf("the TLS of dovecot: %q", out)
 	}
 }
 

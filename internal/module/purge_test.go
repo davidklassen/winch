@@ -42,6 +42,7 @@ func TestWrites(t *testing.T) {
 		{"cmd creates", &Cmd{Command: "x", Creates: "/etc/x/done"}, []string{"/etc/x/done"}},
 		{"hostname", &Hostname{Name: "mail"}, []string{"/etc/hostname"}},
 		{"timezone", &Timezone{Name: "Etc/UTC"}, []string{"/etc/localtime", "/etc/timezone"}},
+		{"certbot", &Certbot{Name: "example.com"}, []string{"/etc/letsencrypt/renewal/example.com.conf", "/etc/letsencrypt/live/example.com", "/etc/letsencrypt/archive/example.com"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

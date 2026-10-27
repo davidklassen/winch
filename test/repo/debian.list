@@ -33,3 +33,9 @@ monit
 python3-dnspython
 # The lockout tests and the demo's nftables recipe.
 nftables
+# The certbot tests, with Pebble, the ACME test server.
+certbot
+python3-certbot-nginx
+python3-certbot-apache
+apache2
+pebble

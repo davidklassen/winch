@@ -69,3 +69,7 @@ func present(absent bool, p string) []string {
 func (h *Hostname) Writes() []string { return []string{hostnameFile} }
 
 func (z *Timezone) Writes() []string { return []string{localtime, timezoneFile} }
+
+func (c *Certbot) Writes() []string {
+	return []string{renewalPath(letsencrypt, c.Name), path.Join(letsencrypt, "live", c.Name), path.Join(letsencrypt, "archive", c.Name)}
+}

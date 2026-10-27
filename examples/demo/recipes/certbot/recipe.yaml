@@ -1,0 +1,27 @@
+# Before the sites, Postfix, and Dovecot: their configs name these files.
+vars:
+  certbot_email: !expr vars.admin_email
+
+steps:
+  - pkg:
+      name: [certbot, python3-certbot-nginx]
+  - name: Mail certificate, key kept for the TLSA 3 1 1 record
+    certbot:
+      name: !expr host.name
+      domains: !expr '[host.name]'
+      email: !expr vars.certbot_email
+      reuse_key: true
+      # On a new host, Dovecot comes after this recipe.
+      deploy_hook: |
+        systemctl try-reload-or-restart postfix
+        if systemctl cat dovecot >/dev/null 2>&1; then systemctl try-reload-or-restart dovecot; fi
+  - certbot:
+      name: !expr vars.domain
+      domains: !expr '[vars.domain, "www." + vars.domain]'
+      email: !expr vars.certbot_email
+      deploy_hook: systemctl reload nginx
+  - certbot:
+      name: !tpl mta-sts.{{ .vars.domain }}
+      domains: !expr '["mta-sts." + vars.domain]'
+      email: !expr vars.certbot_email
+      deploy_hook: systemctl reload nginx

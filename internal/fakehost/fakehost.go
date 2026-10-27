@@ -371,7 +371,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 			return module.Result{Status: module.Change, Action: module.Modify}, nil
 		}
 		return module.Result{Status: module.OK, Deferred: true}, nil
-	case *module.Hostname, *module.Timezone:
+	case *module.Hostname, *module.Timezone, *module.Certbot:
 		c.hosts.mu.Lock()
 		defer c.hosts.mu.Unlock()
 		if res, ok := c.hosts.results[c.host+" "+m.Main()]; ok {
@@ -627,7 +627,7 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 		return res, nil
 	}
 	switch m := m.(type) {
-	case *module.Reboot, *module.Hostname, *module.Timezone:
+	case *module.Reboot, *module.Hostname, *module.Timezone, *module.Certbot:
 		return res, nil
 	case *module.User:
 		c.hosts.SetUser(c.host, m.Name)

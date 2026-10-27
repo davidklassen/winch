@@ -1,0 +1,88 @@
+mail_driver = maildir
+mail_path = ~/Maildir
+
+ssl = required
+ssl_server_cert_file = /etc/letsencrypt/live/{{ .host.name }}/fullchain.pem
+ssl_server_key_file = /etc/letsencrypt/live/{{ .host.name }}/privkey.pem
+
+# IMAP on 993 only.
+service imap-login {
+  inet_listener imap {
+    port = 0
+  }
+}
+
+service lmtp {
+  unix_listener /var/spool/postfix/private/dovecot-lmtp {
+    mode = 0600
+    user = postfix
+    group = postfix
+  }
+}
+
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+}
+
+namespace inbox {
+  mailbox Drafts {
+    auto = create
+  }
+  mailbox Trash {
+    auto = create
+  }
+  mailbox Archive {
+    auto = create
+    special_use = \Archive
+  }
+}
+
+protocol imap {
+  mail_plugins {
+    imap_sieve = yes
+  }
+  # iOS Mail drops the session after COMPRESS on 2.4.1+dfsg1-6+deb13u7.
+  imap_capability {
+    "COMPRESS=DEFLATE" = no
+  }
+}
+
+protocol lmtp {
+  mail_plugins {
+    sieve = yes
+  }
+}
+
+sieve_plugins {
+  sieve_imapsieve = yes
+  sieve_extprograms = yes
+}
+sieve_global_extensions {
+  vnd.dovecot.pipe = yes
+}
+sieve_pipe_bin_dir = /usr/lib/dovecot/sieve-pipe
+
+sieve_script spam {
+  type = after
+  path = /etc/dovecot/sieve/spam.sieve
+}
+
+# Moves into Junk teach spam, moves out of Junk teach ham.
+mailbox Junk {
+  sieve_script report-spam {
+    type = before
+    cause = copy
+    path = /etc/dovecot/sieve/report-spam.sieve
+  }
+}
+imapsieve_from Junk {
+  sieve_script report-ham {
+    type = before
+    cause = copy
+    path = /etc/dovecot/sieve/report-ham.sieve
+  }
+}

@@ -1,7 +1,15 @@
+# The demo serves the pages on port 80 too: its checks and its health gate
+# use http://localhost/.
 server {
 	listen 80;
 	listen [::]:80;
+	listen 443 ssl;
+	listen [::]:443 ssl;
 	server_name {{ .vars.domain }} www.{{ .vars.domain }};
+
+	ssl_certificate /etc/letsencrypt/live/{{ .vars.domain }}/fullchain.pem;
+	ssl_certificate_key /etc/letsencrypt/live/{{ .vars.domain }}/privkey.pem;
+	include snippets/tls.conf;
 
 	root {{ .vars.website_root }};
 

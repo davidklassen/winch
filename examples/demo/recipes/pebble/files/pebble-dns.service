@@ -1,0 +1,8 @@
+[Unit]
+Description=The DNS server of Pebble: 127.0.0.1 for every name
+
+[Service]
+ExecStart=/usr/bin/pebble-challtestsrv -defaultIPv6 "" -dns01 127.0.0.1:8053 -http01 "" -https01 "" -tlsalpn01 "" -doh "" -management 127.0.0.1:8055
+
+[Install]
+WantedBy=multi-user.target
