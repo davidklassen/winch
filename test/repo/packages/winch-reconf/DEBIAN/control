@@ -1,0 +1,6 @@
+Package: winch-reconf
+Version: 1
+Architecture: all
+Maintainer: winch
+Depends: debconf
+Description: test package that writes its debconf answer to a file

@@ -112,13 +112,26 @@ type Slot struct {
 	Runs bool
 }
 
-// shows reports whether the plan shows p.
+// shows reports whether the plan shows p as something that apply changes or
+// runs: a change, an unknown step, a handler, or a then.
 func (p Planned) shows() bool {
-	return p.Result.Status == module.Change || p.Handler != nil && p.Handler.Runs || p.ThenRuns
+	return p.Result.Status == module.Change || p.Result.Status == module.Unknown || p.Handler != nil && p.Handler.Runs || p.ThenRuns
 }
 
 func (h HostPlan) changes() bool {
 	return slices.ContainsFunc(h.Steps, Planned.shows)
+}
+
+// known reports whether the plan shows a line other than an unknown step.
+func (h HostPlan) known() bool {
+	return slices.ContainsFunc(h.Steps, func(p Planned) bool {
+		return p.shows() && (p.Result.Status != module.Unknown || p.PendingThen)
+	})
+}
+
+// deferred reports whether a step runs in apply without a change.
+func (h HostPlan) deferred() bool {
+	return slices.ContainsFunc(h.Steps, func(p Planned) bool { return p.Result.Deferred })
 }
 
 // hostRun is what the plan keeps about a host between its stages.
@@ -329,7 +342,7 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		if _, ok := p.Step.Args.(*module.Debconf); ok && p.Step.Secret && steps[i].Result.Status == module.Change {
 			steps[i].Result.Changes = []string{"answer (secret)"}
 		}
-		if steps[i].Result.Status == module.Change {
+		if steps[i].Result.Status != module.OK {
 			changed = true
 			for _, n := range p.Notify {
 				hr.notified[n] = true

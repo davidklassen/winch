@@ -92,6 +92,13 @@ func TestJSON(t *testing.T) {
 				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: !expr 'string(int(\"\u202e\" + host.name))'\n",
 			})
 		}, args: []string{"plan", "site", "--json"}},
+		{name: "plan-cmd", dir: func(t *testing.T) string {
+			return vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"inventories/test.yaml": "hosts:\n  web1: {}\n",
+				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - assert:\n          command: probe\n          message: x\n      - cmd:\n          command: apt-get clean\n",
+			})
+		}, args: []string{"plan", "site", "--json", "--exit-code"}},
 		{name: "plan-no-pipeline", dir: jsonProject, args: []string{"plan", "--json"}},
 		{name: "apply-stale-check", dir: jsonProject, args: []string{"apply", "site", "--json", "--check", "0badc0de0badc0de"}},
 		{name: "apply-confirm", dir: func(t *testing.T) string {

@@ -139,8 +139,8 @@ func (o *output) end(code int, s summary) int {
 		ExitCode int          `json:"exit_code"`
 	}{Command: s.command, ExitCode: code}
 	if s.plan != nil {
-		change, unchanged, failed := s.plan.Counts()
-		ev.Plan = &planCounts{Hosts: len(s.plan.Hosts), Change: change, Unchanged: unchanged, Failed: failed}
+		change, unchanged, unknown, failed := s.plan.Counts()
+		ev.Plan = &planCounts{Hosts: len(s.plan.Hosts), Change: change, Unchanged: unchanged, Unknown: unknown, Failed: failed}
 		ev.Hash = s.plan.Hash()
 	}
 	if a := s.apply; a != nil {

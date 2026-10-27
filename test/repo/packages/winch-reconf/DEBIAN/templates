@@ -1,0 +1,4 @@
+Template: winch-reconf/enabled
+Type: boolean
+Default: false
+Description: Enabled?

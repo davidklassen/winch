@@ -19,6 +19,7 @@ stages:
           name: curl
       - recipe: unbound
       - recipe: dkimpy_milter
+      - recipe: postfix
       - recipe: unattended_upgrades
       - recipe: rspamd
       - recipe: heartbeat

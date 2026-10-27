@@ -416,6 +416,10 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned)
 		a.rep.Step(ev)
 		return false, fmt.Errorf("%s: failed: %s: %w", ev.scope(), l, err)
 	}
+	// A step that runs a command counts as changed.
+	if res.Status == module.Unknown {
+		res.Status, res.Action = module.Change, module.Modify
+	}
 	ev.Status, ev.Action = string(res.Status), string(res.Action)
 	ev.Link = secret.Printable(res.Link)
 	a.rep.Step(ev)

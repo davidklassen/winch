@@ -1,0 +1,36 @@
+# Debian's generated main.cf plus our changes: send only, from loopback.
+smtpd_banner = $myhostname ESMTP $mail_name (Debian/GNU)
+biff = no
+append_dot_mydomain = no
+readme_directory = no
+compatibility_level = 3.6
+
+myhostname = {{ .host.name }}
+myorigin = /etc/mailname
+mydestination = $myhostname, localhost.localdomain, localhost
+relayhost =
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+mailbox_size_limit = 0
+recipient_delimiter = +
+alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
+inet_interfaces = loopback-only
+inet_protocols = ipv4
+
+# Inbound TLS
+smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem
+smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key
+smtpd_tls_security_level = may
+
+# Outbound TLS with DANE, through the local unbound
+smtp_tls_CApath = /etc/ssl/certs
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+smtp_dns_support_level = dnssec
+smtp_tls_security_level = dane
+smtp_tls_loglevel = 1
+
+# dkimpy-milter signs everything. A broken signer must not stop alerts.
+smtpd_milters = inet:127.0.0.1:8892
+non_smtpd_milters = $smtpd_milters
+milter_default_action = accept

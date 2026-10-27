@@ -472,6 +472,12 @@ func TestLoadRecipes(t *testing.T) {
 		{name: "unit-in-stage", files: map[string]string{
 			"pipelines/site.yaml": stage("      - unit:\n          name: app.service\n          source: app.service\n"),
 		}},
+		{name: "assert-then", files: map[string]string{
+			"pipelines/site.yaml": stage("      - assert:\n          command: \"true\"\n          message: x\n        then: echo done\n"),
+		}},
+		{name: "assert-notify", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe("  - assert:\n      command: \"true\"\n      message: x\n    notify: reload\nhandlers:\n  reload:\n    - service:\n        name: nginx\n        reloaded: true\n"),
+		}},
 		{name: "unit-missing-source", files: map[string]string{
 			"recipes/nginx/recipe.yaml": recipe("  - unit:\n      name: app.service\n      source: nope.service\n"),
 		}},

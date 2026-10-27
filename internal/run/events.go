@@ -1,6 +1,7 @@
 package run
 
 import (
+	"cmp"
 	"encoding/json"
 	"time"
 
@@ -72,13 +73,11 @@ func (p *Plan) WriteJSON(e *Events) {
 			}
 		}
 	}
+	kinds := p.hostKinds()
 	for _, h := range p.Hosts {
-		ev := HostEvent{Phase: "plan", Host: h.Name, Status: "ok"}
-		switch err := p.Failed[h.Name]; {
-		case err != nil:
+		ev := HostEvent{Phase: "plan", Host: h.Name, Status: cmp.Or(kinds[h.Name], "ok")}
+		if err := p.Failed[h.Name]; err != nil {
 			ev.Status, ev.Error = hostStatus(err), err.Error()
-		case p.changes(h.Name):
-			ev.Status = "change"
 		}
 		e.Host(ev)
 	}

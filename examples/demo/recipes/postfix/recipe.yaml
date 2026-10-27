@@ -1,0 +1,42 @@
+# The send-only postfix of the monitor: mail from loopback, signed by
+# dkimpy-milter.
+vars:
+  # The host that the check of outbound port 25 reaches.
+  postfix_probe_host: gmail-smtp-in.l.google.com
+
+steps:
+  - debconf:
+      package: postfix
+      question: postfix/main_mailer_type
+      type: select
+      value: Internet Site
+  - pkg:
+      name: postfix
+      recommends: false
+  - file:
+      path: /etc/mailname
+      content: !tpl "{{ .host.name }}\n"
+  - file:
+      path: /etc/postfix/main.cf
+      template: main.cf.tmpl
+      validate: postfix check
+    # inet_interfaces takes effect only after a restart.
+    notify: restart
+  - file:
+      path: /etc/aliases
+      template: aliases.tmpl
+    then: newaliases
+  - service:
+      name: postfix
+      enabled: true
+      running: true
+  - name: Outbound port 25 is open
+    assert:
+      command: !tpl "timeout 10 bash -c '</dev/tcp/$1/25' - {{ quote .vars.postfix_probe_host }}"
+      message: outbound port 25 is blocked; open it at the provider
+
+handlers:
+  restart:
+    - service:
+        name: postfix
+        restarted: true

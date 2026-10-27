@@ -198,9 +198,9 @@ func deleteOld(bin, self string) error {
 }
 
 // step checks a step. With apply, it then records the handlers that the step
-// notifies and its then, and makes the changes the check found. When the
-// changes fail, it removes the records that it added. After a download, it
-// records the checksum of the path.
+// notifies and its then, and makes the changes the check found, or runs a
+// deferred step. When the changes fail, it removes the records that it added.
+// After a download, it records the checksum of the path.
 func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, handlers, thens, downloads records, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
@@ -224,8 +224,12 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	res, err := m.Check(ctx, &s.State, note)
 	out := protocol.StepResult{Result: res, State: s.State}
-	if err != nil || !apply || res.Status == module.OK {
+	if err != nil || !apply || res.Status == module.OK && !res.Deferred {
 		return out, err
+	}
+	// A deferred step changes nothing, so it notifies nothing.
+	if res.Status == module.OK {
+		return out, m.Apply(ctx, note)
 	}
 	// The plan has shown the diff already.
 	out.Old, out.OldReason = nil, ""

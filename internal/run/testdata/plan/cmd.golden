@@ -1,0 +1,16 @@
+stdout:
+web1
+  checks
+    * assert systemctl is-active nginx
+  base
+    ? cmd apt-get clean
+
+web2
+  checks
+    * assert systemctl is-active nginx
+  build
+    + cmd make install
+
+3 hosts: 1 to change, 1 unchanged, 1 unknown
+plan f16ff6a7f82e1de8
+stderr:

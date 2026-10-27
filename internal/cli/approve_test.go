@@ -149,6 +149,14 @@ func TestExitCode(t *testing.T) {
 	if r := winch(t, pending, h, false, "", "plan", "site", "--exit-code"); r.code != exitChanges {
 		t.Errorf("a plan with only a pending handler: exit %d, want %d", r.code, exitChanges)
 	}
+	unknown := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: apt-get clean\n",
+	})
+	if r := winch(t, unknown, fakehost.New(), false, "", "plan", "site", "--exit-code"); r.code != exitChanges {
+		t.Errorf("a plan with only an unknown step: exit %d, want %d, stdout %q", r.code, exitChanges, r.out)
+	}
 	h = fakehost.New()
 	h.SetFile("web1", "/etc/motd", "hello\n")
 	h.SetFile("web2", "/etc/motd", "hello\n")

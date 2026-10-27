@@ -4,6 +4,7 @@ steps:
       question: unattended-upgrades/enable_auto_updates
       type: boolean
       value: "true"
+    notify: reconfigure
   - pkg:
       name: unattended-upgrades
       recommends: false
@@ -11,3 +12,8 @@ steps:
       path: /etc/apt/apt.conf.d/51unattended-upgrades-local
       content: |
         Unattended-Upgrade::Mail "root";
+
+handlers:
+  reconfigure:
+    - cmd:
+        command: dpkg-reconfigure -f noninteractive unattended-upgrades

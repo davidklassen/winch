@@ -1,7 +1,8 @@
 // Package fakehost is a test double for hosts: it keeps files, packages,
 // answers, and facts in memory and checks and applies file, dir, pkg,
 // service, user, group, and debconf steps against them. It keeps pending
-// handlers and then records, and runs commands as records.
+// handlers and then records, and runs commands, cmd steps, and asserts as
+// records.
 package fakehost
 
 import (
@@ -302,6 +303,18 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if p, ok := m.(*module.Pkg); ok {
 		return c.checkPkg(p, st), nil
 	}
+	switch m := m.(type) {
+	case *module.Cmd:
+		if m.Creates == "" {
+			return module.Result{Status: module.Unknown}, nil
+		}
+		if _, ok := c.hosts.File(c.host, m.Creates); ok {
+			return module.Result{Status: module.OK}, nil
+		}
+		return module.Result{Status: module.Change, Action: module.Create}, nil
+	case *module.Assert:
+		return module.Result{Status: module.OK, Deferred: true}, nil
+	}
 	if d, ok := m.(*module.Dir); ok {
 		return c.checkDir(d), nil
 	}
@@ -456,6 +469,15 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 	}
 	fresh := st.IndexFresh
 	res, err := c.Check(ctx, name, m, st)
+	if a, ok := m.(*module.Assert); ok {
+		c.hosts.mu.Lock()
+		defer c.hosts.mu.Unlock()
+		c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "assert "+a.Command)
+		if c.hosts.failCmd[c.host+" "+a.Command] {
+			return module.Result{}, errors.New(a.Message)
+		}
+		return res, nil
+	}
 	if err != nil || res.Status == module.OK {
 		return res, err
 	}
@@ -479,6 +501,15 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 		c.hosts.thens[c.host] = append(c.hosts.thens[c.host], *then)
 	}
 	c.hosts.mu.Unlock()
+	if cm, ok := m.(*module.Cmd); ok {
+		c.hosts.mu.Lock()
+		defer c.hosts.mu.Unlock()
+		c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "cmd "+cm.Command)
+		if c.hosts.failCmd[c.host+" "+cm.Command] {
+			return module.Result{}, fmt.Errorf("%s: exit status 1", cm.Command)
+		}
+		return res, nil
+	}
 	if sv, ok := m.(*module.Service); ok {
 		c.hosts.mu.Lock()
 		defer c.hosts.mu.Unlock()

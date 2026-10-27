@@ -1,0 +1,7 @@
+stdout:
+{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"assert probe","module":"assert","status":"ok"}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#2","stage":"base","step":"cmd apt-get clean","module":"cmd","status":"unknown"}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"unknown"}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":0,"unchanged":0,"unknown":1,"failed":0},"hash":"9fc89514cf899cb4","exit_code":2}
+stderr:

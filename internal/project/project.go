@@ -812,6 +812,13 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 	if st.Module == "" {
 		return Step{}, yamlx.Errorf(n.Pos, "a step needs a module")
 	}
+	if st.Module == "assert" {
+		for _, p := range n.Pairs {
+			if p.Key == "then" || p.Key == "notify" {
+				return Step{}, yamlx.Errorf(p.KeyPos, "an assert changes nothing; it cannot use %s", p.Key)
+			}
+		}
+	}
 	if r == nil {
 		for _, p := range argsNode.Pairs {
 			if slices.Contains(recipeOnly[st.Module], p.Key) {

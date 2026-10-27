@@ -128,6 +128,15 @@ func checkDemo(t *testing.T, vm *vmtest.VM, peer string) {
 	if out := vm.MustRun(t, "echo 'GET unattended-upgrades/enable_auto_updates' | debconf-communicate 2>/dev/null"); out != "0 true\n" {
 		t.Errorf("the answer of unattended-upgrades: %q", out)
 	}
+	if out := vm.MustRun(t, "grep -o 'Unattended-Upgrade \"[01]\"' /etc/apt/apt.conf.d/20auto-upgrades"); out != "Unattended-Upgrade \"1\"\n" {
+		t.Errorf("the unattended upgrades: %q", out)
+	}
+	if out := vm.MustRun(t, "systemctl is-active postfix; postconf -h inet_interfaces myorigin; postalias -q root /etc/aliases"); out != "active\nloopback-only\n/etc/mailname\nwebmaster@example.com\n" {
+		t.Errorf("the postfix recipe: %q", out)
+	}
+	if out := vm.MustRun(t, "ss -Hltn 'sport = :25' | awk '{print $4}'"); out != "127.0.0.1:25\n" {
+		t.Errorf("postfix listens on %q, want only 127.0.0.1:25", out)
+	}
 }
 
 // rotatePassword gives the website a new password in the inventory of the

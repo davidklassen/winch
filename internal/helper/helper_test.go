@@ -595,3 +595,74 @@ func mkdir(t *testing.T, name string) {
 		t.Fatal(err)
 	}
 }
+
+// spec: Running a pipeline/Apply
+func TestApplyUnknown(t *testing.T) {
+	c := start(t, t.TempDir(), "")
+	c.call(t, "hello", hello("r1"))
+	out := filepath.Join(t.TempDir(), "ran")
+	args, _ := json.Marshal(module.Cmd{Command: "touch " + out})
+	r := c.call(t, "check", protocol.Step{Module: "cmd", Args: args})
+	var res protocol.StepResult
+	if err := json.Unmarshal(r.Result, &res); err != nil || r.Error != "" || res.Status != module.Unknown {
+		t.Fatalf("check = %s %q, want unknown", r.Result, r.Error)
+	}
+	r = c.call(t, "apply", protocol.Step{Module: "cmd", Args: args})
+	if err := json.Unmarshal(r.Result, &res); err != nil || r.Error != "" || res.Status != module.Unknown {
+		t.Errorf("apply = %s %q, want unknown", r.Result, r.Error)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Errorf("apply did not run the command: %v", err)
+	}
+}
+
+// spec: Handlers; Modules/assert
+func TestDeferredRecordsNothing(t *testing.T) {
+	c := start(t, t.TempDir(), "")
+	h := hello("r1")
+	h.Project = "acme"
+	c.call(t, "hello", h)
+	args, _ := json.Marshal(module.Assert{Command: "true", Message: "x"})
+	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args, Notify: []string{"app.reload"}, Then: &protocol.Then{Recipe: "app", Step: 1}}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if p := pendingAll(t, c); len(p.Handlers) != 0 || len(p.Then) != 0 {
+		t.Errorf("records after an assert: %+v", p)
+	}
+}
+
+// spec: Running a pipeline/Apply (the second check decides)
+func TestApplyChecksAgain(t *testing.T) {
+	c := start(t, t.TempDir(), "")
+	c.call(t, "hello", hello("r1"))
+	dir := t.TempDir()
+	made, ran := filepath.Join(dir, "made"), filepath.Join(dir, "ran")
+	args, _ := json.Marshal(module.Cmd{Command: "touch " + ran, Creates: made})
+	write(t, made, "")
+	if r := c.call(t, "apply", protocol.Step{Module: "cmd", Args: args}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("the command ran although its creates exists")
+	}
+}
+
+// spec: Modules/assert
+func TestApplyDeferred(t *testing.T) {
+	c := start(t, t.TempDir(), "")
+	c.call(t, "hello", hello("r1"))
+	out := filepath.Join(t.TempDir(), "ran")
+	args, _ := json.Marshal(module.Assert{Command: "touch " + out, Message: "x"})
+	r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args})
+	var res protocol.StepResult
+	if err := json.Unmarshal(r.Result, &res); err != nil || r.Error != "" || res.Status != module.OK {
+		t.Errorf("apply = %s %q, want ok", r.Result, r.Error)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Errorf("apply did not run the command: %v", err)
+	}
+	args, _ = json.Marshal(module.Assert{Command: "exit 1", Message: "the port is blocked"})
+	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args}); r.Error != "the port is blocked" {
+		t.Errorf("a failing assert: error %q, want the message", r.Error)
+	}
+}

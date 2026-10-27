@@ -1,0 +1,6 @@
+#!/bin/sh
+# Writes the answer, as dpkg-reconfigure runs it again.
+set -e
+. /usr/share/debconf/confmodule
+db_get winch-reconf/enabled
+echo "$RET" > /etc/winch-reconf

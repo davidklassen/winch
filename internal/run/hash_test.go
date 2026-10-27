@@ -42,6 +42,9 @@ var hashFiles = map[string]string{
       - dir:
           path: /srv/old
           absent: true
+      - cmd:
+          command: make
+          creates: /srv/built
       - dir:
           path: /srv/www
           replace: true
@@ -148,6 +151,7 @@ func TestHashChanges(t *testing.T) {
 		{name: "a handler step", files: func(t *testing.T) map[string]string {
 			return edit(t, "recipes/app/recipe.yaml", "reloaded: true", "restarted: true")
 		}},
+		{name: "a cmd whose creates exists", setup: func(h *fakehost.Hosts) { h.SetFile("web1", "/srv/built", "") }},
 		{name: "a pending handler", setup: func(h *fakehost.Hosts) { h.SetPending("web1", "app.reload") }},
 		{name: "a pending then", setup: func(h *fakehost.Hosts) {
 			h.SetThen("web2", protocol.Then{Pipeline: "site", Stage: "extra", Step: 1})

@@ -12,41 +12,51 @@ import (
 	"github.com/davidklassen/winch/internal/secret"
 )
 
-// Counts returns the number of hosts with changes, without changes, and
-// failed.
-func (p *Plan) Counts() (change, unchanged, failed int) {
+// Counts returns the number of hosts with changes, without changes, with
+// only unknown steps, and failed.
+func (p *Plan) Counts() (change, unchanged, unknown, failed int) {
+	kinds := p.hostKinds()
 	for _, h := range p.Hosts {
 		switch {
 		case p.Failed[h.Name] != nil:
 			failed++
-		case p.changes(h.Name):
+		case kinds[h.Name] == "change":
 			change++
+		case kinds[h.Name] == "unknown":
+			unknown++
 		default:
 			unchanged++
 		}
 	}
-	return change, unchanged, failed
+	return change, unchanged, unknown, failed
 }
 
-// changes reports whether the host has changes in a stage.
-func (p *Plan) changes(host string) bool {
+// hostKinds returns "change" for each host whose plan has a change, and
+// "unknown" for each host whose plan has only unknown steps.
+func (p *Plan) hostKinds() map[string]string {
+	kinds := map[string]string{}
 	for _, sp := range p.Stages {
 		for _, hp := range sp.Hosts {
-			if hp.Host.Name == host && hp.changes() {
-				return true
+			switch {
+			case hp.known():
+				kinds[hp.Host.Name] = "change"
+			case hp.changes() && kinds[hp.Host.Name] == "":
+				kinds[hp.Host.Name] = "unknown"
 			}
 		}
 	}
-	return false
+	return kinds
 }
 
 // Write prints the changes per host, hosts with the same changes together,
 // then the summary and the plan hash. Failures go to errOut.
 func (p *Plan) Write(out, errOut *color.Writer) {
 	bodies := map[string]*color.Text{}
+	kinds := p.hostKinds()
 	for _, sp := range p.Stages {
 		for _, hp := range sp.Hosts {
-			if !hp.changes() {
+			// A deferred step runs in each stage of a host that apply runs.
+			if !hp.changes() && (!hp.deferred() || kinds[hp.Host.Name] == "") {
 				continue
 			}
 			b := bodies[hp.Host.Name]
@@ -57,7 +67,7 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 			header(b, "  ", sp.Stage.Name)
 			var in *project.Step
 			for _, p := range hp.Steps {
-				if !p.shows() {
+				if !p.shows() && !p.Result.Deferred {
 					continue
 				}
 				indent := "    "
@@ -77,7 +87,7 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 					}
 					continue
 				}
-				if p.Result.Status == module.Change {
+				if p.Result.Status != module.OK || p.Result.Deferred {
 					writeStep(b, indent, p.Step, p.Result)
 				}
 				switch {
@@ -87,7 +97,7 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 					fmt.Fprintf(b, "%s    then:%s\n", indent, command(p.Step.ShownThen(), indent+"      "))
 				}
 			}
-			if h := sp.Stage.Health; h != nil {
+			if h := sp.Stage.Health; h != nil && hp.changes() {
 				markLine(b, "    ", "*", " health:"+command(h.Command, "        ")+"\n")
 			}
 		}
@@ -124,9 +134,9 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 			hostError(errOut, h.Name, err.Error())
 		}
 	}
-	change, unchanged, failed := p.Counts()
-	fmt.Fprintf(out, "%s: %d to change, %d unchanged, 0 unknown%s\nplan %s\n",
-		hosts(len(p.Hosts)), change, unchanged, failures(failed), p.Hash())
+	change, unchanged, unknown, failed := p.Counts()
+	fmt.Fprintf(out, "%s: %d to change, %d unchanged, %d unknown%s\nplan %s\n",
+		hosts(len(p.Hosts)), change, unchanged, unknown, failures(failed), p.Hash())
 }
 
 var markStyles = map[string]color.Style{"+": color.Green, "-": color.Red, "~": color.Yellow, "!": color.Cyan, "*": color.Cyan}
@@ -193,7 +203,14 @@ func linkNote(link string) string {
 }
 
 func writeStep(t *color.Text, indent string, st project.Step, res module.Result) {
-	markLine(t, indent, marks[res.Action], " "+label(st)+linkNote(res.Link)+"\n")
+	mark := marks[res.Action]
+	switch {
+	case res.Status == module.Unknown:
+		mark = "?"
+	case res.Deferred:
+		mark = "*"
+	}
+	markLine(t, indent, mark, " "+label(st)+linkNote(res.Link)+"\n")
 	for _, c := range res.Changes {
 		fmt.Fprintf(t, "%s    %s\n", indent, secret.Printable(c))
 	}

@@ -18,6 +18,9 @@ type Status string
 const (
 	OK     Status = "ok"
 	Change Status = "change"
+	// Unknown is the status of a step that cannot know whether it changes
+	// something: a cmd without creates.
+	Unknown Status = "unknown"
 )
 
 type Action string
@@ -34,7 +37,8 @@ const (
 // text, or is larger than 1 MiB. Link is
 // the target of the symbolic link at the path that the step follows.
 // StartedBy are the active or enabled units that start the unit that a
-// service step stops or disables; the plan needs a step for each.
+// service step stops or disables; the plan needs a step for each. Deferred
+// marks a step that runs during apply without a change, such as an assert.
 type Result struct {
 	Status    Status   `json:"status"`
 	Action    Action   `json:"action,omitempty"`
@@ -43,6 +47,7 @@ type Result struct {
 	OldReason string   `json:"old_reason,omitempty"`
 	Link      string   `json:"link,omitempty"`
 	StartedBy []string `json:"started_by,omitempty"`
+	Deferred  bool     `json:"deferred,omitempty"`
 }
 
 // State is what earlier steps of the run did on the host. The controller
@@ -84,6 +89,8 @@ type WithContent interface {
 }
 
 var modules = map[string]func() Module{
+	"assert":   func() Module { return new(Assert) },
+	"cmd":      func() Module { return new(Cmd) },
 	"debconf":  func() Module { return new(Debconf) },
 	"dir":      func() Module { return new(Dir) },
 	"download": func() Module { return new(Download) },
