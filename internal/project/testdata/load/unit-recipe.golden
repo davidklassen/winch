@@ -1,0 +1,8 @@
+project acme, inventory inventories/test.yaml
+host web1 address=192.0.2.1 user=admin
+host web2 address=web2 user=deploy
+pipeline site
+stage web hosts=all targets=web1,web2
+  recipe nginx name="Web server" at pipelines/site.yaml:5:9
+    unit {"name":"app.service"} data="[Service]\nExecStart=/bin/true\n" at recipes/nginx/recipe.yaml:2:5
+  file {"path":"/etc/issue"} data="x" at pipelines/site.yaml:7:9

@@ -1,0 +1,8 @@
+[Unit]
+Description=Write the time to /run/heartbeat
+
+[Service]
+ExecStart=/bin/sh -c 'while true; do date > /run/heartbeat; sleep 10; done'
+
+[Install]
+WantedBy=multi-user.target

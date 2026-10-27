@@ -21,6 +21,7 @@ stages:
       - recipe: dkimpy_milter
       - recipe: unattended_upgrades
       - recipe: rspamd
+      - recipe: heartbeat
 
   # One web host at a time; the next starts when the site answers.
   - name: web

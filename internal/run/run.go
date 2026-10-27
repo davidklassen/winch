@@ -442,6 +442,8 @@ func (hr *hostRun) same(st project.Step, where string) error {
 	switch m := st.Args.(type) {
 	case *module.File, *module.Dir, *module.Link, *module.Download:
 		return add("the path "+m.Main(), m)
+	case *module.Unit:
+		return add("the path "+m.Path(), m)
 	case *module.Pkg:
 		for _, n := range m.Name {
 			c := *m

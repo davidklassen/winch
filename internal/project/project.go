@@ -690,6 +690,9 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 	return pl, nil
 }
 
+// recipeOnly are the arguments that read a recipe's files or templates.
+var recipeOnly = map[string][]string{"file": {"template", "source"}, "repo": {"key"}, "unit": {"source"}}
+
 var stepFields = []string{"name", "recipe", "vars", "when", "loop", "then", "notify"}
 
 const thenInLoop = "then runs once after the last element; it cannot use item"
@@ -811,7 +814,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 	}
 	if r == nil {
 		for _, p := range argsNode.Pairs {
-			if st.Module == "file" && (p.Key == "template" || p.Key == "source") || st.Module == "repo" && p.Key == "key" {
+			if slices.Contains(recipeOnly[st.Module], p.Key) {
 				if kind == runStep {
 					return Step{}, yamlx.Errorf(p.Value.Pos, "winch run cannot use %s; use it in a recipe", p.Key)
 				}
@@ -822,6 +825,11 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 	if f, ok := st.Args.(*module.File); ok {
 		var err error
 		if st.tmpl, err = r.content(f, st.loop != nil); err != nil {
+			return Step{}, err
+		}
+	}
+	if u, ok := st.Args.(*module.Unit); ok {
+		if err := r.unitContent(u); err != nil {
 			return Step{}, err
 		}
 	}
@@ -1318,6 +1326,11 @@ func (st Step) instance(e *Env) (Step, any, error) {
 		args = yamlx.Value(n)
 		if f, ok := m.(*module.File); ok {
 			if st.tmpl, err = st.in.content(f, st.loop != nil); err != nil {
+				return Step{}, nil, err
+			}
+		}
+		if u, ok := m.(*module.Unit); ok {
+			if err := st.in.unitContent(u); err != nil {
 				return Step{}, nil, err
 			}
 		}

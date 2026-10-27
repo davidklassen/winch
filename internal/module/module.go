@@ -94,6 +94,7 @@ var modules = map[string]func() Module{
 	"pkg":      func() Module { return new(Pkg) },
 	"repo":     func() Module { return new(Repo) },
 	"service":  func() Module { return new(Service) },
+	"unit":     func() Module { return new(Unit) },
 	"upgrade":  func() Module { return new(Upgrade) },
 	"user":     func() Module { return new(User) },
 }

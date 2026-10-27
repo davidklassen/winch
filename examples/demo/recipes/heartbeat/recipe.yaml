@@ -1,0 +1,22 @@
+# A small service that no package ships, and a timer that logs its last
+# beat.
+steps:
+  - unit:
+      name: !expr item
+      source: !expr item
+    loop: [heartbeat.service, heartbeat-report.service, heartbeat-report.timer]
+    notify: restart
+  - service:
+      name: heartbeat
+      enabled: true
+      running: true
+  - service:
+      name: heartbeat-report.timer
+      enabled: true
+      running: true
+
+handlers:
+  restart:
+    - service:
+        name: heartbeat
+        restarted: true

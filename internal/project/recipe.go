@@ -258,6 +258,16 @@ func (r *Recipe) content(f *module.File, loops bool) (*template.Template, error)
 	return nil, nil
 }
 
+// unitContent sets the data of a unit step of r from its source file.
+func (r *Recipe) unitContent(u *module.Unit) error {
+	data, err := r.readFile("files", u.Source)
+	if err != nil {
+		return yamlx.Errorf(u.SourcePos, "source: %v", err)
+	}
+	u.Data = data
+	return nil
+}
+
 // key sets the key data of a repo step of r from its key file, and returns
 // its warnings.
 func (r *Recipe) key(k *module.Repo) ([]*yamlx.Error, error) {

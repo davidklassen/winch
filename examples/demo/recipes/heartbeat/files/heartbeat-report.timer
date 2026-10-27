@@ -1,0 +1,8 @@
+[Unit]
+Description=Log the last heartbeat every hour
+
+[Timer]
+OnCalendar=hourly
+
+[Install]
+WantedBy=timers.target

@@ -292,6 +292,13 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if ctx.Err() != nil {
 		return module.Result{}, fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
 	}
+	if u, ok := m.(*module.Unit); ok {
+		res, err := c.Check(ctx, name, u.File(), st)
+		if res.Status == module.Change {
+			res.Changes = append(res.Changes, "daemon-reload")
+		}
+		return res, err
+	}
 	if p, ok := m.(*module.Pkg); ok {
 		return c.checkPkg(p, st), nil
 	}
@@ -451,6 +458,9 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 	res, err := c.Check(ctx, name, m, st)
 	if err != nil || res.Status == module.OK {
 		return res, err
+	}
+	if u, ok := m.(*module.Unit); ok {
+		m = u.File()
 	}
 	// A failed apply keeps no record of this call.
 	if sv, ok := m.(*module.Service); ok && c.hosts.fails(c.hosts.failApply, c.host, sv.Name) {

@@ -14,6 +14,7 @@ var controllerOnly = map[string][]string{
 	"download": {"Recorded"},
 	"file":     {"Content", "Template", "TemplatePos", "Source", "SourcePos"},
 	"repo":     {"Key", "KeyPos"},
+	"unit":     {"Source", "SourcePos"},
 }
 
 // fill sets every exported field of v to a value that is not zero.

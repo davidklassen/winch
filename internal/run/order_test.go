@@ -299,6 +299,33 @@ handlers:
           name: staff
           gid: 1500
 `), "", "s: group staff: the group staff is also in s: group staff, with other arguments"},
+		{"a unit and a file on one path", steps(`      - recipe: web
+      - file:
+          path: /etc/systemd/system/app.service
+          content: "[Service]\n"
+`), `steps:
+  - unit:
+      name: app.service
+      source: app.service
+`, "s: file /etc/systemd/system/app.service: the path /etc/systemd/system/app.service is also in web: unit app.service, with other arguments"},
+		{"one unit from two files", steps(`      - recipe: web
+`), `steps:
+  - unit:
+      name: app.service
+      source: app.service
+  - unit:
+      name: app.service
+      source: other.service
+`, "web: unit app.service: the path /etc/systemd/system/app.service is also in web: unit app.service, with other arguments"},
+		{"a unit and a service step on one unit", steps(`      - recipe: web
+`), `steps:
+  - unit:
+      name: nginx.service
+      source: app.service
+  - service:
+      name: nginx
+      running: true
+`, ""},
 		{"two lines with other matches on one path", steps(`      - line:
           path: /etc/redis/redis.conf
           line: port 6380
@@ -369,6 +396,8 @@ handlers:
 			}
 			if tt.recipe != "" {
 				files["recipes/web/recipe.yaml"] = tt.recipe
+				files["recipes/web/files/app.service"] = "[Service]\nExecStart=/bin/sleep infinity\n"
+				files["recipes/web/files/other.service"] = "[Service]\nExecStart=/bin/true\n"
 			}
 			dir := vmtest.WriteProject(t, files)
 			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})

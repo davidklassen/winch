@@ -1,0 +1,6 @@
+[Unit]
+Description=Log the last heartbeat
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/logger -t heartbeat -f /run/heartbeat

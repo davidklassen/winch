@@ -69,6 +69,7 @@ func TestRunArgs(t *testing.T) {
 		{"a wrong type", []string{"web1", "pkg", "name=htop", "recommends=yes"}, `winch run: recommends=yes: recommends: expected true or false, got the string "yes"`},
 		{"template", []string{"web1", "file", "path=/x", "template=a.tmpl"}, "winch run: template=a.tmpl: winch run cannot use template; use it in a recipe"},
 		{"source", []string{"web1", "file", "path=/x", "source=a"}, "winch run: source=a: winch run cannot use source; use it in a recipe"},
+		{"unit source", []string{"web1", "unit", "name=app.service", "source=app.service"}, "winch run: source=app.service: winch run cannot use source; use it in a recipe"},
 		{"unknown host", []string{"web9", "pkg", "name=htop"}, `winch run: unknown host or group "web9" in inventories/test.yaml; did you mean "web1"?`},
 		{"no host", []string{"none", "pkg", "name=htop"}, `winch run: the host pattern "none" matches no host`},
 		{"a YAML error", []string{"web1", "file", "path=/x", "content=[a"}, "winch run: content=[a: "},

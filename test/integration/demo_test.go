@@ -122,6 +122,9 @@ func checkDemo(t *testing.T, vm *vmtest.VM, peer string) {
 	if out := vm.MustRun(t, "apt-cache policy rspamd | grep -c 10.0.2.100/signed"); out == "0\n" {
 		t.Errorf("rspamd does not come from the signed source")
 	}
+	if out := vm.MustRun(t, "systemctl is-active heartbeat heartbeat-report.timer; systemctl is-enabled heartbeat heartbeat-report.timer"); out != "active\nactive\nenabled\nenabled\n" {
+		t.Errorf("the heartbeat recipe: %q", out)
+	}
 	if out := vm.MustRun(t, "echo 'GET unattended-upgrades/enable_auto_updates' | debconf-communicate 2>/dev/null"); out != "0 true\n" {
 		t.Errorf("the answer of unattended-upgrades: %q", out)
 	}

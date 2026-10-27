@@ -112,6 +112,12 @@ func describeStep(b *strings.Builder, indent string, st Step) {
 		args, _ = json.Marshal(&c)
 		data = fmt.Sprintf(" data=%q", f.Data)
 	}
+	if u, ok := st.Args.(*module.Unit); ok && u.Data != nil {
+		c := *u
+		c.Data = nil
+		args, _ = json.Marshal(&c)
+		data = fmt.Sprintf(" data=%q", u.Data)
+	}
 	fmt.Fprintf(b, "%s%s %s%s%s at %s\n", indent, st.Module, strings.Replace(string(args), `,"data":null`, "", 1), data, name, st.Pos)
 }
 
@@ -458,6 +464,16 @@ func TestLoadRecipes(t *testing.T) {
 		}},
 		{name: "missing-source", files: map[string]string{
 			"recipes/nginx/recipe.yaml": recipe("  - file:\n      path: /a\n      source: nope.conf\n"),
+		}},
+		{name: "unit-recipe", files: map[string]string{
+			"recipes/nginx/recipe.yaml":       recipe("  - unit:\n      name: app.service\n      source: app.service\n"),
+			"recipes/nginx/files/app.service": "[Service]\nExecStart=/bin/true\n",
+		}},
+		{name: "unit-in-stage", files: map[string]string{
+			"pipelines/site.yaml": stage("      - unit:\n          name: app.service\n          source: app.service\n"),
+		}},
+		{name: "unit-missing-source", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe("  - unit:\n      name: app.service\n      source: nope.service\n"),
 		}},
 		{name: "source-is-directory", files: map[string]string{
 			"recipes/nginx/recipe.yaml": recipe("  - file:\n      path: /a\n      source: snippets\n"),
