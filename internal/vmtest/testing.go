@@ -145,7 +145,8 @@ type Case struct {
 	// State is the state of the run before the step.
 	State module.State
 	Args  module.Module
-	// Want is the result of the check, and of the apply without Old.
+	// Want is the result of the check, and of the apply without Old and
+	// OldReason.
 	Want module.Result
 	// WantState is the state after the check and after the apply.
 	WantState module.State
@@ -217,7 +218,7 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 			}
 			// Apply returns no old content; the plan has shown the diff.
 			want := c.Want
-			want.Old = nil
+			want.Old, want.OldReason = nil, ""
 			if !equal(applied, want) {
 				t.Errorf("apply = %s, want %s", show(applied), show(want))
 			}
@@ -243,7 +244,7 @@ func equal(got, want module.Result) bool {
 	if (got.Old == nil) != (want.Old == nil) || got.Old != nil && *got.Old != *want.Old {
 		return false
 	}
-	return got.Status == want.Status && got.Action == want.Action && got.Link == want.Link && slices.Equal(got.Changes, want.Changes) && slices.Equal(got.StartedBy, want.StartedBy)
+	return got.Status == want.Status && got.Action == want.Action && got.OldReason == want.OldReason && got.Link == want.Link && slices.Equal(got.Changes, want.Changes) && slices.Equal(got.StartedBy, want.StartedBy)
 }
 
 func show(r module.Result) string {
@@ -251,5 +252,5 @@ func show(r module.Result) string {
 	if r.Old != nil {
 		old = *r.Old
 	}
-	return string(r.Status) + " " + string(r.Action) + " " + strings.Join(r.Changes, "; ") + " old=" + old + " link=" + r.Link + " started by=" + strings.Join(r.StartedBy, " ")
+	return string(r.Status) + " " + string(r.Action) + " " + strings.Join(r.Changes, "; ") + " old=" + old + " old reason=" + r.OldReason + " link=" + r.Link + " started by=" + strings.Join(r.StartedBy, " ")
 }

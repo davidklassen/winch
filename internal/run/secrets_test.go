@@ -19,9 +19,8 @@ import (
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
-// secretProject loads a project whose recipe reads the secret hunter2, and
-// returns the filter that knows its secrets.
-func secretProject(t *testing.T) (*project.Project, *secret.Filter) {
+// ageKey writes a new age identity and returns its path and its recipient.
+func ageKey(t *testing.T) (string, *age.X25519Recipient) {
 	t.Helper()
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
@@ -31,16 +30,21 @@ func secretProject(t *testing.T) (*project.Project, *secret.Filter) {
 	if err := os.WriteFile(identity, []byte(id.String()+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	rec, err := secret.ParseRecipients([]string{id.Recipient().String()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	return identity, id.Recipient()
+}
+
+// secretProject loads a project whose recipe reads the secret hunter2, and
+// returns the filter that knows its secrets.
+func secretProject(t *testing.T) (*project.Project, *secret.Filter) {
+	t.Helper()
+	identity, recipient := ageKey(t)
+	rec := []age.Recipient{recipient}
 	text, err := secret.Encrypt("hunter2", rec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + id.Recipient().String() + "]\n",
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + recipient.String() + "]\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      monit_password: !secret " + text + "\n",
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: monit\n",
 		"recipes/monit/recipe.yaml": `vars:
@@ -124,24 +128,14 @@ func TestSecretsFailedStep(t *testing.T) {
 
 // spec: Variables/Secrets in output; Modules/debconf
 func TestSecretAnswer(t *testing.T) {
-	id, err := age.GenerateX25519Identity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	identity := filepath.Join(t.TempDir(), "age.key")
-	if err := os.WriteFile(identity, []byte(id.String()+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	rec, err := secret.ParseRecipients([]string{id.Recipient().String()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	identity, recipient := ageKey(t)
+	rec := []age.Recipient{recipient}
 	text, err := secret.Encrypt("new-token", rec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + id.Recipient().String() + "]\nvars:\n  token:\n",
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + recipient.String() + "]\nvars:\n  token:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: !secret " + text + "\n",
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -172,4 +166,44 @@ func TestSecretAnswer(t *testing.T) {
 			t.Errorf("the plan shows %q", s)
 		}
 	}
+}
+
+// spec: Variables/Secrets in output; CLI/Output
+func TestSecretContentReasons(t *testing.T) {
+	identity, recipient := ageKey(t)
+	rec := []age.Recipient{recipient}
+	key, err := secret.Encrypt("0\x82\x00\x01\xff", rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	big, err := secret.Encrypt(strings.Repeat("s", 1<<20+1), rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + recipient.String() + "]\nvars:\n  tls_key:\n  big:\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      tls_key: !secret " + key + "\n      big: !secret " + big + "\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/ssl/key.der
+          content: !expr vars.tls_key
+      - file:
+          path: /etc/big
+          content: !expr vars.big
+      - file:
+          path: /etc/big.conf
+          content: !tpl "key: {{ .vars.big }}\n"
+`,
+	})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := run.MakePlan(context.Background(), p, fakehost.New().Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	golden.Assert(t, filepath.Join("testdata", "secrets", "content-reasons.golden"), output(&out, &errOut))
 }

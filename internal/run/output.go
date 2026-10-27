@@ -215,17 +215,23 @@ func diffStyle(line string) color.Style {
 // it.
 func diffLines(st project.Step, res module.Result) []string {
 	t, ok := st.Args.(module.WithContent)
-	if res.Old == nil || !ok {
+	if res.Old == nil && res.OldReason == "" || !ok {
 		return nil
 	}
 	text, reason := t.Text()
+	if res.OldReason != "" {
+		reason = res.OldReason
+	}
+	hidden := st.Shown != nil && st.Shown.Hidden
+	masked := st.Shown != nil && st.Shown.Lines != nil
 	var d []byte
 	switch {
+	// The reason can come from the secret.
+	case hidden || reason != "" && masked:
+		return []string{secret.Mark}
 	case reason != "":
 		return []string{"content (" + reason + ")"}
-	case st.Shown != nil && st.Shown.Hidden:
-		d = []byte(secret.Mark + "\n")
-	case st.Shown != nil && st.Shown.Lines != nil:
+	case masked:
 		d = secret.Diff([]byte(*res.Old), st.Shown.Lines)
 	default:
 		d = diff.Diff([]byte(*res.Old), text)

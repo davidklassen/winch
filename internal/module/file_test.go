@@ -197,10 +197,10 @@ func TestCheckNamesWhyNoDiff(t *testing.T) {
 		old  []byte
 		want string
 	}{
-		{"not UTF-8", []byte("caf\xe9\n"), "content (not UTF-8)"},
-		{"binary", []byte("a\x00b"), "content (binary)"},
-		{"larger than 1 MiB", bytes.Repeat([]byte("a"), maxDiff+1), "content (larger than 1 MiB)"},
-		{"larger than 1 MiB with NUL", append([]byte{0}, bytes.Repeat([]byte("a"), maxDiff)...), "content (larger than 1 MiB)"},
+		{"not UTF-8", []byte("caf\xe9\n"), "not UTF-8"},
+		{"binary", []byte("a\x00b"), "binary"},
+		{"larger than 1 MiB", bytes.Repeat([]byte("a"), maxDiff+1), "larger than 1 MiB"},
+		{"larger than 1 MiB with NUL", append([]byte{0}, bytes.Repeat([]byte("a"), maxDiff)...), "larger than 1 MiB"},
 	}
 	for _, tt := range tests {
 		p := filepath.Join(t.TempDir(), "f")
@@ -213,8 +213,8 @@ func TestCheckNamesWhyNoDiff(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(res.Changes) != 1 || res.Changes[0] != tt.want || res.Old != nil {
-			t.Errorf("%s: changes %q, old %v; want [%q], nil", tt.name, res.Changes, res.Old, tt.want)
+		if res.OldReason != tt.want || res.Changes != nil || res.Old != nil {
+			t.Errorf("%s: old reason %q, changes %q, old %v; want %q, nil, nil", tt.name, res.OldReason, res.Changes, res.Old, tt.want)
 		}
 	}
 }

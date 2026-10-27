@@ -283,9 +283,7 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 		if err != nil {
 			return Result{}, fmt.Errorf("read %s: %w", f.Path, err)
 		}
-		if reason := notText(old); reason != "" {
-			res.Changes = append(res.Changes, "content ("+reason+")")
-		} else {
+		if res.OldReason = notText(old); res.OldReason == "" {
 			res.Old = new(string(old))
 		}
 	}

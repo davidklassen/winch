@@ -183,7 +183,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login uint32,
 		return out, err
 	}
 	// The plan has shown the diff already.
-	out.Old = nil
+	out.Old, out.OldReason = nil, ""
 	notified, err := handlers.add(s.Notify)
 	if err != nil {
 		return out, err

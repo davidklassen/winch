@@ -29,7 +29,9 @@ const (
 )
 
 // Result is the outcome of a check. Changes are lines for the plan. Old is
-// the current text content when the content changes, for the diff. Link is
+// the current text content when the content changes, for the diff. OldReason
+// says why Old is nil when the content changes: the current content is not
+// text, or is larger than 1 MiB. Link is
 // the target of the symbolic link at the path that the step follows.
 // StartedBy are the active or enabled units that start the unit that a
 // service step stops or disables; the plan needs a step for each.
@@ -38,6 +40,7 @@ type Result struct {
 	Action    Action   `json:"action,omitempty"`
 	Changes   []string `json:"changes,omitempty"`
 	Old       *string  `json:"old,omitempty"`
+	OldReason string   `json:"old_reason,omitempty"`
 	Link      string   `json:"link,omitempty"`
 	StartedBy []string `json:"started_by,omitempty"`
 }
