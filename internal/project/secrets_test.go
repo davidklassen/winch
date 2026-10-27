@@ -822,24 +822,53 @@ func TestRekeyInventoryFlagPaths(t *testing.T) {
 
 // spec: Variables/Secrets in output (the load warning); CLI (--inventory)
 func TestLoadWarningInventoryFlag(t *testing.T) {
+	inventory := "hosts:\n  web1:\n    vars:\n      token: " + fakeSecret(t, "ghp.txt") + "\n"
 	dir := writeProject(t, map[string]string{
 		"winch.yaml":          "name: acme\nvars:\n  token:\n",
-		"envs/prod.yaml":      "hosts:\n  web1:\n    vars:\n      token: " + fakeSecret(t, "ghp.txt") + "\n",
+		"envs/prod.yaml":      inventory,
 		"pipelines/site.yaml": "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
-	warnings, err := Validate(dir, "envs/prod.yaml", nil)
-	if err != nil {
+	abs := filepath.Join(t.TempDir(), "hosts.yaml")
+	if err := os.WriteFile(abs, []byte(inventory), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if len(warnings) != 1 || warnings[0].Pos.File != "envs/prod.yaml" {
-		t.Errorf("Validate warnings = %v, want one in envs/prod.yaml", warnings)
+	for _, file := range []string{"envs/prod.yaml", abs} {
+		want := filepath.ToSlash(file) + ":4:14: this looks like a GitHub token; use !secret"
+		warnings, err := Validate(dir, file, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(warnings) != 1 || warnings[0].Error() != want {
+			t.Errorf("Validate warnings = %v, want [%s]", warnings, want)
+		}
+		p, err := Load(t.Context(), dir, file, "site", nil, Keys{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(p.Warnings) != 1 || p.Warnings[0].Error() != want {
+			t.Errorf("Load warnings = %v, want [%s]", p.Warnings, want)
+		}
 	}
-	p, err := Load(t.Context(), dir, "envs/prod.yaml", "site", nil, Keys{})
-	if err != nil {
+}
+
+// spec: Variables/Secrets in output (the load warning)
+func TestLoadWarningInventoryOnce(t *testing.T) {
+	dir := writeProject(t, map[string]string{
+		"winch.yaml":            "name: acme\nvars:\n  token:\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: " + fakeSecret(t, "ghp.txt") + "\n",
+		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
+	})
+	if err := os.Symlink("inventories/test.yaml", filepath.Join(dir, "link.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Warnings) != 1 || p.Warnings[0].Pos.File != "envs/prod.yaml" {
-		t.Errorf("Load warnings = %v, want one in envs/prod.yaml", p.Warnings)
+	for _, file := range []string{filepath.Join(dir, "inventories/test.yaml"), "link.yaml"} {
+		warnings, err := Validate(dir, file, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(warnings) != 1 {
+			t.Errorf("--inventory %s: warnings = %v, want one", file, warnings)
+		}
 	}
 }
 

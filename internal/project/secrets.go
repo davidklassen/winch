@@ -508,10 +508,7 @@ func scanProject(dir, inventory string, cfg *Config) ([]*yamlx.Error, error) {
 	if err != nil {
 		return nil, err
 	}
-	files := []string{filepath.Join(dir, "winch.yaml")}
-	for _, y := range slices.Concat(invs, pipelines, recipes) {
-		files = append(files, filepath.Join(dir, y))
-	}
+	files := slices.Concat([]string{"winch.yaml"}, invs, pipelines, recipes)
 	for _, sub := range []string{"templates", "files"} {
 		roots, err := filepath.Glob(filepath.Join(dir, "recipes", "*", sub))
 		if err != nil {
@@ -519,12 +516,14 @@ func scanProject(dir, inventory string, cfg *Config) ([]*yamlx.Error, error) {
 		}
 		for _, root := range roots {
 			err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+				if err != nil || !d.Type().IsRegular() {
+					return err
+				}
+				rel, err := filepath.Rel(dir, path)
 				if err != nil {
 					return err
 				}
-				if d.Type().IsRegular() {
-					files = append(files, path)
-				}
+				files = append(files, filepath.ToSlash(rel))
 				return nil
 			})
 			if err != nil {
@@ -533,12 +532,20 @@ func scanProject(dir, inventory string, cfg *Config) ([]*yamlx.Error, error) {
 		}
 	}
 	var out []*yamlx.Error
-	for _, path := range files {
+	seen := map[string]bool{}
+	for _, file := range files {
+		path, err := filepath.EvalSymlinks(projectPath(dir, file))
+		if err != nil {
+			return nil, err
+		}
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}
-		rel, _ := filepath.Rel(dir, path)
 		line, last, prev := 1, -1, 0
 		for _, f := range secret.Scan(data) {
 			line += bytes.Count(data[prev:f.Offset], []byte("\n"))
@@ -547,7 +554,7 @@ func scanProject(dir, inventory string, cfg *Config) ([]*yamlx.Error, error) {
 			}
 			prev = f.Offset
 			col := f.Offset - last
-			out = append(out, yamlx.Errorf(yamlx.Pos{File: filepath.ToSlash(rel), Line: line, Col: col}, "this looks like %s; use !secret", f.What))
+			out = append(out, yamlx.Errorf(yamlx.Pos{File: file, Line: line, Col: col}, "this looks like %s; use !secret", f.What))
 		}
 	}
 	slices.SortStableFunc(out, func(a, b *yamlx.Error) int { return strings.Compare(a.Pos.File, b.Pos.File) })
