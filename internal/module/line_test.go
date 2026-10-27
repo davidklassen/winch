@@ -1,0 +1,29 @@
+package module
+
+import "testing"
+
+// spec: Modules/line
+func TestLineValidate(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"line", "path: /etc/redis/redis.conf\nline: maxmemory 256mb\nmatch: ^maxmemory \n", ""},
+		{"absent", "path: /etc/pam.d/sshd\nmatch: pam_motd\nabsent: true\n", ""},
+		{"no path", "line: a\nmatch: ^a\n", `t.yaml:1:1: missing key "path"`},
+		{"no match", "path: /etc/a\nline: a\n", `t.yaml:1:1: missing key "match"`},
+		{"relative path", "path: etc/a\nline: a\nmatch: ^a\n", `t.yaml:1:7: path: must be an absolute path`},
+		{"no line", "path: /etc/a\nmatch: ^a\n", `t.yaml:1:1: line: a line step needs line, or absent: true`},
+		{"line and absent", "path: /etc/a\nline: a\nmatch: ^a\nabsent: true\n", `t.yaml:2:7: line: absent: true takes no line`},
+		{"empty match", "path: /etc/a\nline: a\nmatch: \"\"\n", `t.yaml:3:8: match: must not be empty`},
+		{"bad match", "path: /etc/a\nline: a\nmatch: \"a(\"\n", "t.yaml:3:8: match: error parsing regexp: missing closing ): `a(`"},
+		{"two lines", "path: /etc/a\nline: \"a\\nb\"\nmatch: ^a\n", `t.yaml:2:7: line: must be one line`},
+		{"carriage return", "path: /etc/a\nline: \"a\\r\"\nmatch: ^a\n", `t.yaml:2:7: line: must be one line`},
+		{"line that match does not find", "path: /etc/a\nline: port 1\nmatch: ^Port \n", `t.yaml:2:7: line: match does not find it, so each run would add it again`},
+		{"tab", "path: /etc/a\nline: \"a\\tb\"\nmatch: ^a\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { validate(t, &Line{}, tt.yaml, tt.want) })
+	}
+}

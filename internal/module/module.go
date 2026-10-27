@@ -65,13 +65,19 @@ type Module interface {
 	Apply(ctx context.Context, note func(string)) error
 }
 
-// WithContent is a module that writes content. A check sends only the hash
-// of the content. Text returns the content and the reason the plan shows no
-// diff to it, or "" when the plan shows one.
-type WithContent interface {
+// WithText is a module whose plan shows a diff from the old text of a check
+// result. Text returns the new text and the reason the plan shows no diff to
+// it, or "" when the plan shows one.
+type WithText interface {
 	Module
-	WithoutContent() Module
 	Text() ([]byte, string)
+}
+
+// WithContent is a module that writes content. A check sends only the hash
+// of the content.
+type WithContent interface {
+	WithText
+	WithoutContent() Module
 }
 
 var modules = map[string]func() Module{
@@ -80,6 +86,7 @@ var modules = map[string]func() Module{
 	"download": func() Module { return new(Download) },
 	"file":     func() Module { return new(File) },
 	"group":    func() Module { return new(Group) },
+	"line":     func() Module { return new(Line) },
 	"link":     func() Module { return new(Link) },
 	"pkg":      func() Module { return new(Pkg) },
 	"repo":     func() Module { return new(Repo) },

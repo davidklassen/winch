@@ -214,7 +214,7 @@ func diffStyle(line string) color.Style {
 // diffLines returns the diff of the content of a step, as the output shows
 // it.
 func diffLines(st project.Step, res module.Result) []string {
-	t, ok := st.Args.(module.WithContent)
+	t, ok := st.Args.(module.WithText)
 	if res.Old == nil && res.OldReason == "" || !ok {
 		return nil
 	}
@@ -236,8 +236,13 @@ func diffLines(st project.Step, res module.Result) []string {
 	default:
 		d = diff.Diff([]byte(*res.Old), text)
 	}
+	_, isLine := st.Args.(*module.Line)
 	var lines []string
 	for _, line := range strings.SplitAfter(string(d), "\n") {
+		// The line numbers of a line step's hunk are not those of the file.
+		if isLine && strings.HasPrefix(line, "@@") {
+			continue
+		}
 		if line != "" {
 			lines = append(lines, secret.Printable(strings.TrimSuffix(line, "\n")))
 		}

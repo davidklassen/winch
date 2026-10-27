@@ -293,6 +293,49 @@ handlers:
           name: staff
           gid: 1500
 `), "", "s: group staff: the group staff is also in s: group staff, with other arguments"},
+		{"two lines with other matches on one path", steps(`      - line:
+          path: /etc/redis/redis.conf
+          line: port 6380
+          match: "^port "
+      - line:
+          path: /etc/redis/redis.conf
+          line: maxmemory 256mb
+          match: "^maxmemory "
+`), "", ""},
+		{"two lines with the same match on one path", steps(`      - line:
+          path: /etc/redis/redis.conf
+          line: port 6380
+          match: "^port "
+      - line:
+          path: /etc/redis/redis.conf
+          line: port 6381
+          match: "^port "
+`), "", `s: line /etc/redis/redis.conf: the match "^port " in /etc/redis/redis.conf is also in s: line /etc/redis/redis.conf, with other arguments`},
+		{"the same match on two paths", steps(`      - line:
+          path: /etc/a
+          line: port 1
+          match: "^port "
+      - line:
+          path: /etc/b
+          line: port 2
+          match: "^port "
+`), "", ""},
+		{"a file and a line on one path", steps(`      - file:
+          path: /etc/a
+          content: "port 1\n"
+      - line:
+          path: /etc/a
+          line: port 2
+          match: "^port "
+`), "", "s: line /etc/a: the path /etc/a is also in s: file /etc/a, with other arguments"},
+		{"a line and a file on one path", steps(`      - line:
+          path: /etc/a
+          line: port 2
+          match: "^port "
+      - file:
+          path: /etc/a
+          content: "port 1\n"
+`), "", "s: file /etc/a: the path /etc/a is also in s: line /etc/a, with other arguments"},
 		{"equal steps", steps(`      - file:
           path: /etc/a
           content: "a\n"

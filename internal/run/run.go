@@ -448,6 +448,13 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		c := *m
 		c.Name = m.Unit()
 		return add("the unit "+c.Name, &c)
+	case *module.Line:
+		// Line steps on one path share this entry; another module's step on
+		// the path fails.
+		if err := add("the path "+m.Path, &module.Line{Path: m.Path}); err != nil {
+			return err
+		}
+		return add(fmt.Sprintf("the match %q in %s", m.Match, m.Path), m)
 	case *module.User:
 		return add("the user "+m.Name, m)
 	case *module.Group:

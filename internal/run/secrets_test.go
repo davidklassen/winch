@@ -12,6 +12,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
@@ -206,4 +207,56 @@ func TestSecretContentReasons(t *testing.T) {
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
 	golden.Assert(t, filepath.Join("testdata", "secrets", "content-reasons.golden"), output(&out, &errOut))
+}
+
+// spec: Modules/line; Variables/Secrets in output
+func TestPlanLine(t *testing.T) {
+	identity, recipient := ageKey(t)
+	text, err := secret.Encrypt("hunter2", []age.Recipient{recipient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + recipient.String() + "]\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      redis_password: !secret " + text + "\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: redis\n",
+		"recipes/redis/recipe.yaml": `vars:
+  redis_password:
+steps:
+  - line:
+      path: /etc/redis/redis.conf
+      line: port 6380
+      match: "^port "
+  - line:
+      path: /etc/redis/redis.conf
+      line: !tpl "requirepass {{ .vars.redis_password }}"
+      match: "^requirepass "
+  - line:
+      path: /etc/redis/redis.conf
+      match: "^save "
+      absent: true
+  - line:
+      path: /etc/redis/redis.conf
+      line: maxmemory 256mb
+      match: "^maxmemory "
+  - line:
+      path: /etc/redis/redis.conf
+      line: !tpl "masterauth {{ .vars.redis_password }}"
+      match: "^masterauth "
+`,
+	})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	h.SetResult("web1", "^port ", module.Result{Status: module.Change, Action: module.Modify, Old: new("port 6379\n")})
+	h.SetResult("web1", "^requirepass ", module.Result{Status: module.Change, Action: module.Modify, Old: new("requirepass old-pass\n")})
+	h.SetResult("web1", "^save ", module.Result{Status: module.Change, Action: module.Modify, Old: new("save 900 1\nsave 300 10\n")})
+	h.SetResult("web1", "^maxmemory ", module.Result{Status: module.Change, Action: module.Modify, Old: new("")})
+	h.SetResult("web1", "^masterauth ", module.Result{Status: module.Change, Action: module.Modify, Old: new("")})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	golden.Assert(t, filepath.Join("testdata", "plan", "line.golden"), output(&out, &errOut))
 }

@@ -1287,13 +1287,13 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 	var part string
 	sh.Then, part = secret.Mask(thens[0], thens[1], thens[2])
 	parts = append(parts, part)
-	if f, ok := s.Args.(*module.File); ok && f.Data != nil {
-		var data [3][]byte
-		for n := range mods {
-			if g, ok := mods[n].(*module.File); ok {
-				data[n] = g.Data
-			}
+	var data [3][]byte
+	for n := range mods {
+		if t, ok := mods[n].(module.WithText); ok {
+			data[n], _ = t.Text()
 		}
+	}
+	if data[0] != nil {
 		switch {
 		case !contentOK:
 			sh.Hidden = true

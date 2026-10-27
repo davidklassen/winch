@@ -1,0 +1,21 @@
+stdout:
+web1
+  base
+    redis
+      ~ line /etc/redis/redis.conf
+          -port 6379
+          +port 6380
+      ~ line /etc/redis/redis.conf
+          -requirepass (secret)
+          +requirepass (secret) (secret value changed)
+      ~ line /etc/redis/redis.conf
+          -save 900 1
+          -save 300 10
+      ~ line /etc/redis/redis.conf
+          +maxmemory 256mb
+      ~ line /etc/redis/redis.conf
+          +masterauth (secret)
+
+1 host: 1 to change, 0 unchanged, 0 unknown
+plan 7efa69e323206bea
+stderr:
