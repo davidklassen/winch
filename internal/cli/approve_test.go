@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"regexp"
 	"strings"
 	"testing"
@@ -154,7 +152,7 @@ func TestExitCode(t *testing.T) {
 	h = fakehost.New()
 	h.SetFile("web1", "/etc/motd", "hello\n")
 	h.SetFile("web2", "/etc/motd", "hello\n")
-	h.SetThen("web1", protocol.Then{Stage: "base", SHA256: sum("echo done")})
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Step: 1})
 	then := writeProject(t, strings.Replace(motd, `content: "hello\n"`, `content: "hello\n"`+"\n        then: echo done", 1))
 	if r := winch(t, then, h, false, "", "plan", "site", "--exit-code"); r.code != exitChanges {
 		t.Errorf("a plan with only a pending then: exit %d, want %d, stdout %q", r.code, exitChanges, r.out)
@@ -250,10 +248,4 @@ func TestInterruptDuringPlan(t *testing.T) {
 	if code != exitFailed || h.Applies != 0 || strings.Contains(errOut.String(), "Apply these changes?") {
 		t.Errorf("exit %d, applies %d, stderr %q", code, h.Applies, errOut.String())
 	}
-}
-
-// sum is the record key of a then command.
-func sum(command string) string {
-	b := sha256.Sum256([]byte(command))
-	return hex.EncodeToString(b[:])
 }

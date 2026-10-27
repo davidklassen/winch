@@ -314,8 +314,8 @@ func TestPendingThen(t *testing.T) {
 		args, _ := json.Marshal(module.File{Path: p, Absent: true})
 		return args
 	}
-	postmap := protocol.Then{Recipe: "postfix", SHA256: "1f"}
-	reload := protocol.Then{Stage: "postfix", SHA256: "2f"}
+	postmap := protocol.Then{Recipe: "postfix", Step: 1}
+	reload := protocol.Then{Stage: "postfix", Step: 2}
 
 	if r := c.call(t, "check", protocol.Step{Module: "file", Args: remove("a"), Then: &postmap}); r.Error != "" {
 		t.Fatal(r.Error)
@@ -345,8 +345,8 @@ func TestPendingThen(t *testing.T) {
 	}
 
 	// A failed command keeps its record; a command that succeeds removes it.
-	failing := protocol.Then{Recipe: "postfix", SHA256: "3f"}
-	done := protocol.Then{Recipe: "postfix", SHA256: "4f"}
+	failing := protocol.Then{Recipe: "postfix", Step: 3}
+	done := protocol.Then{Recipe: "postfix", Step: 4}
 	for _, th := range []protocol.Then{failing, done} {
 		if r := c.call(t, "apply", protocol.Step{Module: "file", Args: remove("e"), Then: &th}); r.Error != "" {
 			t.Fatal(r.Error)
@@ -365,9 +365,9 @@ func TestPendingThen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"recipe":"postfix","sha256":"1f"}
-{"stage":"postfix","sha256":"2f"}
-{"recipe":"postfix","sha256":"3f"}
+	want := `{"recipe":"postfix","step":1}
+{"stage":"postfix","step":2}
+{"recipe":"postfix","step":3}
 `
 	if string(b) != want {
 		t.Errorf("then/acme = %q, want %q", b, want)
@@ -408,7 +408,7 @@ func TestPendingStaysInTheStateDirectory(t *testing.T) {
 // spec: Handlers; Remote execution/State on the host
 func TestEmptyLinesInRecords(t *testing.T) {
 	dir := t.TempDir()
-	for sub, data := range map[string]string{"handlers": "nginx.reload\n\napp.restart\n", "then": "\n{\"recipe\":\"a\",\"sha256\":\"1f\"}\n"} {
+	for sub, data := range map[string]string{"handlers": "nginx.reload\n\napp.restart\n", "then": "\n{\"recipe\":\"a\",\"step\":1}\n"} {
 		if err := os.Mkdir(filepath.Join(dir, sub), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -424,7 +424,7 @@ func TestEmptyLinesInRecords(t *testing.T) {
 	if want := []string{"nginx.reload", "app.restart"}; !slices.Equal(p.Handlers, want) {
 		t.Errorf("handlers = %q, want %q", p.Handlers, want)
 	}
-	if want := []protocol.Then{{Recipe: "a", SHA256: "1f"}}; !slices.Equal(p.Then, want) {
+	if want := []protocol.Then{{Recipe: "a", Step: 1}}; !slices.Equal(p.Then, want) {
 		t.Errorf("then = %v, want %v", p.Then, want)
 	}
 }
@@ -437,7 +437,7 @@ func TestDamagedState(t *testing.T) {
 		want  string
 	}{
 		{"truncated then record", func(t *testing.T, dir string) {
-			write(t, filepath.Join(dir, "then", "acme"), "{\"recipe\":\"a\",\"sha256\":\"1f\"}\n\n{\"recipe\":\n")
+			write(t, filepath.Join(dir, "then", "acme"), "{\"recipe\":\"a\",\"step\":1}\n\n{\"recipe\":\n")
 		}, "read the pending then records: DIR/then/acme:3: unexpected end of JSON input"},
 		{"then line that is not JSON", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "then", "acme"), "postmap /etc/postfix/virtual\n")
@@ -494,10 +494,10 @@ func TestRecordsBeforeApply(t *testing.T) {
 		t.Fatal(r.Error)
 	}
 	// The validate command runs inside Apply and sees the records.
-	validate := "grep -qxF nginx.reload '" + filepath.Join(dir, "handlers", "acme") + "' && grep -qF '\"sha256\":\"1f\"' '" + filepath.Join(dir, "then", "acme") + "'"
+	validate := "grep -qxF nginx.reload '" + filepath.Join(dir, "handlers", "acme") + "' && grep -qF '\"step\":1' '" + filepath.Join(dir, "then", "acme") + "'"
 	uid, gid := yamlx.NameOrID(strconv.Itoa(os.Getuid())), yamlx.NameOrID(strconv.Itoa(os.Getgid()))
 	args, _ := json.Marshal(module.File{Path: filepath.Join(t.TempDir(), "f"), Data: []byte("x\n"), Owner: uid, Group: gid, Validation: &validate})
-	r := c.call(t, "apply", protocol.Step{Module: "file", Args: args, Notify: []string{"nginx.reload"}, Then: &protocol.Then{Recipe: "nginx", SHA256: "1f"}})
+	r := c.call(t, "apply", protocol.Step{Module: "file", Args: args, Notify: []string{"nginx.reload"}, Then: &protocol.Then{Recipe: "nginx", Step: 1}})
 	if r.Error != "" {
 		t.Errorf("apply: %s", r.Error)
 	}
@@ -518,12 +518,12 @@ func TestFailedApplyRemovesItsRecords(t *testing.T) {
 		args, _ := json.Marshal(module.File{Path: path, Data: []byte(validate + "\n"), Owner: uid, Group: gid, Validation: &validate})
 		return args
 	}
-	earlier := protocol.Then{Recipe: "nginx", SHA256: "1f"}
+	earlier := protocol.Then{Recipe: "nginx", Step: 1}
 	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("true"), Notify: []string{"nginx.reload"}, Then: &earlier}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 
-	failing := protocol.Then{Recipe: "nginx", SHA256: "2f"}
+	failing := protocol.Then{Recipe: "nginx", Step: 2}
 	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("false"), Notify: []string{"nginx.reload", "nginx.restart"}, Then: &failing}); !strings.Contains(r.Error, "validate: false") {
 		t.Fatalf("apply error = %q, want the validate error", r.Error)
 	}

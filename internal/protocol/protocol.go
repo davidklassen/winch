@@ -50,12 +50,15 @@ type Step struct {
 	Then *Then `json:"then,omitempty"`
 }
 
-// Then is a record of a then: the hex SHA-256 of the command text, under the
-// recipe, or the stage for a step of a stage.
+// Then is a record of a then: the place of its step. Step counts from 1 in the
+// steps of the recipe, of its handler, or of the stage of the pipeline for a
+// step of a stage.
 type Then struct {
-	Recipe string `json:"recipe,omitempty"`
-	Stage  string `json:"stage,omitempty"`
-	SHA256 string `json:"sha256"`
+	Recipe   string `json:"recipe,omitempty"`
+	Pipeline string `json:"pipeline,omitempty"`
+	Stage    string `json:"stage,omitempty"`
+	Handler  string `json:"handler,omitempty"`
+	Step     int    `json:"step"`
 }
 
 // Command is the params of command, which runs the command and then removes

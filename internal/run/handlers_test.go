@@ -3,8 +3,6 @@ package run_test
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -21,12 +19,6 @@ import (
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
-
-// sum is the record key of a then command.
-func sum(command string) string {
-	b := sha256.Sum256([]byte(command))
-	return hex.EncodeToString(b[:])
-}
 
 var handlerFiles = map[string]string{
 	"winch.yaml": "name: acme\ninventory: inventories/test.yaml\n",
@@ -381,7 +373,7 @@ func TestThen(t *testing.T) {
 			t.Fatalf("apply succeeded with a failing then:\n%s", got)
 		}
 		// Both elements change, and one record stays.
-		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", SHA256: sum("reindex")}}; !slices.Equal(got, want) {
+		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Step: 1}}; !slices.Equal(got, want) {
 			t.Fatalf("then records = %v, want %v", got, want)
 		}
 		h.Fix("web1 reindex")
@@ -412,7 +404,7 @@ func TestThen(t *testing.T) {
 		if slices.Contains(h.Log["web1"], "command reindex") {
 			t.Error("then ran after a failed element")
 		}
-		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", SHA256: sum("reindex")}}; !slices.Equal(got, want) {
+		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Step: 1}}; !slices.Equal(got, want) {
 			t.Errorf("then records = %v, want %v", got, want)
 		}
 		got := h.PendingOf("web1")
@@ -501,14 +493,17 @@ func TestPendingThen(t *testing.T) {
 	present(h, "web1", "web2")
 	h.SetFile("web1", "/etc/motd", "hi\n")
 	h.SetFile("web2", "/etc/motd", "hi\n")
-	h.SetThen("web1", protocol.Then{Recipe: "site", SHA256: sum("reindex")}, protocol.Then{Stage: "apps", SHA256: sum("newaliases")})
-	// No step matches these: another recipe, the stage of a recipe, another
-	// command, a recipe named like the stage.
+	h.SetThen("web1", protocol.Then{Recipe: "site", Step: 1}, protocol.Then{Pipeline: "site", Stage: "apps", Step: 2})
+	// No step with then is at these places: a step without then, the stage
+	// of a recipe, a place without a step, a recipe named like the stage, a
+	// handler, a stage of another pipeline.
 	other := []protocol.Then{
-		{Recipe: "nginx", SHA256: sum("reindex")},
-		{Stage: "web", SHA256: sum("reindex")},
-		{Recipe: "site", SHA256: sum("other")},
-		{Recipe: "apps", SHA256: sum("newaliases")},
+		{Recipe: "nginx", Step: 1},
+		{Pipeline: "site", Stage: "web", Step: 2},
+		{Recipe: "site", Step: 2},
+		{Recipe: "apps", Step: 2},
+		{Recipe: "site", Handler: "restart", Step: 1},
+		{Pipeline: "deploy", Stage: "apps", Step: 2},
 	}
 	h.SetThen("web2", other...)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
@@ -544,7 +539,7 @@ func TestPendingThenOfAChangedStep(t *testing.T) {
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetFile("web1", "/var/www/about.html", "old\n")
-	h.SetThen("web1", protocol.Then{Recipe: "site", SHA256: sum("reindex")})
+	h.SetThen("web1", protocol.Then{Recipe: "site", Step: 1})
 	p := handlerProject(t)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
@@ -575,7 +570,7 @@ func TestPendingThenOfAHandlerStep(t *testing.T) {
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetPending("web1", "app.restart")
-	h.SetThen("web1", protocol.Then{Recipe: "app", SHA256: sum("app-check\napp-log\n")})
+	h.SetThen("web1", protocol.Then{Recipe: "app", Handler: "restart", Step: 1})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -626,10 +621,9 @@ func TestCommandLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	then := "newaliases\npostmap /etc/postfix/virtual\n"
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/aliases", "a\n")
-	h.SetThen("web1", protocol.Then{Stage: "base", SHA256: sum(then)})
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Step: 1})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -672,6 +666,52 @@ func TestFailedStepKeepsEarlierRecordsOnly(t *testing.T) {
 	}
 	if got, want := h.PendingOf("web1"), []string{"app.restart"}; !slices.Equal(got, want) {
 		t.Errorf("pending = %v, want %v", got, want)
+	}
+	if got := h.ThenOf("web1"); len(got) != 0 {
+		t.Errorf("then records = %v, want none", got)
+	}
+}
+
+// spec: Steps
+func TestFixedThenRuns(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: mail
+    hosts: all
+    steps:
+      - file:
+          path: /etc/postfix/virtual
+          content: "a\n"
+        then: postmapp /etc/postfix/virtual
+`,
+	}
+	h := fakehost.New()
+	h.FailCommand("web1", "postmapp /etc/postfix/virtual")
+	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, got := applyAll(t, p, h); ok {
+		t.Fatalf("apply succeeded with a failing then:\n%s", got)
+	}
+
+	files["pipelines/site.yaml"] = strings.Replace(files["pipelines/site.yaml"], "postmapp", "postmap", 1)
+	if p, err = project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{}); err != nil {
+		t.Fatal(err)
+	}
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if want := "! then: postmap /etc/postfix/virtual\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("plan does not show %q:\n%s", want, out.String())
+	}
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+		t.Fatal(errOut.String())
+	}
+	if want := []string{"command postmapp /etc/postfix/virtual", "command postmap /etc/postfix/virtual"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if got := h.ThenOf("web1"); len(got) != 0 {
 		t.Errorf("then records = %v, want none", got)

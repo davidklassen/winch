@@ -224,6 +224,28 @@ func TestHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("a fixed then runs at the next run", func(t *testing.T) {
+		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.app_value=five", "--set", "vars.app_then=echox y >> /root/fixed-then")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "then: echox y >> /root/fixed-then") {
+			t.Fatalf("apply: exit %d, want the then error\n%s", r.Code, r.Stderr)
+		}
+		fixed := []string{"--set", "vars.app_value=five", "--set", "vars.app_then=echo y >> /root/fixed-then"}
+		r = lab.Winch(t, dir, append([]string{"plan", "site"}, fixed...)...)
+		if r.Code != 0 || !strings.Contains(r.Stdout, "! then: echo y >> /root/fixed-then") {
+			t.Fatalf("plan after the fix: exit %d, want the fixed then as pending\n%s", r.Code, r.Stdout)
+		}
+		if r = lab.Winch(t, dir, append([]string{"apply", "site", "--yes"}, fixed...)...); r.Code != 0 {
+			t.Fatalf("apply after the fix: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if out := vm.MustRun(t, "cat /root/fixed-then"); out != "y\n" {
+			t.Errorf("the fixed then wrote %q, want one line", out)
+		}
+		r = lab.Winch(t, dir, append([]string{"plan", "site"}, fixed...)...)
+		if r.Code != 0 || !unchanged(r.Stdout, 2) {
+			t.Errorf("third plan: exit %d, stdout %q", r.Code, r.Stdout)
+		}
+	})
+
 	t.Run("a failed validate leaves only the records of earlier runs", func(t *testing.T) {
 		vdir := vmtest.WriteProject(t, map[string]string{
 			"winch.yaml":            "name: vdemo\ninventory: inventories/test.yaml\n",

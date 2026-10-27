@@ -270,7 +270,7 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 			hr.thens[t] = true
 		}
 	}
-	steps, err := evaluate(stage, hr)
+	steps, err := evaluate(p.Pipeline.Name, stage, hr)
 	if err != nil {
 		return nil, err
 	}
@@ -462,10 +462,10 @@ func (hr *hostRun) dropCreatedParents(m module.Module, res *module.Result) {
 // steps, when, and loop applied. A slot for each handler of a recipe follows
 // the recipe's steps. A handler of a recipe that ran before a step of the
 // stage notifies it gets a slot at the end of the stage.
-func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
+func evaluate(pipeline string, stage *project.Stage, hr *hostRun) ([]Planned, error) {
 	var out []Planned
 	late := map[*project.Handler]bool{}
-	add := func(env *project.Env, st project.Step, in *project.Step, addr string) error {
+	add := func(env *project.Env, st project.Step, in *project.Step, addr string, place protocol.Then) error {
 		steps, err := st.Eval(env)
 		if err != nil {
 			return err
@@ -482,14 +482,14 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 			}
 		}
 		for i, s := range steps {
-			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify, Then: thenRecord(stage, in, s), Address: address(addr, st, i)})
+			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify, Then: thenRecord(s, place), Address: address(addr, st, i)})
 		}
 		return nil
 	}
 	for i := range stage.Steps {
 		st := &stage.Steps[i]
 		if st.Recipe == nil {
-			if err := add(hr.env, *st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1)); err != nil {
+			if err := add(hr.env, *st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1), protocol.Then{Pipeline: pipeline, Stage: stage.Name, Step: i + 1}); err != nil {
 				return nil, err
 			}
 			continue
@@ -503,12 +503,12 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 		}
 		env := hr.env.For(st)
 		for j, rs := range st.Recipe.Steps {
-			if err := add(env, rs, st, fmt.Sprintf("%s#%d", st.Recipe.Name, j+1)); err != nil {
+			if err := add(env, rs, st, fmt.Sprintf("%s#%d", st.Recipe.Name, j+1), protocol.Then{Recipe: st.Recipe.Name, Step: j + 1}); err != nil {
 				return nil, err
 			}
 		}
 		for _, h := range st.Recipe.Handlers {
-			slot, err := handlerSlot(stage, h, env, st)
+			slot, err := handlerSlot(h, env, st)
 			if err != nil {
 				return nil, err
 			}
@@ -521,7 +521,7 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 			if !late[h] {
 				continue
 			}
-			slot, err := handlerSlot(stage, h, hr.env.For(r), r)
+			slot, err := handlerSlot(h, hr.env.For(r), r)
 			if err != nil {
 				return nil, err
 			}
@@ -540,7 +540,7 @@ func address(addr string, st project.Step, i int) string {
 }
 
 // handlerSlot evaluates the steps of a handler for a host.
-func handlerSlot(stage *project.Stage, h *project.Handler, env *project.Env, in *project.Step) (*Slot, error) {
+func handlerSlot(h *project.Handler, env *project.Env, in *project.Step) (*Slot, error) {
 	slot := &Slot{Handler: h}
 	for j, hs := range h.Steps {
 		steps, err := hs.Eval(env)
@@ -548,8 +548,9 @@ func handlerSlot(stage *project.Stage, h *project.Handler, env *project.Env, in 
 			return nil, err
 		}
 		addr := fmt.Sprintf("%s#%d", h.FullName(), j+1)
+		place := protocol.Then{Recipe: in.Recipe.Name, Handler: h.Name, Step: j + 1}
 		for i, s := range steps {
-			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1, Then: thenRecord(stage, in, s), Address: address(addr, hs, i)})
+			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1, Then: thenRecord(s, place), Address: address(addr, hs, i)})
 		}
 	}
 	return slot, nil
@@ -575,17 +576,13 @@ func scope(stage *project.Stage, p Planned) string {
 	return stage.Name
 }
 
-// thenRecord is the record of the then of st in the recipe step in, or nil
-// for a step without then.
-func thenRecord(stage *project.Stage, in *project.Step, st project.Step) *protocol.Then {
+// thenRecord is the record of the then of the step st at place, or nil for a
+// step without then.
+func thenRecord(st project.Step, place protocol.Then) *protocol.Then {
 	if st.Then == "" {
 		return nil
 	}
-	sum := sum(st.Then)
-	if in != nil {
-		return &protocol.Then{Recipe: in.Recipe.Name, SHA256: sum}
-	}
-	return &protocol.Then{Stage: stage.Name, SHA256: sum}
+	return &place
 }
 
 // label is the text of a step in the plan and the logs.
