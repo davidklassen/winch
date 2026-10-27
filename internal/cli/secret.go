@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/secret"
@@ -11,6 +12,7 @@ import (
 
 const secretHelp = `Examples:
   winch secret init
+  winch secret generate vars.monit_password
   winch secret encrypt < dkim.key
   openssl rand -hex 16 | winch secret encrypt
   winch secret rekey
@@ -21,6 +23,7 @@ Usage: winch secret <command>
 
 Commands:
   init      Make an age key, and add its public key to the recipients.
+  generate  Write a random password as a secret into the inventory.
   encrypt   Encrypt a value from stdin, and print it as a !secret value.
   rekey     Encrypt all secrets in the project again for the recipients.
 
@@ -45,6 +48,24 @@ the stdout of the command. Both variables set is an error.
 
 The new key can read the secrets only after a member who can read them runs
 winch secret rekey.
+`
+
+const generateHelp = `Examples:
+  winch secret generate vars.monit_password
+  winch secret generate vars.db_password --host db1.acme.com
+  winch secret generate vars.db_password --inventory inventories/production.yaml
+
+Make a random password of 32 letters and digits, encrypt it for the
+recipients in winch.yaml, and write it as a !secret value into the vars of
+the group all in the inventory. The file keeps its comments and layout.
+
+Usage: winch secret generate vars.<name> [flags]
+
+The variable must be declared, and must not be in those vars yet.
+
+Flags:
+  --inventory <path>            The inventory file to write.
+  --host <name>                 Write into the vars of this host.
 `
 
 const encryptHelp = `Examples:
@@ -113,6 +134,28 @@ func secretInit(ctx context.Context, env Env, f *flags, args []string) int {
 		fmt.Fprintln(env.stdout, "added the public key to recipients in winch.yaml")
 		fmt.Fprintln(env.stdout, "a member who can read the secrets must now run winch secret rekey")
 	}
+	return exitOK
+}
+
+func secretGenerate(ctx context.Context, env Env, f *flags, args []string) int {
+	name, ok := "", false
+	if len(args) == 1 {
+		name, ok = strings.CutPrefix(args[0], "vars.")
+	}
+	if !ok || name == "" {
+		printError(env.stderr, "winch: secret generate needs one variable: vars.<name>")
+		return exitInvalid
+	}
+	file, err := project.WriteSecret(env.Dir, f.inventory, f.host, name, secret.Password())
+	if err != nil {
+		printError(env.stderr, err.Error())
+		return exitInvalid
+	}
+	where := "the group all"
+	if f.host != "" {
+		where = fmt.Sprintf("host %q", f.host)
+	}
+	fmt.Fprintf(env.stdout, "wrote vars.%s into the vars of %s in %s\n", name, where, file)
 	return exitOK
 }
 

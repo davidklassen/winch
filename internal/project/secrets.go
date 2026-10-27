@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -534,4 +535,167 @@ func scanProject(dir, inventory string, cfg *Config) ([]*yamlx.Error, error) {
 	}
 	slices.SortStableFunc(out, func(a, b *yamlx.Error) int { return strings.Compare(a.Pos.File, b.Pos.File) })
 	return out, nil
+}
+
+// WriteSecret encrypts plain for the recipients, and writes it as the value
+// of the variable name into the vars of the group all in the inventory, or of
+// host when host is not empty. inventory is the path of --inventory, or
+// empty. It keeps the comments and the layout of the file, and returns the
+// name of the file.
+func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
+	cfg, err := loadConfig(dir)
+	if err != nil {
+		return "", err
+	}
+	recs, err := recipients(cfg)
+	if err != nil {
+		return "", err
+	}
+	l := &loader{dir: dir, vars: map[string]*Var{}, files: map[string]*recipeFile{}, recipes: map[string]*Recipe{}}
+	if err := errors.Join(append(l.declare(cfg.Vars, ""), l.readRecipes())...); err != nil {
+		return "", err
+	}
+	if l.vars[name] == nil {
+		return "", errors.New(unknownVariable(name, l.vars))
+	}
+	file := inventory
+	if file == "" {
+		file = cfg.Inventory
+	}
+	if file == "" {
+		return "", errors.New("no inventory: use --inventory, or set inventory in winch.yaml")
+	}
+	path, err := filepath.EvalSymlinks(projectPath(dir, file))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", notFound(file)
+	}
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", file, err)
+	}
+	n, err := yamlx.Parse(file, data)
+	if err != nil {
+		return "", err
+	}
+	keys := []string{"groups", "all", "vars", name}
+	where := "the group all"
+	if host != "" {
+		keys = []string{"hosts", host, "vars", name}
+		where = fmt.Sprintf("host %q", host)
+		if find(n, keys[:2]) == nil {
+			return "", fmt.Errorf("host %q is not in %s", host, file)
+		}
+	}
+	if find(n, keys) != nil {
+		return "", fmt.Errorf("variable %q is already in the vars of %s in %s", name, where, file)
+	}
+	text, err := secret.Encrypt(plain, recs)
+	if err != nil {
+		return "", err
+	}
+	out := insert(string(data), n, keys, "!secret "+text)
+	// insert assumes block maps; a check of the result catches every other
+	// layout.
+	after, err := yamlx.Parse(file, []byte(out))
+	if err != nil || !reflect.DeepEqual(yamlx.Value(after), withValue(yamlx.Value(n), keys, text)) {
+		return "", fmt.Errorf("cannot write vars.%s into %s; add it by hand", name, file)
+	}
+	return file, replaceFile(path, []byte(out))
+}
+
+// find returns the pair at the path of keys in n, or nil.
+func find(n *yamlx.Node, keys []string) *yamlx.Pair {
+	for i, key := range keys {
+		if n.Kind != yamlx.Map {
+			return nil
+		}
+		j := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == key })
+		if j < 0 {
+			return nil
+		}
+		if i == len(keys)-1 {
+			return &n.Pairs[j]
+		}
+		n = n.Pairs[j].Value
+	}
+	return nil
+}
+
+// insert returns text, whose tree is root, with the map entries for keys and
+// leaf as the value of the last key. It returns text when a map on the path
+// is not a block map.
+func insert(text string, root *yamlx.Node, keys []string, leaf string) string {
+	lines := strings.SplitAfter(text, "\n")
+	n := root
+	for i := range keys {
+		var at, col int
+		rest := keys[i:]
+		p := find(n, rest[:1])
+		switch {
+		case p != nil && p.Value.Kind == yamlx.Map && len(p.Value.Pairs) > 0:
+			n = p.Value
+			continue
+		case p != nil && p.Value.Kind == yamlx.Null:
+			at, col = p.KeyPos.Line, p.KeyPos.Col+2
+			rest = rest[1:]
+		case p != nil:
+			return text
+		case len(n.Pairs) == 0:
+			at, col = len(lines), 1
+		default:
+			at, col = blockEnd(lines, n.Pairs[0].KeyPos), n.Pairs[0].KeyPos.Col
+		}
+		var b strings.Builder
+		b.WriteString(strings.Join(lines[:at], ""))
+		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
+			b.WriteString("\n")
+		}
+		for j, k := range rest {
+			b.WriteString(strings.Repeat(" ", col-1+2*j) + k + ":")
+			if j == len(rest)-1 {
+				b.WriteString(" " + leaf)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString(strings.Join(lines[at:], ""))
+		return b.String()
+	}
+	return text
+}
+
+// blockEnd returns the index of the line after the block map whose first key
+// is at first: the line after its last line that is indented at least as far
+// as the key.
+func blockEnd(lines []string, first yamlx.Pos) int {
+	end := first.Line
+	for i := first.Line; i < len(lines); i++ {
+		line := strings.TrimRight(lines[i], "\r\n")
+		rest := strings.TrimLeft(line, " ")
+		if rest == "" {
+			continue
+		}
+		if len(line)-len(rest) < first.Col-1 {
+			break
+		}
+		end = i + 1
+	}
+	return end
+}
+
+// withValue returns a copy of v, a map, with leaf at the path of keys.
+func withValue(v any, keys []string, leaf any) map[string]any {
+	m, _ := v.(map[string]any)
+	m = maps.Clone(m)
+	if m == nil {
+		m = map[string]any{}
+	}
+	if len(keys) == 1 {
+		m[keys[0]] = leaf
+	} else {
+		m[keys[0]] = withValue(m[keys[0]], keys[1:], leaf)
+	}
+	return m
 }

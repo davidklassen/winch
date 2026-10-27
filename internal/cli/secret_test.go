@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -460,4 +461,82 @@ func TestSecretInit(t *testing.T) {
 			t.Errorf("winch.yaml changed: %q", got)
 		}
 	})
+}
+
+// spec: Variables/Secrets (winch secret generate); CLI
+func TestSecretGenerate(t *testing.T) {
+	_, id := newIdentity(t)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + id.Recipient().String() + "\nvars:\n  pw:\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n",
+	})
+	path := filepath.Join(dir, "inventories", "test.yaml")
+	password := regexp.MustCompile(`^[A-Za-z0-9]{32}$`)
+	values := func(t *testing.T) []string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, m := range regexp.MustCompile(`!secret (\S+)`).FindAllStringSubmatch(string(data), -1) {
+			plain, err := secret.Decrypt(m[1], []age.Identity{id})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !password.MatchString(plain) {
+				t.Errorf("password %q; want 32 letters and digits", plain)
+			}
+			out = append(out, plain)
+		}
+		return out
+	}
+
+	r := winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw")
+	if r.code != exitOK || r.out != "wrote vars.pw into the vars of the group all in inventories/test.yaml\n" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	all := values(t)
+	if len(all) != 1 {
+		t.Fatalf("%d secrets; want 1", len(all))
+	}
+	if strings.Contains(r.out+r.err, all[0]) {
+		t.Errorf("the output shows the password")
+	}
+
+	r = winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw")
+	if r.code != exitInvalid || !strings.Contains(r.err, `variable "pw" is already in the vars of the group all in inventories/test.yaml`) {
+		t.Errorf("second run: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+
+	r = winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw", "--host", "web1")
+	if r.code != exitOK || r.out != "wrote vars.pw into the vars of host \"web1\" in inventories/test.yaml\n" {
+		t.Fatalf("--host: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(data), "hosts:\n  web1:\n    vars:\n      pw: !secret ") {
+		t.Errorf("--host: inventory:\n%s", data)
+	}
+	if got := values(t); len(got) != 2 || got[0] == got[1] {
+		t.Errorf("passwords %q; want two different ones", got)
+	}
+
+	r = winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw", "--host", "")
+	if r.code != exitInvalid || !strings.Contains(r.err, "winch secret generate: invalid value \"\" for flag -host: must not be empty") {
+		t.Errorf("--host \"\": exit %d, stderr %q", r.code, r.err)
+	}
+	r = winch(t, dir, fakehost.New(), false, "", "validate", "--host", "web1")
+	if r.code != exitInvalid || !strings.Contains(r.err, "flag provided but not defined: -host") {
+		t.Errorf("validate --host: exit %d, stderr %q", r.code, r.err)
+	}
+
+	for _, args := range [][]string{{}, {"pw"}, {"vars.pw", "vars.x"}, {"vars."}} {
+		r = winch(t, dir, fakehost.New(), false, "", append([]string{"secret", "generate"}, args...)...)
+		if r.code != exitInvalid || !strings.Contains(r.err, "winch: secret generate needs one variable: vars.<name>") {
+			t.Errorf("args %q: exit %d, stderr %q", args, r.code, r.err)
+		}
+	}
 }

@@ -81,7 +81,8 @@ Commands:
   validate   Load the project and check it. Connects to no host.
   plan       Show the changes. Change nothing.
   apply      Show the changes, ask, then make them.
-  secret     Make an age key, encrypt a value, or encrypt all secrets again.
+  secret     Make an age key, make or encrypt a secret, or encrypt all
+             secrets again.
 
 Run "winch <command> --help" for the arguments and flags of a command.
 `
@@ -99,17 +100,20 @@ type command struct {
 	// hosts is true when the command connects to hosts: it takes --hosts,
 	// --stages, --user, and --batch.
 	hosts bool
-	run   func(ctx context.Context, env Env, f *flags, args []string) int
+	// host is true when the command takes --host.
+	host bool
+	run  func(ctx context.Context, env Env, f *flags, args []string) int
 }
 
 var commands = map[string]command{
-	"validate":       {help: validateHelp, inventory: true, project: true, run: validate},
-	"plan":           {help: planHelp, inventory: true, project: true, exitCode: true, hosts: true, run: plan},
-	"apply":          {help: applyHelp, inventory: true, project: true, apply: true, hosts: true, run: apply},
-	"secret":         {help: secretHelp, run: secretUsage},
-	"secret init":    {help: initHelp, run: secretInit},
-	"secret encrypt": {help: encryptHelp, run: secretEncrypt},
-	"secret rekey":   {help: rekeyHelp, inventory: true, run: secretRekey},
+	"validate":        {help: validateHelp, inventory: true, project: true, run: validate},
+	"plan":            {help: planHelp, inventory: true, project: true, exitCode: true, hosts: true, run: plan},
+	"apply":           {help: applyHelp, inventory: true, project: true, apply: true, hosts: true, run: apply},
+	"secret":          {help: secretHelp, run: secretUsage},
+	"secret init":     {help: initHelp, run: secretInit},
+	"secret generate": {help: generateHelp, inventory: true, host: true, run: secretGenerate},
+	"secret encrypt":  {help: encryptHelp, run: secretEncrypt},
+	"secret rekey":    {help: rekeyHelp, inventory: true, run: secretRekey},
 }
 
 const validateHelp = `Examples:
@@ -212,6 +216,7 @@ type flags struct {
 	check    *string
 	exitCode bool
 	json     bool
+	host     string
 }
 
 // Main runs the command in args. All output passes through env.Filter.
@@ -280,6 +285,9 @@ func Main(ctx context.Context, args []string, env Env) int {
 			return nil
 		})
 		fs.BoolVar(&f.batch, "batch", false, "")
+	}
+	if cmd.host {
+		fs.Func("host", "", notEmpty(&f.host))
 	}
 	pos, err := parse(fs, args[1:])
 	if errors.Is(err, flag.ErrHelp) {

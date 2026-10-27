@@ -6,6 +6,7 @@ package secret
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -53,6 +54,23 @@ func Encrypt(plain string, recipients []age.Recipient) (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(b.Bytes()), nil
+}
+
+const passwordChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+// Password returns a random password of 32 letters and digits.
+func Password() string {
+	var out []byte
+	b := make([]byte, 1)
+	for len(out) < 32 {
+		rand.Read(b)
+		// Without the bytes above the last full set of characters, each
+		// character is equally likely.
+		if int(b[0]) < 256-256%len(passwordChars) {
+			out = append(out, passwordChars[int(b[0])%len(passwordChars)])
+		}
+	}
+	return string(out)
 }
 
 // Identity is the source of the age identity: the stdout of Cmd when Cmd
