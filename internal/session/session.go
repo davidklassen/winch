@@ -79,7 +79,8 @@ func (s *Session) wait() error {
 var archNames = map[string]string{"amd64": "x86_64", "arm64": "aarch64"}
 
 // Script returns the shell script that runs as root on the host. It picks the
-// helper for the architecture, receives it when it is missing, and starts it.
+// helper for the architecture, receives it when it is missing or has another
+// hash, and starts it.
 // It prints "have", or "need <arch>" and then "got" after it received the
 // helper. winch sends nothing else before "got", so head cannot read past the
 // helper.
@@ -91,11 +92,17 @@ func Script(bins []helperbin.Binary, dir string) string {
 	}
 	b.WriteString(`*) echo "winch: unsupported architecture $(uname -m)" >&2; exit 1 ;;
 esac
+mkdir -p -m 700 "$d" "$d/bin"
 b=$d/bin/$h
-if [ -x "$b" ]; then
+for p in "$d/" "$d/bin/" "$b"; do
+  [ -e "$p" ] || continue
+  set -- $(ls -ldn "$p")
+  case $1 in [d-]????[!w]??[!w]*) [ "$3" = 0 ] && continue ;; esac
+  echo "winch: ${p%/} is not owned by root or can be written by others" >&2; exit 1
+done
+if [ -x "$b" ] && [ "$(sha256sum < "$b")" = "$h  -" ]; then
   echo have
 else
-  mkdir -p "$d/bin"
   chmod 700 "$d"
   t=$b.$$
   echo "need $a"

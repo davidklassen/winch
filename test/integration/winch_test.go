@@ -222,6 +222,31 @@ func TestWinch(t *testing.T) {
 		}
 	})
 
+	t.Run("an unsafe state directory fails the host", func(t *testing.T) {
+		if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 {
+			t.Fatalf("first plan: exit %d\n%s", r.Code, r.Stderr)
+		}
+		for _, p := range []string{"/var/lib/winch", "/var/lib/winch/bin"} {
+			vm.MustRun(t, "chown nobody "+p)
+			r := lab.Winch(t, dir, "plan", "site")
+			vm.MustRun(t, "chown root "+p)
+			if r.Code != 1 || !strings.Contains(r.Stderr, "winch: "+p+" is not owned by root or can be written by others") {
+				t.Errorf("plan with %s owned by nobody: exit %d\n%s", p, r.Code, r.Stderr)
+			}
+		}
+	})
+
+	t.Run("a cut helper is sent again", func(t *testing.T) {
+		if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 {
+			t.Fatalf("first plan: exit %d\n%s", r.Code, r.Stderr)
+		}
+		vm.MustRun(t, "for f in /var/lib/winch/bin/*; do truncate -s 1000 $f; done")
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stderr, sending) {
+			t.Errorf("plan with a cut helper: exit %d\n%s", r.Code, r.Stderr)
+		}
+	})
+
 	t.Run("a run as root", func(t *testing.T) {
 		vm.MustRun(t, "cp /home/admin/.ssh/authorized_keys /root/.ssh/authorized_keys")
 		defer vm.MustRun(t, ": > /root/.ssh/authorized_keys")

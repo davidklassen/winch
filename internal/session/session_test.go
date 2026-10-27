@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,7 +49,7 @@ func run(m *testing.M) int {
 	return m.Run()
 }
 
-// fakeSSH puts fake ssh, uname, id, and sudo in bin, and bin first in PATH.
+// fakeSSH puts fake ssh, uname, id, sudo, and ls in bin, and bin first in PATH.
 // The tests share them: macOS checks each new executable file on its first
 // run, and that takes up to half a second.
 //
@@ -59,7 +60,8 @@ func run(m *testing.M) int {
 // fails once: it prints $SSH_FAIL_OUT on stdout when it is set, prints
 // $SSH_FAIL_ERR on stderr, and exits with $SSH_FAIL_CODE. A later start
 // creates $SSH_FAIL_ONCE.again. uname prints $FAKE_UNAME, id prints
-// $FAKE_UID, and sudo runs the script $FAKE_SUDO with its arguments.
+// $FAKE_UID, and sudo runs the script $FAKE_SUDO with its arguments. ls -ldn
+// shows root as the owner, except for the path $FAKE_LS_USER.
 func fakeSSH(bin string) error {
 	if err := os.Mkdir(bin, 0o755); err != nil {
 		return err
@@ -71,6 +73,7 @@ func fakeSSH(bin string) error {
 		"uname": "#!/bin/sh\necho \"$FAKE_UNAME\"\n",
 		"id":    "#!/bin/sh\necho \"$FAKE_UID\"\n",
 		"sudo":  "#!/bin/sh\nexec sh -c \"$FAKE_SUDO\" sudo \"$@\"\n",
+		"ls":    "#!/bin/sh\nset -- \"$2\" $(/bin/ls \"$@\")\nu=0\n[ \"$1\" != \"$FAKE_LS_USER\" ] || u=$4\necho \"$2 $3 $u $5\"\n",
 	}
 	for name, s := range scripts {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(s), 0o755); err != nil {
@@ -175,6 +178,89 @@ func TestOpenBadHash(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Join(dir, "bin")); len(entries) != 0 {
 		t.Errorf("bin holds %v after a bad upload", entries)
+	}
+}
+
+// spec: Remote execution/Helper
+func TestOpenUnsafeStateDir(t *testing.T) {
+	bins := []helperbin.Binary{fakeHelper("arm64")}
+	helper := filepath.Join("bin", bins[0].SHA256)
+	tests := []struct {
+		name string
+		path string
+		// mode zero means another owner.
+		mode os.FileMode
+		// have opens once first, so the helper is there.
+		have bool
+	}{
+		{"dir of another user", ".", 0, false},
+		{"bin of another user", "bin", 0, false},
+		{"dir written by others", ".", 0o702, false},
+		{"bin written by the group", "bin", 0o770, false},
+		{"dir of another user with a helper", ".", 0, true},
+		{"helper of another user", helper, 0, true},
+		{"helper written by others", helper, 0o757, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			dir := filepath.Join(t.TempDir(), "state")
+			if tt.have {
+				_, _ = open(t, dir, bins)
+			} else if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, tt.path)
+			if tt.mode != 0 {
+				if err := os.Chmod(path, tt.mode); err != nil {
+					t.Fatal(err)
+				}
+			} else if tt.path == helper {
+				t.Setenv("FAKE_LS_USER", path)
+			} else {
+				t.Setenv("FAKE_LS_USER", path+"/")
+			}
+			progress, err := open(t, dir, bins)
+			want := "winch: " + path + " is not owned by root or can be written by others"
+			if err == nil || err.Error() != want {
+				t.Errorf("error = %v, want %q", err, want)
+			}
+			if progress != "" {
+				t.Errorf("progress = %q, want no helper sent", progress)
+			}
+		})
+	}
+}
+
+// spec: Remote execution/Helper
+func TestOpenLooseUmask(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	defer syscall.Umask(syscall.Umask(0))
+	_, err := open(t, filepath.Join(t.TempDir(), "state"), []helperbin.Binary{fakeHelper("arm64")})
+	if err == nil || !strings.Contains(err.Error(), "ran arm64") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+// spec: Remote execution/Helper
+func TestOpenCutHelper(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	dir := t.TempDir()
+	bins := []helperbin.Binary{fakeHelper("arm64")}
+	_, _ = open(t, dir, bins)
+	path := filepath.Join(dir, "bin", bins[0].SHA256)
+	if err := os.Truncate(path, 10); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := open(t, dir, bins)
+	if !strings.Contains(progress, "web1: sending the helper (arm64)") {
+		t.Errorf("progress = %q, want the helper sent again", progress)
+	}
+	if err == nil || !strings.Contains(err.Error(), "ran arm64") {
+		t.Errorf("error = %v", err)
+	}
+	if data, _ := os.ReadFile(path); !bytes.Equal(data, bins[0].Data) {
+		t.Errorf("helper = %q, want the full helper", data)
 	}
 }
 
