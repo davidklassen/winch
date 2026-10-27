@@ -14,6 +14,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/run"
 	"github.com/davidklassen/winch/internal/vmtest"
@@ -574,6 +575,43 @@ func TestHealthGateOnlyAfterAChange(t *testing.T) {
 	}
 	if slices.ContainsFunc(h.Trace, func(s string) bool { return strings.HasPrefix(s, "health web2 ") }) {
 		t.Errorf("web2 ran the gate of a stage without a change: %q", h.Trace)
+	}
+}
+
+// spec: Running a pipeline/Health gates
+func TestHealthGateAfterAChangeInApply(t *testing.T) {
+	p := manyProject(t, motdStage+`  - name: web
+    hosts: all
+    health:
+      command: curl -sf http://localhost/
+    steps:
+      - file:
+          path: /etc/issue
+          content: "x\n"
+`)
+	h := fakehost.New()
+	for _, host := range []string{"web1", "web2", "web3"} {
+		h.SetFile(host, "/etc/issue", "x\n")
+	}
+	h.OnApply = func(host, main string) {
+		if main == "/etc/motd" {
+			h.SetFile(host, "/etc/issue", "default\n")
+		}
+	}
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	for _, hp := range plan.Stages[1].Hosts {
+		if s := hp.Steps[0].Result.Status; s != module.OK {
+			t.Fatalf("%s: plan of stage web is %q, want ok", hp.Host.Name, s)
+		}
+	}
+	var out, errOut bytes.Buffer
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+		t.Fatalf("apply failed: %s", errOut.String())
+	}
+	for _, host := range []string{"web1", "web2", "web3"} {
+		if !slices.Contains(h.Trace, "health "+host+" curl -sf http://localhost/ 0s 1m0s") {
+			t.Errorf("%s did not run the gate after a change in apply: %q", host, h.Trace)
+		}
 	}
 }
 

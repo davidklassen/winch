@@ -271,14 +271,14 @@ func (a *hostApply) close() error {
 }
 
 // apply runs the steps and the handlers of a stage on one host, then its
-// health gate when the stage shows a change in the plan. It reports whether a
-// step changed something.
+// health gate when the plan or apply has a change in the stage. It reports
+// whether a step changed something.
 func (a *hostApply) apply(ctx context.Context, stage *project.Stage, hp HostPlan) (bool, error) {
 	changed, err := a.steps(ctx, stage, "", hp.Steps)
 	if err != nil {
 		return changed, err
 	}
-	if stage.Health != nil && hp.changes() {
+	if stage.Health != nil && (changed || hp.changes()) {
 		if ctx.Err() != nil {
 			return changed, ErrInterrupted
 		}
