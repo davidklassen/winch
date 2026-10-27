@@ -190,3 +190,33 @@ func TestKeyChanges(t *testing.T) {
 		})
 	}
 }
+
+// spec: Modules/user and group
+func TestUserCheckLogin(t *testing.T) {
+	admin := passwdEntry{name: "admin", uid: 1000, gid: 1000, home: "/home/admin", shell: "/bin/bash"}
+	tests := []struct {
+		name  string
+		user  User
+		login uint32
+		want  string
+	}{
+		{"same fields", User{Name: "admin", UID: "1000", Home: "/home/admin", Shell: "/bin/bash"}, 1000, ""},
+		{"uid", User{Name: "admin", UID: "2000"}, 1000, "admin is the login user of this session; log in as another user to change its uid"},
+		{"shell", User{Name: "admin", Shell: "/usr/sbin/nologin"}, 1000, "admin is the login user of this session; log in as another user to change its shell"},
+		{"home", User{Name: "admin", Home: "/srv/admin"}, 1000, "admin is the login user of this session; log in as another user to change its home"},
+		{"uid of another user", User{Name: "admin", UID: "2000"}, 0, ""},
+		{"shell of another user", User{Name: "admin", Shell: "/usr/sbin/nologin"}, 0, ""},
+		{"home of another user", User{Name: "admin", Home: "/srv/admin"}, 0, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ""
+			if err := tt.user.checkLogin(admin, tt.login); err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("checkLogin() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

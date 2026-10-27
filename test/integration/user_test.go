@@ -117,6 +117,16 @@ wtbob wtgrp 700" ]`,
 			WantErr: "admin is the login user of this session; log in as another user to change its uid",
 		},
 		{
+			Name:    "the shell of the login user",
+			Args:    &module.User{Name: "admin", Shell: "/usr/sbin/nologin"},
+			WantErr: "admin is the login user of this session; log in as another user to change its shell",
+		},
+		{
+			Name:    "the home of the login user",
+			Args:    &module.User{Name: "admin", Home: "/srv/admin"},
+			WantErr: "admin is the login user of this session; log in as another user to change its home",
+		},
+		{
 			Name:  "a group with the user's name exists",
 			Setup: `groupadd -g 2150 wtalice`,
 			Args:  &module.User{Name: "wtalice"},

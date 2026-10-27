@@ -104,13 +104,13 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 		if other, ok := a.userByID(u.uid()); ok && other.name != u.Name {
 			return Result{}, fmt.Errorf("uid %s belongs to user %s", u.UID, other.name)
 		}
-		if exists && cur.uid == st.LoginUID {
-			return Result{}, fmt.Errorf("%s is the login user of this session; log in as another user to change its uid", u.Name)
-		}
 	}
 	var res Result
 	var home, group string
 	if exists {
+		if err := u.checkLogin(cur, st.LoginUID); err != nil {
+			return Result{}, err
+		}
 		res, home, group, err = u.checkExisting(a, cur)
 	} else {
 		res, home, group, err = u.checkNew(a)
@@ -142,6 +142,26 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 		}
 	}
 	return res, nil
+}
+
+// checkLogin fails when the step changes a field of the login user that the
+// next session needs.
+func (u *User) checkLogin(cur passwdEntry, login uint32) error {
+	if cur.uid != login {
+		return nil
+	}
+	var field string
+	switch {
+	case u.UID != "" && u.uid() != cur.uid:
+		field = "uid"
+	case u.Shell != "" && u.Shell != cur.shell:
+		field = "shell"
+	case u.Home != "" && u.Home != cur.home:
+		field = "home"
+	default:
+		return nil
+	}
+	return fmt.Errorf("%s is the login user of this session; log in as another user to change its %s", u.Name, field)
 }
 
 func (u *User) uid() uint32 {
