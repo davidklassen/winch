@@ -1,8 +1,10 @@
 package integration
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -38,7 +40,7 @@ func TestWinch(t *testing.T) {
 	sending := "winch: sending the helper (" + lab.Arch + ")"
 
 	t.Run("apply, then plan shows no changes", func(t *testing.T) {
-		vm.MustRun(t, "mkdir -p /var/lib/winch/bin && touch /var/lib/winch/bin/old")
+		vm.MustRun(t, "mkdir -p /var/lib/winch/bin && touch -d '31 days ago' /var/lib/winch/bin/old")
 		r := lab.Winch(t, dir, "plan", "site")
 		// Debian ships an /etc/motd.
 		if r.Code != 0 || !strings.Contains(r.Stdout, "~ file /etc/motd") {
@@ -77,6 +79,25 @@ func TestWinch(t *testing.T) {
 		r = lab.Winch(t, dir, "apply", "site")
 		if r.Code != 0 {
 			t.Errorf("apply with no changes: exit %d", r.Code)
+		}
+	})
+
+	t.Run("two winch versions keep both helpers", func(t *testing.T) {
+		other := otherWinch(t)
+		if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 {
+			t.Fatalf("plan: exit %d", r.Code)
+		}
+		if r := lab.WinchBin(t, other, dir, nil, "plan", "site"); r.Code != 0 || !strings.Contains(r.Stderr, sending) {
+			t.Errorf("plan with the other winch: exit %d, did not send its helper", r.Code)
+		}
+		if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 || strings.Contains(r.Stderr, sending) {
+			t.Errorf("plan after the other winch: exit %d, sent the helper again", r.Code)
+		}
+		if r := lab.WinchBin(t, other, dir, nil, "plan", "site"); r.Code != 0 || strings.Contains(r.Stderr, sending) {
+			t.Errorf("second plan with the other winch: exit %d, sent the helper again", r.Code)
+		}
+		if out := vm.MustRun(t, "ls /var/lib/winch/bin"); len(strings.Fields(out)) != 2 {
+			t.Errorf("/var/lib/winch/bin holds %q, want two helpers", out)
 		}
 	})
 
@@ -375,6 +396,44 @@ func TestWinch(t *testing.T) {
 			}
 		}
 	})
+}
+
+// otherWinch builds winch with helpers that have one more byte, so their
+// hashes differ from the helpers of WINCH_BIN.
+func otherWinch(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replace := map[string]string{}
+	for _, arch := range []string{"amd64", "arm64"} {
+		src := filepath.Join(root, "internal/helperbin/helper-linux-"+arch)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dst := filepath.Join(tmp, "helper-"+arch)
+		if err := os.WriteFile(dst, append(data, 0), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		replace[src] = dst
+	}
+	overlay, err := json.Marshal(map[string]any{"Replace": replace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "overlay.json"), overlay, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(tmp, "winch")
+	cmd := exec.CommandContext(t.Context(), "go", "build", "-overlay", filepath.Join(tmp, "overlay.json"), "-o", bin, "./cmd/winch")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build the other winch: %v\n%s", err, out)
+	}
+	return bin
 }
 
 // lockHolder is a Python program that holds the fcntl lock of path. It writes

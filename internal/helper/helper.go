@@ -137,13 +137,15 @@ func takeLock(params json.RawMessage, dir, self string) (_ *os.File, project str
 	if err := f.Truncate(int64(len(data))); err != nil {
 		return nil, "", fmt.Errorf("write lock: %w", err)
 	}
-	if err := deleteOthers(filepath.Join(dir, "bin"), self); err != nil {
+	if err := deleteOld(filepath.Join(dir, "bin"), self); err != nil {
 		return nil, "", err
 	}
 	return f, h.Project, nil
 }
 
-func deleteOthers(bin, self string) error {
+// deleteOld keeps the helpers of other winch versions in use, and their
+// uploads in progress. An upload renames its file when it ends.
+func deleteOld(bin, self string) error {
 	entries, err := os.ReadDir(bin)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -151,11 +153,26 @@ func deleteOthers(bin, self string) error {
 	if err != nil {
 		return err
 	}
+	now := time.Now()
 	for _, e := range entries {
+		p := filepath.Join(bin, e.Name())
 		if e.Name() == filepath.Base(self) {
+			if err := os.Chtimes(p, now, now); err != nil {
+				return fmt.Errorf("touch helper: %w", err)
+			}
 			continue
 		}
-		if err := os.Remove(filepath.Join(bin, e.Name())); err != nil {
+		info, err := e.Info()
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if now.Sub(info.ModTime()) <= 30*24*time.Hour {
+			continue
+		}
+		if err := os.Remove(p); err != nil {
 			return fmt.Errorf("delete old helper: %w", err)
 		}
 	}

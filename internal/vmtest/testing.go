@@ -93,6 +93,13 @@ func (l *Lab) WinchEnv(t *testing.T, dir string, env []string, args ...string) R
 	if bin == "" {
 		t.Fatal("WINCH_BIN is not set; run make test-integration")
 	}
+	return l.WinchBin(t, bin, dir, env, args...)
+}
+
+// WinchBin runs the winch binary bin in dir, with env added to the
+// environment.
+func (l *Lab) WinchBin(t *testing.T, bin, dir string, env []string, args ...string) Result {
+	t.Helper()
 	cmd := exec.CommandContext(t.Context(), bin, args...)
 	cmd.Dir = dir
 	cmd.Env = append(l.Env(), env...)

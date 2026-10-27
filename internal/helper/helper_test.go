@@ -138,15 +138,22 @@ func TestLockWithoutPID(t *testing.T) {
 }
 
 // spec: Remote execution/Helper
-func TestHelloDeletesOtherVersions(t *testing.T) {
+func TestHelloDeletesOldHelpers(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"old1", "old2", "self"} {
-		if err := os.WriteFile(filepath.Join(bin, name), nil, 0o755); err != nil {
+	old := time.Now().AddDate(0, 0, -31)
+	for _, name := range []string{"old", "new", "self"} {
+		p := filepath.Join(bin, name)
+		if err := os.WriteFile(p, nil, 0o755); err != nil {
 			t.Fatal(err)
+		}
+		if name != "new" {
+			if err := os.Chtimes(p, old, old); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	c := start(t, dir, filepath.Join(bin, "self"))
@@ -158,8 +165,11 @@ func TestHelloDeletesOtherVersions(t *testing.T) {
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	if !slices.Equal(names, []string{"self"}) {
-		t.Errorf("bin holds %v, want [self]", names)
+	if !slices.Equal(names, []string{"new", "self"}) {
+		t.Errorf("bin holds %v, want [new self]", names)
+	}
+	if fi, err := os.Stat(filepath.Join(bin, "self")); err != nil || time.Since(fi.ModTime()) > time.Hour {
+		t.Errorf("the helper did not update the modification time of its own file")
 	}
 }
 
