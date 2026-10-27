@@ -350,3 +350,51 @@ func TestUserCheckNewSystemHome(t *testing.T) {
 		t.Errorf("account = %q, mkHome = %q; want useradd -M and mkHome %s", u.account, u.mkHome, home)
 	}
 }
+
+// spec: Modules/user and group
+func TestOwnGroup(t *testing.T) {
+	a := accounts{
+		users: []passwdEntry{
+			{name: "root", uid: 0, gid: 0},
+			{name: "alice", uid: 1000, gid: 1000},
+			{name: "bob", uid: 1001, gid: 1001},
+			{name: "carol", uid: 1002, gid: 1003},
+		},
+		groups: []groupEntry{
+			{name: "alice", gid: 1000},
+			{name: "bob", gid: 1001, members: []string{"bob"}},
+			{name: "users", gid: 100},
+			{name: "shared", gid: 1003},
+			{name: "dev", gid: 1004, members: []string{"alice"}},
+			{name: "team", gid: 1005, members: []string{"alice", "bob"}},
+		},
+	}
+	tests := []struct {
+		name  string
+		user  string
+		gid   uint32
+		group string
+		owner string
+		want  bool
+	}{
+		{"private group", "alice", 1000, "alice", "alice", true},
+		{"private group of a root home", "alice", 1000, "alice", "root", true},
+		{"private group that lists the owner", "bob", 1001, "bob", "bob", true},
+		{"private group that lists the user of a root home", "bob", 1001, "bob", "root", false},
+		{"group without members", "alice", 100, "alice", "alice", false},
+		{"primary group of another user", "alice", 1003, "shared", "alice", false},
+		{"listed group of the owner only", "alice", 1004, "alice", "alice", true},
+		{"listed group with two members", "alice", 1005, "alice", "alice", false},
+		{"primary group after the step", "alice", 100, "users", "alice", true},
+		{"old primary group after the step", "alice", 1000, "users", "alice", false},
+		{"missing group", "alice", 1234, "alice", "alice", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := &User{Name: tt.user}
+			if got := u.ownGroup(a, tt.gid, tt.group, tt.owner); got != tt.want {
+				t.Errorf("ownGroup = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

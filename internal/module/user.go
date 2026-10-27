@@ -133,7 +133,7 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 	case "/":
 		return Result{}, fmt.Errorf("the home of %s is /; authorized_keys needs another home; set home", u.Name)
 	}
-	if err := u.sshdUsesKeys(ctx, cur, exists, home); err != nil {
+	if err := u.sshdUsesKeys(ctx, a, cur, exists, home, group); err != nil {
 		return Result{}, err
 	}
 	lines, err := u.keyLines(home, group)
@@ -450,14 +450,23 @@ func homeState(home string) ([]string, fs.FileInfo, error) {
 }
 
 // sshdUsesKeys fails when sshd, as configured before the run, would not use
-// the keys of the user in home after the step.
-func (u *User) sshdUsesKeys(ctx context.Context, cur passwdEntry, exists bool, home string) error {
+// the keys of the user in home after the step. group is the user's primary
+// group after the step.
+func (u *User) sshdUsesKeys(ctx context.Context, a accounts, cur passwdEntry, exists bool, home, group string) error {
 	if _, err := os.Stat("/usr/sbin/sshd"); err != nil {
 		return nil
 	}
-	out, err := run(ctx, nil, "sshd", "-T", "-C", "user="+u.Name)
+	// sshd -T fails on a Match LocalPort block without lport. Port is not
+	// allowed in a Match block, so the first run gives sshd's port.
+	spec := "user=" + u.Name + ",host=localhost,addr=127.0.0.1,laddr=127.0.0.1,lport="
+	out, err := run(ctx, nil, "sshd", "-T", "-C", spec+"22")
 	if err != nil {
 		return err
+	}
+	if port := sshdPort(out); port != "22" {
+		if out, err = run(ctx, nil, "sshd", "-T", "-C", spec+port); err != nil {
+			return err
+		}
 	}
 	conf := map[string]string{}
 	for line := range strings.Lines(out) {
@@ -471,7 +480,7 @@ func (u *User) sshdUsesKeys(ctx context.Context, cur passwdEntry, exists bool, h
 		return fmt.Errorf("sshd reads the keys of %s from %s (AuthorizedKeysFile), not from ~/.ssh/authorized_keys", u.Name, conf["authorizedkeysfile"])
 	}
 	if conf["strictmodes"] == "yes" {
-		if err := u.safeHome(cur, exists, home); err != nil {
+		if err := u.safeHome(a, cur, exists, home, group); err != nil {
 			return err
 		}
 	}
@@ -492,7 +501,7 @@ func (u *User) sshdUsesKeys(ctx context.Context, cur passwdEntry, exists bool, h
 
 // safeHome fails when sshd with StrictModes ignores the keys in home after the
 // step.
-func (u *User) safeHome(cur passwdEntry, exists bool, home string) error {
+func (u *User) safeHome(a accounts, cur passwdEntry, exists bool, home, group string) error {
 	fi, err := os.Stat(home)
 	if errors.Is(err, fs.ErrNotExist) {
 		// The step creates the home with mode 0700.
@@ -513,10 +522,54 @@ func (u *User) safeHome(cur passwdEntry, exists bool, home string) error {
 	if !slices.Contains(owners, st.Uid) {
 		return fmt.Errorf("with StrictModes yes, sshd ignores the keys of %s: %s owns %s, not root or %s", u.Name, userName(st.Uid), home, u.Name)
 	}
-	if st.Mode&0o022 != 0 {
-		return fmt.Errorf("with StrictModes yes, sshd ignores the keys of %s: the group or others can write %s (mode %04o)", u.Name, home, st.Mode&0o7777)
+	if st.Mode&0o002 != 0 {
+		return fmt.Errorf("with StrictModes yes, sshd ignores the keys of %s: others can write %s (mode %04o)", u.Name, home, st.Mode&0o7777)
+	}
+	owner := u.Name
+	if st.Uid == 0 {
+		owner = "root"
+	}
+	gid := st.Gid
+	if g, ok := a.group(group); ok && exists && st.Uid != 0 && st.Gid == cur.gid {
+		// usermod -g also changes the group of the user's home.
+		gid = g.gid
+	}
+	if st.Mode&0o020 != 0 && !u.ownGroup(a, gid, group, owner) {
+		return fmt.Errorf("with StrictModes yes, sshd ignores the keys of %s: the group %s can write %s (mode %04o) and is not the own group of %s alone", u.Name, a.groupName(gid), home, st.Mode&0o7777, u.Name)
 	}
 	return nil
+}
+
+// ownGroup reports whether Debian's sshd accepts a home of owner that the
+// group gid can write. group is the user's primary group after the step.
+func (u *User) ownGroup(a accounts, gid uint32, group, owner string) bool {
+	g, ok := a.group(strconv.FormatUint(uint64(gid), 10))
+	if !ok {
+		return false
+	}
+	for _, o := range a.users {
+		if o.gid == gid && o.name != u.Name {
+			return false
+		}
+	}
+	switch len(g.members) {
+	case 0:
+		pg, ok := a.group(group)
+		return ok && pg.gid == gid
+	case 1:
+		return g.members[0] == owner
+	}
+	return false
+}
+
+// sshdPort returns the first port in the output of sshd -T.
+func sshdPort(conf string) string {
+	for line := range strings.Lines(conf) {
+		if port, ok := strings.CutPrefix(strings.TrimSpace(line), "port "); ok {
+			return port
+		}
+	}
+	return ""
 }
 
 func passwordLocked(name string) (bool, error) {
