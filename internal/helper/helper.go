@@ -21,9 +21,25 @@ import (
 
 // Serve answers requests. dir is the state directory, self the path of the
 // running helper binary in dir/bin, and login the login user and the
-// connection of the session.
+// connection of the session. When in closes, a running exec command stops;
+// other requests finish.
 func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, login module.State) error {
-	dec := json.NewDecoder(in)
+	reqs := make(chan protocol.Request)
+	inCtx, inClosed := context.WithCancel(ctx)
+	defer inClosed()
+	var readErr error
+	go func() {
+		defer close(reqs)
+		defer inClosed()
+		dec := json.NewDecoder(in)
+		for {
+			var req protocol.Request
+			if readErr = dec.Decode(&req); readErr != nil {
+				return
+			}
+			reqs <- req
+		}
+	}()
 	enc := json.NewEncoder(out)
 	var lock *os.File
 	defer func() {
@@ -33,12 +49,12 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 	}()
 	var handlers, thens, downloads records
 	for {
-		var req protocol.Request
-		if err := dec.Decode(&req); err != nil {
-			if errors.Is(err, io.EOF) {
+		req, ok := <-reqs
+		if !ok {
+			if errors.Is(readErr, io.EOF) {
 				return nil
 			}
-			return fmt.Errorf("read request: %w", err)
+			return fmt.Errorf("read request: %w", readErr)
 		}
 		var result any
 		var err error
@@ -66,7 +82,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "command":
 			err = command(ctx, req.Params, thens)
 		case req.Method == "exec":
-			result, err = execCommand(ctx, req.Params)
+			result, err = execCommand(inCtx, req.Params)
 		case req.Method == "health":
 			err = runHealth(ctx, req.Params)
 		case req.Method == "check":

@@ -1,9 +1,12 @@
 package integration
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -70,5 +73,68 @@ func TestExec(t *testing.T) {
 		if r.Code != 1 || strings.Join(types, " ") != "version exec exec summary" || outputs["exec-a"] != "a\n" || outputs["exec-b"] != "b\n" {
 			t.Errorf("exit %d, events %q, outputs %q", r.Code, types, outputs)
 		}
+	})
+}
+
+// spec: CLI (winch exec); Modules (time limit)
+func TestExecInterrupt(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "exec-int")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  exec-int: {}\n",
+	})
+	// start runs command with winch exec and waits until the command creates
+	// /root/started.
+	start := func(t *testing.T, command string) *winchProcess {
+		t.Helper()
+		vm.MustRun(t, "rm -f /root/started")
+		w := startWinch(t, dir, "exec", "all", "--", command)
+		vm.MustRun(t, "timeout 60 sh -c 'until [ -e /root/started ]; do sleep 0.2; done'")
+		return w
+	}
+	freed := func(t *testing.T) {
+		t.Helper()
+		if r := lab.Winch(t, dir, "exec", "all", "--", "true"); r.Code != 0 {
+			t.Errorf("the next exec: exit %d, stderr %q", r.Code, r.Stderr)
+		}
+	}
+
+	t.Run("Ctrl-C sends SIGINT and frees the lock", func(t *testing.T) {
+		w := start(t, "touch /root/started; sleep 300")
+		began := time.Now()
+		w.interrupt(t)
+		code := w.wait(t)
+		if took := time.Since(began); took > 5*time.Second {
+			t.Errorf("winch ended after %s", took)
+		}
+		if out := w.cmd.Stdout.(*bytes.Buffer).String(); code != 1 || out != "exec-int\n  killed by signal 2\n\n" {
+			t.Errorf("exit %d, stdout %q", code, out)
+		}
+		freed(t)
+	})
+
+	t.Run("a command that ignores SIGINT gets SIGKILL after 10 seconds", func(t *testing.T) {
+		w := start(t, "trap '' INT; touch /root/started; sleep 300")
+		began := time.Now()
+		w.interrupt(t)
+		code := w.wait(t)
+		if took := time.Since(began); took < 10*time.Second || took > 20*time.Second {
+			t.Errorf("winch ended after %s, want 10s", took)
+		}
+		if out := w.cmd.Stdout.(*bytes.Buffer).String(); code != 1 || out != "exec-int\n  killed by signal 9\n\n" {
+			t.Errorf("exit %d, stdout %q", code, out)
+		}
+		freed(t)
+	})
+
+	t.Run("a broken session stops the command", func(t *testing.T) {
+		w := start(t, "touch /root/started; sleep 300")
+		if err := syscall.Kill(-w.cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			t.Fatal(err)
+		}
+		<-w.done
+		vm.MustRun(t, "timeout 10 sh -c 'while pgrep -x sleep >/dev/null || pgrep -f ^/var/lib/winch/bin/ >/dev/null; do sleep 0.2; done'")
+		freed(t)
 	})
 }

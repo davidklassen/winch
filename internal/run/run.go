@@ -22,7 +22,8 @@ import (
 
 // Conn is a session with one host. The context of MakePlan and Apply ends at
 // the first interrupt: they then start no new step. The calls of a Conn get a
-// context that does not end, so a step that runs finishes.
+// context that does not end, so a step that runs finishes. Exec gets the
+// context of the run: an interrupt stops its command.
 type Conn interface {
 	Facts(ctx context.Context) (facts.Facts, error)
 	Pending(ctx context.Context) (protocol.Pending, error)

@@ -24,18 +24,22 @@ import (
 func main() {
 	filter := secret.NewFilter()
 	stderr := color.NewWriter(os.Stderr, filter.Parts, false)
-	// The first Ctrl-C ends ctx: no new step or exec command starts. The second ends the
-	// sessions.
+	// The first Ctrl-C ends ctx: no new step starts, and exec commands stop.
+	// The second ends the sessions.
 	ctx, stop := context.WithCancel(context.Background())
 	sessions, kill := context.WithCancel(context.Background())
 	// Other commands run no steps, so a Ctrl-C ends them at once. A third
 	// Ctrl-C ends winch.
 	if len(os.Args) > 1 && slices.Contains([]string{"plan", "apply", "run", "exec"}, os.Args[1]) {
+		msg := "winch: interrupted; the running steps finish. Press Ctrl-C again to end the sessions."
+		if os.Args[1] == "exec" {
+			msg = "winch: interrupted; the commands stop. Press Ctrl-C again to end the sessions."
+		}
 		interrupts := make(chan os.Signal, 2)
 		signal.Notify(interrupts, os.Interrupt)
 		go func() {
 			<-interrupts
-			fmt.Fprintln(stderr, "winch: interrupted; the running steps finish. Press Ctrl-C again to end the sessions.")
+			fmt.Fprintln(stderr, msg)
 			stop()
 			<-interrupts
 			signal.Stop(interrupts)

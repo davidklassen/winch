@@ -53,8 +53,8 @@ type Hosts struct {
 	// OnCheck and OnApply run before each check and each apply of a step,
 	// with the host and the main argument of the step.
 	OnCheck, OnApply func(host, main string)
-	// OnConnect runs before each connect.
-	OnConnect func(host string)
+	// OnConnect runs before each connect, and OnExec in each exec.
+	OnConnect, OnExec func(host string)
 	// Batch lists the batch mode of each ConnectorFor call.
 	Batch []bool
 	// Users holds the login user of the last connect of each host.
@@ -614,6 +614,9 @@ func (h *Hosts) SetExec(host string, res module.ExecResult) {
 func (c *Conn) Exec(ctx context.Context, command string) (module.ExecResult, error) {
 	if ctx.Err() != nil {
 		return module.ExecResult{}, fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
+	}
+	if c.hosts.OnExec != nil {
+		c.hosts.OnExec(c.host)
 	}
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()

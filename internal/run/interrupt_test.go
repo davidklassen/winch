@@ -129,3 +129,39 @@ func TestPlanInterruptedBetweenChecks(t *testing.T) {
 		}
 	}
 }
+
+// spec: CLI (winch exec)
+func TestExecInterruptedDuringConnect(t *testing.T) {
+	p := interruptProject(t)
+	h := fakehost.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.OnConnect = func(string) { cancel() }
+	results := run.Exec(ctx, p.Name, p.Pipeline.Stages[0].Targets, "uptime", h.Connector(), run.Options{Serial: true})
+	for _, r := range results {
+		if r.Ran || !errors.Is(r.Err, run.ErrInterrupted) {
+			t.Errorf("%s: ran %v, error %v, want interrupted", r.Host, r.Ran, r.Err)
+		}
+	}
+	if len(h.Log["web1"]) != 0 || h.Open != 0 {
+		t.Errorf("web1 ran %q, %d sessions stay open", h.Log["web1"], h.Open)
+	}
+}
+
+// spec: CLI (winch exec)
+func TestExecFailsAfterInterrupt(t *testing.T) {
+	p := interruptProject(t)
+	h := fakehost.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.OnExec = func(host string) {
+		if host == "web1" {
+			cancel()
+		}
+	}
+	h.FailExec("web1")
+	results := run.Exec(ctx, p.Name, p.Pipeline.Stages[0].Targets, "uptime", h.Connector(), run.Options{Serial: true})
+	if r := results[0]; r.Ran || !errors.Is(r.Err, run.ErrInterrupted) {
+		t.Errorf("%s: ran %v, error %v, want interrupted", r.Host, r.Ran, r.Err)
+	}
+}

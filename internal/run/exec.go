@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -23,12 +24,20 @@ type ExecResult struct {
 }
 
 // Exec runs command on the hosts at the same time. With opts.Serial, the
-// sessions start one at a time. Each session closes after its command.
+// sessions start one at a time. Each session closes after its command. When
+// ctx ends, the commands stop.
 func Exec(ctx context.Context, proj string, hosts []project.Host, command string, connect Connect, opts Options) []ExecResult {
 	results := make([]ExecResult, len(hosts))
 	open := func(h project.Host) (Conn, error) { return connect(context.WithoutCancel(ctx), proj, h) }
 	errs := rollout(ctx, "exec", hosts, 0, opts.Serial, open, func(i int, c Conn) error {
-		res, err := c.Exec(context.WithoutCancel(ctx), command)
+		if ctx.Err() != nil {
+			return errors.Join(ErrInterrupted, c.Close())
+		}
+		res, err := c.Exec(ctx, command)
+		// The command can fail to start when the interrupt comes first.
+		if err != nil && ctx.Err() != nil {
+			err = ErrInterrupted
+		}
 		results[i].ExecResult, results[i].Ran = res, err == nil
 		if cerr := c.Close(); err == nil {
 			err = cerr

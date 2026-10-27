@@ -187,6 +187,37 @@ func TestExitsOnEOF(t *testing.T) {
 	}
 }
 
+// spec: CLI (winch exec)
+func TestExecStopsOnEOF(t *testing.T) {
+	c := start(t, t.TempDir(), "")
+	c.call(t, "hello", hello("r1"))
+	ready := filepath.Join(t.TempDir(), "ready")
+	go func() {
+		for {
+			if _, err := os.Stat(ready); err == nil {
+				c.w.Close()
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	r := c.call(t, "exec", protocol.Exec{Command: "touch " + ready + "; sleep 30"})
+	var res module.ExecResult
+	if err := json.Unmarshal(r.Result, &res); err != nil || r.Error != "" || res.Signal != 2 {
+		t.Errorf("exec = %s, %q, want killed by signal 2", r.Result, r.Error)
+	}
+}
+
+// spec: Modules (time limit)
+func TestCommandFinishesAfterEOF(t *testing.T) {
+	c := start(t, t.TempDir(), "")
+	c.call(t, "hello", hello("r1"))
+	time.AfterFunc(200*time.Millisecond, func() { c.w.Close() })
+	if r := c.call(t, "command", protocol.Command{Command: "sleep 1"}); r.Error != "" {
+		t.Errorf("command: %s", r.Error)
+	}
+}
+
 func TestRequestsBeforeHello(t *testing.T) {
 	c := start(t, t.TempDir(), "")
 	r := c.call(t, "check", protocol.Step{Module: "file"})

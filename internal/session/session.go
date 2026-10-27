@@ -294,6 +294,13 @@ func (s *Session) fail(err error) error {
 }
 
 func (s *Session) call(method string, params, result any) error {
+	if err := s.send(method, params); err != nil {
+		return err
+	}
+	return s.receive(result)
+}
+
+func (s *Session) send(method string, params any) error {
 	s.id++
 	p, err := json.Marshal(params)
 	if err != nil {
@@ -306,6 +313,10 @@ func (s *Session) call(method string, params, result any) error {
 	if _, err := s.stdin.Write(append(req, '\n')); err != nil {
 		return s.fail(err)
 	}
+	return nil
+}
+
+func (s *Session) receive(result any) error {
 	var resp protocol.Response
 	for {
 		line, err := s.stdout.ReadBytes('\n')
@@ -387,10 +398,15 @@ func (s *Session) Health(ctx context.Context, h protocol.Health) error {
 	return s.call("health", h, nil)
 }
 
-// Exec runs a command of winch exec as root on the host.
+// Exec runs a command of winch exec as root on the host. When ctx ends, it
+// closes the input of the helper, and the helper stops the command.
 func (s *Session) Exec(ctx context.Context, command string) (module.ExecResult, error) {
 	var res module.ExecResult
-	err := s.call("exec", protocol.Exec{Command: command}, &res)
+	if err := s.send("exec", protocol.Exec{Command: command}); err != nil {
+		return res, err
+	}
+	defer context.AfterFunc(ctx, func() { s.stdin.Close() })()
+	err := s.receive(&res)
 	return res, err
 }
 

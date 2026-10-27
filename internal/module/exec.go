@@ -91,14 +91,20 @@ func shell(ctx context.Context, command string, limit, killDelay time.Duration, 
 }
 
 // wait runs cmd in its own process group. When ctx ends, the group gets
-// SIGTERM, and SIGKILL when it still has a process after killDelay.
+// SIGTERM after a time limit and SIGINT after a cancel, as from a Ctrl-C in a
+// terminal. It gets SIGKILL when it still has a process after killDelay.
+// After a cancel, the exit of cmd is the result.
 func wait(ctx context.Context, cmd *exec.Cmd, killDelay time.Duration) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	var stopped bool
+	var timedOut bool
 	cmd.Cancel = func() error {
-		stopped = true
+		timedOut = errors.Is(ctx.Err(), context.DeadlineExceeded)
+		sig := syscall.SIGINT
+		if timedOut {
+			sig = syscall.SIGTERM
+		}
 		group := -cmd.Process.Pid
-		_ = syscall.Kill(group, syscall.SIGTERM)
+		_ = syscall.Kill(group, sig)
 		for end := time.Now().Add(killDelay); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
 			if errors.Is(syscall.Kill(group, 0), syscall.ESRCH) {
 				return nil
@@ -109,11 +115,12 @@ func wait(ctx context.Context, cmd *exec.Cmd, killDelay time.Duration) error {
 	// A daemon that the command starts can keep the output open.
 	cmd.WaitDelay = killDelay
 	err := cmd.Run()
-	if stopped {
+	if timedOut {
 		return context.Cause(ctx)
 	}
-	// The command itself succeeded.
-	if errors.Is(err, exec.ErrWaitDelay) {
+	// Run fails also when the command succeeded: when a child process keeps
+	// the output open, or when the command exits 0 after a cancel.
+	if cmd.ProcessState != nil && cmd.ProcessState.Success() {
 		return nil
 	}
 	return err

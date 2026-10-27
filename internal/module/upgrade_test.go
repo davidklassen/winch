@@ -1,6 +1,9 @@
 package module
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -80,6 +83,55 @@ func TestExecLongOutput(t *testing.T) {
 	}
 	if !strings.HasPrefix(got.Output, "(output cut to the last 1 MiB)\n") || !strings.HasSuffix(got.Output, "\n300000\nend\n") || len(got.Output) > 1<<20+100 {
 		t.Errorf("output of %d bytes starts %q, want the last 1 MiB after a note", len(got.Output), got.Output[:min(40, len(got.Output))])
+	}
+}
+
+// cancelWhenReady cancels the returned context when the command has created
+// the file ready.
+func cancelWhenReady(t *testing.T, ready string) context.Context {
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		for {
+			if _, err := os.Stat(ready); err == nil {
+				cancel()
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	return ctx
+}
+
+// spec: CLI (winch exec)
+func TestExecInterrupt(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		command string
+		want    ExecResult
+	}{
+		{"SIGINT", "touch $R; sleep 30", ExecResult{ExitCode: 130, Signal: 2}},
+		{"SIGKILL when SIGINT is ignored", "trap '' INT; touch $R; sleep 30", ExecResult{ExitCode: 137, Signal: 9}},
+		{"an exit 0 on SIGINT", "trap 'echo bye; exit 0' INT; touch $R; sleep 30", ExecResult{Output: "bye\n"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ready := filepath.Join(t.TempDir(), "ready")
+			got, err := execLimit(cancelWhenReady(t, ready), "R="+ready+"; "+tt.command, commandLimit, 5*time.Second)
+			if err != nil || got != tt.want {
+				t.Errorf("exec = %+v, %v, want %+v", got, err, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Modules (time limit)
+func TestExecTimeLimitSendsSIGTERM(t *testing.T) {
+	t.Parallel()
+	_, err := execLimit(t.Context(), "trap 'echo term; exit 1' TERM; sleep 30 & wait", time.Second, time.Second)
+	if err == nil || !strings.HasSuffix(err.Error(), "no result after 1s: term") {
+		t.Errorf("error = %v, want SIGTERM at the time limit", err)
 	}
 }
 
