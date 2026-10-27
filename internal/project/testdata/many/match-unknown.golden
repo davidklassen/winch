@@ -1,10 +1,10 @@
 mail.acme.com monit
   error: recipes/monit/recipe.yaml:6:16: content: unknown host or group "mial" in inventories/test.yaml
- | string(len(match("mial")))
+ | string(len(match(lower("MIAL"))))
  | ...........^
   file {"path":"/etc/peer-mail"} data="192.0.2.10 all\n" at pipelines/site.yaml:8:9
 monitor.acme.com monit
   error: recipes/monit/recipe.yaml:6:16: content: unknown host or group "mial" in inventories/test.yaml
- | string(len(match("mial")))
+ | string(len(match(lower("MIAL"))))
  | ...........^
   file {"path":"/etc/peer-mail"} data="192.0.2.10 all\n" at pipelines/site.yaml:8:9

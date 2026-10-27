@@ -4,6 +4,7 @@ package project
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -152,7 +153,7 @@ func Load(ctx context.Context, dir, inventory, pipeline string, set []string, ke
 	if err := errors.Join(cfgErr, lErr, setErr, invErr, plErr); err != nil {
 		return nil, err
 	}
-	if err := resolve(invs[0], pl); err != nil {
+	if err := resolve(invs[0], pl, map[*Recipe]bool{}); err != nil {
 		return nil, err
 	}
 	if err := l.unsealAll(ctx, keys); err != nil {
@@ -188,6 +189,10 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 		return nil, err
 	}
 	var pls []*Pipeline
+	checked := map[*Inventory]map[*Recipe]bool{}
+	for _, inv := range invs {
+		checked[inv] = map[*Recipe]bool{}
+	}
 	for _, file := range files {
 		pl, err := l.decodePipeline(file)
 		errs = append(errs, err)
@@ -196,7 +201,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 		}
 		pls = append(pls, pl)
 		for _, inv := range invs {
-			errs = append(errs, resolve(inv, pl))
+			errs = append(errs, resolve(inv, pl, checked[inv]))
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
@@ -300,8 +305,9 @@ func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setVa
 
 // resolve sets the targets of every stage from the inventory. It checks that
 // a recipe runs at most once per host, and that a recipe step without when
-// has the required variables of its recipe.
-func resolve(inv *Inventory, pl *Pipeline) error {
+// has the required variables of its recipe. It checks the match() patterns of
+// each recipe that checked does not hold yet, and adds the recipe to checked.
+func resolve(inv *Inventory, pl *Pipeline, checked map[*Recipe]bool) error {
 	var errs []error
 	first := map[[2]string]yamlx.Pos{}
 	for i := range pl.Stages {
@@ -311,8 +317,20 @@ func resolve(inv *Inventory, pl *Pipeline) error {
 			errs = append(errs, yamlx.Errorf(s.HostsPos, "%s", err))
 		}
 		for _, st := range s.Steps {
+			errs = append(errs, st.checkMatches(inv))
 			if st.Recipe == nil {
 				continue
+			}
+			if !checked[st.Recipe] {
+				checked[st.Recipe] = true
+				for _, rs := range st.Recipe.Steps {
+					errs = append(errs, rs.checkMatches(inv))
+				}
+				for _, h := range st.Recipe.Handlers {
+					for _, hs := range h.Steps {
+						errs = append(errs, hs.checkMatches(inv))
+					}
+				}
 			}
 			if st.when == nil {
 				errs = append(errs, st.missing(s.Targets))
@@ -328,6 +346,41 @@ func resolve(inv *Inventory, pl *Pipeline) error {
 		}
 	}
 	return errors.Join(append(errs, notifyHosts(pl))...)
+}
+
+// checkMatches checks that each constant match() pattern of st matches a
+// host of inv.
+func (st Step) checkMatches(inv *Inventory) error {
+	var cs []*computed
+	if st.when != nil {
+		cs = append(cs, st.when)
+	}
+	for _, v := range []*value{st.args, st.loop, st.then} {
+		if v != nil {
+			cs = slices.AppendSeq(cs, maps.Values(v.computed))
+		}
+	}
+	for _, v := range st.vars {
+		if v.computed != nil {
+			cs = slices.AppendSeq(cs, maps.Values(v.computed.computed))
+		}
+	}
+	slices.SortFunc(cs, func(a, b *computed) int {
+		return cmp.Or(cmp.Compare(a.pos.Line, b.pos.Line), cmp.Compare(a.pos.Col, b.pos.Col))
+	})
+	var errs []error
+	for _, c := range cs {
+		for _, m := range c.matches {
+			hosts, err := inv.Match(m.pattern)
+			switch {
+			case err != nil:
+				errs = append(errs, yamlx.Errorf(c.pos, "match(%q): %s%s", m.pattern, err, m.snippet))
+			case len(hosts) == 0:
+				errs = append(errs, yamlx.Errorf(c.pos, "match(%q): the host pattern matches no host in %s%s", m.pattern, inv.File, m.snippet))
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // notifyHosts checks that the recipe of each handler that a step notifies
@@ -689,11 +742,42 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 			l.warnings = append(l.warnings, yamlx.Errorf(d.ModePos, "mode: %s", w))
 		}
 	}
+	if w := skippedName(args); w != "" {
+		for _, p := range argsNode.Pairs {
+			if p.Key == "path" {
+				l.warnings = append(l.warnings, yamlx.Errorf(p.Value.Pos, "path: %s", w))
+			}
+		}
+	}
 	if st.Module == "file" {
 		st.tmplReads = r.templateReads(argsNode)
 		st.open = openContent(st, args.(*module.File), argsNode)
 	}
 	return st, nil
+}
+
+// skippedName returns a warning for a file or a link that cron or sudo skip
+// because its name has a ".", or "".
+func skippedName(m module.Module) string {
+	var p string
+	var absent bool
+	switch m := m.(type) {
+	case *module.File:
+		p, absent = m.Path, m.Absent
+	case *module.Link:
+		p, absent = m.Path, m.Absent
+	}
+	dir, name := path.Split(p)
+	switch {
+	case absent || !strings.Contains(name, "."):
+		return ""
+	case dir == "/etc/cron.d/":
+		return `cron skips a file in /etc/cron.d whose name has a "."`
+	case dir == "/etc/sudoers.d/":
+		return `sudo skips a file in /etc/sudoers.d whose name has a "."`
+	default:
+		return ""
+	}
 }
 
 // openContent returns the content reads of the file step st when its mode

@@ -409,6 +409,13 @@ func TestLoadRecipes(t *testing.T) {
 				"{{ .hots.name.x }} {{ $.hots }}\n" +
 				"{{ define \"row\" }}{{ $.name }}{{ .y }}{{ end }}{{ template \"row\" .host }}\n",
 		}},
+		{name: "template-not-defined", files: map[string]string{
+			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
+			"recipes/nginx/templates/bad.tmpl": "{{ define \"row\" }}{{ .name }}{{ end }}\n{{ template \"row\" .host }} {{ template \"rwo\" .host }}\n",
+		}},
+		{name: "template-not-defined-inline", files: map[string]string{
+			"pipelines/site.yaml": stage("      - file:\n          path: /a\n          content: !tpl '{{ template \"x\" }}'\n"),
+		}},
 		{name: "template-parse-error-mid-line", files: map[string]string{
 			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
 			"recipes/nginx/templates/bad.tmpl": "a {{ .host.name ) }}\n",
@@ -602,6 +609,42 @@ func TestLoadDirModeWarning(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, map[string]string{
 				"pipelines/site.yaml": stage("      - dir:\n          path: " + tt.path + "\n          mode: " + tt.mode + "\n"),
+			})
+			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			warnings, err := Validate(dir, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for what, ws := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": warnings} {
+				var got string
+				if len(ws) > 0 {
+					got = ws[0].Error()
+				}
+				if len(ws) > 1 || got != tt.want {
+					t.Errorf("%s warnings = %v, want %q", what, ws, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// spec: Modules/file, dir, link
+func TestLoadSkippedNameWarning(t *testing.T) {
+	for _, tt := range []struct{ name, step, want string }{
+		{"cron file", "file:\n          path: /etc/cron.d/backup.sh\n          content: x", `pipelines/site.yaml:6:17: path: cron skips a file in /etc/cron.d whose name has a "."`},
+		{"sudoers link", "link:\n          path: /etc/sudoers.d/admin.conf\n          target: /srv/admin", `pipelines/site.yaml:6:17: path: sudo skips a file in /etc/sudoers.d whose name has a "."`},
+		{"no dot", "file:\n          path: /etc/sudoers.d/admin\n          content: x", ""},
+		{"other directory", "file:\n          path: /etc/cron.daily/a.sh\n          content: x", ""},
+		{"subdirectory", "file:\n          path: /etc/cron.d/a/b.sh\n          content: x", ""},
+		{"absent", "file:\n          path: /etc/cron.d/a.sh\n          absent: true", ""},
+		{"computed path", "file:\n          path: !expr '\"/etc/cron.d/a.sh\"'\n          content: x", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeProject(t, map[string]string{
+				"pipelines/site.yaml": stage("      - " + tt.step + "\n"),
 			})
 			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
 			if err != nil {

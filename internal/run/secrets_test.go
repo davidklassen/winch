@@ -164,7 +164,7 @@ func TestSecretAnswer(t *testing.T) {
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
-	if !strings.Contains(out.String(), "    ~ debconf (secret)\n        answer (secret)\n") {
+	if !strings.Contains(out.String(), "    ~ debconf app/token\n        answer (secret)\n") {
 		t.Errorf("plan:\n%s%s", out.String(), errOut.String())
 	}
 	for _, s := range []string{"old-token", "new-token"} {

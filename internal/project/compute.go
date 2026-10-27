@@ -26,6 +26,15 @@ type computed struct {
 	tmpl *template.Template
 	// reads are the variables that it reads by name.
 	reads []string
+	// matches are the calls of match() with a constant pattern.
+	matches []matchCall
+}
+
+// matchCall is a call of match() with a constant pattern. snippet shows the
+// call in the expression.
+type matchCall struct {
+	pattern string
+	snippet string
 }
 
 // scope is what an expression or a template can read.
@@ -153,7 +162,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 		}
 		return nil, errors.Join(errs...)
 	}
-	c.reads = check.reads
+	c.reads, c.matches = check.reads, check.matches
 	return c, nil
 }
 
@@ -161,10 +170,11 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 // reports $env, undeclared variables, an item that is not defined, and a
 // read of vars other than by name where the scope forbids it.
 type exprCheck struct {
-	sc    scope
-	src   file.Source
-	reads []string
-	errs  []string
+	sc      scope
+	src     file.Source
+	reads   []string
+	matches []matchCall
+	errs    []string
 	// named are the nodes that a member access with a constant name reads.
 	named map[ast.Node]bool
 	// whole are the nodes that hold vars: vars, host, and host.vars.
@@ -172,8 +182,12 @@ type exprCheck struct {
 }
 
 func (c *exprCheck) fail(n ast.Node, msg string) {
-	fe := &file.Error{Location: n.Location(), Message: msg}
-	c.errs = append(c.errs, msg+secret.PrintableLines(fe.Bind(c.src).Snippet))
+	c.errs = append(c.errs, msg+c.snippet(n))
+}
+
+func (c *exprCheck) snippet(n ast.Node) string {
+	fe := &file.Error{Location: n.Location()}
+	return secret.PrintableLines(fe.Bind(c.src).Snippet)
 }
 
 func (c *exprCheck) Visit(np *ast.Node) {
@@ -190,6 +204,14 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		}
 		if isVars(n) || n.Value == "host" {
 			c.whole = append(c.whole, n)
+		}
+	case *ast.CallNode:
+		id, ok := n.Callee.(*ast.IdentifierNode)
+		if !ok || id.Value != "match" || len(n.Arguments) != 1 {
+			return
+		}
+		if pattern, ok := n.Arguments[0].(*ast.StringNode); ok {
+			c.matches = append(c.matches, matchCall{pattern: pattern.Value, snippet: c.snippet(n)})
 		}
 	case *ast.MemberNode:
 		if isVars(n) {

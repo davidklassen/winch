@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"path"
 	"strings"
+	"unicode"
 
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -33,6 +34,8 @@ func (l *Link) Validate() error {
 		return &yamlx.FieldError{Field: "target", Msg: "a link needs a target, or absent: true"}
 	case *l.Target == "":
 		return &yamlx.FieldError{Field: "target", Msg: "must not be empty"}
+	case strings.ContainsFunc(*l.Target, unicode.IsControl):
+		return &yamlx.FieldError{Field: "target", Msg: "has a control character"}
 	case dotDotAfterPart(*l.Target):
 		return &yamlx.FieldError{Field: "target", Msg: `".." after another part is not allowed; write the target without it`}
 	case path.Clean(*l.Target) != *l.Target:

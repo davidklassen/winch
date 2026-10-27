@@ -77,10 +77,10 @@ func (u *User) Validate() error {
 	if u.System && u.Home == "" {
 		return &yamlx.FieldError{Field: "authorized_keys", Msg: "a system user without home has no home for its keys; set home"}
 	}
+	seen := map[string]int{}
 	for i, k := range *u.AuthorizedKeys {
-		switch key, err := parseKey(k); {
-		case slices.Contains((*u.AuthorizedKeys)[:i], k):
-			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d repeats element %d", i+1, slices.Index(*u.AuthorizedKeys, k)+1)}
+		key, err := parseKey(k)
+		switch {
 		case k == "":
 			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is empty", i+1)}
 		case strings.ContainsAny(k, "\r\n"):
@@ -92,6 +92,10 @@ func (u *User) Validate() error {
 		case key.typ == "ssh-rsa" && key.rsaBits < 1024:
 			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is a %d-bit RSA key; Debian 13's sshd rejects RSA keys under 1024 bits", i+1, key.rsaBits)}
 		}
+		if j, ok := seen[string(key.blob)]; ok {
+			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d has the key of element %d", i+1, j+1)}
+		}
+		seen[string(key.blob)] = i
 	}
 	return nil
 }

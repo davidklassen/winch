@@ -102,6 +102,7 @@ func (sc scope) names() *names {
 type nameCheck struct {
 	sc    scope
 	at    func(off int) yamlx.Pos
+	t     *template.Template
 	top   *names
 	main  bool
 	item  bool
@@ -112,6 +113,7 @@ type nameCheck struct {
 // check checks every template of t. main names the template of the text,
 // where $ is the data.
 func (c *nameCheck) check(t *template.Template, main string) {
+	c.t = t
 	c.top = c.sc.names()
 	for _, d := range t.Templates() {
 		c.main = d.Name() == main
@@ -132,6 +134,13 @@ func (c *nameCheck) walk(n tparse.Node, top bool) {
 	case *tparse.ActionNode:
 		c.walk(n.Pipe, top)
 	case *tparse.TemplateNode:
+		if c.t.Lookup(n.Name) == nil {
+			var defined []string
+			for _, d := range c.t.Templates() {
+				defined = append(defined, d.Name())
+			}
+			c.errs = append(c.errs, yamlx.Errorf(c.at(int(n.Pos)), "template %q is not defined in this template%s", n.Name, yamlx.Suggest(n.Name, defined)))
+		}
 		if n.Pipe != nil {
 			c.walk(n.Pipe, top)
 		}

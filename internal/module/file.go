@@ -128,9 +128,12 @@ func checkPath(p string) error {
 	return checkAbs("path", p)
 }
 
-// checkAbs checks that p is a clean absolute path without "..".
+// checkAbs checks that p is a clean absolute path without ".." and without
+// control characters.
 func checkAbs(field, p string) error {
 	switch {
+	case strings.ContainsFunc(p, unicode.IsControl):
+		return &yamlx.FieldError{Field: field, Msg: "has a control character"}
 	case !path.IsAbs(p):
 		return &yamlx.FieldError{Field: field, Msg: "must be an absolute path"}
 	case slices.Contains(strings.Split(p, "/"), ".."):

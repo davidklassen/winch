@@ -406,7 +406,7 @@ func TestMatch(t *testing.T) {
 		{name: "match"},
 		{name: "match-set", set: []string{"vars.mail_server=true"}},
 		{name: "match-unknown", files: map[string]string{
-			"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mial\")))'\n",
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(lower(\"MIAL\"))))'\n",
 		}},
 	}
 	for _, tt := range tests {
@@ -417,6 +417,65 @@ func TestMatch(t *testing.T) {
 			}
 			golden.Assert(t, filepath.Join("testdata", "many", tt.name+".golden"), []byte(evalSteps(t, p)))
 		})
+	}
+}
+
+// spec: Templates and expressions/Data
+func TestMatchConstantPattern(t *testing.T) {
+	const content = "recipes/monit/recipe.yaml:6:16: "
+	tests := []struct {
+		name  string
+		files map[string]string
+		want  string
+	}{
+		{name: "no host", files: map[string]string{
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mon & !mon\")))'\n",
+		}, want: content + `match("mon & !mon"): the host pattern matches no host in inventories/test.yaml`},
+		{name: "unknown name", files: map[string]string{
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mial\")))'\n",
+		}, want: content + `match("mial"): unknown host or group "mial" in inventories/test.yaml`},
+		{name: "recipe step vars", files: map[string]string{
+			"pipelines/site.yaml": "stages:\n  - name: monit\n    hosts: all\n    steps:\n      - recipe: monit\n        vars:\n          monit_peers: !expr 'match(\"web\")'\n",
+		}, want: `pipelines/site.yaml:7:24: match("web"): unknown host or group "web"`},
+		{name: "when of a handler", files: map[string]string{
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps: []\nhandlers:\n  x:\n    - pkg:\n        name: curl\n      when: !expr 'len(match(\"mon & mail.acme.com\")) > 0'\n",
+		}, want: `recipes/monit/recipe.yaml:8:13: match("mon & mail.acme.com"): the host pattern matches no host`},
+		{name: "loop of a stage step", files: map[string]string{
+			"pipelines/site.yaml": "stages:\n  - name: monit\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: x\n        loop: !expr 'match(\"mon & !mon\")'\n",
+		}, want: `pipelines/site.yaml:8:15: match("mon & !mon"): the host pattern matches no host`},
+		{name: "computed pattern", files: map[string]string{
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(host.short + \"x\")))'\n",
+		}},
+		{name: "recipe outside the pipeline", files: map[string]string{
+			"recipes/other/recipe.yaml": "steps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mon & !mon\")))'\n",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeProject(t, with(matchFiles, tt.files))
+			_, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+			_, verr := Validate(dir, "", nil)
+			for what, err := range map[string]error{"Load": err, "Validate": verr} {
+				switch {
+				case tt.want == "" && err != nil:
+					t.Errorf("%s error = %v", what, err)
+				case tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)):
+					t.Errorf("%s error = %v, want %q", what, err, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// spec: Templates and expressions/Data
+func TestMatchConstantPatternOnce(t *testing.T) {
+	dir := writeProject(t, with(matchFiles, map[string]string{
+		"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mial\")))'\n",
+		"pipelines/other.yaml":      "stages:\n  - name: monit\n    hosts: all\n    steps:\n      - recipe: monit\n        vars:\n          monit_peers: []\n",
+	}))
+	_, err := Validate(dir, "", nil)
+	if err == nil || strings.Count(err.Error(), `: match("mial"): `) != 1 {
+		t.Errorf("error = %v, want one error for match(\"mial\")", err)
 	}
 }
 
@@ -555,7 +614,7 @@ func TestSkippedStageEvaluatesOnlyRequirements(t *testing.T) {
     steps:
       - recipe: site
         vars:
-          site_name: !expr 'string(len(match("mial")))'
+          site_name: !expr 'string(len(match(lower("MIAL"))))'
       - file:
           path: /x
           content: x

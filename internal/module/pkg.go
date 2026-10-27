@@ -43,9 +43,14 @@ func (p *Pkg) Validate() error {
 	if len(p.Name) == 0 {
 		return &yamlx.FieldError{Field: "name", Msg: "needs at least one package"}
 	}
-	for _, n := range p.Name {
-		if !pkgNameRe.MatchString(n) {
+	for i, n := range p.Name {
+		switch {
+		case !pkgNameRe.MatchString(n):
 			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q is not a package name", n)}
+		case strings.HasSuffix(n, "-"):
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf(`%q ends in "-", which apt reads as a removal; use absent: true`, n)}
+		case slices.Contains(p.Name[:i], n):
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q is in the list twice", n)}
 		}
 	}
 	switch {

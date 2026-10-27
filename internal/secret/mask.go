@@ -16,8 +16,9 @@ const Mark = "(secret)"
 
 // placeholders replace each secret in the variants 1 and 2. They share no
 // character, and their lengths differ, so no part of a secret is common to
-// all three results.
-var placeholders = [3]string{1: "\x01\x02\x02\x02\x02\x02\x02\x01", 2: "\x03\x04\x04\x04\x04\x04\x04\x04\x03"}
+// all three results. They have no control character, which a path cannot
+// hold.
+var placeholders = [3]string{1: "~^^^^^^~", 2: "`|||||||`"}
 
 // Placeholder returns the placeholder of the variant n, 1 or 2.
 func Placeholder(n int) string { return placeholders[n] }

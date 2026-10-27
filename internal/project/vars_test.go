@@ -642,6 +642,8 @@ func TestEvalErrors(t *testing.T) {
 			want: "error: recipes/r/recipe.yaml:3:13: path: must be an absolute path"},
 		{name: "path not clean", step: "  - file:\n      path: !tpl '/etc/{{ .vars.s }}/'\n      content: x\n",
 			want: `error: recipes/r/recipe.yaml:3:13: path: must be a clean path, such as "/etc/yes"`},
+		{name: "control character in a computed path", step: "  - file:\n      path: !tpl \"/etc/{{ .vars.s }}\\n\"\n      content: x\n",
+			want: "error: recipes/r/recipe.yaml:3:13: path: has a control character"},
 		{name: "content not a string", step: "  - file:\n      path: /a\n      content: !expr vars.l\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: expected a string, got a list"},
 		{name: "expression fails", step: "  - file:\n      path: /a\n      content: !expr 1 + vars.s\n",

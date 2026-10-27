@@ -34,6 +34,7 @@ func TestFileValidate(t *testing.T) {
 		{"name of three dots", "path: /srv/...\ncontent: hi\n", ""},
 		{"unclean path", "path: /etc//motd\ncontent: hi\n", `t.yaml:1:7: path: must be a clean path, such as "/etc/motd"`},
 		{"root path", "path: /\ncontent: hi\n", `t.yaml:1:7: path: must not be /`},
+		{"control character in path", "path: \"/etc/mo\\x7ftd\"\ncontent: hi\n", `t.yaml:1:7: path: has a control character`},
 		{"no content", "path: /etc/motd\n", `t.yaml:1:1: content: a file needs content, template, or source, or absent: true`},
 		{"template", "path: /x\ntemplate: site.tmpl\n", ""},
 		{"source in a subdirectory", "path: /x\nsource: sieve/spam.sieve\n", ""},
