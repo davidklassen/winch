@@ -2,6 +2,7 @@ package facts
 
 import (
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -42,11 +43,11 @@ func TestParse(t *testing.T) {
 // spec: Remote execution/Facts
 func TestRead(t *testing.T) {
 	f, err := Read("testdata/debian-13.os-release")
-	if want := (OS{ID: "debian", Version: "13", Codename: "trixie"}); err != nil || f.OS != want {
+	if want := (OS{ID: "debian", Version: "13", Codename: "trixie", Arch: runtime.GOARCH}); err != nil || f.OS != want {
 		t.Errorf("Read = %+v, %v; want %+v", f, err, want)
 	}
 	f, err = Read("testdata/missing", "testdata/debian-13.os-release")
-	if want := (OS{ID: "debian", Version: "13", Codename: "trixie"}); err != nil || f.OS != want {
+	if want := (OS{ID: "debian", Version: "13", Codename: "trixie", Arch: runtime.GOARCH}); err != nil || f.OS != want {
 		t.Errorf("Read of a missing first file = %+v, %v; want %+v", f, err, want)
 	}
 	if _, err := Read("testdata/missing", "testdata/missing"); err == nil {

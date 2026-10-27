@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -19,6 +20,7 @@ type OS struct {
 	ID       string `json:"id" expr:"id"`
 	Version  string `json:"version" expr:"version"`
 	Codename string `json:"codename" expr:"codename"`
+	Arch     string `json:"arch" expr:"arch"`
 }
 
 // Read reads the facts from the first os-release file in paths that exists.
@@ -38,6 +40,9 @@ func Read(paths ...string) (Facts, error) {
 	if err != nil {
 		return Facts{}, fmt.Errorf("read facts: %s: %w", path, err)
 	}
+	// The start script picks the helper binary by uname -m, so the arch of
+	// the helper is the arch of the host.
+	f.OS.Arch = runtime.GOARCH
 	return f, nil
 }
 
@@ -86,5 +91,5 @@ func unquote(s string) string {
 
 // Map returns the facts with the names that templates read.
 func (f Facts) Map() map[string]any {
-	return map[string]any{"os": map[string]any{"id": f.OS.ID, "version": f.OS.Version, "codename": f.OS.Codename}}
+	return map[string]any{"os": map[string]any{"id": f.OS.ID, "version": f.OS.Version, "codename": f.OS.Codename, "arch": f.OS.Arch}}
 }

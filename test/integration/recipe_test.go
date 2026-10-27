@@ -49,6 +49,7 @@ func TestRecipes(t *testing.T) {
 `,
 		"recipes/nginx/recipe.yaml": `require:
   - !expr 'facts.os.id == "debian" and facts.os.version == "13" and facts.os.codename == "trixie"'
+  - !expr 'facts.os.arch == "` + lab.Arch + `"'
 steps:
   - name: Site
     file:

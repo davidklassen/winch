@@ -362,7 +362,7 @@ while read -r line; do
   id=$(printf '%s' "$line" | sed 's/^{"id":\([0-9]*\).*/\1/')
   case "$line" in
   *'"method":"apply"'*'"data":"'*) echo '{"id":'$id',"result":{"status":"change","action":"create"}}' ;;
-  *'"method":"facts"'*) echo '{"id":'$id',"result":{"os":{"id":"debian","version":"13","codename":"trixie"}}}' ;;
+  *'"method":"facts"'*) echo '{"id":'$id',"result":{"os":{"id":"debian","version":"13","codename":"trixie","arch":"arm64"}}}' ;;
   *'"method":"apply"'*) echo '{"id":'$id',"error":"apply needs the content","need_content":true}' ;;
   *) echo '{"id":'$id',"result":{"status":"ok"}}' ;;
   esac
@@ -384,7 +384,7 @@ func TestFacts(t *testing.T) {
 	}
 	defer s.Close()
 	f, err := s.Facts(context.Background())
-	if want := (facts.OS{ID: "debian", Version: "13", Codename: "trixie"}); err != nil || f.OS != want {
+	if want := (facts.OS{ID: "debian", Version: "13", Codename: "trixie", Arch: "arm64"}); err != nil || f.OS != want {
 		t.Errorf("facts = %+v, %v; want %+v", f, err, want)
 	}
 }

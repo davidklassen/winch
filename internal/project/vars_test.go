@@ -16,7 +16,7 @@ import (
 	"github.com/davidklassen/winch/internal/module"
 )
 
-var debian13 = facts.Facts{OS: facts.OS{ID: "debian", Version: "13", Codename: "trixie"}}
+var debian13 = facts.Facts{OS: facts.OS{ID: "debian", Version: "13", Codename: "trixie", Arch: "amd64"}}
 
 var varsProject = map[string]string{
 	"winch.yaml": `name: acme
@@ -552,7 +552,7 @@ func TestValues(t *testing.T) {
 		{"host groups", "{{ .host.groups }}", "[all]"},
 		{"host vars", "{{ .host.vars.i }} {{ .host.address }}", "80 192.0.2.1"},
 		{"has keeps types", "{{ has .vars.ports \"22\" }}", "false"},
-		{"facts", "{{ .facts.os.id }} {{ .facts.os.version }}", "debian 13"},
+		{"facts", "{{ .facts.os.id }} {{ .facts.os.version }} {{ .facts.os.codename }} {{ .facts.os.arch }}", "debian 13 trixie amd64"},
 		{"missing key", "{{ .vars.m.nope }}", `error: recipes/r/templates/t.tmpl:1:9: .vars.m.nope: map has no entry for key "nope"`},
 		{"variable without a value", "{{ .vars.nothing }}", `error: recipes/r/templates/t.tmpl:1:9: .vars.nothing: map has no entry for key "nothing"`},
 	}
@@ -608,6 +608,7 @@ func TestExprValues(t *testing.T) {
 		{"types", `string(vars.i + 1) + string(vars.f2) + string(vars.b)`, "818.5true"},
 		{"host", `host.name + " " + host.short + " " + host.address + " " + join(host.groups, ",") + " " + string(host.vars.i)`, "web1 web1 192.0.2.1 all 80"},
 		{"defaults in dependency order", `string(vars.early)`, "3"},
+		{"facts", `facts.os.id + " " + facts.os.version + " " + facts.os.codename + " " + facts.os.arch`, "debian 13 trixie amd64"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

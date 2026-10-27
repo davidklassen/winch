@@ -198,7 +198,7 @@ func (h *Hosts) SetPkgFile(pkg, path, content string) {
 	h.pkgFiles[pkg][path] = content
 }
 
-// SetFacts sets the facts of a host. A host without them is Debian 13.
+// SetFacts sets the facts of a host. A host without them is Debian 13 on amd64.
 func (h *Hosts) SetFacts(host string, f facts.Facts) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -521,7 +521,7 @@ func (c *Conn) Facts(ctx context.Context) (facts.Facts, error) {
 	if f, ok := c.hosts.facts[c.host]; ok {
 		return f, nil
 	}
-	return facts.Facts{OS: facts.OS{ID: "debian", Version: "13", Codename: "trixie"}}, nil
+	return facts.Facts{OS: facts.OS{ID: "debian", Version: "13", Codename: "trixie", Arch: "amd64"}}, nil
 }
 
 func (c *Conn) Pending(ctx context.Context) (protocol.Pending, error) {
