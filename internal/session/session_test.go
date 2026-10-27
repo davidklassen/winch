@@ -345,6 +345,19 @@ func TestOpenMuchLoginShellText(t *testing.T) {
 	}
 }
 
+// spec: Modules/user and group
+func TestOpenPassesSSHConnection(t *testing.T) {
+	helper := helperbin.New("amd64", []byte("#!/bin/sh\nread line\necho \"{\\\"id\\\":1,\\\"error\\\":\\\"conn $1\\\"}\"\n"))
+	t.Setenv("SSH_CONNECTION", "10.0.2.2 51234 10.0.2.15 22")
+	for _, uid := range []string{"1000", "0"} {
+		fakeBin(t, "x86_64", uid, goodSudo)
+		_, err := open(t, stateDir, []helperbin.Binary{helper})
+		if want := "conn 10.0.2.2 51234 10.0.2.15 22"; err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("uid %s: error = %v, want %q", uid, err, want)
+		}
+	}
+}
+
 // The script travels inside single quotes.
 func TestScriptHasNoSingleQuote(t *testing.T) {
 	s := Script([]helperbin.Binary{fakeHelper("amd64"), fakeHelper("arm64")}, StateDir)

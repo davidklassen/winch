@@ -53,6 +53,9 @@ type State struct {
 	IndexFresh bool `json:"index_fresh,omitempty"`
 	// LoginUID is the UID of the session's login user. The helper sets it.
 	LoginUID uint32 `json:"-"`
+	// SSHConnection is the SSH_CONNECTION of the session's login. The helper
+	// sets it.
+	SSHConnection string `json:"-"`
 }
 
 // Module is the decoded arguments of one step. Main returns the main

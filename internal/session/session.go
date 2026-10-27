@@ -81,13 +81,13 @@ var archNames = map[string]string{"amd64": "x86_64", "arm64": "aarch64"}
 
 // Script returns the shell script that runs as root on the host. It picks the
 // helper for the architecture, receives it when it is missing or has another
-// hash, and starts it.
+// hash, and starts it with the script's first argument.
 // It prints "have", or "need <arch>" and then "got" after it received the
 // helper. winch sends nothing else before "got", so head cannot read past the
 // helper.
 func Script(bins []helperbin.Binary, dir string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "set -e\nd=%s\ncase $(uname -m) in\n", dir)
+	fmt.Fprintf(&b, "set -e\nc=$1\nd=%s\ncase $(uname -m) in\n", dir)
 	for _, bin := range bins {
 		fmt.Fprintf(&b, "%s) a=%s h=%s n=%d ;;\n", archNames[bin.Arch], bin.Arch, bin.SHA256, len(bin.Data))
 	}
@@ -114,16 +114,18 @@ else
   mv "$t" "$b"
   echo got
 fi
-exec "$b"
+exec "$b" "$c"
 `)
 	return b.String()
 }
 
-// command runs the script as root: directly for root, else with sudo -n.
+// command runs the script as root: directly for root, else with sudo -n. The
+// script gets SSH_CONNECTION as its argument, since sudo removes it from the
+// environment.
 func command(script string) string {
-	return "s='" + script + `'; if [ "$(id -u)" -eq 0 ]; then exec sh -c "$s"; fi; ` +
+	return "s='" + script + `'; if [ "$(id -u)" -eq 0 ]; then exec sh -c "$s" sh "$SSH_CONNECTION"; fi; ` +
 		`e=$(sudo -n true 2>&1) || { printf "winch: the login user needs passwordless sudo%s\n" "${e:+: $e}" >&2; exit 1; }; ` +
-		`exec sudo -n sh -c "$s"`
+		`exec sudo -n sh -c "$s" sh "$SSH_CONNECTION"`
 }
 
 // Open starts ssh and the helper. When the host closes the connection before

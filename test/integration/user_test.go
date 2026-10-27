@@ -572,8 +572,21 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Want:  addK1,
 		},
 		{
-			Name:    "a Match LocalPort block of another Port of sshd",
-			Setup:   `printf 'Port 2222\nMatch LocalPort 2222\n  AuthorizedKeysFile /etc/ssh/keys/%%u\n' > /etc/ssh/sshd_config.d/wt.conf`,
+			Name:  "a Match LocalPort block of a second Port of sshd",
+			Setup: `printf 'Port 2222\nPort 22\nMatch LocalPort 2222\n  AuthorizedKeysFile /etc/ssh/keys/%%u\n' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice`,
+			Args:  &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			Want:  addK1,
+		},
+		{
+			// QEMU's user network connects from 10.0.2.2 to 10.0.2.15.
+			Name:    "a Match LocalAddress block of the VM",
+			Setup:   `printf 'Match LocalAddress 10.0.2.15\n  AuthorizedKeysFile /etc/ssh/keys/%%u\n' > /etc/ssh/sshd_config.d/wt.conf`,
+			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			WantErr: "sshd reads the keys of wtalice from /etc/ssh/keys/%u (AuthorizedKeysFile), not from ~/.ssh/authorized_keys",
+		},
+		{
+			Name:    "a Match Address block of the controller",
+			Setup:   `printf 'Match Address 10.0.2.2\n  AuthorizedKeysFile /etc/ssh/keys/%%u\n' > /etc/ssh/sshd_config.d/wt.conf`,
 			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
 			WantErr: "sshd reads the keys of wtalice from /etc/ssh/keys/%u (AuthorizedKeysFile), not from ~/.ssh/authorized_keys",
 		},

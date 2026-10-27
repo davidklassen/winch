@@ -444,3 +444,28 @@ func TestOwnGroup(t *testing.T) {
 		})
 	}
 }
+
+// spec: Modules/user and group
+func TestSSHDSpec(t *testing.T) {
+	tests := []struct {
+		conn, want, wantErr string
+	}{
+		{"10.0.2.2 51234 10.0.2.15 22", "user=wtalice,host=10.0.2.2,addr=10.0.2.2,laddr=10.0.2.15,lport=22", ""},
+		{"2001:db8::1 40000 2001:db8::2 2222", "user=wtalice,host=2001:db8::1,addr=2001:db8::1,laddr=2001:db8::2,lport=2222", ""},
+		{"", "", `SSH_CONNECTION "" is not a client address and port and a local address and port`},
+		{"10.0.2.2 51234 10.0.2.15", "", `SSH_CONNECTION "10.0.2.2 51234 10.0.2.15" is not`},
+		{"10.0.2.2,x 51234 10.0.2.15 22", "", `SSH_CONNECTION "10.0.2.2,x 51234 10.0.2.15 22" is not`},
+	}
+	for _, tt := range tests {
+		got, err := sshdSpec("wtalice", tt.conn)
+		if tt.wantErr != "" {
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("sshdSpec(%q) error = %v, want %q", tt.conn, err, tt.wantErr)
+			}
+			continue
+		}
+		if err != nil || got != tt.want {
+			t.Errorf("sshdSpec(%q) = %q, %v, want %q", tt.conn, got, err, tt.want)
+		}
+	}
+}

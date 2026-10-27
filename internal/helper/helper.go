@@ -20,9 +20,9 @@ import (
 )
 
 // Serve answers requests. dir is the state directory, self the path of the
-// running helper binary in dir/bin, and login the UID of the session's login
-// user.
-func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, login uint32) error {
+// running helper binary in dir/bin, and login the login user and the
+// connection of the session.
+func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, login module.State) error {
 	dec := json.NewDecoder(in)
 	enc := json.NewEncoder(out)
 	var lock *os.File
@@ -166,12 +166,12 @@ func deleteOthers(bin, self string) error {
 // notifies and its then, and makes the changes the check found. When the
 // changes fail, it removes the records that it added. After a download, it
 // records the checksum of the path.
-func step(ctx context.Context, params json.RawMessage, apply bool, login uint32, handlers, thens, downloads records, note func(string)) (protocol.StepResult, error) {
+func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, handlers, thens, downloads records, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
 	}
-	s.State.LoginUID = login
+	s.State.LoginUID, s.State.SSHConnection = login.LoginUID, login.SSHConnection
 	m, ok := module.New(s.Module)
 	if !ok {
 		return protocol.StepResult{}, fmt.Errorf("unknown module %q", s.Module)

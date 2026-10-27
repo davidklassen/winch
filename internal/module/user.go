@@ -175,7 +175,7 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 	case "/":
 		return Result{}, fmt.Errorf("the home of %s is /; authorized_keys needs another home; set home", u.Name)
 	}
-	if err := u.sshdUsesKeys(ctx, a, cur, exists, home, group); err != nil {
+	if err := u.sshdUsesKeys(ctx, st.SSHConnection, a, cur, exists, home, group); err != nil {
 		return Result{}, err
 	}
 	lines, err := u.keyLines(home, group)
@@ -551,21 +551,17 @@ func homeState(home string) ([]string, fs.FileInfo, error) {
 // sshdUsesKeys fails when sshd, as configured before the run, would not use
 // the keys of the user in home after the step. group is the user's primary
 // group after the step.
-func (u *User) sshdUsesKeys(ctx context.Context, a accounts, cur passwdEntry, exists bool, home, group string) error {
+func (u *User) sshdUsesKeys(ctx context.Context, sshConnection string, a accounts, cur passwdEntry, exists bool, home, group string) error {
 	if _, err := os.Stat("/usr/sbin/sshd"); err != nil {
 		return nil
 	}
-	// sshd -T fails on a Match LocalPort block without lport. Port is not
-	// allowed in a Match block, so the first run gives sshd's port.
-	spec := "user=" + u.Name + ",host=localhost,addr=127.0.0.1,laddr=127.0.0.1,lport="
-	out, err := run(ctx, nil, "sshd", "-T", "-C", spec+"22")
+	spec, err := sshdSpec(u.Name, sshConnection)
 	if err != nil {
 		return err
 	}
-	if port := sshdPort(out); port != "22" {
-		if out, err = run(ctx, nil, "sshd", "-T", "-C", spec+port); err != nil {
-			return err
-		}
+	out, err := run(ctx, nil, "sshd", "-T", "-C", spec)
+	if err != nil {
+		return err
 	}
 	conf := map[string]string{}
 	for line := range strings.Lines(out) {
@@ -664,14 +660,15 @@ func (u *User) ownGroup(a accounts, gid uint32, group, owner string) bool {
 	return false
 }
 
-// sshdPort returns the first port in the output of sshd -T.
-func sshdPort(conf string) string {
-	for line := range strings.Lines(conf) {
-		if port, ok := strings.CutPrefix(strings.TrimSpace(line), "port "); ok {
-			return port
-		}
+// sshdSpec returns the connection spec of sshd -T for a login of user over
+// the connection conn, a value of SSH_CONNECTION. Without UseDNS, sshd
+// matches Host against the client address.
+func sshdSpec(user, conn string) (string, error) {
+	f := strings.Fields(conn)
+	if len(f) != 4 || strings.Contains(conn, ",") {
+		return "", fmt.Errorf("SSH_CONNECTION %q is not a client address and port and a local address and port", conn)
 	}
-	return ""
+	return fmt.Sprintf("user=%s,host=%s,addr=%s,laddr=%s,lport=%s", user, f[0], f[0], f[2], f[3]), nil
 }
 
 // shadowPassword returns the password hash of the user name in /etc/shadow.

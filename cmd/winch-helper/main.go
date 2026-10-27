@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/davidklassen/winch/internal/helper"
+	"github.com/davidklassen/winch/internal/module"
 )
 
 func main() {
@@ -19,7 +20,7 @@ func main() {
 	// without /usr/sbin.
 	os.Setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") //nolint:errcheck // cannot fail for a valid name
 	os.Setenv("HOME", "/root")                                                        //nolint:errcheck // cannot fail for a valid name
-	login := helper.LoginUID(os.Getenv("SUDO_UID"), os.Getuid())
+	login := module.State{LoginUID: helper.LoginUID(os.Getenv("SUDO_UID"), os.Getuid()), SSHConnection: os.Args[1]}
 	for _, kv := range os.Environ() {
 		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "SUDO_") {
 			os.Unsetenv(name) //nolint:errcheck // cannot fail for a valid name

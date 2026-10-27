@@ -32,7 +32,7 @@ func start(t *testing.T, dir, self string) *client {
 	outR, outW := io.Pipe()
 	c := &client{w: inW, r: bufio.NewScanner(outR), done: make(chan error, 1)}
 	go func() {
-		err := Serve(context.Background(), inR, outW, dir, self, 1000)
+		err := Serve(context.Background(), inR, outW, dir, self, module.State{LoginUID: 1000})
 		outW.Close()
 		c.done <- err
 	}()
