@@ -1,0 +1,24 @@
+vars:
+  nftables_tcp_ports: [22]
+
+steps:
+  - pkg:
+      name: nftables
+  - file:
+      path: /etc/nftables.conf
+      template: nftables.conf.tmpl
+      mode: "0755"
+      validate: nft -c -f /etc/nftables.conf
+    notify: [reload, fail2ban.restart]
+  - service:
+      name: nftables
+      enabled: true
+      running: true
+    confirm_access: true
+
+handlers:
+  reload:
+    - service:
+        name: nftables
+        reloaded: true
+      confirm_access: true

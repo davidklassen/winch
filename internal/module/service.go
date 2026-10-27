@@ -245,6 +245,23 @@ func activeOrEnabled(ctx context.Context, units []string) ([]string, error) {
 	return found, nil
 }
 
+// Undo returns the step that reverses what a checked step does to the running
+// unit: a stop for a start, a start for a stop, and the same step for a
+// restart or a reload. It returns nil for a step that does none of these.
+func (s *Service) Undo() *Service {
+	switch {
+	case slices.Contains(s.todo, "start"):
+		no := false
+		return &Service{Name: s.Name, Running: &no}
+	case slices.Contains(s.todo, "stop"):
+		yes := true
+		return &Service{Name: s.Name, Running: &yes}
+	case s.Restarted, s.Reloaded:
+		return &Service{Name: s.Name, Restarted: s.Restarted, Reloaded: s.Reloaded}
+	}
+	return nil
+}
+
 // planLabels are the plan lines of the commands that differ from the
 // command.
 var planLabels = map[string]string{"try-restart": "restart", "try-reload-or-restart": "reload"}

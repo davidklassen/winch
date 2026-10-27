@@ -10,6 +10,9 @@ groups:
       # The public test key of the lab's VMs.
       admin_authorized_keys:
         - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEKuH6pdaf+e0kocKtI05vQqRCDwEohA8IwUIwzFtKku winch-test
+      # The lab forwards only SSH; the web stage checks the site on
+      # localhost.
+      nftables_tcp_ports: [22, 80]
       # The VMs have no internet; the local postfix answers on port 25.
       postfix_probe_host: 127.0.0.1
       # A DKIM key made for the demo.

@@ -43,6 +43,15 @@ type Handler struct {
 	Pos    yamlx.Pos
 }
 
+// ConfirmsAccess reports whether a step or a handler step of the recipe has
+// confirm_access.
+func (r *Recipe) ConfirmsAccess() bool {
+	confirms := func(st Step) bool { return st.ConfirmAccess }
+	return slices.ContainsFunc(r.Steps, confirms) || slices.ContainsFunc(r.Handlers, func(h *Handler) bool {
+		return slices.ContainsFunc(h.Steps, confirms)
+	})
+}
+
 // FullName is <recipe>.<handler>.
 func (h *Handler) FullName() string { return h.Recipe.Name + "." + h.Name }
 

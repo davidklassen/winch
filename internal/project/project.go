@@ -85,6 +85,12 @@ type Stage struct {
 	Skipped bool
 }
 
+// ConfirmsAccess reports whether a module step of the stage has
+// confirm_access.
+func (s *Stage) ConfirmsAccess() bool {
+	return slices.ContainsFunc(s.Steps, func(st Step) bool { return st.ConfirmAccess })
+}
+
 // Health is the health gate of a stage. Stable and Timeout are seconds.
 type Health struct {
 	Command string
@@ -105,6 +111,8 @@ type Step struct {
 	Notify []*Handler
 	// Then is the command of then, after Eval.
 	Then string
+	// ConfirmAccess is the confirm_access of a service step.
+	ConfirmAccess bool
 	// Shown is set after Eval when the output shows a part of the step as
 	// a secret.
 	Shown *Shown
@@ -729,7 +737,7 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 // recipeOnly are the arguments that read a recipe's files or templates.
 var recipeOnly = map[string][]string{"file": {"template", "source"}, "repo": {"key"}, "unit": {"source"}}
 
-var stepFields = []string{"name", "recipe", "vars", "when", "loop", "then", "notify"}
+var stepFields = []string{"name", "recipe", "vars", "when", "loop", "then", "confirm_access", "notify"}
 
 const thenInLoop = "then runs once after the last element; it cannot use item"
 
@@ -803,6 +811,9 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 			st.then, err = compileThen(p.Value, thenScope)
 			errs = append(errs, err)
 			continue
+		case p.Key == "confirm_access":
+			errs = append(errs, yamlx.Decode(p.Value, &st.ConfirmAccess))
+			continue
 		case p.Key == "notify" && kind == handlerStep:
 			errs = append(errs, yamlx.Errorf(p.KeyPos, "a handler step cannot notify"))
 			continue
@@ -847,6 +858,13 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 	}
 	if st.Module == "" {
 		return Step{}, yamlx.Errorf(n.Pos, "a step needs a module")
+	}
+	if st.Module != "service" {
+		for _, p := range n.Pairs {
+			if p.Key == "confirm_access" {
+				return Step{}, yamlx.Errorf(p.KeyPos, "confirm_access: only a service step can use it")
+			}
+		}
 	}
 	if st.Module == "assert" {
 		for _, p := range n.Pairs {

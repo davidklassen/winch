@@ -475,6 +475,18 @@ func TestLoadRecipes(t *testing.T) {
 		{name: "assert-then", files: map[string]string{
 			"pipelines/site.yaml": stage("      - assert:\n          command: \"true\"\n          message: x\n        then: echo done\n"),
 		}},
+		{name: "confirm-access-not-service", files: map[string]string{
+			"pipelines/site.yaml": stage("      - file:\n          path: /a\n          content: a\n        confirm_access: true\n"),
+		}},
+		{name: "hostname-fqdn", files: map[string]string{
+			"pipelines/site.yaml": stage("      - hostname:\n          name: mail.example.com\n"),
+		}},
+		{name: "timezone-bad-name", files: map[string]string{
+			"pipelines/site.yaml": stage("      - timezone:\n          name: Europe/Ber lin\n"),
+		}},
+		{name: "reboot-without-if-required", files: map[string]string{
+			"pipelines/site.yaml": stage("      - reboot:\n          timeout: 60\n"),
+		}},
 		{name: "assert-notify", files: map[string]string{
 			"recipes/nginx/recipe.yaml": recipe("  - assert:\n      command: \"true\"\n      message: x\n    notify: reload\nhandlers:\n  reload:\n    - service:\n        name: nginx\n        reloaded: true\n"),
 		}},

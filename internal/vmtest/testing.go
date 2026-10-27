@@ -229,7 +229,13 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 				vm.MustRun(t, c.BeforeApply)
 			}
 			st = c.State
-			applied, err := s.Apply(ctx, name, c.Args, &st, nil, nil)
+			applied, err := s.Apply(ctx, name, c.Args, &st, nil, nil, protocol.Guard{})
+			// A guarded step started the rollback timer; the case keeps its
+			// change.
+			if err == nil && applied.Timer > 0 {
+				err = s.Confirm(ctx)
+				applied.Timer = 0
+			}
 			if c.WantApplyErr != "" {
 				if err == nil || !strings.Contains(err.Error(), c.WantApplyErr) {
 					t.Fatalf("apply error = %v, want %q", err, c.WantApplyErr)

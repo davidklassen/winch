@@ -1,0 +1,12 @@
+steps:
+  - file:
+      path: /etc/hosts
+      template: hosts.tmpl
+  - hostname:
+      name: !expr host.short
+  - name: Keep cloud-init from changing the name at boot
+    file:
+      path: /etc/cloud/cloud.cfg.d/99-hostname.cfg
+      content: !tpl |
+        hostname: {{ .host.short }}
+        fqdn: {{ .host.name }}

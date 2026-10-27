@@ -7,6 +7,7 @@ import (
 	"errors"
 	"maps"
 	"slices"
+	"time"
 )
 
 // ErrNeedContent is the error of an apply that must write content it did not
@@ -48,6 +49,12 @@ type Result struct {
 	Link      string   `json:"link,omitempty"`
 	StartedBy []string `json:"started_by,omitempty"`
 	Deferred  bool     `json:"deferred,omitempty"`
+	// Guard is set on a change that can lock out the login user: apply
+	// checks the access after it, as for confirm_access.
+	Guard bool `json:"guard,omitempty"`
+	// Timer is set by an apply that started the rollback timer: the time
+	// that the timer has left.
+	Timer time.Duration `json:"timer,omitempty"`
 	// SourceSHA256 is the hash of the content that copy_from or stock
 	// reads on the host, so the plan hash covers it.
 	SourceSHA256 string `json:"source_sha256,omitempty"`
@@ -99,11 +106,14 @@ var modules = map[string]func() Module{
 	"download": func() Module { return new(Download) },
 	"file":     func() Module { return new(File) },
 	"group":    func() Module { return new(Group) },
+	"hostname": func() Module { return new(Hostname) },
 	"line":     func() Module { return new(Line) },
 	"link":     func() Module { return new(Link) },
 	"pkg":      func() Module { return new(Pkg) },
+	"reboot":   func() Module { return new(Reboot) },
 	"repo":     func() Module { return new(Repo) },
 	"service":  func() Module { return new(Service) },
+	"timezone": func() Module { return new(Timezone) },
 	"unit":     func() Module { return new(Unit) },
 	"upgrade":  func() Module { return new(Upgrade) },
 	"user":     func() Module { return new(User) },

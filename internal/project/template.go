@@ -91,7 +91,7 @@ func (sc scope) names() *names {
 	}
 	return &names{noun: "name", sub: map[string]*names{
 		"vars":  vars,
-		"facts": {noun: "fact", sub: map[string]*names{"os": {noun: "fact", sub: fact}}},
+		"facts": {noun: "fact", sub: map[string]*names{"os": {noun: "fact", sub: fact}, "reboot_required": nil}},
 		"host":  {noun: "host field", sub: host},
 		"item":  nil,
 	}}

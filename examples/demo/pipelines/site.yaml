@@ -4,6 +4,11 @@ stages:
     steps:
       - recipe: admin
       - recipe: leftovers
+      - recipe: ssh
+      - recipe: nftables
+      - recipe: hostname
+      - timezone:
+          name: Etc/UTC
       - group:
           name: deploy
           gid: 2000

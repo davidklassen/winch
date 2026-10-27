@@ -41,6 +41,8 @@ type User struct {
 	mkHome   string
 	password bool
 	keys     bool
+	// keyHome is the home of the keys that Apply writes.
+	keyHome string
 }
 
 // hashRe matches a crypt hash, such as $y$… or $6$…, also locked with "!".
@@ -183,10 +185,7 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 		return Result{}, err
 	}
 	if len(lines) > 0 {
-		u.keys = true
-		if exists && cur.uid == st.LoginUID {
-			lines = append([]string{"changes the keys of the login user " + u.Name}, lines...)
-		}
+		u.keys, u.keyHome = true, home
 		res.Changes = append(res.Changes, lines...)
 		if res.Status == OK {
 			res = Result{Status: Change, Action: Modify, Changes: lines}

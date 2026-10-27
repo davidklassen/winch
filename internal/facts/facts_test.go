@@ -66,3 +66,78 @@ func TestRead(t *testing.T) {
 		t.Error("Read of a directory: no error")
 	}
 }
+
+// spec: Remote execution/Facts (reboot_required)
+func TestRebootRequired(t *testing.T) {
+	tests := []struct {
+		name    string
+		flag    bool
+		kernels []string
+		release string
+		want    bool
+	}{
+		{"no flag, running the only kernel", false, []string{"6.12.43+deb13-arm64"}, "6.12.43+deb13-arm64", false},
+		{"the flag file", true, []string{"6.12.43+deb13-arm64"}, "6.12.43+deb13-arm64", true},
+		{"a newer kernel", false, []string{"6.12.43+deb13-arm64", "6.12.48+deb13-arm64"}, "6.12.43+deb13-arm64", true},
+		{"running the newest", false, []string{"6.12.43+deb13-arm64", "6.12.48+deb13-arm64"}, "6.12.48+deb13-arm64", false},
+		{"numbers, not text", false, []string{"6.12.9+deb13-arm64", "6.12.10+deb13-arm64"}, "6.12.10+deb13-arm64", false},
+		{"numbers, not text, older", false, []string{"6.12.9+deb13-arm64", "6.12.10+deb13-arm64"}, "6.12.9+deb13-arm64", true},
+		{"a tilde sorts first", false, []string{"6.12~rc1-arm64", "6.12-arm64"}, "6.12-arm64", false},
+		{"another flavor does not count", false, []string{"6.12.43+deb13-arm64", "6.12.48+deb13-rt-arm64"}, "6.12.43+deb13-arm64", false},
+		{"no kernels in boot", false, nil, "6.12.43+deb13-arm64", false},
+		{"debian 12 abi", false, []string{"6.1.0-28-amd64", "6.1.0-31-amd64"}, "6.1.0-28-amd64", true},
+		{"debian 12 abi, running the newest", false, []string{"6.1.0-28-cloud-amd64", "6.1.0-31-cloud-amd64"}, "6.1.0-31-cloud-amd64", false},
+		{"debian 12, another flavor", false, []string{"6.1.0-28-amd64", "6.1.0-31-cloud-amd64"}, "6.1.0-28-amd64", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			boot := dir + "/boot"
+			if err := os.Mkdir(boot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, k := range append(tt.kernels, "config-x") {
+				if err := os.WriteFile(boot+"/vmlinuz-"+k, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			flag := dir + "/reboot-required"
+			if tt.flag {
+				if err := os.WriteFile(flag, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := RebootRequired(flag, boot, tt.release)
+			if tt.kernels == nil {
+				got, err = RebootRequired(flag, dir+"/missing", tt.release)
+			}
+			if err != nil || got != tt.want {
+				t.Errorf("RebootRequired = %v, %v; want %v", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompareVersions(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{"1.0", "1.0", 0},
+		{"1.0", "1.1", -1},
+		{"1.10", "1.9", 1},
+		{"1.0~rc1", "1.0", -1},
+		{"1.0+deb13", "1.0", 1},
+		{"1.0a", "1.0+", -1},
+		{"6.12.43+deb13", "6.12.48+deb13", -1},
+		{"1:1.0", "2.0", 1},
+	}
+	for _, tt := range tests {
+		if got := compareVersions(tt.a, tt.b); got != tt.want {
+			t.Errorf("compareVersions(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+		if got := compareVersions(tt.b, tt.a); got != -tt.want {
+			t.Errorf("compareVersions(%q, %q) = %d, want %d", tt.b, tt.a, got, -tt.want)
+		}
+	}
+}

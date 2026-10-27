@@ -48,10 +48,15 @@ type Config struct {
 	Binaries []helperbin.Binary
 	Hello    protocol.Hello
 	Progress *color.Writer
-	// RetryDelay is the wait before the second ssh start. Zero means 2s.
+	// RetryDelay is the wait before another ssh start: the retry of a
+	// dropped connection, and each connect after a reboot. Zero means 2s.
 	RetryDelay time.Duration
 	// Batch makes ssh ask no questions.
 	Batch bool
+	// fresh makes ssh open its own connection, also when the SSH config
+	// shares one: a check of the access and a reconnect after a reboot need
+	// a new login.
+	fresh bool
 }
 
 // Session is one ssh process with the helper at the other end.
@@ -63,6 +68,10 @@ type Session struct {
 	id       int
 	host     string
 	progress *color.Writer
+	// cfg and ctx are those of Open: a check of the access and a reboot
+	// open more connections.
+	cfg Config
+	ctx context.Context
 
 	waitOnce sync.Once
 	waitErr  error
@@ -137,30 +146,25 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	if !retry {
 		return s, err
 	}
-	delay := cfg.RetryDelay
-	if delay == 0 {
-		delay = 2 * time.Second
-	}
 	select {
 	case <-ctx.Done():
 		return nil, err
-	case <-time.After(delay):
+	case <-time.After(cfg.retryDelay()):
 	}
 	s, _, err = dial(ctx, cfg)
 	return s, err
 }
 
-// dial reports whether the host closed the connection before the handshake.
-func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
-	dir := cfg.Dir
-	if dir == "" {
-		dir = StateDir
-	}
+// argv returns the arguments of ssh for the host of cfg and the command.
+func argv(cfg Config, command string) []string {
 	args := []string{"-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
 		"-o", "RemoteCommand=none", "-o", "PermitLocalCommand=no",
 		"-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
 	if cfg.Batch {
 		args = append(args, "-o", "BatchMode=yes")
+	}
+	if cfg.fresh {
+		args = append(args, "-o", "ControlMaster=no", "-o", "ControlPath=none")
 	}
 	// The host name stays the target, so the Host blocks of the SSH config
 	// match it. ssh expands % tokens in HostName.
@@ -170,7 +174,16 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	if cfg.User != "" {
 		args = append(args, "-l", cfg.User)
 	}
-	args = append(args, "--", cfg.Host, command(Script(cfg.Binaries, dir)))
+	return append(args, "--", cfg.Host, command)
+}
+
+// dial reports whether the host closed the connection before the handshake.
+func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
+	dir := cfg.Dir
+	if dir == "" {
+		dir = StateDir
+	}
+	args := argv(cfg, command(Script(cfg.Binaries, dir)))
 	// ssh keeps an ignored SIGINT ignored, so a Ctrl-C in the terminal reaches
 	// only winch. ssh stays in the terminal's process group and can still ask
 	// for a host key or a passphrase.
@@ -183,7 +196,7 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	s := &Session{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout), stderr: &limitedBuffer{max: 64 << 10}, host: cfg.Host, progress: cfg.Progress}
+	s := &Session{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout), stderr: &limitedBuffer{max: 64 << 10}, host: cfg.Host, progress: cfg.Progress, cfg: cfg, ctx: ctx}
 	cmd.Stderr = s.stderr
 	// A child of ssh, such as a ProxyCommand, can keep stderr open.
 	cmd.WaitDelay = 5 * time.Second
@@ -364,17 +377,109 @@ func (s *Session) Facts(ctx context.Context) (facts.Facts, error) {
 
 // Check checks a step and updates st. It sends only the hash of the content.
 func (s *Session) Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
-	return s.step("check", name, withoutContent(m), st, nil, nil)
+	return s.step("check", withoutContent(m), protocol.Step{Module: name, State: *st}, st)
 }
 
 // Apply checks a step again, makes its changes, and updates st. It sends the
 // content only when the helper must write it.
-func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
-	res, err := s.step("apply", name, withoutContent(m), st, notify, then)
+func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard) (module.Result, error) {
+	step := protocol.Step{Module: name, State: *st, Notify: notify, Then: then, Guard: guard}
+	res, err := s.step("apply", withoutContent(m), step, st)
 	if errors.Is(err, errNeedContent) {
-		return s.step("apply", name, m, st, notify, then)
+		return s.step("apply", m, step, st)
 	}
 	return res, err
+}
+
+// accessCommand works only for a login that can still use sudo without a
+// password, when the login user is not root.
+const accessCommand = `if [ "$(id -u)" -eq 0 ]; then exit 0; fi; exec sudo -n true`
+
+// Access opens a new SSH connection to the host, without a connection that
+// the SSH config shares, and runs a command that needs the login and sudo.
+func (s *Session) Access(ctx context.Context) error {
+	cfg := s.cfg
+	cfg.fresh = true
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, argv(cfg, accessCommand)...)...)
+	var out limitedBuffer
+	out.max = 4 << 10
+	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.WaitDelay = 5 * time.Second
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(out.String()); msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
+}
+
+// Confirm stops the rollback timer on the host.
+func (s *Session) Confirm(ctx context.Context) error {
+	return s.call("confirm", nil, nil)
+}
+
+// Rollback ends the rollback timer on the host at once: the old files come
+// back.
+func (s *Session) Rollback(ctx context.Context) error {
+	return s.call("rollback", nil, nil)
+}
+
+// Reboot reboots the host, and connects again until the host has a new boot
+// ID, within wait. It then waits for the system to start, within the same
+// time, and reads the facts again.
+func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error) {
+	deadline := time.Now().Add(wait)
+	var id string
+	if err := s.call("reboot", nil, &id); err != nil {
+		return protocol.Boot{}, err
+	}
+	// The helper ends when its input closes, before the reboot.
+	s.Close() //nolint:errcheck // the reboot ends the connection
+	cfg := s.cfg
+	cfg.fresh = true
+	cfg.Hello.Resume = true
+	last := errors.New("no connection yet")
+	for {
+		select {
+		case <-s.ctx.Done():
+			return protocol.Boot{}, s.ctx.Err()
+		case <-time.After(cfg.retryDelay()):
+		}
+		if time.Now().After(deadline) {
+			return protocol.Boot{}, fmt.Errorf("the host did not come back within %s: %w", wait, last)
+		}
+		n, _, err := dial(s.ctx, cfg)
+		if err != nil {
+			last = err
+			continue
+		}
+		var b protocol.Boot
+		if err := n.call("booted", protocol.Booted{Old: id, Wait: time.Until(deadline)}, &b); err != nil {
+			n.Close() //nolint:errcheck // the call failed already
+			last = err
+			continue
+		}
+		if b.Same {
+			n.Close() //nolint:errcheck // the next connect tries again
+			last = errors.New("the host has not rebooted yet")
+			continue
+		}
+		s.cmd, s.stdin, s.stdout, s.stderr, s.id = n.cmd, n.stdin, n.stdout, n.stderr, n.id
+		s.waitOnce, s.waitErr = sync.Once{}, nil
+		if b.State != "running" && b.State != "degraded" {
+			return b, fmt.Errorf("the host did not start within %s: systemctl is-system-running says %s", wait, b.State)
+		}
+		_, err = s.Facts(ctx)
+		return b, err
+	}
+}
+
+func (cfg Config) retryDelay() time.Duration {
+	if cfg.RetryDelay == 0 {
+		return 2 * time.Second
+	}
+	return cfg.RetryDelay
 }
 
 func (s *Session) Pending(ctx context.Context) (protocol.Pending, error) {
@@ -410,13 +515,14 @@ func (s *Session) Exec(ctx context.Context, command string) (module.ExecResult, 
 	return res, err
 }
 
-func (s *Session) step(method, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
-	args, err := json.Marshal(m)
-	if err != nil {
+// step sends the step with the arguments m, and updates st.
+func (s *Session) step(method string, m module.Module, step protocol.Step, st *module.State) (module.Result, error) {
+	var err error
+	if step.Args, err = json.Marshal(m); err != nil {
 		return module.Result{}, err
 	}
 	var res protocol.StepResult
-	if err := s.call(method, protocol.Step{Module: name, Args: args, State: *st, Notify: notify, Then: then}, &res); err != nil {
+	if err := s.call(method, step, &res); err != nil {
 		return module.Result{}, err
 	}
 	*st = res.State

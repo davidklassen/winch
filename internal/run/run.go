@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
@@ -30,8 +31,17 @@ type Conn interface {
 	Pending(ctx context.Context) (protocol.Pending, error)
 	Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
 	// Apply records the handlers in notify and then on the host before it
-	// changes something.
-	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error)
+	// changes something. It guards the step against a lockout as guard says.
+	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard) (module.Result, error)
+	// Access opens a second SSH connection and runs a command that needs the
+	// login and sudo.
+	Access(ctx context.Context) error
+	// Confirm stops the rollback timer of the last apply.
+	Confirm(ctx context.Context) error
+	// Rollback ends the rollback timer at once: the old files come back.
+	Rollback(ctx context.Context) error
+	// Reboot reboots the host and connects again within wait.
+	Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error)
 	// Handled removes the record of a handler that succeeded.
 	Handled(ctx context.Context, handler string) error
 	// Command runs the command of a then, and then removes its record.
@@ -491,6 +501,10 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		return add("the user "+m.Name, m)
 	case *module.Group:
 		return add("the group "+m.Name, m)
+	case *module.Hostname:
+		return add("the host name", m)
+	case *module.Timezone:
+		return add("the time zone", m)
 	}
 	return nil
 }
@@ -741,7 +755,10 @@ func thenRecord(steps []project.Step, place protocol.Then) *protocol.Then {
 
 // label is the text of a step in the plan and the logs.
 func label(st project.Step) string {
-	l := st.Module + " " + st.ShownMain()
+	l := st.Module
+	if m := st.ShownMain(); m != "" {
+		l += " " + m
+	}
 	if st.Name != "" {
 		l = st.Name + ": " + l
 	}

@@ -40,6 +40,8 @@ func TestWrites(t *testing.T) {
 		{"user absent", &User{Name: "debian", Absent: true}, nil},
 		{"cmd", &Cmd{Command: "x"}, nil},
 		{"cmd creates", &Cmd{Command: "x", Creates: "/etc/x/done"}, []string{"/etc/x/done"}},
+		{"hostname", &Hostname{Name: "mail"}, []string{"/etc/hostname"}},
+		{"timezone", &Timezone{Name: "Etc/UTC"}, []string{"/etc/localtime", "/etc/timezone"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -214,7 +216,7 @@ func TestDebEntryStopsEarly(t *testing.T) {
 
 // spec: Modules/file, dir, link (dir purge: each module writes known paths)
 func TestEveryModuleDeclaresItsWrites(t *testing.T) {
-	writesNothing := []string{"assert", "debconf", "group", "pkg", "service", "upgrade"}
+	writesNothing := []string{"assert", "debconf", "group", "pkg", "reboot", "service", "upgrade"}
 	for _, name := range Names() {
 		m, _ := New(name)
 		if _, ok := m.(Writer); ok == slices.Contains(writesNothing, name) {

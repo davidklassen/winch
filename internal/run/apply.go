@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -31,11 +32,13 @@ type StepEvent struct {
 	// Health is the command of a health gate.
 	Health string `json:"health,omitempty"`
 	// Step is the label of the step in the plan.
-	Step    string   `json:"step,omitempty"`
-	Module  string   `json:"module,omitempty"`
-	Status  string   `json:"status"`
-	Action  string   `json:"action,omitempty"`
-	Link    string   `json:"link,omitempty"`
+	Step   string `json:"step,omitempty"`
+	Module string `json:"module,omitempty"`
+	Status string `json:"status"`
+	Action string `json:"action,omitempty"`
+	Link   string `json:"link,omitempty"`
+	// Note says what apply saw: that the host rebooted.
+	Note    string   `json:"note,omitempty"`
 	Changes []string `json:"changes,omitempty"`
 	Diff    []string `json:"diff,omitempty"`
 	Then    string   `json:"then,omitempty"`
@@ -100,7 +103,11 @@ func (t text) Step(ev StepEvent) {
 	case ev.Then != "" && ev.ThenPending:
 		markLine(&line, ev.Host+": "+ev.scope()+": ", "!", " then:"+command(ev.Then, "    ")+"\n")
 	case ev.Then == "":
-		markLine(&line, ev.Host+": "+ev.scope()+": ", marks[module.Action(ev.Action)], " "+ev.label()+linkNote(ev.Link)+"\n")
+		note := ""
+		if ev.Note != "" {
+			note = " (" + ev.Note + ")"
+		}
+		markLine(&line, ev.Host+": "+ev.scope()+": ", marks[module.Action(ev.Action)], " "+ev.label()+linkNote(ev.Link)+note+"\n")
 	}
 	if line != nil {
 		color.Fprint(t.out, line)
@@ -355,7 +362,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 		ev := stepEvent(a.host, stage, p)
 		ev.Handler, ev.Step, ev.Module = handler, label(p.Step), p.Step.Module
 		l := ev.label()
-		c, err := a.step(ctx, ev, l, p)
+		c, err := a.step(ctx, ev, l, p, guard(stage, p))
 		changed = changed || c
 		if err != nil {
 			return changed, err
@@ -390,6 +397,48 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 	return changed, nil
 }
 
+// timerMargin is the time before the end of the rollback timer when apply
+// stops trying the access and asks for the rollback itself.
+const timerMargin = 10 * time.Second
+
+// accessPoll is the time between the two checks of the access. sshd's
+// PerSourcePenalties blocks an address after three failed logins, so apply
+// tries twice: a third failed login would lock winch out after the rollback.
+const accessPoll = 5 * time.Second
+
+// confirm checks the access with a second SSH connection, at most twice, and
+// not after shortly before the rollback timer ends after left. Then it stops
+// the timer, or asks the helper to put back the old files.
+func (a *hostApply) confirm(ctx context.Context, left time.Duration) error {
+	ctx = context.WithoutCancel(ctx)
+	deadline := time.Now().Add(left - timerMargin)
+	err := a.conn.Access(ctx)
+	if err != nil && time.Now().Add(accessPoll).Before(deadline) {
+		time.Sleep(accessPoll)
+		err = a.conn.Access(ctx)
+	}
+	if err == nil {
+		return a.conn.Confirm(ctx)
+	}
+	if rerr := a.conn.Rollback(ctx); rerr != nil {
+		return fmt.Errorf("no new SSH connection works: %w; the rollback failed: %w", err, rerr)
+	}
+	return fmt.Errorf("no new SSH connection works: %w; the old files are back", err)
+}
+
+// reboot reboots the host and waits until it is back. It returns the note of
+// the apply line.
+func (a *hostApply) reboot(ctx context.Context, r *module.Reboot) (string, error) {
+	b, err := a.conn.Reboot(context.WithoutCancel(ctx), r.Wait())
+	if err != nil {
+		return "", err
+	}
+	if len(b.Failed) > 0 {
+		return "rebooted; degraded, failed units: " + strings.Join(b.Failed, ", "), nil
+	}
+	return "rebooted", nil
+}
+
 // handler runs the steps of a slot's handler when it was notified, and then
 // removes its record on the host.
 func (a *hostApply) handler(ctx context.Context, stage *project.Stage, s *Slot) (bool, error) {
@@ -408,9 +457,40 @@ func (a *hostApply) handler(ctx context.Context, stage *project.Stage, s *Slot) 
 	return changed, nil
 }
 
+// guard returns how the helper guards the step p of stage: it saves in the
+// store of the recipe, or of the stage for a module step of the stage, when
+// that has a step with confirm_access. A step that notifies a handler with
+// confirm_access of another recipe saves in the store of that recipe, which
+// the handler's timer puts back.
+func guard(stage *project.Stage, p Planned) protocol.Guard {
+	g := protocol.Guard{Confirm: p.Step.ConfirmAccess}
+	if p.In != nil {
+		g.Recipe, g.Save = p.In.Recipe.Name, p.In.Recipe.ConfirmsAccess()
+	} else {
+		g.Stage, g.Save = stage.Name, stage.ConfirmsAccess()
+	}
+	if g.Save {
+		return g
+	}
+	for _, h := range p.Step.Notify {
+		if slices.ContainsFunc(h.Steps, func(st project.Step) bool { return st.ConfirmAccess }) {
+			return protocol.Guard{Recipe: h.Recipe.Name, Save: true}
+		}
+	}
+	return g
+}
+
 // step applies one element of a step with the label l. It reports a change.
-func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned) (bool, error) {
-	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then)
+// After a step that started the rollback timer, it checks the access. After a
+// changed reboot step, it reboots the host.
+func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned, g protocol.Guard) (bool, error) {
+	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, g)
+	if err == nil && res.Timer > 0 {
+		err = a.confirm(ctx, res.Timer)
+	}
+	if r, ok := p.Step.Args.(*module.Reboot); ok && err == nil && res.Status == module.Change {
+		ev.Note, err = a.reboot(ctx, r)
+	}
 	if err != nil {
 		ev.Status, ev.Error = "failed", err.Error()
 		a.rep.Step(ev)

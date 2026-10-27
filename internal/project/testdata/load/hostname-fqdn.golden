@@ -1,0 +1,1 @@
+pipelines/site.yaml:6:17: name: "mail.example.com" is not a short host name: 1 to 63 lowercase letters, digits, and "-", without "-" at the start or the end; for the first part of the inventory name, use !expr host.short

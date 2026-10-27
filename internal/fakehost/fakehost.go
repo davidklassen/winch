@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
@@ -73,35 +74,76 @@ type Hosts struct {
 	// DirKeep holds the Keep paths of the last checked dir step with purge,
 	// by "host path".
 	DirKeep map[string][]string
+	// Guards holds the guard of each apply, by "host main".
+	Guards map[string]protocol.Guard
+	// noAccess holds the hosts whose access check fails, and noAccessOnce
+	// those whose next one fails.
+	noAccess, noAccessOnce map[string]bool
+	// timer is the time that a started rollback timer has left.
+	timer time.Duration
+	boots map[string]protocol.Boot
 }
 
 func New() *Hosts {
 	return &Hosts{
-		files:      map[string]map[string]string{},
-		noDirs:     map[string]map[string]bool{},
-		pkgs:       map[string]map[string]bool{},
-		pkgFiles:   map[string]map[string]string{},
-		failCheck:  map[string]bool{},
-		failApply:  map[string]bool{},
-		Refreshes:  map[string]int{},
-		FactsReads: map[string]int{},
-		facts:      map[string]facts.Facts{},
-		pending:    map[string][]string{},
-		thens:      map[string][]protocol.Then{},
-		failCmd:    map[string]bool{},
-		Log:        map[string][]string{},
-		results:    map[string]module.Result{},
-		execs:      map[string]module.ExecResult{},
-		failExec:   map[string]bool{},
-		failClose:  map[string]bool{},
-		Connects:   map[string]int{},
-		Users:      map[string]string{},
-		down:       map[string]bool{},
-		users:      map[string]bool{},
-		groups:     map[string]bool{},
-		answers:    map[string]string{},
-		DirKeep:    map[string][]string{},
+		files:        map[string]map[string]string{},
+		noDirs:       map[string]map[string]bool{},
+		pkgs:         map[string]map[string]bool{},
+		pkgFiles:     map[string]map[string]string{},
+		failCheck:    map[string]bool{},
+		failApply:    map[string]bool{},
+		Refreshes:    map[string]int{},
+		FactsReads:   map[string]int{},
+		facts:        map[string]facts.Facts{},
+		pending:      map[string][]string{},
+		thens:        map[string][]protocol.Then{},
+		failCmd:      map[string]bool{},
+		Log:          map[string][]string{},
+		results:      map[string]module.Result{},
+		execs:        map[string]module.ExecResult{},
+		failExec:     map[string]bool{},
+		failClose:    map[string]bool{},
+		Connects:     map[string]int{},
+		Users:        map[string]string{},
+		down:         map[string]bool{},
+		users:        map[string]bool{},
+		groups:       map[string]bool{},
+		answers:      map[string]string{},
+		DirKeep:      map[string][]string{},
+		Guards:       map[string]protocol.Guard{},
+		noAccess:     map[string]bool{},
+		noAccessOnce: map[string]bool{},
+		timer:        time.Nanosecond,
+		boots:        map[string]protocol.Boot{},
 	}
+}
+
+// FailAccess makes the access check of host fail.
+func (h *Hosts) FailAccess(host string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.noAccess[host] = true
+}
+
+// FailAccessOnce makes the next access check of host fail.
+func (h *Hosts) FailAccessOnce(host string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.noAccessOnce[host] = true
+}
+
+// SetTimer sets the time that a started rollback timer has left.
+func (h *Hosts) SetTimer(d time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.timer = d
+}
+
+// SetBoot sets what a reboot of host reports.
+func (h *Hosts) SetBoot(host string, b protocol.Boot) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.boots[host] = b
 }
 
 // SetAnswer sets the debconf answer of a question on a host.
@@ -321,6 +363,21 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		return module.Result{Status: module.Change, Action: module.Create}, nil
 	case *module.Assert:
 		return module.Result{Status: module.OK, Deferred: true}, nil
+	case *module.Reboot:
+		c.hosts.mu.Lock()
+		required := c.hosts.facts[c.host].RebootRequired
+		c.hosts.mu.Unlock()
+		if !*m.IfRequired || required {
+			return module.Result{Status: module.Change, Action: module.Modify}, nil
+		}
+		return module.Result{Status: module.OK, Deferred: true}, nil
+	case *module.Hostname, *module.Timezone:
+		c.hosts.mu.Lock()
+		defer c.hosts.mu.Unlock()
+		if res, ok := c.hosts.results[c.host+" "+m.Main()]; ok {
+			return res, nil
+		}
+		return module.Result{Status: module.OK}, nil
 	}
 	if d, ok := m.(*module.Dir); ok {
 		return c.checkDir(d), nil
@@ -468,7 +525,22 @@ func serviceAction(s *module.Service) string {
 	return "restart"
 }
 
-func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
+// Apply starts a rollback timer that ends at once for a changed step with
+// confirm_access, or a result with Guard.
+func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard) (module.Result, error) {
+	res, err := c.apply(ctx, name, m, st, notify, then)
+	c.hosts.mu.Lock()
+	c.hosts.Guards[c.host+" "+m.Main()] = guard
+	c.hosts.mu.Unlock()
+	if err == nil && res.Status == module.Change && (guard.Confirm || res.Guard) {
+		c.hosts.mu.Lock()
+		res.Timer = c.hosts.timer
+		c.hosts.mu.Unlock()
+	}
+	return res, err
+}
+
+func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
 	if c.hosts.OnApply != nil {
 		c.hosts.OnApply(c.host, m.Main())
 	}
@@ -555,6 +627,8 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 		return res, nil
 	}
 	switch m := m.(type) {
+	case *module.Reboot, *module.Hostname, *module.Timezone:
+		return res, nil
 	case *module.User:
 		c.hosts.SetUser(c.host, m.Name)
 		return res, nil
@@ -579,6 +653,47 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 	c.hosts.files[c.host][f.Path] = string(f.Data)
 	c.makeDirs(path.Dir(f.Path))
 	return res, nil
+}
+
+func (c *Conn) log(entry string) {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	c.hosts.Log[c.host] = append(c.hosts.Log[c.host], entry)
+}
+
+func (c *Conn) Access(ctx context.Context) error {
+	c.log("access")
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	if c.hosts.noAccess[c.host] || c.hosts.noAccessOnce[c.host] {
+		delete(c.hosts.noAccessOnce, c.host)
+		return errors.New("ssh: connect to host " + c.host + " port 22: Connection timed out")
+	}
+	return nil
+}
+
+func (c *Conn) Confirm(ctx context.Context) error {
+	c.log("confirm")
+	return nil
+}
+
+func (c *Conn) Rollback(ctx context.Context) error {
+	c.log("rollback")
+	return nil
+}
+
+// Reboot reads the facts again, as a session does.
+func (c *Conn) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error) {
+	c.log("reboot " + wait.String())
+	if _, err := c.Facts(ctx); err != nil {
+		return protocol.Boot{}, err
+	}
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	if b, ok := c.hosts.boots[c.host]; ok {
+		return b, nil
+	}
+	return protocol.Boot{State: "running"}, nil
 }
 
 func (c *Conn) Facts(ctx context.Context) (facts.Facts, error) {

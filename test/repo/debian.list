@@ -31,3 +31,5 @@ dovecot-lmtpd
 dovecot-sieve
 monit
 python3-dnspython
+# The lockout tests and the demo's nftables recipe.
+nftables

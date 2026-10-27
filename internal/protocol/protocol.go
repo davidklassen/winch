@@ -35,6 +35,8 @@ type Hello struct {
 	User    string    `json:"user"`
 	Machine string    `json:"machine"`
 	Started time.Time `json:"started"`
+	// Resume is set on the connect after a reboot: the same run goes on.
+	Resume bool `json:"resume,omitempty"`
 }
 
 // Step is the params of check and apply.
@@ -47,7 +49,38 @@ type Step struct {
 	Notify []string `json:"notify,omitempty"`
 	// Then is the then of the step, which the helper records before an
 	// apply changes something.
-	Then *Then `json:"then,omitempty"`
+	Then  *Then `json:"then,omitempty"`
+	Guard Guard `json:"guard,omitzero"`
+}
+
+// Guard tells the helper how to guard an apply against a lockout. The helper
+// keeps the old state of what a step changes in the rollback store of its
+// recipe, or of its stage for a module step of a stage.
+type Guard struct {
+	Recipe string `json:"recipe,omitempty"`
+	Stage  string `json:"stage,omitempty"`
+	// Save keeps the old state in the store: the recipe or the stage has a
+	// step with confirm_access.
+	Save bool `json:"save,omitempty"`
+	// Confirm is the confirm_access of the step: a change starts the
+	// rollback timer, which puts back the whole store.
+	Confirm bool `json:"confirm,omitempty"`
+}
+
+// Booted is the params of booted: the boot ID before the reboot, and the
+// time to wait for the system to start.
+type Booted struct {
+	Old  string        `json:"old"`
+	Wait time.Duration `json:"wait"`
+}
+
+// Boot is the result of booted. Same is set when the host has not rebooted
+// yet. State is that of systemctl is-system-running; Failed are the failed
+// units of a degraded system.
+type Boot struct {
+	Same   bool     `json:"same,omitempty"`
+	State  string   `json:"state,omitempty"`
+	Failed []string `json:"failed,omitempty"`
 }
 
 // Then is a record of a then: the place of its step, and its module and main

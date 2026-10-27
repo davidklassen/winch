@@ -7,12 +7,18 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/davidklassen/winch/internal/helper"
 	"github.com/davidklassen/winch/internal/module"
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "--rollback" {
+		// The timer process has no one to tell about an error.
+		_ = helper.RunTimer(context.Background(), os.Args[2], 200*time.Millisecond)
+		return
+	}
 	// Modules read the output of host commands, so it must not be translated.
 	os.Setenv("LC_ALL", "C.UTF-8") //nolint:errcheck // cannot fail for a valid name
 	os.Unsetenv("LANGUAGE")        //nolint:errcheck // cannot fail for a valid name

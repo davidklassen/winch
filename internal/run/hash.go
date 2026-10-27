@@ -40,11 +40,13 @@ type hashStep struct {
 	Module  string `json:"module,omitempty"`
 	// Args, Then, and Result are JSON, or the SHA-256 of their JSON for a
 	// step that reads a secret.
-	Args        any      `json:"args,omitempty"`
-	Then        any      `json:"then,omitempty"`
-	Notify      []string `json:"notify,omitempty"`
-	Result      any      `json:"result,omitempty"`
-	PendingThen bool     `json:"pending_then,omitempty"`
+	Args   any      `json:"args,omitempty"`
+	Then   any      `json:"then,omitempty"`
+	Notify []string `json:"notify,omitempty"`
+	// ConfirmAccess changes what apply does, so the hash covers it.
+	ConfirmAccess bool `json:"confirm_access,omitempty"`
+	Result        any  `json:"result,omitempty"`
+	PendingThen   bool `json:"pending_then,omitempty"`
 	// Runs and Steps are set on a handler slot.
 	Runs  bool       `json:"runs,omitempty"`
 	Steps []hashStep `json:"steps,omitempty"`
@@ -104,7 +106,7 @@ func stepHash(p Planned) hashStep {
 		}
 		return h
 	}
-	h := hashStep{Address: p.Address, Module: p.Step.Module, Notify: p.Notify, PendingThen: p.PendingThen}
+	h := hashStep{Address: p.Address, Module: p.Step.Module, Notify: p.Notify, ConfirmAccess: p.Step.ConfirmAccess, PendingThen: p.PendingThen}
 	args := p.Step.Args
 	if c, ok := args.(module.WithContent); ok {
 		args = c.WithoutContent()

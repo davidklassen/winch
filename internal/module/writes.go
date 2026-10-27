@@ -65,3 +65,7 @@ func present(absent bool, p string) []string {
 	}
 	return []string{p}
 }
+
+func (h *Hostname) Writes() []string { return []string{hostnameFile} }
+
+func (z *Timezone) Writes() []string { return []string{localtime, timezoneFile} }

@@ -1,0 +1,26 @@
+steps:
+  - name: Debian's stock sshd_config
+    file:
+      path: /etc/ssh/sshd_config
+      copy_from: /usr/share/openssh/sshd_config
+      validate: sshd -t
+    notify: reload
+  - file:
+      path: /etc/ssh/sshd_config.d/local.conf
+      content: |
+        PasswordAuthentication no
+        ClientAliveInterval 120
+      validate: sshd -t
+    notify: reload
+  - name: Remove cloud-init's and other foreign drop-ins
+    dir:
+      path: /etc/ssh/sshd_config.d
+      purge: true
+    notify: reload
+
+handlers:
+  reload:
+    - service:
+        name: ssh
+        reloaded: true
+      confirm_access: true

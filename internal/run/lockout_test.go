@@ -1,0 +1,294 @@
+package run_test
+
+import (
+	"bytes"
+	"context"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/davidklassen/winch/internal/facts"
+	"github.com/davidklassen/winch/internal/fakehost"
+	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/protocol"
+	"github.com/davidklassen/winch/internal/run"
+	"github.com/davidklassen/winch/internal/vmtest"
+)
+
+func loadWeb1(t *testing.T, files map[string]string) *project.Project {
+	t.Helper()
+	all := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+	}
+	for k, v := range files {
+		all[k] = v
+	}
+	p, err := project.Load(t.Context(), vmtest.WriteProject(t, all), "", "site", nil, project.Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+const sshRecipe = `steps:
+  - file:
+      path: /etc/ssh/sshd_config.d/local.conf
+      content: "PasswordAuthentication no\n"
+    notify: reload
+handlers:
+  reload:
+    - service:
+        name: ssh
+        reloaded: true
+      confirm_access: true
+`
+
+func lockoutProject(t *testing.T) *project.Project {
+	return loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - recipe: ssh
+      - file:
+          path: /etc/motd
+          content: hi
+  - name: firewall
+    hosts: all
+    steps:
+      - file:
+          path: /etc/nftables.conf
+          content: "flush ruleset\n"
+      - service:
+          name: nftables
+          running: true
+        confirm_access: true
+`,
+		"recipes/ssh/recipe.yaml": sshRecipe,
+	})
+}
+
+func applyWeb1(t *testing.T, p *project.Project, h *fakehost.Hosts) (string, *run.Outcome) {
+	t.Helper()
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	return out.String() + errOut.String(), o
+}
+
+// spec: Running a pipeline/Lockout protection (the store of the recipe, the
+// timer, the second connection)
+func TestConfirmAccess(t *testing.T) {
+	h := fakehost.New()
+	h.SetResult("web1", "nftables", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"reload"}})
+	_, o := applyWeb1(t, lockoutProject(t), h)
+	if !o.OK() {
+		t.Fatalf("apply failed: %v", o.Failed)
+	}
+	if want := []string{"ssh reload", "access", "confirm", "nftables restart", "access", "confirm"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+	want := map[string]protocol.Guard{
+		"web1 /etc/ssh/sshd_config.d/local.conf": {Recipe: "ssh", Save: true},
+		"web1 ssh":                               {Recipe: "ssh", Save: true, Confirm: true},
+		"web1 /etc/motd":                         {Stage: "base"},
+		"web1 /etc/nftables.conf":                {Stage: "firewall", Save: true},
+		"web1 nftables":                          {Stage: "firewall", Save: true, Confirm: true},
+	}
+	for k, g := range want {
+		if h.Guards[k] != g {
+			t.Errorf("guard of %s = %+v, want %+v", k, h.Guards[k], g)
+		}
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (when the second connection
+// fails, the old files come back and the host fails)
+func TestAccessFails(t *testing.T) {
+	h := fakehost.New()
+	h.SetResult("web1", "nftables", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"reload"}})
+	h.FailAccess("web1")
+	out, o := applyWeb1(t, lockoutProject(t), h)
+	if o.OK() {
+		t.Fatal("apply succeeded without access")
+	}
+	if want := []string{"ssh reload", "access", "rollback"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+	want := "web1: ssh: failed: handler ssh.reload: service ssh: no new SSH connection works: ssh: connect to host web1 port 22: Connection timed out; the old files are back"
+	if !strings.Contains(out, want) {
+		t.Errorf("output:\n%s\nwant %q", out, want)
+	}
+	if _, ok := h.File("web1", "/etc/motd"); ok {
+		t.Error("the host went on after the rollback")
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a user step that changes the
+// keys of the login user gets the same protection)
+func TestGuardedResult(t *testing.T) {
+	h := fakehost.New()
+	h.SetResult("web1", "mail", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"changes the sudo rules, which the login user admin needs"}, Guard: true})
+	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - hostname:\n          name: mail\n"})
+	_, o := applyWeb1(t, p, h)
+	if !o.OK() {
+		t.Fatalf("apply failed: %v", o.Failed)
+	}
+	if want := []string{"access", "confirm"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+	if g := h.Guards["web1 mail"]; g != (protocol.Guard{Stage: "base"}) {
+		t.Errorf("guard %+v: the step has no confirm_access", g)
+	}
+}
+
+func rebootProject(t *testing.T, ifRequired string, more string) *project.Project {
+	return loadWeb1(t, map[string]string{"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n" + more +
+		"      - reboot:\n          if_required: " + ifRequired + "\n          timeout: 30\n"})
+}
+
+// spec: Modules/reboot; CLI/Output (marks); roadmap phase 16 (the apply line
+// says that the host rebooted and names the failed units)
+func TestRebootStep(t *testing.T) {
+	motd := "      - file:\n          path: /etc/motd\n          content: hi\n"
+	tests := []struct {
+		name       string
+		ifRequired string
+		more       string
+		required   bool
+		boot       *protocol.Boot
+		wantPlan   string
+		wantApply  string
+		wantLog    []string
+		noConnect  bool
+	}{
+		{name: "always", ifRequired: "false", wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted)\n", wantLog: []string{"reboot 30s"}},
+		{name: "required", ifRequired: "true", required: true, wantPlan: "    ~ reboot if required\n", wantApply: "web1: base: ~ reboot if required (rebooted)\n", wantLog: []string{"reboot 30s"}},
+		{name: "degraded", ifRequired: "false", boot: &protocol.Boot{State: "degraded", Failed: []string{"a.service", "b.service"}},
+			wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted; degraded, failed units: a.service, b.service)\n", wantLog: []string{"reboot 30s"}},
+		{name: "maybe, with a change", ifRequired: "true", more: motd, wantPlan: "    * reboot if required\n", wantApply: "web1: base: + file /etc/motd\n"},
+		{name: "maybe, alone", ifRequired: "true", wantPlan: "0 to change, 1 unchanged", wantApply: "", noConnect: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := fakehost.New()
+			h.SetFacts("web1", facts.Facts{OS: facts.OS{ID: "debian", Version: "13"}, RebootRequired: tt.required})
+			if tt.boot != nil {
+				h.SetBoot("web1", *tt.boot)
+			}
+			p := rebootProject(t, tt.ifRequired, tt.more)
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+			var out, errOut bytes.Buffer
+			plan.Write(plain(&out), plain(&errOut))
+			if !strings.Contains(out.String(), tt.wantPlan) {
+				t.Errorf("plan:\n%s\nwant %q", out.String(), tt.wantPlan)
+			}
+			out.Reset()
+			connects := h.Connects["web1"]
+			o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+			if tt.noConnect && h.Connects["web1"] != connects {
+				t.Error("apply connected to a host whose plan has only * steps")
+			}
+			if !o.OK() {
+				t.Fatalf("apply failed: %v", o.Failed)
+			}
+			var got string
+			for line := range strings.Lines(out.String()) {
+				if strings.HasPrefix(line, "web1: ") {
+					got += line
+				}
+			}
+			if got != tt.wantApply {
+				t.Errorf("apply lines %q, want %q", got, tt.wantApply)
+			}
+			if !slices.Equal(h.Log["web1"], tt.wantLog) {
+				t.Errorf("log %q, want %q", h.Log["web1"], tt.wantLog)
+			}
+			if tt.wantLog != nil && h.FactsReads["web1"] != 2 {
+				t.Errorf("facts read %d times, want 2: plan, and after the reboot", h.FactsReads["web1"])
+			}
+		})
+	}
+}
+
+// spec: Running a pipeline/Plan (the hash covers the evaluated steps)
+func TestHashCoversConfirmAccess(t *testing.T) {
+	hash := func(confirm string) string {
+		h := fakehost.New()
+		h.SetResult("web1", "nftables", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"reload"}})
+		p := loadWeb1(t, map[string]string{"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - service:\n          name: nftables\n          running: true\n        confirm_access: " + confirm + "\n"})
+		return run.MakePlan(context.Background(), p, h.Connector(), run.Options{}).Hash()
+	}
+	if hash("true") == hash("false") {
+		t.Error("the plan hash does not cover confirm_access")
+	}
+}
+
+// spec: Running a pipeline/Plan (two steps that manage the same thing)
+func TestSameHostnameAndTimezone(t *testing.T) {
+	for _, tt := range []struct{ module, a, b, want string }{
+		{"hostname", "mail", "web", "the host name is also in"},
+		{"timezone", "Etc/UTC", "Europe/Berlin", "the time zone is also in"},
+	} {
+		h := fakehost.New()
+		p := loadWeb1(t, map[string]string{"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - " + tt.module + ":\n          name: " + tt.a + "\n      - " + tt.module + ":\n          name: " + tt.b + "\n"})
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		if err := plan.Failed["web1"]; err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: plan error %v, want %q", tt.module, err, tt.want)
+		}
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (every file that the recipe
+// changed: a step in another recipe or a stage that notifies the handler)
+func TestConfirmAccessAcrossRecipes(t *testing.T) {
+	h := fakehost.New()
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - recipe: hardening
+      - file:
+          path: /etc/ssh/sshd_config.d/stage.conf
+          content: "X11Forwarding no\n"
+        notify: ssh.reload
+      - recipe: ssh
+`,
+		"recipes/hardening/recipe.yaml": `steps:
+  - file:
+      path: /etc/ssh/sshd_config.d/hardening.conf
+      content: "PermitRootLogin no\n"
+    notify: ssh.reload
+`,
+		"recipes/ssh/recipe.yaml": sshRecipe,
+	})
+	if _, o := applyWeb1(t, p, h); !o.OK() {
+		t.Fatalf("apply failed: %v", o.Failed)
+	}
+	want := protocol.Guard{Recipe: "ssh", Save: true}
+	for _, path := range []string{"/etc/ssh/sshd_config.d/hardening.conf", "/etc/ssh/sshd_config.d/stage.conf"} {
+		if g := h.Guards["web1 "+path]; g != want {
+			t.Errorf("guard of %s = %+v, want the store of the handler's recipe %+v", path, g, want)
+		}
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (gap: two tries of the access,
+// 5 seconds apart)
+func TestAccessSecondTry(t *testing.T) {
+	h := fakehost.New()
+	h.SetTimer(time.Minute)
+	h.FailAccessOnce("web1")
+	h.SetResult("web1", "mail", module.Result{Status: module.Change, Action: module.Modify, Guard: true})
+	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - hostname:\n          name: mail\n"})
+	if _, o := applyWeb1(t, p, h); !o.OK() {
+		t.Fatalf("apply failed: %v", o.Failed)
+	}
+	if want := []string{"access", "access", "confirm"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+}

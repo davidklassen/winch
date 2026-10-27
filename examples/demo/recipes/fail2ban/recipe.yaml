@@ -21,6 +21,8 @@ steps:
       enabled: true
       running: true
 
+# nftables' "flush ruleset" also removes fail2ban's table, so the
+# nftables recipe notifies restart too.
 handlers:
   restart:
     - service:

@@ -29,6 +29,9 @@ type Dir struct {
 	// Keep are the paths below Path that steps for the host write. The
 	// controller sets them.
 	Keep []string `json:"keep,omitempty"`
+
+	// removed are the paths that purge removes. Check sets them.
+	removed []string
 }
 
 func (d *Dir) Main() string { return d.Path }
@@ -168,6 +171,7 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 		}
 		for _, rm := range rs {
 			changes = append(changes, rm.line)
+			d.removed = append(d.removed, path.Join(d.Path, rm.name))
 		}
 	}
 	if d.Recurse {

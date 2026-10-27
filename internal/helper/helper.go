@@ -48,6 +48,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		}
 	}()
 	var handlers, thens, downloads records
+	var rb *rollbacks
+	var loginUser *module.Login
 	for {
 		req, ok := <-reqs
 		if !ok {
@@ -71,10 +73,24 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			handlers = records{dir: filepath.Join(dir, "handlers"), project: project, what: "pending handlers"}
 			thens = records{dir: filepath.Join(dir, "then"), project: project, what: "pending then records"}
 			downloads = records{dir: filepath.Join(dir, "downloads"), project: project, what: "download records"}
+			rb = &rollbacks{dir: filepath.Join(dir, "rollback"), project: project, self: self}
+			if err == nil {
+				loginUser, err = module.LookupLogin(login.LoginUID)
+			}
+			if err == nil {
+				err = rb.idle(ctx)
+			}
+			if err == nil && !resumed(req.Params) {
+				err = rb.clear(handlers)
+			}
+			if err != nil && lock != nil {
+				lock.Close()
+				lock = nil
+			}
 		case lock == nil:
 			err = errors.New("the first request must be hello")
 		case req.Method == "facts":
-			result, err = facts.Read("/etc/os-release", "/usr/lib/os-release")
+			result, err = readFacts()
 		case req.Method == "pending":
 			result, err = readPending(handlers, thens)
 		case req.Method == "handled":
@@ -86,9 +102,21 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "health":
 			err = runHealth(ctx, req.Params)
 		case req.Method == "check":
-			result, err = step(ctx, req.Params, false, login, handlers, thens, downloads, note)
+			result, err = step(ctx, req.Params, false, login, loginUser, handlers, thens, downloads, rb, note)
 		case req.Method == "apply":
-			result, err = step(ctx, req.Params, true, login, handlers, thens, downloads, note)
+			result, err = step(ctx, req.Params, true, login, loginUser, handlers, thens, downloads, rb, note)
+		case req.Method == "confirm":
+			err = rb.confirm()
+		case req.Method == "rollback":
+			g := rb.running
+			err = rb.rollback(ctx)
+			if g != nil {
+				err = errors.Join(err, handlers.remove(g.handlers...), thens.remove(g.thens...))
+			}
+		case req.Method == "reboot":
+			result, err = reboot()
+		case req.Method == "booted":
+			result, err = booted(ctx, req.Params)
 		default:
 			err = fmt.Errorf("unknown method %q", req.Method)
 		}
@@ -201,7 +229,7 @@ func deleteOld(bin, self string) error {
 // notifies and its then, and makes the changes the check found, or runs a
 // deferred step. When the changes fail, it removes the records that it added.
 // After a download, it records the checksum of the path.
-func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, handlers, thens, downloads records, note func(string)) (protocol.StepResult, error) {
+func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, loginUser *module.Login, handlers, thens, downloads records, rb *rollbacks, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
@@ -223,6 +251,12 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		d.Recorded = sum
 	}
 	res, err := m.Check(ctx, &s.State, note)
+	if err == nil && res.Status == module.Change {
+		if line := module.Guard(module.Touches(m), loginUser); line != "" {
+			res.Guard = true
+			res.Changes = append([]string{line}, res.Changes...)
+		}
+	}
 	out := protocol.StepResult{Result: res, State: s.State}
 	if err != nil || !apply || res.Status == module.OK && !res.Deferred {
 		return out, err
@@ -247,13 +281,71 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			return out, err
 		}
 	}
+	guard := s.Guard.Confirm || res.Guard
+	var deadline time.Time
+	if s.Guard.Save || guard {
+		saved, all, err := rb.save(s.Guard, m)
+		if err == nil && guard {
+			deadline, err = startTimer(rb, s.Guard, m, saved, all)
+		}
+		if err != nil {
+			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+		}
+	}
 	if err := m.Apply(ctx, note); err != nil {
+		if guard {
+			if rerr := rb.rollback(ctx); rerr != nil {
+				err = fmt.Errorf("%w; the rollback failed: %w", err, rerr)
+			} else {
+				err = fmt.Errorf("%w; the old files are back", err)
+			}
+		}
 		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+	}
+	if guard {
+		out.Timer = time.Until(deadline)
+		rb.running = &guarded{handlers: notified, thens: thenLines}
 	}
 	if isDownload {
 		return out, record(downloads, d.SHA256, d.Path)
 	}
 	return out, nil
+}
+
+// resumed reports whether the params of hello are those of the connect
+// after a reboot.
+func resumed(params json.RawMessage) bool {
+	var h protocol.Hello
+	return json.Unmarshal(params, &h) == nil && h.Resume
+}
+
+// startTimer starts the rollback timer of the guarded step m. A step with
+// confirm_access puts back the whole store of its recipe or stage, and its
+// undo step; another guarded step puts back only what it saved.
+func startTimer(rb *rollbacks, g protocol.Guard, m module.Module, saved, all []module.Saved) (time.Time, error) {
+	j := job{Deadline: time.Now().Add(TimerTime), Restore: saved}
+	if g.Confirm {
+		j.Restore = all
+		if sv, ok := m.(*module.Service); ok {
+			if u := sv.Undo(); u != nil {
+				args, err := json.Marshal(u)
+				if err != nil {
+					return time.Time{}, err
+				}
+				j.Undo = &undo{Module: "service", Args: args}
+			}
+		}
+	}
+	return j.Deadline, rb.start(j)
+}
+
+func readFacts() (facts.Facts, error) {
+	f, err := facts.Read("/etc/os-release", "/usr/lib/os-release")
+	if err != nil {
+		return f, err
+	}
+	f.RebootRequired, err = module.RebootRequired()
+	return f, err
 }
 
 func readPending(handlers, thens records) (protocol.Pending, error) {
