@@ -40,7 +40,7 @@ func TestHostnameModule(t *testing.T) {
 func TestTimezoneModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "timezone")
-	reset := "timedatectl set-timezone Etc/UTC && rm -f /etc/timezone"
+	reset := "timedatectl set-timezone Etc/UTC && rm -rf /etc/timezone /usr/share/zoneinfo/Mars"
 	vmtest.RunCases(t, vm, "timezone", reset, []vmtest.Case{
 		{
 			Name:      "a new zone",
@@ -66,6 +66,7 @@ func TestTimezoneModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"time zone Etc/UTC → Mars/Olympus (/usr/share/zoneinfo/Mars/Olympus does not exist yet)"}},
 			WantApplyErr: "unknown time zone Mars/Olympus: /usr/share/zoneinfo/Mars/Olympus does not exist; an old name such as US/Eastern needs the package tzdata-legacy",
 			After:        `[ "$(timedatectl show -p Timezone --value)" = Etc/UTC ]`,
+			Fix:          "mkdir /usr/share/zoneinfo/Mars && cp /usr/share/zoneinfo/Etc/UTC /usr/share/zoneinfo/Mars/Olympus",
 		},
 		{
 			Name:      "a stale /etc/timezone",

@@ -140,6 +140,7 @@ func TestRepoModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, "add key " + other + " winch test key <test@example.com>", "create file " + signedFile + sourceAttrs, refresh}},
 			WantApplyErr: "refresh the index of source winch-signed",
 			After:        "[ ! -e " + signedFile + " ] && [ ! -e " + signedAsc + " ]",
+			FixArgs:      args(),
 		},
 		{
 			Name:         "a failed refresh puts the old files back",
@@ -148,6 +149,7 @@ func TestRepoModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove key " + fpr + " winch test repository", "add key " + other + " winch test key <test@example.com>", refresh}},
 			WantApplyErr: "refresh the index of source winch-signed",
 			After:        "cmp " + signedFile + " /root/saved/winch-signed.sources && cmp " + signedAsc + " /root/saved/winch-signed.asc && " + others,
+			FixArgs:      args(),
 		},
 		{
 			Name:         "a source that apt cannot fetch",
@@ -155,6 +157,7 @@ func TestRepoModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedFile + sourceAttrs, refresh}},
 			WantApplyErr: "refresh the index of source winch-signed",
 			After:        "[ ! -e " + signedFile + " ]",
+			FixArgs:      args(),
 		},
 		{
 			Name:    "the source in another file",

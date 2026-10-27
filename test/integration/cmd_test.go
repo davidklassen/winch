@@ -12,7 +12,7 @@ import (
 func TestCmdModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "cmd")
-	reset := "rm -rf /root/out /root/made /tmp/winch-out /srv/winch-c; userdel -r winchc 2>/dev/null; groupdel winchg 2>/dev/null; true"
+	reset := "rm -rf /root/out /root/made /root/fixed /tmp/winch-out /srv/winch-c /srv/winch-missing; userdel -r winchc 2>/dev/null; userdel winch-nobody 2>/dev/null; groupdel winchg 2>/dev/null; true"
 	user := "useradd -m -s /bin/sh winchc && groupadd winchg && usermod -aG winchg winchc\n"
 	vmtest.RunCases(t, vm, "cmd", reset, []vmtest.Case{
 		{
@@ -73,24 +73,32 @@ func TestCmdModule(t *testing.T) {
 			Args:         &module.Cmd{Command: "true", User: "winchc", Dir: "/srv/winch-c"},
 			Want:         module.Result{Status: module.Unknown},
 			WantApplyErr: "dir /srv/winch-c: permission denied",
+			Fix:          "chmod 0755 /srv/winch-c",
+			NoConverge:   true,
 		},
 		{
 			Name:         "a missing user",
 			Args:         &module.Cmd{Command: "true", User: "winch-nobody"},
 			Want:         module.Result{Status: module.Unknown},
 			WantApplyErr: "user winch-nobody does not exist",
+			Fix:          "useradd winch-nobody",
+			NoConverge:   true,
 		},
 		{
 			Name:         "a missing dir",
 			Args:         &module.Cmd{Command: "true", Dir: "/srv/winch-missing"},
 			Want:         module.Result{Status: module.Unknown},
 			WantApplyErr: "/srv/winch-missing",
+			Fix:          "mkdir /srv/winch-missing",
+			NoConverge:   true,
 		},
 		{
 			Name:         "a failing command",
-			Args:         &module.Cmd{Command: "echo the cause; exit 3"},
+			Args:         &module.Cmd{Command: "test -e /root/fixed || { echo the cause; exit 3; }"},
 			Want:         module.Result{Status: module.Unknown},
 			WantApplyErr: "exit status 3: the cause",
+			Fix:          "touch /root/fixed",
+			NoConverge:   true,
 		},
 	})
 }
@@ -113,6 +121,8 @@ func TestAssertModule(t *testing.T) {
 			Args:         &module.Assert{Command: "test -e /root/ran", Message: "the marker is missing"},
 			Want:         module.Result{Status: module.OK, Deferred: true},
 			WantApplyErr: "the marker is missing",
+			Fix:          "touch /root/ran",
+			NoConverge:   true,
 		},
 	})
 }

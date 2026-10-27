@@ -45,7 +45,7 @@ func TestCertbotModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "certbot")
 	vm.MustRun(t, pebbleSetup)
-	reset := `rm -rf /etc/letsencrypt/live/* /etc/letsencrypt/archive/* /etc/letsencrypt/renewal/* /root/deployed /root/key.sum
+	reset := `rm -rf /etc/letsencrypt/live/* /etc/letsencrypt/archive/* /etc/letsencrypt/renewal/* /root/deployed /root/key.sum /root/hook-ok
 systemctl stop apache2
 systemctl start nginx
 md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.conf /etc/apache2/sites-enabled/* > /root/web.md5`
@@ -121,18 +121,20 @@ md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.con
 		},
 		{
 			Name:         "a failing deploy_hook fails the step",
-			Args:         &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: new("echo oops >&2; exit 3")},
-			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook echo oops >&2; exit 3"}},
+			Args:         &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: new("test -e /root/hook-ok || { echo oops >&2; exit 3; }")},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook test -e /root/hook-ok || { echo oops >&2; exit 3; }"}},
 			WantApplyErr: "a hook failed:\nHook 'deploy-hook' reported error code 3\nHook 'deploy-hook' ran with error output:\n oops",
-			// certbot has issued the certificate: the next check is ok, and the
-			// hook does not run again.
-			After: "test -e /etc/letsencrypt/renewal/a.example.com.conf",
+			After:        "test -e /etc/letsencrypt/renewal/a.example.com.conf",
+			Fix:          "touch /root/hook-ok",
+			SkipRecovery: "issue 156",
 		},
 		{
 			Name:         "a failing pre_hook fails the step",
 			Args:         &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", PreHook: new("false")},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "pre_hook false"}},
 			WantApplyErr: "Hook 'pre-hook' reported error code 1",
+			// certbot issues the certificate after a failed pre_hook.
+			ErrAfterChange: true,
 		},
 		{
 			Name:  "apache",
@@ -155,6 +157,7 @@ md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.con
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator standalone"}},
 			WantApplyErr: "Could not bind TCP port 80",
 			After:        "test ! -e /etc/letsencrypt/renewal/a.example.com.conf",
+			Fix:          "systemctl stop nginx",
 		},
 		{
 			Name:  "webroot",

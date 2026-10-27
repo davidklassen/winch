@@ -33,16 +33,18 @@ func fileCases(attrs, alone string) []vmtest.Case {
 		{
 			Name:         "validate fails and the old file stays",
 			Setup:        `printf 'old\n' > /tmp/w/f && chown admin:admin /tmp/w/f && chmod 600 /tmp/w/f`,
-			Args:         &module.File{Path: "/tmp/w/f", Data: []byte("new\n"), Validation: new("echo bad config >&2; exit 1")},
+			Args:         &module.File{Path: "/tmp/w/f", Data: []byte("new\n"), Validation: new("test -e /tmp/w/valid || { echo bad config >&2; exit 1; }")},
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner admin → root", "group admin → root", "mode 0600 → 0644"}, Old: new("old\n")},
-			WantApplyErr: "validate: echo bad config >&2; exit 1: exit status 1: bad config",
+			WantApplyErr: "validate: test -e /tmp/w/valid || { echo bad config >&2; exit 1; }: exit status 1: bad config",
 			After:        `[ "$(cat /tmp/w/f)" = old ] && [ "$(stat -c '%U %G %a' /tmp/w/f)" = "admin admin 600" ]` + alone,
+			Fix:          "touch /tmp/w/valid",
 		},
 		{
 			Name:         "validate fails on a create and the parents go too",
-			Args:         &module.File{Path: "/tmp/w/new/sub/f", Data: []byte("new\n"), Validation: new("false")},
+			Args:         &module.File{Path: "/tmp/w/new/sub/f", Data: []byte("new\n"), Validation: new("test -e /tmp/w/valid")},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /tmp/w/new (owner root, group root, mode 0755)", "create directory /tmp/w/new/sub (owner root, group root, mode 0755)", attrs}, Old: new("")},
-			WantApplyErr: "validate: false: exit status 1",
+			WantApplyErr: "validate: test -e /tmp/w/valid: exit status 1",
+			Fix:          "touch /tmp/w/valid",
 			After:        `[ -z "$(ls -A /tmp/w)" ]`,
 		},
 		{
@@ -61,9 +63,10 @@ func fileCases(attrs, alone string) []vmtest.Case {
 		{
 			Name:         "validate fails and the symbolic link comes back",
 			Setup:        `ln -s /etc/hostname /tmp/w/f`,
-			Args:         &module.File{Path: "/tmp/w/f", Data: []byte("new\n"), Validation: new("false")},
+			Args:         &module.File{Path: "/tmp/w/f", Data: []byte("new\n"), Validation: new("test -e /tmp/w/valid")},
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"replace the symbolic link to /etc/hostname", attrs}, Old: new("")},
-			WantApplyErr: "validate: false: exit status 1",
+			WantApplyErr: "validate: test -e /tmp/w/valid: exit status 1",
+			Fix:          "touch /tmp/w/valid",
 			After:        `[ "$(readlink /tmp/w/f)" = /etc/hostname ]` + alone,
 		},
 	}
@@ -81,16 +84,18 @@ func linkCases(alone string) []vmtest.Case {
 		{
 			Name:         "validate fails and the old target stays",
 			Setup:        `ln -s /a /tmp/w/f`,
-			Args:         &module.Link{Path: "/tmp/w/f", Target: new("/b"), Validation: new("false")},
+			Args:         &module.Link{Path: "/tmp/w/f", Target: new("/b"), Validation: new("test -e /tmp/w/valid")},
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"target /a → /b"}},
-			WantApplyErr: "validate: false: exit status 1",
+			WantApplyErr: "validate: test -e /tmp/w/valid: exit status 1",
+			Fix:          "touch /tmp/w/valid",
 			After:        `[ "$(readlink /tmp/w/f)" = /a ]` + alone,
 		},
 		{
 			Name:         "validate fails on a create",
-			Args:         &module.Link{Path: "/tmp/w/new/f", Target: new("/b"), Validation: new("false")},
+			Args:         &module.Link{Path: "/tmp/w/new/f", Target: new("/b"), Validation: new("test -e /tmp/w/valid")},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /tmp/w/new (owner root, group root, mode 0755)", "target /b"}},
-			WantApplyErr: "validate: false: exit status 1",
+			WantApplyErr: "validate: test -e /tmp/w/valid: exit status 1",
+			Fix:          "touch /tmp/w/valid",
 			After:        `[ -z "$(ls -A /tmp/w)" ]`,
 		},
 	}

@@ -107,6 +107,7 @@ func TestLineModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"/tmp/w/f does not exist yet"}, Old: new("")},
 			WantApplyErr: "/tmp/w/f does not exist; line does not create a file",
 			After:        `[ ! -e /tmp/w/f ]`,
+			Fix:          "touch /tmp/w/f",
 		},
 		{
 			Name:    "a directory fails",

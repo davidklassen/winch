@@ -206,10 +206,13 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		// A unit that waits to restart is down, but systemd starts it again
 		// unless a stop cancels the restart.
 		crashed := strings.HasPrefix(u.sub, "auto-restart")
+		// A unit whose stop job timed out is still stopping; a stop waits
+		// for it.
+		stopping := u.active == "deactivating"
 		switch {
 		case *s.Running && (!up || crashed):
 			s.todo = append(s.todo, "start")
-		case !*s.Running && up:
+		case !*s.Running && (up || stopping):
 			s.todo = append(s.todo, "stop")
 		}
 	}

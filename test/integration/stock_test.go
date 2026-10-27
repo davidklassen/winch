@@ -66,6 +66,7 @@ func TestStockModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"content of the package that ships " + stockConf + " (no installed package ships it yet)", "owner, group, and mode from the package"}},
 			WantApplyErr: "no installed package ships " + stockConf,
 			After:        `[ ! -e ` + stockConf + ` ]`,
+			Fix:          installStock,
 		},
 		{
 			Name:      "stock of a held package",
@@ -82,6 +83,7 @@ func TestStockModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"content of the package that ships " + stockConf + " (no installed package ships it yet)", "owner, group, and mode from the package"}},
 			WantApplyErr: "no installed package ships " + stockConf,
 			After:        `grep -q edited ` + stockConf,
+			Fix:          "DEBIAN_FRONTEND=noninteractive apt-get install -y -q -o Dpkg::Options::=--force-confold winch-stock >/dev/null",
 		},
 		{
 			Name:      "stock takes the mode of the archive",
@@ -96,6 +98,7 @@ func TestStockModule(t *testing.T) {
 			Args:         &module.File{Path: "/tmp/w/f", Stock: true},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"content of the package that ships /tmp/w/f (no installed package ships it yet)", "owner, group, and mode from the package"}},
 			WantApplyErr: "no installed package ships /tmp/w/f",
+			FixArgs:      stockArgs,
 		},
 		{
 			Name:  "copy_from creates with the attributes of the source",
@@ -139,6 +142,7 @@ func TestStockModule(t *testing.T) {
 			Args:         &module.File{Path: "/tmp/w/f", CopyFrom: "/tmp/w/l/src"},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"content from /tmp/w/l/src (does not exist yet)", "owner, group, and mode from /tmp/w/l/src"}},
 			WantApplyErr: "/tmp/w/l/src does not exist",
+			Fix:          `mkdir /tmp/w/later && printf 'src\n' > /tmp/w/later/src`,
 		},
 		{
 			Name:         "copy_from a missing source",
@@ -146,6 +150,7 @@ func TestStockModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"content from /tmp/w/src (does not exist yet)", "owner, group, and mode from /tmp/w/src"}},
 			WantApplyErr: "/tmp/w/src does not exist",
 			After:        `[ ! -e /tmp/w/f ]`,
+			Fix:          `printf 'src\n' > /tmp/w/src`,
 		},
 		{
 			Name:    "copy_from a named pipe fails",
@@ -179,6 +184,7 @@ func TestStockModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"content from /tmp/w/src"}},
 			WantApplyErr: "grep -q good /tmp/w/f",
 			After:        `[ "$(cat /tmp/w/f)" = old ]`,
+			Fix:          `printf 'good\n' > /tmp/w/src`,
 		},
 	})
 }
@@ -292,6 +298,7 @@ func TestPurgeModule(t *testing.T) {
 			BeforeApply:  `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
 			WantApplyErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
 			After:        `[ -e /tmp/w/d/b ]`,
+			Fix:          "rm /home/admin/w && mkdir -p /home/admin/w/d && touch /home/admin/w/d/a",
 		},
 	})
 }

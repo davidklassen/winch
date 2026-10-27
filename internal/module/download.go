@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -279,13 +280,6 @@ func (d *Download) Apply(ctx context.Context, note func(string)) error {
 	return sub.Rename(tmpName, name)
 }
 
-var client = &http.Client{Transport: func() http.RoundTripper {
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	// The checksum is of the bytes that the server sends.
-	t.DisableCompression = true
-	return t
-}()}
-
 // stallLimit is the time without data after which a download fails.
 const stallLimit = 2 * time.Minute
 
@@ -312,7 +306,7 @@ func fetch(ctx context.Context, url string, w io.Writer, stall time.Duration) (s
 	return sum, err
 }
 
-// caBundle is the file of the package ca-certificates that Go reads.
+// caBundle is the file of the package ca-certificates.
 const caBundle = "/etc/ssl/certs/ca-certificates.crt"
 
 type writerFunc func([]byte) (int, error)
@@ -324,7 +318,21 @@ func fetchBody(ctx context.Context, url string, w io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resp, err := client.Do(req)
+	// Go reads the system's CA certificates once per process. A step can add
+	// a CA certificate after an earlier download, so each download reads
+	// them again.
+	pem, err := os.ReadFile(caBundle)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(pem)
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	defer t.CloseIdleConnections()
+	t.TLSClientConfig = &tls.Config{RootCAs: roots}
+	// The checksum is of the bytes that the server sends.
+	t.DisableCompression = true
+	resp, err := (&http.Client{Transport: t}).Do(req)
 	if err != nil {
 		return "", err
 	}

@@ -197,6 +197,7 @@ func TestDownloadModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url2 + " (new sha256)"}},
 			WantApplyErr: "download " + url2 + ": the SHA-256 is " + sha(v2) + ", not " + sha([]byte("other")),
 			After:        `[ "$(cat /tmp/w/f)" = "version 1" ] && [ "$(ls -A /tmp/w)" = f ] && grep -qx '` + sha(v1) + ` /tmp/w/f' ` + record,
+			FixArgs:      &module.Download{URL: url2, SHA256: sha(v2), Path: "/tmp/w/f"},
 		},
 		{
 			Name:         "a missing URL fails",
@@ -204,6 +205,7 @@ func TestDownloadModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + missing, attrs}},
 			WantApplyErr: "download " + missing + ": 404 Not Found",
 			After:        `[ "$(ls -A /tmp/w)" = "" ] && [ ! -e ` + record + ` ]`,
+			FixArgs:      &module.Download{URL: url1, SHA256: sha(v1), Path: "/tmp/w/f"},
 		},
 		{
 			Name:  "owner and mode of a downloaded file",
@@ -264,6 +266,7 @@ func TestDownloadModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + urlEvil, attrs, "unpack into /tmp/w/opt"}},
 			WantApplyErr: `the entry "../evil" is outside the directory`,
 			After:        `[ ! -e /tmp/w/evil ] && [ ! -e /tmp/w/evil.tar.gz ] && [ ! -e ` + record + ` ]`,
+			FixArgs:      &module.Download{URL: urlTgz, SHA256: sha(tgz), Path: "/tmp/w/evil.tar.gz", Unpack: "/tmp/w/opt"},
 		},
 		{
 			Name:  "a record without the file downloads again",
@@ -299,6 +302,7 @@ func TestDownloadModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + urlTgz, attrs, "unpack into /tmp/w/opt"}},
 			WantApplyErr: "the SHA-256 is " + sha(tgz),
 			After:        `[ ! -e /tmp/w/opt ] && [ ! -e /tmp/w/app.tar.gz ]`,
+			FixArgs:      &module.Download{URL: urlTgz, SHA256: sha(tgz), Path: "/tmp/w/app.tar.gz", Unpack: "/tmp/w/opt"},
 		},
 		{
 			Name:         "a bad entry after a good one unpacks nothing",
@@ -306,6 +310,7 @@ func TestDownloadModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + urlLate, attrs, "unpack into /tmp/w/opt"}},
 			WantApplyErr: `the entry "../evil" is outside the directory`,
 			After:        `[ ! -e /tmp/w/opt ] && [ ! -e /tmp/w/evil ]`,
+			FixArgs:      &module.Download{URL: urlTgz, SHA256: sha(tgz), Path: "/tmp/w/late.tar.gz", Unpack: "/tmp/w/opt"},
 		},
 		{
 			Name:         "a broken tar.xz shows the error of xz",
@@ -313,6 +318,7 @@ func TestDownloadModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + urlBroken, attrs, "unpack into /tmp/w/opt"}},
 			WantApplyErr: "xz: exit status 1: xz: (stdin): Unexpected end of input",
 			After:        `[ ! -e /tmp/w/broken.tar.xz ]`,
+			FixArgs:      &module.Download{URL: urlTxz, SHA256: sha(txz), Path: "/tmp/w/broken.tar.xz", Unpack: "/tmp/w/opt"},
 		},
 		{
 			Name:         "a link out of the directory is not followed",
@@ -320,6 +326,7 @@ func TestDownloadModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + urlEscape, attrs, "unpack into /tmp/w/opt"}},
 			WantApplyErr: "/tmp/w/opt/out is a symbolic link, not a directory",
 			After:        `[ ! -e /tmp/w/escaped ] && [ ! -e ` + record + ` ]`,
+			FixArgs:      &module.Download{URL: urlTgz, SHA256: sha(tgz), Path: "/tmp/w/escape.tar.gz", Unpack: "/tmp/w/opt"},
 		},
 	})
 }
@@ -416,17 +423,29 @@ open("/root/listening", "w").write(str(os.getpid()))
 c.recv(65536)
 c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\npartial")
 time.sleep(600)`)
+	// serve answers each request with "tool".
+	const serve = `c.recv(65536)
+        c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntool")`
 	tls := server("8443", `ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ctx.load_cert_chain("/root/tls.pem")
 while True:
     c, _ = s.accept()
     try:
-        ctx.wrap_socket(c, server_side=True).recv(1)
+        c = ctx.wrap_socket(c, server_side=True)
+        `+serve+`
     except Exception:
         pass
     c.close()`)
+	good := "pid=$(cat /root/listening) && kill $pid && while kill -0 $pid 2>/dev/null; do sleep 0.1; done && rm /root/listening && " + server("8099", `while True:
+    c, _ = s.accept()
+    try:
+        `+serve+`
+    except Exception:
+        pass
+    c.close()`)
+	trust := "sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' /root/tls.pem > /usr/local/share/ca-certificates/winch-test.crt && update-ca-certificates >/dev/null 2>&1"
 	attrs := "owner root, group root, mode 0644"
-	reset := "! pid=$(cat /root/listening 2>/dev/null) || ! kill $pid || while kill -0 $pid 2>/dev/null; do sleep 0.1; done\n[ -e /etc/ssl/certs ] || mv /etc/ssl/certs.off /etc/ssl/certs\nrm -rf /tmp/w /root/listening /var/lib/winch/downloads/test && mkdir /tmp/w"
+	reset := "! pid=$(cat /root/listening 2>/dev/null) || ! kill $pid || while kill -0 $pid 2>/dev/null; do sleep 0.1; done\n[ -e /etc/ssl/certs ] || mv /etc/ssl/certs.off /etc/ssl/certs\n[ ! -e /usr/local/share/ca-certificates/winch-test.crt ] || { rm /usr/local/share/ca-certificates/winch-test.crt && update-ca-certificates >/dev/null 2>&1; }\nrm -rf /tmp/w /root/listening /var/lib/winch/downloads/test && mkdir /tmp/w"
 	stalled, untrusted := "http://127.0.0.1:8099/tool", "https://localhost:8443/tool"
 	vmtest.RunCases(t, vm, "download", reset, []vmtest.Case{
 		{
@@ -436,6 +455,7 @@ while True:
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + stalled, attrs}},
 			WantApplyErr: "download " + stalled + ": no data for 2m0s",
 			After:        `[ "$(ls -A /tmp/w)" = "" ]`,
+			Fix:          good,
 		},
 		{
 			Name:         "an untrusted certificate fails",
@@ -443,6 +463,7 @@ while True:
 			Args:         &module.Download{URL: untrusted, SHA256: sum, Path: "/tmp/w/f"},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + untrusted, attrs}},
 			WantApplyErr: "certificate signed by unknown authority",
+			Fix:          trust,
 		},
 		{
 			Name:         "https without CA certificates names ca-certificates",
@@ -450,6 +471,7 @@ while True:
 			Args:         &module.Download{URL: untrusted, SHA256: sum, Path: "/tmp/w/f"},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + untrusted, attrs}},
 			WantApplyErr: "download " + untrusted + ": the host has no CA certificates; install the package ca-certificates with an earlier pkg step",
+			Fix:          "mv /etc/ssl/certs.off /etc/ssl/certs && " + trust,
 		},
 	})
 }

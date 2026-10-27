@@ -12,7 +12,7 @@ func TestFileModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "file")
 	attrs := "owner root, group root, mode 0644"
-	reset := "[ ! -d /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w && mkdir /tmp/w"
+	reset := "userdel later 2>/dev/null\n[ ! -d /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w && mkdir /tmp/w"
 	vmtest.RunCases(t, vm, "file", reset, []vmtest.Case{
 		{
 			Name:      "create",
@@ -195,10 +195,11 @@ func TestFileModule(t *testing.T) {
 		{
 			Name:         "replace keeps the directory when validate fails",
 			Setup:        `mkdir /tmp/w/d && echo keep > /tmp/w/d/f`,
-			Args:         &module.File{Path: "/tmp/w/d", Data: []byte("x\n"), Replace: true, Validation: new("false")},
+			Args:         &module.File{Path: "/tmp/w/d", Data: []byte("x\n"), Replace: true, Validation: new("test -e /tmp/w/valid")},
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 1 file, 0 directories", attrs}, Old: new("")},
 			WantApplyErr: "validate",
 			After:        `[ "$(cat /tmp/w/d/f)" = keep ] && [ -z "$(ls -A /tmp/w | grep -v '^d$')" ]`,
+			Fix:          "touch /tmp/w/valid",
 		},
 		{
 			Name:  "replace with validate",
@@ -243,6 +244,7 @@ func TestFileModule(t *testing.T) {
 			Args:         &module.File{Path: "/tmp/w/f", Data: []byte("x\n"), Owner: "later"},
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner root → later (does not exist yet)"}},
 			WantApplyErr: `user "later" does not exist`,
+			Fix:          "useradd later",
 		},
 		{
 			Name:    "a link in a user's home fails",
@@ -258,6 +260,7 @@ func TestFileModule(t *testing.T) {
 			BeforeApply:  `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
 			WantApplyErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
 			After:        `[ ! -e /tmp/w/f ] && [ ! -L /tmp/w/f ]`,
+			Fix:          "rm /home/admin/w && mkdir /home/admin/w && chown admin: /home/admin/w",
 		},
 		{
 			Name:    "a link in /tmp fails",

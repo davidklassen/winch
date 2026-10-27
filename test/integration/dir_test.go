@@ -12,7 +12,7 @@ func TestDirModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "dir")
 	attrs := "owner root, group root, mode 0755"
-	reset := "[ ! -d /tmp/w ] || find /tmp/w -depth -mindepth 1 -type d -exec mountpoint -q {} \\; -exec umount {} \\;\nfor d in /tmp/w /tmp/wsrc; do [ ! -e $d ] || find $d \\( -type f -o -type d \\) -exec chattr -ia {} +; done\nrm -rf /tmp/w /tmp/wsrc && mkdir /tmp/w"
+	reset := "userdel later 2>/dev/null\n[ ! -d /tmp/w ] || find /tmp/w -depth -mindepth 1 -type d -exec mountpoint -q {} \\; -exec umount {} \\;\nfor d in /tmp/w /tmp/wsrc; do [ ! -e $d ] || find $d \\( -type f -o -type d \\) -exec chattr -ia {} +; done\nrm -rf /tmp/w /tmp/wsrc && mkdir /tmp/w"
 	vmtest.RunCases(t, vm, "dir", reset, []vmtest.Case{
 		{
 			Name:      "create with parents",
@@ -103,6 +103,7 @@ func TestDirModule(t *testing.T) {
 			Args:         &module.Dir{Path: "/tmp/w/d", Owner: "later"},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{`owner later, group root, mode 0755; user "later" does not exist yet`}},
 			WantApplyErr: `user "later" does not exist`,
+			Fix:          "useradd later",
 		},
 		{
 			Name:    "absent on a symbolic link fails",
@@ -172,6 +173,7 @@ func TestDirModule(t *testing.T) {
 			BeforeApply:  `mount -t tmpfs tmpfs /tmp/w/d/m && touch /tmp/w/d/m/f`,
 			WantApplyErr: "/tmp/w/d/m is a mount point",
 			After:        `[ -f /tmp/w/d/m/f ]`,
+			Fix:          "umount /tmp/w/d/m",
 		},
 		{
 			Name: "absent when missing is ok",
@@ -358,6 +360,7 @@ func TestDirModule(t *testing.T) {
 			BeforeApply:  `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
 			WantApplyErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
 			After:        `[ ! -e /tmp/w/d ] && [ ! -L /tmp/w/d ]`,
+			Fix:          "rm /home/admin/w && mkdir /home/admin/w && chown admin: /home/admin/w",
 		},
 		{
 			Name:    "a link in /tmp fails",
@@ -380,6 +383,7 @@ func TestDirModule(t *testing.T) {
 			BeforeApply:  `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
 			WantApplyErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
 			After:        `[ -d /tmp/w/d ]`,
+			Fix:          "rm /home/admin/w && mkdir -p /home/admin/w/d && chown -R admin: /home/admin/w",
 		},
 		{
 			Name:      "recurse sets owner and group in the tree and not behind a link",

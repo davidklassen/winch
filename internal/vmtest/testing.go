@@ -185,6 +185,17 @@ type Case struct {
 	WantErr string
 	// WantApplyErr is part of the error of apply.
 	WantApplyErr string
+	// Fix runs as root after a failed apply and removes its cause on the host.
+	Fix string
+	// FixArgs are the arguments without the cause of a failed apply, for a
+	// cause in the arguments, such as a checksum that pins a bad archive.
+	FixArgs module.Module
+	// ErrAfterChange marks a failed apply that still reaches the wanted
+	// state, so the next check is ok.
+	ErrAfterChange bool
+	// SkipRecovery names the issue that blocks the recovery of the case. The
+	// case skips its recovery test.
+	SkipRecovery string
 	// After runs as root after apply, also after a failed one, and must
 	// exit 0.
 	After string
@@ -243,6 +254,7 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 				if c.After != "" {
 					vm.MustRun(t, c.After)
 				}
+				checkRecovery(t, vm, s, name, c)
 				return
 			}
 			if err != nil {
@@ -260,15 +272,65 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 			if c.After != "" {
 				vm.MustRun(t, c.After)
 			}
-			want2 := module.Result{Status: module.OK}
-			if c.NoConverge {
-				want2 = c.Want
-			}
-			again, err := s.Check(ctx, name, c.Args, &module.State{})
-			if err != nil || !equal(again, want2) {
-				t.Fatalf("second check = %s, %v; want %s", show(again), err, show(want2))
-			}
+			checkAgain(t, s, name, c)
 		})
+	}
+}
+
+// checkRecovery checks that the check after a failed apply is not ok, and that
+// apply succeeds after the case's Fix or with its FixArgs. A check error counts
+// as not ok, but the check after the fix must pass. With ErrAfterChange, the
+// check after the failed apply is ok.
+func checkRecovery(t *testing.T, vm *VM, s *session.Session, name string, c Case) {
+	t.Helper()
+	if c.SkipRecovery != "" {
+		t.Skip(c.SkipRecovery)
+	}
+	if c.ErrAfterChange {
+		checkAgain(t, s, name, c)
+		return
+	}
+	if c.Fix == "" && c.FixArgs == nil {
+		t.Fatal("the case has no Fix or FixArgs for its failed apply")
+	}
+	ctx := t.Context()
+	st := c.State
+	got, err := s.Check(ctx, name, c.Args, &st)
+	if err == nil && got.Status == module.OK && !got.Deferred {
+		t.Fatalf("check after the failed apply = %s, want a change", show(got))
+	}
+	if c.Fix != "" {
+		vm.MustRun(t, c.Fix)
+	}
+	if c.FixArgs != nil {
+		c.Args = c.FixArgs
+	}
+	st = c.State
+	if _, err := s.Check(ctx, name, c.Args, &st); err != nil {
+		t.Fatalf("check after the fix: %v", err)
+	}
+	st = c.State
+	applied, err := s.Apply(ctx, name, c.Args, &st, nil, nil, protocol.Guard{})
+	if err == nil && applied.Timer > 0 {
+		err = s.Confirm(ctx)
+	}
+	if err != nil {
+		t.Fatalf("apply after the fix: %v%s", err, vm.lab.hint(err.Error()))
+	}
+	checkAgain(t, s, name, c)
+}
+
+// checkAgain checks that a second check after apply is ok, or Want for a case
+// that never converges.
+func checkAgain(t *testing.T, s *session.Session, name string, c Case) {
+	t.Helper()
+	want := module.Result{Status: module.OK}
+	if c.NoConverge {
+		want = c.Want
+	}
+	got, err := s.Check(t.Context(), name, c.Args, &module.State{})
+	if err != nil || !equal(got, want) {
+		t.Fatalf("second check = %s, %v; want %s", show(got), err, show(want))
 	}
 }
 

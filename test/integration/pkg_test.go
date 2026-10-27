@@ -119,6 +119,7 @@ func TestPkgModule(t *testing.T) {
 			WantState:    module.State{IndexFresh: true},
 			WantApplyErr: "winch-fragile is held; apt-mark unhold winch-fragile changes it",
 			After:        "! dpkg -s winch-uses-fragile >/dev/null 2>&1",
+			Fix:          "apt-mark unhold winch-fragile >/dev/null",
 		},
 		{
 			Name: "an install checks the other packages again after the refresh",
@@ -132,6 +133,7 @@ func TestPkgModule(t *testing.T) {
 			WantState:    module.State{IndexFresh: true},
 			WantApplyErr: "winch-fragile is held; apt-mark unhold winch-fragile changes it",
 			After:        "! dpkg -s winch-uses-fragile >/dev/null 2>&1",
+			Fix:          "apt-mark unhold winch-fragile >/dev/null",
 		},
 		{
 			Name:      "a removed package with an empty index plans the other packages after the refresh",
@@ -158,6 +160,7 @@ func TestPkgModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello"}},
 			WantState:    module.State{IndexFresh: true},
 			WantApplyErr: "Failed to fetch http://127.0.0.1:9/winch-down",
+			Fix:          "rm /etc/apt/sources.list.d/winch-down.sources",
 		},
 		{
 			Name:  "ok when installed",
@@ -296,6 +299,7 @@ func TestPkgModule(t *testing.T) {
 			Args:         &module.Pkg{Name: []string{"winch-fragile"}},
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"configure winch-fragile"}},
 			WantApplyErr: "post-installation script subprocess returned error exit status 1",
+			Fix:          "touch /etc/winch-fragile.ok",
 		},
 		{
 			Name:        "configure keeps the installed version",
@@ -486,6 +490,7 @@ func TestPkgModule(t *testing.T) {
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install winch-no-such-package", later}},
 			WantState:    module.State{IndexFresh: true},
 			WantApplyErr: "Unable to locate package winch-no-such-package",
+			FixArgs:      &module.Pkg{Name: []string{"hello"}},
 		},
 	})
 }

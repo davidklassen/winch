@@ -152,6 +152,7 @@ func TestLinkModule(t *testing.T) {
 			BeforeApply:  `mount -t tmpfs tmpfs /tmp/w/d/m && touch /tmp/w/d/m/f`,
 			WantApplyErr: "/tmp/w/d/m is a mount point",
 			After:        `[ -f /tmp/w/d/m/f ]`,
+			Fix:          "umount /tmp/w/d/m",
 		},
 		{
 			Name:    "a directory with a mount point fails without replace",
@@ -168,18 +169,20 @@ func TestLinkModule(t *testing.T) {
 		{
 			Name:         "replace a file keeps it when validate fails",
 			Setup:        `echo keep > /tmp/w/f`,
-			Args:         &module.Link{Path: "/tmp/w/f", Target: new("/etc/hostname"), Replace: true, Validation: new("false")},
+			Args:         &module.Link{Path: "/tmp/w/f", Target: new("/etc/hostname"), Replace: true, Validation: new("test -e /tmp/w/valid")},
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove file /tmp/w/f", "target /etc/hostname"}},
 			WantApplyErr: "validate",
 			After:        `[ ! -L /tmp/w/f ] && [ "$(cat /tmp/w/f)" = keep ] && [ -z "$(ls -A /tmp/w | grep -v '^f$')" ]`,
+			Fix:          "touch /tmp/w/valid",
 		},
 		{
 			Name:         "replace a directory keeps it when validate fails",
 			Setup:        `mkdir -p /tmp/w/d/x && echo keep > /tmp/w/d/x/f`,
-			Args:         &module.Link{Path: "/tmp/w/d", Target: new("/tmp"), Replace: true, Validation: new("false")},
+			Args:         &module.Link{Path: "/tmp/w/d", Target: new("/tmp"), Replace: true, Validation: new("test -e /tmp/w/valid")},
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 1 file, 1 directory", "target /tmp"}},
 			WantApplyErr: "validate",
 			After:        `[ ! -L /tmp/w/d ] && [ "$(cat /tmp/w/d/x/f)" = keep ] && [ -z "$(ls -A /tmp/w | grep -v '^d$')" ]`,
+			Fix:          "touch /tmp/w/valid",
 		},
 		{
 			Name:  "replace a directory with validate",
@@ -220,6 +223,7 @@ func TestLinkModule(t *testing.T) {
 			BeforeApply:  `rm -rf /home/admin/w && ln -s /tmp/w /home/admin/w`,
 			WantApplyErr: "/home/admin/w is a symbolic link in /home/admin, which a user other than root can write",
 			After:        `[ ! -e /tmp/w/l ] && [ ! -L /tmp/w/l ]`,
+			Fix:          "rm /home/admin/w && mkdir /home/admin/w && chown admin: /home/admin/w",
 		},
 		{
 			Name:    "a link in /tmp fails",

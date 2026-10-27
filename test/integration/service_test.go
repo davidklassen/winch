@@ -56,7 +56,7 @@ cat > /etc/systemd/system/winch-boom.service <<'U'
 [Service]
 ExecStartPre=/bin/sh -c 'if [ -e /tmp/boom ]; then cat /tmp/boom; exit 1; fi'
 ExecStart=/bin/sleep infinity
-ExecReload=/bin/sh -c 'echo boom on reload; exit 1'
+ExecReload=/bin/sh -c 'if [ -e /tmp/boom ]; then cat /tmp/boom; exit 1; fi'
 U
 cat > /etc/systemd/system/winch-slowstop.service <<'U'
 [Unit]
@@ -98,7 +98,7 @@ WantedBy=multi-user.target
 U
 cat > /etc/systemd/system/winch-cond.service <<'U'
 [Unit]
-ConditionPathExists=/nonexistent
+ConditionPathExists=/tmp/winch-cond
 ConditionPathExists=/
 [Service]
 ExecStart=/bin/sleep infinity
@@ -143,7 +143,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service winch-lost.service; rm -f /tmp/boom; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service winch-noexec.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
+	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-slowstop.service.d ]; then rm -r /etc/systemd/system/winch-slowstop.service.d; systemctl daemon-reload; fi; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; if [ -e /etc/systemd/system/winch-nope.service ]; then systemctl disable --now winch-nope; rm /etc/systemd/system/winch-nope.service; systemctl daemon-reload; fi; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service winch-lost.service winch-cond.service winch-slowstop.service; rm -f /tmp/boom /tmp/winch-cond; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service winch-noexec.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -403,6 +403,7 @@ systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
 			Args:         &module.Service{Name: "winch-nope", Enabled: new(true), Running: new(true)},
 			Want:         change("winch-nope.service does not exist yet", "enable", "start"),
 			WantApplyErr: "winch-nope.service does not exist",
+			Fix:          "printf '[Service]\\nExecStart=/bin/sleep infinity\\n[Install]\\nWantedBy=multi-user.target\\n' > /etc/systemd/system/winch-nope.service && systemctl daemon-reload",
 		},
 		{
 			Name:    "an alias fails and names the unit",
@@ -548,12 +549,14 @@ systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
 			Args:         &module.Service{Name: "winch-boom", Running: new(true)},
 			Want:         change("start"),
 			WantApplyErr: "\nboom on start",
+			Fix:          "rm /tmp/boom",
 		},
 		{
 			Name:         "a start that a condition skips fails and names the condition",
 			Args:         &module.Service{Name: "winch-cond", Running: new(true)},
 			Want:         change("start"),
-			WantApplyErr: "winch-cond.service did not start: ConditionPathExists=/nonexistent failed",
+			WantApplyErr: "winch-cond.service did not start: ConditionPathExists=/tmp/winch-cond failed",
+			Fix:          "touch /tmp/winch-cond",
 		},
 		{
 			Name:       "a unit that ends at once after its start is ok",
@@ -578,13 +581,17 @@ systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
 			Args:         &module.Service{Name: "winch-boom", Restarted: true},
 			Want:         change("restart"),
 			WantApplyErr: "\nboom on restart",
+			Fix:          "rm /tmp/boom",
+			NoConverge:   true,
 		},
 		{
 			Name:         "a failed reload shows the journal",
-			Setup:        `systemctl start winch-boom`,
+			Setup:        `systemctl start winch-boom && echo boom on reload > /tmp/boom`,
 			Args:         &module.Service{Name: "winch-boom", Reloaded: true},
 			Want:         change("reload"),
 			WantApplyErr: "\nboom on reload",
+			Fix:          "rm /tmp/boom",
+			NoConverge:   true,
 		},
 		{
 			Name:         "a failed stop shows the journal",
@@ -592,7 +599,7 @@ systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
 			Args:         &module.Service{Name: "winch-slowstop", Running: new(false)},
 			Want:         change("stop"),
 			WantApplyErr: "\nboom on stop",
-			After:        `systemctl kill -s KILL winch-slowstop`,
+			Fix:          "mkdir /etc/systemd/system/winch-slowstop.service.d && printf '[Unit]\\nJobTimeoutSec=infinity\\n' > /etc/systemd/system/winch-slowstop.service.d/wait.conf && systemctl daemon-reload",
 		},
 		{
 			Name:    "a bad load state shows the journal",
