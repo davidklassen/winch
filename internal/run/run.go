@@ -2,7 +2,9 @@
 package run
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -15,6 +17,7 @@ import (
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/secret"
+	"github.com/davidklassen/winch/internal/yamlx"
 )
 
 // Conn is a session with one host. The context of MakePlan and Apply ends at
@@ -146,6 +149,15 @@ type hostRun struct {
 	removed []string
 	// sources are the URIs and suites of repo steps, with the first step.
 	sources map[string]string
+	// managed are the paths, packages, units, users, and groups of the
+	// checked steps, with the first step and its arguments.
+	managed map[string]managed
+}
+
+type managed struct {
+	where  string
+	module string
+	args   module.Module
 }
 
 type startedBy struct {
@@ -202,7 +214,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}, units: map[string]bool{}, sources: map[string]string{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}, units: map[string]bool{}, sources: map[string]string{}, managed: map[string]managed{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -295,6 +307,9 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		}
 		where := scope(stage, p) + ": " + label(p.Step)
 		if err := hr.repo(&steps[i].Step, where); err != nil {
+			return nil, err
+		}
+		if err := hr.same(p.Step, where); err != nil {
 			return nil, err
 		}
 		steps[i].Result, err = conn.Check(context.WithoutCancel(ctx), p.Step.Module, steps[i].Step.Args, &hr.state)
@@ -390,6 +405,52 @@ func (hr *hostRun) repo(st *project.Step, where string) error {
 	c := *r
 	c.Removed = hr.removed
 	st.Args = &c
+	return nil
+}
+
+// same fails a step that manages a path, package, unit, user, or group that
+// an earlier step of the host manages with other arguments. The host would
+// change on every run.
+func (hr *hostRun) same(st project.Step, where string) error {
+	add := func(thing string, args module.Module) error {
+		m, ok := hr.managed[thing]
+		if !ok {
+			hr.managed[thing] = managed{where, st.Module, args}
+			return nil
+		}
+		a, err := json.Marshal(m.args)
+		if err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
+		b, err := json.Marshal(args)
+		if err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
+		if m.module != st.Module || !bytes.Equal(a, b) {
+			return fmt.Errorf("%s: %s is also in %s, with other arguments", where, thing, m.where)
+		}
+		return nil
+	}
+	switch m := st.Args.(type) {
+	case *module.File, *module.Dir, *module.Link:
+		return add("the path "+m.Main(), m)
+	case *module.Pkg:
+		for _, n := range m.Name {
+			c := *m
+			c.Name = yamlx.Strings{n}
+			if err := add("the package "+n, &c); err != nil {
+				return err
+			}
+		}
+	case *module.Service:
+		c := *m
+		c.Name = m.Unit()
+		return add("the unit "+c.Name, &c)
+	case *module.User:
+		return add("the user "+m.Name, m)
+	case *module.Group:
+		return add("the group "+m.Name, m)
+	}
 	return nil
 }
 
