@@ -32,6 +32,8 @@ type File struct {
 	TemplatePos yamlx.Pos `json:"-"`
 	Source      string    `yaml:"source" json:"-"`
 	SourcePos   yamlx.Pos `json:"-"`
+	CopyFrom    string    `yaml:"copy_from" json:"copy_from,omitempty"`
+	Stock       bool      `yaml:"stock" json:"stock,omitempty"`
 	// Data is the content for the host, from content, template, or source.
 	// Without omitempty, JSON keeps nil apart from empty content.
 	Data       []byte         `json:"data"`
@@ -50,7 +52,7 @@ func (f *File) Validate() error {
 	if err := checkPath(f.Path); err != nil {
 		return err
 	}
-	sources := []arg{{"content", f.Content != nil}, {"template", f.Template != ""}, {"source", f.Source != ""}}
+	sources := []arg{{"content", f.Content != nil}, {"template", f.Template != ""}, {"source", f.Source != ""}, {"copy_from", f.CopyFrom != ""}, {"stock", f.Stock}}
 	if f.Absent {
 		return absentTakesNone(append(sources, arg{"owner", f.Owner != ""}, arg{"group", f.Group != ""}, arg{"mode", f.Mode != ""}, arg{"validate", f.Validation != nil}, arg{"replace", f.Replace})...)
 	}
@@ -63,12 +65,12 @@ func (f *File) Validate() error {
 			set++
 		}
 		if a.set && set > 1 {
-			return &yamlx.FieldError{Field: a.name, Msg: "a file has only one of content, template, and source"}
+			return &yamlx.FieldError{Field: a.name, Msg: "a file has only one of content, template, source, copy_from, and stock"}
 		}
 	}
 	if set == 0 {
 		if f.Owner == "" && f.Group == "" && f.Mode == "" {
-			return &yamlx.FieldError{Field: "content", Msg: "a file needs content, template, or source, one of owner, group, and mode, or absent: true"}
+			return &yamlx.FieldError{Field: "content", Msg: "a file needs content, template, source, copy_from, or stock, one of owner, group, and mode, or absent: true"}
 		}
 		if err := takesNone("a file without content", arg{"validate", f.Validation != nil}, arg{"replace", f.Replace}); err != nil {
 			return err
@@ -79,6 +81,14 @@ func (f *File) Validate() error {
 	}
 	if err := checkRelative("source", f.Source); err != nil {
 		return err
+	}
+	if f.CopyFrom != "" {
+		if err := checkAbs("copy_from", f.CopyFrom); err != nil {
+			return err
+		}
+		if f.CopyFrom == f.Path {
+			return &yamlx.FieldError{Field: "copy_from", Msg: "is the path of the step itself"}
+		}
 	}
 	if err := checkOwner("owner", f.Owner); err != nil {
 		return err
@@ -254,25 +264,43 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	if !f.hasContent() {
 		return f.checkAttrs(dir, name, fi, exists)
 	}
-	owner, group, mode, err := attrs(f.Owner, f.Group, f.Mode, "0644")
+	hc, err := f.hostContent(ctx)
 	if err != nil {
 		return Result{}, err
 	}
+	if hc != nil {
+		defer hc.close()
+	}
+	owner, group, mode, known, err := f.wanted(hc)
+	if err != nil {
+		return Result{}, err
+	}
+	want := attrLine(owner, group, mode) + userNote(owner, group)
+	// A source on the host shows no diff, only the line that names it.
+	var content []string
+	var srcSum string
+	old := new("")
+	if hc != nil {
+		content, old, srcSum = []string{hc.line}, nil, hc.sum
+		if !known {
+			want = "owner, group, and mode from " + hc.from
+		}
+	}
 	switch {
 	case !exists:
-		changes := append(parentChanges(missing), attrLine(owner, group, mode)+userNote(owner, group))
-		return Result{Status: Change, Action: Create, Changes: changes, Old: new("")}, nil
+		changes := slices.Concat(parentChanges(missing), content, []string{want})
+		return Result{Status: Change, Action: Create, Changes: changes, Old: old, SourceSHA256: srcSum}, nil
 	case fi.Mode()&fs.ModeSymlink != 0:
 		target, _ := dir.Readlink(name)
-		changes := []string{"replace the symbolic link to " + target, attrLine(owner, group, mode) + userNote(owner, group)}
-		return Result{Status: Change, Action: Modify, Changes: changes, Old: new("")}, nil
+		changes := slices.Concat([]string{"replace the symbolic link to " + target}, content, []string{want})
+		return Result{Status: Change, Action: Modify, Changes: changes, Old: old, SourceSHA256: srcSum}, nil
 	case fi.IsDir():
 		line, err := checkReplace(dir, name, f.Path, fi, f.Replace)
 		if err != nil {
 			return Result{}, err
 		}
-		changes := []string{line, attrLine(owner, group, mode) + userNote(owner, group)}
-		return Result{Status: Change, Action: Modify, Changes: changes, Old: new("")}, nil
+		changes := slices.Concat([]string{line}, content, []string{want})
+		return Result{Status: Change, Action: Modify, Changes: changes, Old: old, SourceSHA256: srcSum}, nil
 	case !fi.Mode().IsRegular():
 		return Result{}, fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
 	}
@@ -281,24 +309,32 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 		return Result{}, err
 	}
 	defer r.Close()
-	res := Result{Status: OK}
+	res := Result{Status: OK, SourceSHA256: srcSum}
 	sum, err := fileSHA(r)
 	if err != nil {
 		return Result{}, err
 	}
-	if sum != f.sum() {
-		res.Status, res.Action = Change, Modify
-		old, err := readHead(r)
-		if err != nil {
-			return Result{}, fmt.Errorf("read %s: %w", f.Path, err)
-		}
-		if res.OldReason = notText(old); res.OldReason == "" {
-			res.Old = new(string(old))
+	wantSum := f.sum()
+	if hc != nil {
+		wantSum = hc.sum
+	}
+	if sum != wantSum {
+		res.Status, res.Action, res.Changes = Change, Modify, content
+		if hc == nil {
+			old, err := readHead(r)
+			if err != nil {
+				return Result{}, fmt.Errorf("read %s: %w", f.Path, err)
+			}
+			if res.OldReason = notText(old); res.OldReason == "" {
+				res.Old = new(string(old))
+			}
 		}
 	}
-	changes, err := attrChanges(fi, owner, group, mode)
-	if err != nil {
-		return Result{}, err
+	changes := []string{want}
+	if known {
+		if changes, err = attrChanges(fi, owner, group, mode); err != nil {
+			return Result{}, err
+		}
 	}
 	if len(changes) > 0 {
 		res.Status, res.Action = Change, Modify
@@ -314,7 +350,40 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 
 // hasContent reports whether the step on the host sets the content.
 func (f *File) hasContent() bool {
-	return f.Data != nil || f.DataSHA256 != ""
+	return f.Data != nil || f.DataSHA256 != "" || f.fromHost()
+}
+
+// fromHost reports whether the content comes from the host: copy_from or
+// stock.
+func (f *File) fromHost() bool {
+	return f.CopyFrom != "" || f.Stock
+}
+
+// hostContent reads the source of copy_from or stock, or returns nil for
+// content from the controller.
+func (f *File) hostContent(ctx context.Context) (*hostContent, error) {
+	switch {
+	case f.Stock:
+		return stockSource(ctx, f.Path)
+	case f.CopyFrom != "":
+		return copySource(f.CopyFrom)
+	}
+	return nil, nil
+}
+
+// wanted returns the owner, group, and mode with their defaults: those of hc
+// when it is not nil, else root and 0644. known is false when the defaults
+// come from a source that does not exist yet.
+func (f *File) wanted(hc *hostContent) (owner, group string, mode uint32, known bool, err error) {
+	if hc == nil {
+		owner, group, mode, err = attrs(f.Owner, f.Group, f.Mode, "0644")
+		return owner, group, mode, true, err
+	}
+	if hc.missing != nil && (f.Owner == "" || f.Group == "" || f.Mode == "") {
+		return "", "", 0, false, nil
+	}
+	owner, group, mode, err = attrs(cmp.Or(f.Owner, yamlx.NameOrID(hc.owner)), cmp.Or(f.Group, yamlx.NameOrID(hc.group)), f.Mode, fmt.Sprintf("%04o", hc.mode))
+	return owner, group, mode, true, err
 }
 
 // checkAttrs checks a step without content: only the owner, group, and mode
@@ -419,7 +488,19 @@ func (f *File) Apply(ctx context.Context, _ func(string)) error {
 	if !f.hasContent() {
 		return f.applyAttrs(name)
 	}
-	owner, group, mode, err := attrs(f.Owner, f.Group, f.Mode, "0644")
+	hc, err := f.hostContent(ctx)
+	if err != nil {
+		return err
+	}
+	wantSum := f.sum()
+	if hc != nil {
+		defer hc.close()
+		if hc.missing != nil {
+			return hc.missing
+		}
+		wantSum = hc.sum
+	}
+	owner, group, mode, _, err := f.wanted(hc)
 	if err != nil {
 		return err
 	}
@@ -446,12 +527,20 @@ func (f *File) Apply(ctx context.Context, _ func(string)) error {
 		if err != nil {
 			return err
 		}
-		if sum == f.sum() {
+		if sum == wantSum {
 			return setAttrs(r, uid, gid, mode)
 		}
 	}
-	if f.Data == nil {
+	var content io.Reader
+	switch {
+	case hc != nil:
+		if content, err = hc.reader(); err != nil {
+			return err
+		}
+	case f.Data == nil:
 		return ErrNeedContent
+	default:
+		content = bytes.NewReader(f.Data)
 	}
 	if exists && fi.IsDir() {
 		if err := noMount(dir, name, fi, f.Path); err != nil {
@@ -463,7 +552,7 @@ func (f *File) Apply(ctx context.Context, _ func(string)) error {
 		return err
 	}
 	defer sub.Close()
-	return writeFile(sub, name, bytes.NewReader(f.Data), uid, gid, mode, func(tmp string) error {
+	return writeFile(sub, name, content, uid, gid, mode, func(tmp string) error {
 		return put(ctx, dir, missing, sub, tmp, name, f.Validation)
 	})
 }
@@ -593,12 +682,8 @@ func openPath(d, p string) (*os.Root, []string, error) {
 		case err != nil:
 			return fail(err)
 		case fi.Mode()&fs.ModeSymlink != 0:
-			safe, err := onlyRoot(dir)
-			if err != nil {
+			if err := linkAllowed(dir, name); err != nil {
 				return fail(err)
-			}
-			if !safe {
-				return fail(fmt.Errorf("%s is a symbolic link in %s, which a user other than root can write", full, dir.Name()))
 			}
 			if links++; links > 40 {
 				return fail(fmt.Errorf("%s: %w", p, errLinkLevels))
@@ -642,6 +727,16 @@ func parts(p string) []string {
 		return nil
 	}
 	return strings.Split(p[1:], "/")
+}
+
+// linkAllowed fails for the symbolic link name in dir when a user other than
+// root owns or can write dir: winch does not follow it.
+func linkAllowed(dir *os.Root, name string) error {
+	safe, err := onlyRoot(dir)
+	if err == nil && !safe {
+		err = fmt.Errorf("%s is a symbolic link in %s, which a user other than root can write", path.Join(dir.Name(), name), dir.Name())
+	}
+	return err
 }
 
 // onlyRoot reports whether no user other than root owns or can write dir.

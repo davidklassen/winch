@@ -1,0 +1,5 @@
+Package: winch-stock
+Version: 1
+Architecture: all
+Maintainer: winch
+Description: test package with a conffile for file stock and dir purge

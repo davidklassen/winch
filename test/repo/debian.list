@@ -23,3 +23,11 @@ mariadb-server
 postgresql
 # The demo of winch run.
 htop
+# The demo's fail2ban, dovecot, and monit recipes.
+fail2ban
+python3-systemd
+dovecot-imapd
+dovecot-lmtpd
+dovecot-sieve
+monit
+python3-dnspython

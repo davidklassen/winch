@@ -6,3 +6,9 @@ recipients:
 vars:
   domain:
   admin_email: !expr '"webmaster@" + vars.domain'
+  # Monit alerts go here.
+  alert_addresses: !expr '[vars.admin_email]'
+  # The full mail server. false: send only.
+  mail_server: false
+  # Mailbox name to its {BLF-CRYPT} password hash, one per user.
+  mail_users: {}

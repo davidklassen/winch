@@ -1,0 +1,29 @@
+{{- /* Each peer seen from outside. A mail server gets the mail ports,
+the web sites, and DANE; any other node gets SSH. "protocol smtps" on
+port 25 means STARTTLS. */ -}}
+{{ range .vars.monit_peers -}}
+{{ if .vars.mail_server -}}
+check host {{ .name }} with address {{ .name }}
+  every 5 cycles
+  if failed port 25 protocol smtps and certificate valid > 14 days for 3 cycles then alert
+  if failed port 465 protocol smtps and certificate valid > 14 days for 3 cycles then alert
+  if failed port 993 protocol imaps and certificate valid > 14 days for 3 cycles then alert
+
+check host {{ $.vars.domain }} with address {{ $.vars.domain }}
+  every 5 cycles
+  if failed port 443 protocol https and certificate valid > 14 days for 3 cycles then alert
+
+check host mta-sts.{{ $.vars.domain }} with address mta-sts.{{ $.vars.domain }}
+  every 5 cycles
+  if failed port 443 protocol https request "/.well-known/mta-sts.txt"
+    and certificate valid > 14 days for 3 cycles then alert
+
+check program dane-mail with path /usr/local/bin/dane-mail
+  every 5 cycles
+  if status != 0 for 3 cycles then alert
+{{ else -}}
+check host {{ .name }} with address {{ .name }}
+  every 5 cycles
+  if failed port 22 protocol ssh for 3 cycles then alert
+{{ end -}}
+{{ end -}}

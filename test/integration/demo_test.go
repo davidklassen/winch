@@ -55,6 +55,22 @@ func TestDemo(t *testing.T) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 
+	// Drift: stock restores nginx.conf, and purge removes an unknown page.
+	vms[0].MustRun(t, "echo edited >> /etc/nginx/nginx.conf && chmod 600 /etc/nginx/nginx.conf && touch /var/www/example.com/old.html")
+	r = lab.WinchEnv(t, dir, env, "plan", "site", "--hosts", "demo")
+	for _, want := range []string{"file /etc/nginx/nginx.conf\n          content of nginx-common ", "          mode 0600 → 0644\n", "dir /var/www/example.com\n          remove file /var/www/example.com/old.html\n"} {
+		if !strings.Contains(r.Stdout, want) {
+			t.Errorf("plan after drift: no %q in %q", want, r.Stdout)
+		}
+	}
+	if r := lab.WinchEnv(t, dir, env, "apply", "site", "--hosts", "demo", "--yes"); r.Code != 0 {
+		t.Fatalf("apply after drift: exit %d, stderr %q", r.Code, r.Stderr)
+	}
+	r = lab.WinchEnv(t, dir, env, "plan", "site", "--hosts", "demo")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("plan after the repair: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+
 	// A new password: the plan masks the old and the new value.
 	copyDir := t.TempDir()
 	if err := os.CopyFS(copyDir, os.DirFS(dir)); err != nil {
@@ -136,6 +152,31 @@ func checkDemo(t *testing.T, vm *vmtest.VM, peer string) {
 	}
 	if out := vm.MustRun(t, "ss -Hltn 'sport = :25' | awk '{print $4}'"); out != "127.0.0.1:25\n" {
 		t.Errorf("postfix listens on %q, want only 127.0.0.1:25", out)
+	}
+	if out := vm.MustRun(t, "cmp /etc/postfix/master.cf /usr/share/postfix/master.cf.dist && echo stock"); out != "stock\n" {
+		t.Errorf("postfix master.cf: %q", out)
+	}
+	// The stock and purge steps.
+	if out := vm.MustRun(t, "dpkg-deb --fsys-tarfile /var/cache/apt/archives/nginx-common_*.deb | tar -xO ./etc/nginx/nginx.conf | cmp - /etc/nginx/nginx.conf && echo stock"); out != "stock\n" {
+		t.Errorf("nginx.conf: %q", out)
+	}
+	for dir, want := range map[string]string{
+		"/etc/nginx/sites-enabled": "example.com",
+		"/var/www/example.com":     "about.html contact.html index.html private.html robots.txt",
+		"/etc/sudoers.d":           "README admin",
+		"/etc/fail2ban/jail.d":     "defaults-debian.conf mail.conf",
+		"/etc/monit/conf.d":        "inside outside settings",
+		"/etc/dovecot/conf.d":      "10-auth.conf 10-mail.conf 10-master.conf 10-ssl.conf 15-mailboxes.conf 20-imap.conf 20-lmtp.conf 90-sieve-extprograms.conf 90-sieve.conf",
+	} {
+		if out := vm.MustRun(t, "ls "+dir+" | tr '\\n' ' '"); out != want+" " {
+			t.Errorf("%s holds %q, want %q", dir, out, want)
+		}
+	}
+	if out := vm.MustRun(t, "stat -c '%a' /etc/sudoers.d; systemctl is-active dovecot fail2ban monit"); out != "750\nactive\nactive\nactive\n" {
+		t.Errorf("leftovers, dovecot, fail2ban, monit: %q", out)
+	}
+	if out := vm.MustRun(t, "fail2ban-client status | grep 'Jail list'"); !strings.Contains(out, "dovecot, postfix-sasl, sshd") {
+		t.Errorf("fail2ban jails: %q", out)
 	}
 }
 

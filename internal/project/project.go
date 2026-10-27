@@ -18,6 +18,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -27,6 +28,10 @@ type Project struct {
 	Name      string
 	Inventory *Inventory
 	Pipeline  *Pipeline
+	// others are the other pipelines of the project, and othersErr their load
+	// errors. Only dir purge needs them.
+	others    []*Pipeline
+	othersErr error
 	Warnings  []*yamlx.Error
 	// vars are the declarations in the order in which defaults evaluate.
 	vars []*Var
@@ -142,7 +147,7 @@ type nameAt struct {
 // inventory is the path in inventory, or the default from winch.yaml. set
 // holds the --set flags.
 func Load(ctx context.Context, dir, inventory, pipeline string, set []string, keys Keys) (*Project, error) {
-	return load(ctx, dir, inventory, set, keys, func(l *loader) (*Pipeline, error) { return l.loadPipeline(pipeline) })
+	return load(ctx, dir, inventory, set, keys, "pipelines/"+pipeline+".yaml", func(l *loader) (*Pipeline, error) { return l.loadPipeline(pipeline) })
 }
 
 // Command is a winch run or winch exec on the command line: a host pattern,
@@ -158,10 +163,12 @@ type Command struct {
 // Its one stage run holds the step of c on the hosts of its pattern; without a
 // module, the stage has no steps.
 func LoadCommand(ctx context.Context, dir, inventory string, keys Keys, c Command) (*Project, error) {
-	return load(ctx, dir, inventory, nil, keys, func(l *loader) (*Pipeline, error) { return l.commandPipeline(c) })
+	return load(ctx, dir, inventory, nil, keys, "", func(l *loader) (*Pipeline, error) { return l.commandPipeline(c) })
 }
 
-func load(ctx context.Context, dir, inventory string, set []string, keys Keys, pipeline func(*loader) (*Pipeline, error)) (*Project, error) {
+// load loads the project with the pipeline that pipeline returns, and every
+// pipeline file other than file.
+func load(ctx context.Context, dir, inventory string, set []string, keys Keys, file string, pipeline func(*loader) (*Pipeline, error)) (*Project, error) {
 	cfg, cfgErr := loadConfig(dir)
 	if cfg == nil {
 		return nil, cfgErr
@@ -176,6 +183,14 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, p
 	if err := resolve(invs[0], pl, map[*Recipe]bool{}); err != nil {
 		return nil, err
 	}
+	// The other pipelines count only for dir purge; their warnings show in
+	// winch validate.
+	n := len(l.warnings)
+	others, othersErr := l.otherPipelines(file)
+	l.warnings = l.warnings[:n]
+	for _, o := range others {
+		othersErr = errors.Join(othersErr, resolve(invs[0], o, map[*Recipe]bool{}))
+	}
 	if err := l.unsealAll(ctx, keys); err != nil {
 		return nil, err
 	}
@@ -188,7 +203,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, p
 	for _, v := range sets {
 		setNames[v.name] = true
 	}
-	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, Warnings: warnings, vars: l.order, filter: keys.Filter, secrets: len(l.sealed) > 0,
+	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, others: others, othersErr: othersErr, Warnings: warnings, vars: l.order, filter: keys.Filter, secrets: len(l.sealed) > 0,
 		set: setNames, peers: peerVars(invs[0], l.decls)}, nil
 }
 
@@ -628,6 +643,27 @@ func (l *loader) loadPipeline(name string) (*Pipeline, error) {
 		return nil, fmt.Errorf("unknown pipeline %q%s", name, yamlx.Suggest(name, names))
 	}
 	return l.decodePipeline(file)
+}
+
+// otherPipelines loads every pipeline file of the project other than skip.
+func (l *loader) otherPipelines(skip string) ([]*Pipeline, error) {
+	files, err := list(l.dir, "pipelines")
+	if err != nil {
+		return nil, err
+	}
+	var out []*Pipeline
+	var errs []error
+	for _, file := range files {
+		if file == skip {
+			continue
+		}
+		pl, err := l.decodePipeline(file)
+		errs = append(errs, err)
+		if err == nil {
+			out = append(out, pl)
+		}
+	}
+	return out, errors.Join(errs...)
 }
 
 func pipelineName(file string) string {
@@ -1419,4 +1455,74 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 		return nil, reads
 	}
 	return sh, reads
+}
+
+// Written returns the paths that the steps for the host h write, in every
+// pipeline of the project, sorted. A stage that the selection leaves out
+// counts. A step that when skips does not count, and neither does an
+// absent one.
+func (p *Project) Written(h Host, f facts.Facts) ([]string, error) {
+	if p.othersErr != nil {
+		return nil, p.othersErr
+	}
+	seen := map[string]bool{}
+	add := func(e *Env, st Step) error {
+		steps, err := st.Eval(e)
+		if err != nil {
+			return err
+		}
+		for _, s := range steps {
+			if w, ok := s.Args.(module.Writer); ok {
+				for _, p := range w.Writes() {
+					seen[p] = true
+				}
+			}
+		}
+		return nil
+	}
+	for _, pl := range append([]*Pipeline{p.Pipeline}, p.others...) {
+		all := *pl
+		all.Stages = slices.Clone(pl.Stages)
+		for i := range all.Stages {
+			all.Stages[i].Skipped = false
+		}
+		q := *p
+		q.Pipeline = &all
+		e, err := q.Start(h, f)
+		if err != nil {
+			return nil, fmt.Errorf("pipeline %s: %w", pl.Name, err)
+		}
+		for _, s := range all.Stages {
+			if !slices.ContainsFunc(s.Targets, func(t Host) bool { return t.Name == h.Name }) {
+				continue
+			}
+			for i := range s.Steps {
+				st := &s.Steps[i]
+				if st.Recipe == nil {
+					if err := add(e, *st); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				ok, err := st.Runs(e)
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					continue
+				}
+				re := e.For(st)
+				steps := slices.Clone(st.Recipe.Steps)
+				for _, hd := range st.Recipe.Handlers {
+					steps = append(steps, hd.Steps...)
+				}
+				for _, rs := range steps {
+					if err := add(re, rs); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(seen)), nil
 }

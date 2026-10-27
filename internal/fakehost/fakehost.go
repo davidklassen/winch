@@ -67,6 +67,9 @@ type Hosts struct {
 	Trace []string
 	// RepoRemoved lists the Removed paths of each checked repo step.
 	RepoRemoved [][]string
+	// DirKeep holds the Keep paths of the last checked dir step with purge,
+	// by "host path".
+	DirKeep map[string][]string
 }
 
 func New() *Hosts {
@@ -94,6 +97,7 @@ func New() *Hosts {
 		users:      map[string]bool{},
 		groups:     map[string]bool{},
 		answers:    map[string]string{},
+		DirKeep:    map[string][]string{},
 	}
 }
 
@@ -411,6 +415,9 @@ func (c *Conn) checkAccount(m map[string]bool, name string) module.Result {
 // checkDir creates only.
 func (c *Conn) checkDir(d *module.Dir) module.Result {
 	c.hosts.mu.Lock()
+	if d.Purge {
+		c.hosts.DirKeep[c.host+" "+d.Path] = d.Keep
+	}
 	if res, ok := c.hosts.results[c.host+" "+d.Path]; ok {
 		c.hosts.mu.Unlock()
 		return res

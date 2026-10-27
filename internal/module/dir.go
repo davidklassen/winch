@@ -25,6 +25,10 @@ type Dir struct {
 	Recurse bool           `yaml:"recurse" json:"recurse,omitempty"`
 	Absent  bool           `yaml:"absent" json:"absent,omitempty"`
 	Replace bool           `yaml:"replace" json:"replace,omitempty"`
+	Purge   bool           `yaml:"purge" json:"purge,omitempty"`
+	// Keep are the paths below Path that steps for the host write. The
+	// controller sets them.
+	Keep []string `json:"keep,omitempty"`
 }
 
 func (d *Dir) Main() string { return d.Path }
@@ -34,7 +38,7 @@ func (d *Dir) Validate() error {
 		return err
 	}
 	if d.Absent {
-		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"recurse", d.Recurse}, arg{"replace", d.Replace})
+		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"recurse", d.Recurse}, arg{"replace", d.Replace}, arg{"purge", d.Purge})
 	}
 	if err := checkOwner("owner", d.Owner); err != nil {
 		return err
@@ -145,6 +149,25 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 	if len(changes) > 0 {
 		if err := noFlags(at, atName, fi, d.Path); err != nil {
 			return Result{}, err
+		}
+	}
+	if d.Purge {
+		r, err := openRoot(at, atName, fi)
+		if err != nil {
+			return Result{}, err
+		}
+		rs, err := d.removals(r)
+		r.Close()
+		if err != nil {
+			return Result{}, err
+		}
+		if len(rs) > 0 {
+			if err := noFlags(at, atName, fi, d.Path); err != nil {
+				return Result{}, err
+			}
+		}
+		for _, rm := range rs {
+			changes = append(changes, rm.line)
 		}
 	}
 	if d.Recurse {
@@ -330,6 +353,11 @@ func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
 		if err := setAttrs(f, uid, gid, mode); err != nil {
 			return err
 		}
+		if d.Purge {
+			if err := d.purge(behind); err != nil {
+				return err
+			}
+		}
 		return d.chownContent(behind, ".", fi, uid, gid)
 	case d.Replace && (fi.Mode()&fs.ModeSymlink != 0 || fi.Mode().IsRegular()):
 		if err := sub.Remove(name); err != nil {
@@ -353,6 +381,17 @@ func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
 	defer f.Close()
 	if err := setAttrs(f, uid, gid, mode); err != nil {
 		return err
+	}
+	if d.Purge {
+		r, err := openRoot(sub, name, fi)
+		if err != nil {
+			return err
+		}
+		err = d.purge(r)
+		r.Close()
+		if err != nil {
+			return err
+		}
 	}
 	return d.chownContent(sub, name, fi, uid, gid)
 }

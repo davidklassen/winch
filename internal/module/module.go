@@ -48,6 +48,9 @@ type Result struct {
 	Link      string   `json:"link,omitempty"`
 	StartedBy []string `json:"started_by,omitempty"`
 	Deferred  bool     `json:"deferred,omitempty"`
+	// SourceSHA256 is the hash of the content that copy_from or stock
+	// reads on the host, so the plan hash covers it.
+	SourceSHA256 string `json:"source_sha256,omitempty"`
 }
 
 // State is what earlier steps of the run did on the host. The controller

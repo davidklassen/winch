@@ -3,6 +3,7 @@ stages:
     hosts: all
     steps:
       - recipe: admin
+      - recipe: leftovers
       - group:
           name: deploy
           gid: 2000
@@ -19,10 +20,17 @@ stages:
           name: curl
       - recipe: unbound
       - recipe: dkimpy_milter
+      # monit's postinst adds "monit: root" to /etc/aliases; the postfix
+      # recipe then writes the file as the project declares it.
+      - recipe: monit
+        vars:
+          monit_peers: !expr 'filter(match("all"), .name != host.name)'
       - recipe: postfix
       - recipe: unattended_upgrades
       - recipe: rspamd
       - recipe: heartbeat
+      - recipe: dovecot
+      - recipe: fail2ban
 
   # One web host at a time; the next starts when the site answers.
   - name: web

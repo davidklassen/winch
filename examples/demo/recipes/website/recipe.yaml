@@ -12,11 +12,12 @@ vars:
   website_peers: []
 
 steps:
-  - name: Only nginx reads the site
+  - name: Only nginx reads the site, and only the project's pages are in it
     dir:
       path: !expr vars.website_root
       group: www-data
       mode: "0750"
+      purge: true
   - file:
       path: !tpl "{{ .vars.website_root }}/index.html"
       template: index.html.tmpl

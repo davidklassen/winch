@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
@@ -167,6 +168,9 @@ type hostRun struct {
 	// managed are the paths, packages, units, users, and groups of the
 	// checked steps, with the first step and its arguments.
 	managed map[string]managed
+	// written returns the paths that the project writes on the host, for dir
+	// steps with purge. It is set at the first contact.
+	written func() ([]string, error)
 }
 
 type managed struct {
@@ -285,6 +289,7 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		if hr.env, err = p.Start(h, f); err != nil {
 			return nil, err
 		}
+		hr.written = sync.OnceValues(func() ([]string, error) { return p.Written(h, f) })
 		pending, err := conn.Pending(context.WithoutCancel(ctx))
 		if err != nil {
 			return nil, err
@@ -558,6 +563,9 @@ func evaluate(pipeline string, stage *project.Stage, hr *hostRun) ([]Planned, er
 		if err != nil {
 			return err
 		}
+		if err := hr.keep(steps); err != nil {
+			return err
+		}
 		var notify []string
 		for _, h := range st.Notify {
 			// A recipe that does not run on the host never runs its handler.
@@ -597,7 +605,7 @@ func evaluate(pipeline string, stage *project.Stage, hr *hostRun) ([]Planned, er
 			}
 		}
 		for _, h := range st.Recipe.Handlers {
-			slot, err := handlerSlot(h, env, st)
+			slot, err := handlerSlot(h, env, st, hr)
 			if err != nil {
 				return nil, err
 			}
@@ -610,7 +618,7 @@ func evaluate(pipeline string, stage *project.Stage, hr *hostRun) ([]Planned, er
 			if !late[h] {
 				continue
 			}
-			slot, err := handlerSlot(h, hr.env.For(r), r)
+			slot, err := handlerSlot(h, hr.env.For(r), r, hr)
 			if err != nil {
 				return nil, err
 			}
@@ -618,6 +626,30 @@ func evaluate(pipeline string, stage *project.Stage, hr *hostRun) ([]Planned, er
 		}
 	}
 	return out, nil
+}
+
+// keep gives each dir step with purge the paths below its path that the
+// project writes on the host.
+func (hr *hostRun) keep(steps []project.Step) error {
+	for i := range steps {
+		d, ok := steps[i].Args.(*module.Dir)
+		if !ok || !d.Purge {
+			continue
+		}
+		written, err := hr.written()
+		if err != nil {
+			return fmt.Errorf("dir %s: the paths that the project writes: %w", d.Path, err)
+		}
+		c := *d
+		c.Keep = nil
+		for _, p := range written {
+			if strings.HasPrefix(p, d.Path+"/") {
+				c.Keep = append(c.Keep, p)
+			}
+		}
+		steps[i].Args = &c
+	}
+	return nil
 }
 
 // address is the address of the element i of the step st at addr.
@@ -629,11 +661,14 @@ func address(addr string, st project.Step, i int) string {
 }
 
 // handlerSlot evaluates the steps of a handler for a host.
-func handlerSlot(h *project.Handler, env *project.Env, in *project.Step) (*Slot, error) {
+func handlerSlot(h *project.Handler, env *project.Env, in *project.Step, hr *hostRun) (*Slot, error) {
 	slot := &Slot{Handler: h}
 	for j, hs := range h.Steps {
 		steps, err := hs.Eval(env)
 		if err != nil {
+			return nil, err
+		}
+		if err := hr.keep(steps); err != nil {
 			return nil, err
 		}
 		addr := fmt.Sprintf("%s#%d", h.FullName(), j+1)

@@ -1,0 +1,26 @@
+# What the provider images leave behind. Runs as admin, after bootstrap.
+steps:
+  - name: Remove the image's user
+    user:
+      name: debian
+      absent: true
+  - name: Sudo rules only from the admin recipe (cloud-init's go)
+    dir:
+      path: /etc/sudoers.d
+      mode: "0750"
+      purge: true
+  - name: Root logs in only on the console
+    file:
+      path: /root/.ssh/authorized_keys
+      absent: true
+  - pkg:
+      name: cron
+      absent: true
+      purge: true
+  - name: Remove the provider's fstrim job
+    file:
+      path: /etc/cron.d/kernel
+      absent: true
+  - file:
+      path: /etc/timezone
+      absent: true

@@ -1,0 +1,71 @@
+# IMAP for virtual users. The TLS part (99-local.conf) needs certbot's
+# certificates; this demo keeps Debian's self-signed one.
+steps:
+  - group:
+      name: vmail
+      gid: 5000
+      system: true
+  - user:
+      name: vmail
+      uid: 5000
+      group: vmail
+      system: true
+      home: /var/vmail
+      shell: /usr/sbin/nologin
+  - dir:
+      path: !expr item
+      owner: vmail
+      group: vmail
+    loop:
+      - /var/vmail
+      - !tpl /var/vmail/{{ .vars.domain }}
+  - dir:
+      path: !tpl /var/vmail/{{ .vars.domain }}/{{ .item }}
+      owner: vmail
+      group: vmail
+    loop: !expr sort(keys(vars.mail_users))
+  - pkg:
+      name: [dovecot-imapd, dovecot-lmtpd, dovecot-sieve]
+
+  # Debian 13 ships conf.d in /usr/share/dovecot, and its postinst copies
+  # the files to /etc/dovecot/conf.d: no package owns them there.
+  - name: Debian's conf.d files stay stock
+    file:
+      path: !tpl /etc/dovecot/conf.d/{{ .item }}
+      copy_from: !tpl /usr/share/dovecot/conf.d/{{ .item }}
+    loop:
+      - 10-mail.conf
+      - 10-master.conf
+      - 10-ssl.conf
+      - 15-mailboxes.conf
+      - 20-imap.conf
+      - 20-lmtp.conf
+      - 90-sieve.conf
+      - 90-sieve-extprograms.conf
+    notify: restart
+  - name: Virtual users only (a later file cannot drop the system auth include)
+    file:
+      path: /etc/dovecot/conf.d/10-auth.conf
+      source: 10-auth.conf
+      validate: doveconf -n
+    notify: restart
+  - dir:
+      path: /etc/dovecot/conf.d
+      purge: true
+    notify: restart
+  - file:
+      path: /etc/dovecot/users
+      template: users.tmpl
+      group: dovecot
+      mode: "0640"
+
+  - service:
+      name: dovecot
+      enabled: true
+      running: true
+
+handlers:
+  restart:
+    - service:
+        name: dovecot
+        restarted: true

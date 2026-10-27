@@ -1,0 +1,21 @@
+#!/usr/bin/python3
+# Monit check: fail when a message has waited in the Postfix queue for
+# more than 2 hours. "postqueue -j" prints one JSON object per queued
+# message; its arrival_time is when Postfix received the message.
+
+import json
+import subprocess
+import sys
+import time
+
+MAX_AGE = 2 * 60 * 60  # seconds
+
+queue = subprocess.run(["/usr/sbin/postqueue", "-j"],
+                       stdout=subprocess.PIPE, text=True, check=True)
+
+for line in queue.stdout.splitlines():
+    message = json.loads(line)
+    age = time.time() - message["arrival_time"]
+    if age > MAX_AGE:
+        print(f"{message['queue_id']} has been queued for {age / 3600:.1f} hours")
+        sys.exit(1)

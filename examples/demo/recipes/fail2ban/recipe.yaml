@@ -1,0 +1,28 @@
+steps:
+  - pkg:
+      name: [fail2ban, python3-systemd]
+  - file:
+      path: /etc/fail2ban/jail.d/mail.conf
+      source: mail.conf
+      validate: fail2ban-client -t
+    notify: restart
+  - dir:
+      path: /etc/fail2ban/jail.d
+      purge: true
+    notify: restart
+  - name: Dovecot 2.4 log wording (upstream fix, not in 1.1.0)
+    file:
+      path: /etc/fail2ban/filter.d/dovecot.local
+      source: dovecot.local
+      validate: fail2ban-client -t
+    notify: restart
+  - service:
+      name: fail2ban
+      enabled: true
+      running: true
+
+handlers:
+  restart:
+    - service:
+        name: fail2ban
+        restarted: true

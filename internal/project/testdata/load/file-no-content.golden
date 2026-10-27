@@ -1,1 +1,1 @@
-pipelines/site.yaml:6:11: content: a file needs content, template, or source, one of owner, group, and mode, or absent: true
+pipelines/site.yaml:6:11: content: a file needs content, template, source, copy_from, or stock, one of owner, group, and mode, or absent: true

@@ -1,0 +1,19 @@
+check filesystem rootfs with path /
+  if space usage > 80% for 3 cycles then alert
+
+check program system-state with path "/usr/bin/systemctl is-system-running"
+  if status != 0 for 3 cycles then alert
+
+check program postfix-queue with path /usr/local/bin/postfix-queue-age
+  if status != 0 for 3 cycles then alert
+{{- if .vars.mail_server }}
+
+check program blocklists with path /usr/local/bin/blocklists
+  every 30 cycles
+  if status != 0 for 3 cycles then alert
+
+# The age is no glitch: alert at once, not after 3 cycles.
+check program mail-key-age with path /usr/local/bin/mail-key-age
+  every 720 cycles
+  if status != 0 then alert
+{{- end }}

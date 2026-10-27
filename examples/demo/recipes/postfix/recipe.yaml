@@ -22,6 +22,11 @@ steps:
       validate: postfix check
     # inet_interfaces takes effect only after a restart.
     notify: restart
+  - name: Debian's stock master.cf
+    file:
+      path: /etc/postfix/master.cf
+      copy_from: /usr/share/postfix/master.cf.dist
+    notify: restart
   - file:
       path: /etc/aliases
       template: aliases.tmpl

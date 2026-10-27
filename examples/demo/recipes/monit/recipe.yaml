@@ -1,0 +1,40 @@
+# Each node checks itself (inside) and every other node (outside).
+# Alert only; restarts are systemd's job.
+vars:
+  monit_password:
+  # The other nodes, from the pipeline: checked from outside.
+  monit_peers:
+
+steps:
+  - pkg:
+      name: [monit, python3-dnspython]
+  - file:
+      path: /usr/local/bin/postfix-queue-age
+      source: postfix-queue-age
+      mode: "0755"
+  - name: Debian's stock monitrc
+    file:
+      path: /etc/monit/monitrc
+      stock: true
+    notify: reload
+  - file:
+      path: !tpl /etc/monit/conf.d/{{ .item }}
+      template: !tpl '{{ .item }}.tmpl'
+      mode: "0600"
+      validate: monit -t
+    loop: [settings, inside, outside]
+    notify: reload
+  - dir:
+      path: /etc/monit/conf.d
+      purge: true
+    notify: reload
+  - service:
+      name: monit
+      enabled: true
+      running: true
+
+handlers:
+  reload:
+    - service:
+        name: monit
+        reloaded: true

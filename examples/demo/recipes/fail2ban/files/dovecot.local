@@ -1,0 +1,3 @@
+[Definition]
+failregex = %(known/failregex)s
+            ^%(__prefix_line)s(?:(?:imap|pop3|submission)-login: )?Login aborted: .*\(auth_failed\): user=<[^>]*>, (?:method=\S+, )?rip=<HOST>

@@ -2,10 +2,20 @@
 steps:
   - pkg:
       name: nginx
+  - name: Debian's stock nginx.conf
+    file:
+      path: /etc/nginx/nginx.conf
+      stock: true
+      validate: nginx -t
+    notify: reload
+  - file:
+      path: /etc/nginx/snippets/tls.conf
+      source: tls.conf
+    notify: reload
   - name: Only our sites (removes Debian's default)
-    link:
-      path: /etc/nginx/sites-enabled/default
-      absent: true
+    dir:
+      path: /etc/nginx/sites-enabled
+      purge: true
     notify: reload
   - service:
       name: nginx
