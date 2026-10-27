@@ -1,10 +1,7 @@
 package module
 
 import (
-	"fmt"
 	"maps"
-	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -287,7 +284,7 @@ func TestParseDpkgBadOutput(t *testing.T) {
 }
 
 // spec: Modules/service and unit
-func TestInstallKeys(t *testing.T) {
+func TestSectionKeys(t *testing.T) {
 	type keys = map[string][]string
 	for _, tc := range []struct {
 		name  string
@@ -307,17 +304,12 @@ func TestInstallKeys(t *testing.T) {
 		{"value after an empty one", []string{"[Install]\nRequiredBy=\nRequiredBy=a.target\n"}, keys{"RequiredBy": {"a.target"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var paths []string
-			for i, u := range tc.units {
-				p := filepath.Join(t.TempDir(), fmt.Sprint(i, ".conf"))
-				if err := os.WriteFile(p, []byte(u), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				paths = append(paths, p)
+			var files [][]byte
+			for _, u := range tc.units {
+				files = append(files, []byte(u))
 			}
-			got, err := installKeys(paths)
-			if err != nil || !maps.EqualFunc(got, tc.want, slices.Equal[[]string]) {
-				t.Errorf("installKeys = %v, %v, want %v", got, err, tc.want)
+			if got := sectionKeys(files, "Install"); !maps.EqualFunc(got, tc.want, slices.Equal[[]string]) {
+				t.Errorf("sectionKeys = %v, want %v", got, tc.want)
 			}
 		})
 	}

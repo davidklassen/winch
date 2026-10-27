@@ -67,6 +67,9 @@ type Hosts struct {
 	Trace []string
 	// RepoRemoved lists the Removed paths of each checked repo step.
 	RepoRemoved [][]string
+	// ServiceNewFile lists the name and the NewFile of each checked service
+	// step, as "name: content".
+	ServiceNewFile []string
 	// DirKeep holds the Keep paths of the last checked dir step with purge,
 	// by "host path".
 	DirKeep map[string][]string
@@ -357,6 +360,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	}
 	if sv, ok := m.(*module.Service); ok {
 		c.hosts.mu.Lock()
+		c.hosts.ServiceNewFile = append(c.hosts.ServiceNewFile, sv.Name+": "+string(sv.NewFile))
 		res, ok := c.hosts.results[c.host+" "+sv.Name]
 		c.hosts.mu.Unlock()
 		if ok {

@@ -85,11 +85,12 @@ test "$(systemctl show -P MainPID winch-u)" = "$(cat /root/pid)"`,
 			Unchanged: "test -L " + path,
 		},
 		{
-			Name:      "a link fails",
-			Setup:     "printf '%s' '" + unitOne + "' > /opt/winch-u.service && ln -s /opt/winch-u.service " + path,
+			Name:      "a link is replaced by the file",
+			Setup:     "printf '%s' '" + unitOne + "' > /opt/winch-u.service && systemctl link /opt/winch-u.service",
 			Args:      &module.Unit{Name: "winch-u.service", Data: []byte(unitTwo)},
-			WantErr:   path + " is a symbolic link to /opt/winch-u.service",
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"replace the symbolic link to /opt/winch-u.service", "owner root, group root, mode 0644", "daemon-reload"}, Old: new("")},
 			Unchanged: "test -L " + path,
+			After:     "test -f " + path + " && test ! -L " + path + " && grep -qx Environment=WINCH=one /opt/winch-u.service && systemctl show -P FragmentPath winch-u | grep -qx " + path + " && systemctl show -P Environment winch-u | grep -qx WINCH=two",
 		},
 		{
 			Name:      "a directory fails",
@@ -170,5 +171,164 @@ func TestUnitPipeline(t *testing.T) {
 	r = lab.Winch(t, dir, "plan", "site")
 	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("third plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+}
+
+const (
+	kindStatic  = "[Service]\nExecStart=/bin/sleep infinity\n"
+	kindInstall = kindStatic + "[Install]\nWantedBy=multi-user.target\n"
+	kindOneshot = "[Service]\nType=oneshot\nExecStart=/bin/true\n"
+	kindRemain  = "[Service]\nType=oneshot\nRemainAfterExit=True\nExecStart=/bin/true\n"
+)
+
+// spec: Modules/service and unit
+func TestServiceNewUnitFile(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "unitkind")
+	const path = "/etc/systemd/system/winch-k.service"
+	reset := `systemctl stop 'winch-k*' 2>/dev/null
+systemctl disable winch-k.service winch-k@one.service 2>/dev/null
+rm -rf ` + path + ` ` + path + `.d /etc/systemd/system/winch-k@.service /etc/systemd/system/*.wants/winch-k.service
+systemctl daemon-reload`
+	write := func(file, content string) string {
+		return "printf '%s' '" + content + "' > /etc/systemd/system/" + file + " && systemctl daemon-reload"
+	}
+	vmtest.RunCases(t, vm, "service", reset, []vmtest.Case{
+		{
+			Name:        "enable a static unit that gets [Install]",
+			Setup:       write("winch-k.service", kindStatic),
+			Args:        &module.Service{Name: "winch-k", Enabled: new(true), NewFile: []byte(kindInstall)},
+			Want:        module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"enable"}},
+			Unchanged:   "systemctl is-enabled winch-k | grep -qx static",
+			BeforeApply: write("winch-k.service", kindInstall),
+			After:       "systemctl is-enabled winch-k | grep -qx enabled",
+		},
+		{
+			Name:        "enable an instance of a static template that gets [Install]",
+			Setup:       write("winch-k@.service", kindStatic),
+			Args:        &module.Service{Name: "winch-k@one", Enabled: new(true), NewFile: []byte(kindInstall)},
+			Want:        module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"enable"}},
+			BeforeApply: write("winch-k@.service", kindInstall),
+			After:       "systemctl is-enabled winch-k@one | grep -qx enabled",
+		},
+		{
+			Name:    "enable a unit that loses [Install] fails",
+			Setup:   write("winch-k.service", kindInstall),
+			Args:    &module.Service{Name: "winch-k", Enabled: new(true), NewFile: []byte(kindStatic)},
+			WantErr: `winch-k.service has the unit file state "static"`,
+		},
+		{
+			Name:    "enable a new unit without [Install] fails",
+			Args:    &module.Service{Name: "winch-k", Enabled: new(true), NewFile: []byte(kindStatic)},
+			WantErr: `winch-k.service has the unit file state "static"`,
+		},
+		{
+			Name:    "run a unit that becomes oneshot fails",
+			Setup:   write("winch-k.service", kindStatic),
+			Args:    &module.Service{Name: "winch-k", Running: new(true), NewFile: []byte(kindOneshot)},
+			WantErr: "winch-k.service is a oneshot unit without RemainAfterExit=yes",
+		},
+		{
+			Name:  "an enabled unit that loses [Install] stays enabled",
+			Setup: write("winch-k.service", kindInstall) + " && systemctl enable winch-k",
+			Args:  &module.Service{Name: "winch-k", Enabled: new(true), NewFile: []byte(kindStatic)},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:        "disable an enabled unit that loses [Install]",
+			Setup:       write("winch-k.service", kindInstall) + " && systemctl enable winch-k",
+			Args:        &module.Service{Name: "winch-k", Enabled: new(false), NewFile: []byte(kindStatic)},
+			Want:        module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"disable"}},
+			BeforeApply: write("winch-k.service", kindStatic) + " && systemctl is-enabled winch-k | grep -qx enabled",
+			After:       "test ! -e /etc/systemd/system/multi-user.target.wants/winch-k.service",
+		},
+		{
+			Name:        "run a oneshot unit with RemainAfterExit=True",
+			Setup:       write("winch-k.service", kindStatic),
+			Args:        &module.Service{Name: "winch-k", Running: new(true), NewFile: []byte(kindRemain)},
+			Want:        module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"start"}},
+			BeforeApply: write("winch-k.service", kindRemain),
+			After:       "systemctl is-active -q winch-k",
+		},
+		{
+			Name:    "a unit file that systemd has not loaded",
+			Setup:   write("winch-k.service", kindStatic) + " && systemctl start winch-k && printf '%s' '" + kindOneshot + "' > " + path + " && systemctl show -P NeedDaemonReload winch-k | grep -qx yes",
+			Args:    &module.Service{Name: "winch-k", Running: new(true), NewFile: []byte(kindOneshot)},
+			WantErr: "winch-k.service is a oneshot unit without RemainAfterExit=yes",
+		},
+		{
+			Name:        "a new unit file fixes a bad setting",
+			Setup:       write("winch-k.service", "[Service]\nExecStart=relative/path\n") + " && systemctl show -P LoadState winch-k | grep -qx bad-setting",
+			Args:        &module.Service{Name: "winch-k", Running: new(true), NewFile: []byte(kindStatic)},
+			Want:        module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"start"}},
+			BeforeApply: write("winch-k.service", kindStatic),
+			After:       "systemctl is-active -q winch-k",
+		},
+		{
+			Name:        "a drop-in adds [Install] to the new unit file",
+			Setup:       "mkdir " + path + ".d && printf '[Install]\nWantedBy=multi-user.target\n' > " + path + ".d/i.conf && " + write("winch-k.service", kindStatic),
+			Args:        &module.Service{Name: "winch-k", Enabled: new(true), NewFile: []byte(kindStatic + "Environment=K=1\n")},
+			Want:        module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"enable"}},
+			BeforeApply: write("winch-k.service", kindStatic+"Environment=K=1\n"),
+			After:       "systemctl is-enabled winch-k | grep -qx enabled",
+		},
+	})
+}
+
+const kindRecipe = `steps:
+  - unit:
+      name: winch-k.service
+      source: winch-k.service
+  - service:
+      name: winch-k
+      running: true
+      enabled: true
+  - unit:
+      name: winch-l.service
+      source: winch-l.service
+  - service:
+      name: winch-l
+      enabled: true
+  - unit:
+      name: winch-m.service
+      source: winch-k.service
+  - service:
+      name: winch-m
+      enabled: true
+`
+
+// spec: Modules/service and unit
+func TestUnitChangesKind(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "unitkindpipe")
+	vm.MustRun(t, "printf '%s' '"+kindStatic+"' > /etc/systemd/system/winch-k.service\n"+
+		"printf '%s' '"+kindStatic+"' > /opt/winch-l.service && systemctl link /opt/winch-l.service\n"+
+		"printf '%s' '"+kindStatic+"[Install]\nAlias=winch-m.service\n' > /etc/systemd/system/winch-ma.service && systemctl enable winch-ma\n"+
+		"systemctl daemon-reload")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":                        "name: units\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml":             "hosts:\n  unitkindpipe: {}\n",
+		"pipelines/site.yaml":               "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: app\n",
+		"recipes/app/recipe.yaml":           kindRecipe,
+		"recipes/app/files/winch-k.service": kindInstall,
+		"recipes/app/files/winch-l.service": kindInstall,
+	})
+
+	r := lab.Winch(t, dir, "plan", "site")
+	for _, want := range []string{"~ unit winch-k.service", "+[Install]", "~ service winch-k", "enable", "start", "~ unit winch-l.service", "replace the symbolic link to /opt/winch-l.service", "replace the symbolic link to /etc/systemd/system/winch-ma.service", "winch-m.service does not exist yet"} {
+		if !strings.Contains(r.Stdout, want) {
+			t.Errorf("first plan: no %q in stdout %q, stderr %q", want, r.Stdout, r.Stderr)
+		}
+	}
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 0 {
+		t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	if out := vm.MustRun(t, "systemctl is-active winch-k; systemctl is-enabled winch-k; test -f /etc/systemd/system/winch-l.service && test ! -L /etc/systemd/system/winch-l.service && echo file; systemctl show -P FragmentPath winch-l; systemctl is-enabled winch-l; systemctl show -P Id winch-m; systemctl is-enabled winch-m"); out != "active\nenabled\nfile\n/etc/systemd/system/winch-l.service\nenabled\nwinch-m.service\nenabled\n" {
+		t.Errorf("after apply: %q", out)
+	}
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 }

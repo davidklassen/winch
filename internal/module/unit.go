@@ -85,7 +85,6 @@ func (u *Unit) Check(ctx context.Context, st *State, note func(string)) (Result,
 		if target == "/dev/null" {
 			return Result{}, fmt.Errorf("%s is masked; systemctl unmask %s removes the mask", u.Name, u.Name)
 		}
-		return Result{}, fmt.Errorf("%s is a symbolic link to %s", u.Path(), target)
 	case !fi.Mode().IsRegular():
 		return Result{}, fmt.Errorf("%s is %s, not a file", u.Path(), kind(fi))
 	}

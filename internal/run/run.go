@@ -163,6 +163,9 @@ type hostRun struct {
 	startedBy []startedBy
 	// removed are the paths of the checked absent steps.
 	removed []string
+	// unitFiles are the contents of the unit files that checked unit steps
+	// change, by name.
+	unitFiles map[string][]byte
 	// sources are the URIs and suites of repo steps, with the first step.
 	sources map[string]string
 	// managed are the paths, packages, units, users, and groups of the
@@ -233,7 +236,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}, units: map[string]bool{}, sources: map[string]string{}, managed: map[string]managed{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}, units: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -332,11 +335,13 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		if err := hr.same(p.Step, where); err != nil {
 			return nil, err
 		}
+		hr.newUnitFile(&steps[i].Step)
 		steps[i].Result, err = conn.Check(context.WithoutCancel(ctx), p.Step.Module, steps[i].Step.Args, &hr.state)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", where, err)
 		}
 		hr.trackRemoved(p.Step.Args)
+		hr.trackUnitFile(p.Step.Args, steps[i].Result)
 		if err := hr.order(p.Step.Args, steps[i].Result, where); err != nil {
 			return nil, err
 		}
@@ -488,6 +493,29 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		return add("the group "+m.Name, m)
 	}
 	return nil
+}
+
+// newUnitFile gives a service step the unit file that an earlier unit step of
+// the host changes.
+func (hr *hostRun) newUnitFile(st *project.Step) {
+	sv, ok := st.Args.(*module.Service)
+	if !ok {
+		return
+	}
+	data, ok := hr.unitFiles[sv.UnitFile()]
+	if !ok {
+		return
+	}
+	c := *sv
+	c.NewFile = data
+	st.Args = &c
+}
+
+// trackUnitFile records the unit file of a unit step that changes it.
+func (hr *hostRun) trackUnitFile(m module.Module, res module.Result) {
+	if u, ok := m.(*module.Unit); ok && res.Status == module.Change {
+		hr.unitFiles[u.Name] = u.Data
+	}
 }
 
 // trackRemoved records the path of an absent step.

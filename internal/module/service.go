@@ -23,6 +23,10 @@ type Service struct {
 	Enabled   *bool  `yaml:"enabled" json:"enabled,omitempty"`
 	Reloaded  bool   `yaml:"reloaded" json:"reloaded,omitempty"`
 	Restarted bool   `yaml:"restarted" json:"restarted,omitempty"`
+	// NewFile is the unit file that an earlier unit step of the host writes
+	// in the run. For an instance, it is the file of the template. The
+	// controller sets it.
+	NewFile []byte `json:"new_file,omitempty"`
 
 	// Check sets these for Apply: the systemctl commands, in order.
 	todo  []string
@@ -42,6 +46,16 @@ func (s *Service) Unit() string {
 		return s.Name
 	}
 	return s.Name + ".service"
+}
+
+// UnitFile returns the name of the unit's file: the template for an instance.
+func (s *Service) UnitFile() string {
+	u := s.Unit()
+	prefix, rest, ok := strings.Cut(u, "@")
+	if !ok {
+		return u
+	}
+	return prefix + "@" + rest[strings.LastIndexByte(rest, '.'):]
 }
 
 func (s *Service) Validate() error {
@@ -86,8 +100,28 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	if err != nil {
 		return Result{}, fmt.Errorf("systemctl show %s: %w", s.Name, err)
 	}
-	if u.id != s.Unit() {
+	fresh, err := s.fresh(u)
+	if err != nil {
+		return Result{}, err
+	}
+	switch {
+	case u.id == s.Unit():
+	case fresh:
+		// The new file replaces the alias: a unit that systemd has not loaded.
+		u = unitState{id: s.Unit(), load: "not-found"}
+	default:
 		return Result{}, fmt.Errorf("%s is an alias of %s; use %s", s.Name, u.id, strings.TrimSuffix(u.id, ".service"))
+	}
+	var files [][]byte
+	if fresh || u.file == "linked" || u.file == "indirect" {
+		if files, err = s.files(u, fresh); err != nil {
+			return Result{}, err
+		}
+	}
+	if fresh {
+		if err := u.fromFiles(files); err != nil {
+			return Result{}, err
+		}
 	}
 	missing := u.load == "not-found"
 	if missing && (s.Restarted || s.Reloaded) {
@@ -126,12 +160,12 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		// systemctl link made, and the unit is gone. For an instance, that
 		// link is the template's, and systemctl disable keeps it.
 		var linked bool
-		if !*s.Enabled && u.file == "enabled" && !strings.Contains(u.id, "@") {
+		if !*s.Enabled && !fresh && u.file == "enabled" && !strings.Contains(u.id, "@") {
 			fi, err := os.Lstat(filepath.Join(unitDir, u.id))
 			linked = err == nil && fi.Mode().Type() == fs.ModeSymlink
 		}
 		switch {
-		case missing:
+		case missing && !fresh:
 			if *s.Enabled {
 				s.todo = append(s.todo, "enable")
 			}
@@ -151,21 +185,13 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		case u.file == "linked":
 			// systemd reports a unit without [Install] as static, but not
 			// a linked one.
-			in, err := installKeys(append([]string{u.fragment}, strings.Fields(u.dropIns)...))
-			if err != nil {
-				return Result{}, err
-			}
-			if len(in["WantedBy"])+len(in["RequiredBy"])+len(in["UpheldBy"])+len(in["Alias"]) == 0 {
+			if !installs(sectionKeys(files, "Install")) {
 				return Result{}, fmt.Errorf("%s has no [Install] section with WantedBy, RequiredBy, UpheldBy, or Alias; enabled: true cannot enable it", u.id)
 			}
 			s.todo = append(s.todo, "enable")
 		default:
 			if u.file == "indirect" {
-				in, err := installKeys(append([]string{u.fragment}, strings.Fields(u.dropIns)...))
-				if err != nil {
-					return Result{}, err
-				}
-				if len(in["Also"]) > 0 {
+				if in := sectionKeys(files, "Install"); len(in["Also"]) > 0 {
 					return Result{}, fmt.Errorf("%s has the unit file state %q; enabled: true cannot enable it; enable the units in its Also=: %s", u.id, u.file, strings.Join(in["Also"], ", "))
 				}
 			}
@@ -345,27 +371,105 @@ func enableLinks(id string) ([]string, error) {
 	return links, nil
 }
 
-// installKeys returns the [Install] keys of the unit files at paths, read in
-// order. A value adds its words to the key, and an empty value clears it.
-func installKeys(paths []string) (map[string][]string, error) {
-	keys := map[string][]string{}
+// fresh reports whether systemd has not loaded NewFile yet.
+func (s *Service) fresh(u unitState) (bool, error) {
+	if s.NewFile == nil {
+		return false, nil
+	}
+	if u.reload {
+		return true, nil
+	}
+	p := filepath.Join(unitDir, s.UnitFile())
+	fi, err := os.Lstat(p)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return true, nil
+	case err != nil:
+		return false, err
+	case !fi.Mode().IsRegular():
+		return true, nil
+	}
+	old, err := os.ReadFile(p)
+	if err != nil {
+		return false, fmt.Errorf("read the unit file: %w", err)
+	}
+	return !bytes.Equal(old, s.NewFile), nil
+}
+
+// files returns the unit file and its drop-ins, in the order that systemd
+// reads them. With fresh, the unit file is NewFile.
+func (s *Service) files(u unitState, fresh bool) ([][]byte, error) {
+	paths := strings.Fields(u.dropIns)
+	var files [][]byte
+	if fresh {
+		files = append(files, s.NewFile)
+	} else {
+		paths = append([]string{u.fragment}, paths...)
+	}
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
 			return nil, fmt.Errorf("read the unit file: %w", err)
 		}
-		var section string
+		files = append(files, data)
+	}
+	return files, nil
+}
+
+// fromFiles sets the unit file state and the type that systemd reports after
+// it loads files.
+func (u *unitState) fromFiles(files [][]byte) error {
+	if u.load == "bad-setting" || u.load == "error" {
+		u.load = "loaded"
+	}
+	// systemd looks for enable links before it reads [Install].
+	links, err := enableLinks(u.id)
+	if err != nil {
+		return err
+	}
+	in := sectionKeys(files, "Install")
+	switch {
+	case len(links) > 0:
+		u.file = "enabled"
+	case installs(in):
+		u.file = "disabled"
+	case len(in["Also"]) > 0:
+		u.file = "indirect"
+	default:
+		u.file = "static"
+	}
+	if strings.HasSuffix(u.id, ".service") {
+		sv := sectionKeys(files, "Service")
+		typ := sv["Type"]
+		u.oneshot = len(typ) > 0 && typ[len(typ)-1] == "oneshot" || len(typ) == 0 && len(sv["ExecStart"]) == 0
+		remain := sv["RemainAfterExit"]
+		u.remain = len(remain) > 0 && slices.Contains([]string{"1", "yes", "y", "true", "t", "on"}, strings.ToLower(remain[len(remain)-1]))
+	}
+	return nil
+}
+
+// installs reports whether the [Install] keys let systemctl enable a unit.
+func installs(in map[string][]string) bool {
+	return len(in["WantedBy"])+len(in["RequiredBy"])+len(in["UpheldBy"])+len(in["Alias"]) > 0
+}
+
+// sectionKeys returns the keys of a section of unit files, read in order. A
+// value adds its words to the key, and an empty value clears it.
+func sectionKeys(files [][]byte, section string) map[string][]string {
+	keys := map[string][]string{}
+	for _, data := range files {
+		var current string
 		for line := range strings.SplitSeq(string(data), "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
 				continue
 			}
 			if strings.HasPrefix(line, "[") {
-				section = line
+				current = line
 				continue
 			}
 			k, v, ok := strings.Cut(line, "=")
-			if !ok || section != "[Install]" {
+			if !ok || current != "["+section+"]" {
 				continue
 			}
 			k = strings.TrimSpace(k)
@@ -376,7 +480,7 @@ func installKeys(paths []string) (map[string][]string, error) {
 			}
 		}
 	}
-	return keys, nil
+	return keys
 }
 
 type unitState struct {
