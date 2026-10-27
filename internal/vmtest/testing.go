@@ -181,6 +181,9 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 				if err == nil || !strings.Contains(err.Error(), c.WantErr) {
 					t.Fatalf("check error = %v, want %q", err, c.WantErr)
 				}
+				if c.Unchanged != "" {
+					vm.MustRun(t, c.Unchanged)
+				}
 				return
 			}
 			if err != nil {

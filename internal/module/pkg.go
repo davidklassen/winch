@@ -116,6 +116,11 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 			inst = append(inst, n)
 		}
 	}
+	if p.Absent {
+		for n, ps := range providers {
+			providers[n] = slices.DeleteFunc(ps, func(q string) bool { return pkgs[q].state != installed && pkgs[q].half == 0 })
+		}
+	}
 	if err := providedOnly(missing, providers); err != nil {
 		return Result{}, err
 	}

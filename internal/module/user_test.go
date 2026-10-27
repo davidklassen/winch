@@ -5,7 +5,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -244,5 +247,106 @@ func TestUserCheckLogin(t *testing.T) {
 				t.Errorf("checkLogin() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// spec: Modules/user and group
+func TestUserProcesses(t *testing.T) {
+	proc := t.TempDir()
+	status := map[string]string{
+		"1":    "Name:\tsystemd\nUid:\t0\t0\t0\t0\n",
+		"20":   "Name:\tsleep\nUid:\t2200\t2200\t2200\t2200\n",
+		"21":   "Name:\tsleep\nUid:\t2200\t2200\t2200\t2200\n",
+		"30":   "Name:\tsetuid\nUid:\t1000\t2200\t2200\t2200\n",
+		"40":   "Name:\tsaved\nUid:\t1000\t1000\t2200\t1000\n",
+		"50":   "Name:\tfs\nUid:\t1000\t1000\t1000\t2200\n",
+		"self": "Name:\tself\nUid:\t2200\t2200\t2200\t2200\n",
+	}
+	for pid, s := range status {
+		if err := os.Mkdir(filepath.Join(proc, pid), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("/", filepath.Join(proc, pid, "root")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(proc, pid, "status"), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// usermod skips a process in another root, such as a container.
+	if err := os.MkdirAll(filepath.Join(proc, "70"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(proc, "70", "root")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proc, "70", "status"), []byte("Name:\tcontainer\nUid:\t2200\t2200\t2200\t2200\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A process that ends during the read has no status.
+	if err := os.Mkdir(filepath.Join(proc, "60"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := userProcesses(proc, 2200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"saved", "setuid", "sleep"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("userProcesses() = %q, want %q", got, want)
+	}
+}
+
+// spec: Modules/user and group
+func TestCheckShell(t *testing.T) {
+	dir := t.TempDir()
+	exe, plain, link := filepath.Join(dir, "exe"), filepath.Join(dir, "plain"), filepath.Join(dir, "link")
+	if err := os.WriteFile(exe, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plain, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("exe", link); err != nil {
+		t.Fatal(err)
+	}
+	plainLink := filepath.Join(dir, "plain-link")
+	if err := os.Symlink("plain", plainLink); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		shell, note, err string
+	}{
+		{exe, "", ""},
+		{link, "", ""},
+		{filepath.Join(dir, "missing"), " (does not exist yet)", ""},
+		{plain, "", "shell " + plain + " is not an executable file"},
+		{dir, "", "shell " + dir + " is not an executable file"},
+		{plainLink, "", "shell " + plainLink + " is not an executable file"},
+	}
+	for _, tt := range tests {
+		note, err := checkShell(tt.shell)
+		got := ""
+		if err != nil {
+			got = err.Error()
+		}
+		if note != tt.note || got != tt.err {
+			t.Errorf("checkShell(%s) = %q, %q; want %q, %q", tt.shell, note, got, tt.note, tt.err)
+		}
+	}
+}
+
+// spec: Modules/user and group
+func TestUserCheckNewSystemHome(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "svc")
+	u := User{Name: "wtsvc", System: true, Home: home}
+	res, _, _, err := u.checkNew(accounts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "home " + home + " (owner wtsvc, group wtsvc, mode 0700)"; !slices.Contains(res.Changes, want) {
+		t.Errorf("changes = %q, want %q", res.Changes, want)
+	}
+	if !slices.Contains(u.account, "-M") || slices.Contains(u.account, "-m") || u.mkHome != home {
+		t.Errorf("account = %q, mkHome = %q; want useradd -M and mkHome %s", u.account, u.mkHome, home)
 	}
 }

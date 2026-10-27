@@ -289,7 +289,8 @@ func (r *Repo) checkOthers() error {
 
 // checkRepoFile reads the file at p, which must hold content, owned by root
 // with mode 0644. The lines are the missing parents and the new file, or the
-// owner and mode changes.
+// owner and mode changes. A file that must change fails with the immutable or
+// append-only flag.
 func checkRepoFile(p string, content []byte) (repoFile, []string, error) {
 	f := repoFile{path: p, content: content}
 	dir, missing, err := openParent(p)
@@ -321,7 +322,10 @@ func checkRepoFile(p string, content []byte) (repoFile, []string, error) {
 	}
 	f.fi = fi
 	lines, err := prefixed(p, fi, "root", "root", 0o644)
-	return f, lines, err
+	if err != nil || len(lines) == 0 && string(f.old) == string(content) {
+		return f, lines, err
+	}
+	return f, lines, noFlags(dir, path.Base(p), fi, p)
 }
 
 // sourceFields are the fields of a source file that winch writes.

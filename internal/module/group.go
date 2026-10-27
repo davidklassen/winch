@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -87,7 +89,18 @@ func (g *Group) Check(ctx context.Context, _ *State, _ func(string)) (Result, er
 		return Result{Status: OK}, nil
 	}
 	g.todo = []string{"groupmod", "-g", string(g.GID), g.Name}
-	return Result{Status: Change, Action: Modify, Changes: []string{fmt.Sprintf("gid %d → %s; files keep the old gid", cur.gid, g.GID)}}, nil
+	changes := []string{fmt.Sprintf("gid %d → %s; files keep the old gid", cur.gid, g.GID)}
+	var users []string
+	for _, u := range a.users {
+		if u.gid == cur.gid {
+			users = append(users, u.name)
+		}
+	}
+	if len(users) > 0 {
+		slices.Sort(users)
+		changes = append(changes, fmt.Sprintf("the primary group of %s moves to gid %s", strings.Join(users, ", "), g.GID))
+	}
+	return Result{Status: Change, Action: Modify, Changes: changes}, nil
 }
 
 func (g *Group) Apply(ctx context.Context, _ func(string)) error {

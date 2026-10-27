@@ -46,6 +46,7 @@ for u in wtalice wtbob wtsvc; do pkill -9 -u $u; userdel $u 2>/dev/null; done
 sed -i '/^wtbob:/d' /etc/passwd /etc/shadow
 for g in wtalice wtbob wtsvc wtgrp wtnew wtother; do groupdel $g 2>/dev/null; done
 gpasswd -d admin wtalice 2>/dev/null
+chattr -R -ia /home/wtalice 2>/dev/null
 rm -rf /home/wtalice /home/wtbob /srv/w /var/lib/wtsvc /opt/wt /root/.ssh /etc/ssh/sshd_config.d/wt.conf
 sed -i '/ one$/d' /home/admin/.ssh/authorized_keys
 true`
@@ -86,8 +87,8 @@ wtbob wtgrp 700" ]`,
 		{
 			Name:  "a system user with home",
 			Args:  &module.User{Name: "wtsvc", System: true, Home: "/var/lib/wtsvc"},
-			Want:  create("group wtsvc (new)", "system user", "home /var/lib/wtsvc (owner wtsvc, group wtsvc, mode 0700, files from /etc/skel)", "shell /usr/sbin/nologin"),
-			After: `[ "$(stat -c '%U %G %a' /var/lib/wtsvc)" = "wtsvc wtsvc 700" ]`,
+			Want:  create("group wtsvc (new)", "system user", "home /var/lib/wtsvc (owner wtsvc, group wtsvc, mode 0700)", "shell /usr/sbin/nologin"),
+			After: `[ "$(stat -c '%U %G %a' /var/lib/wtsvc)" = "wtsvc wtsvc 700" ] && [ -z "$(ls -A /var/lib/wtsvc)" ]`,
 		},
 		{
 			Name:  "a home that is a link",
@@ -156,6 +157,64 @@ wtbob wtgrp 700" ]`,
 			After: `[ "$(getent passwd wtalice | cut -d: -f7)" = /opt/wt/sh ]`,
 		},
 		{
+			Name:    "a shell that is not an executable file",
+			Args:    &module.User{Name: "wtalice", Shell: "/etc/passwd"},
+			WantErr: "shell /etc/passwd is not an executable file",
+		},
+		{
+			Name:    "a change to a shell that is a directory",
+			Setup:   `useradd -m -U wtalice`,
+			Args:    &module.User{Name: "wtalice", Shell: "/usr/bin"},
+			WantErr: "shell /usr/bin is not an executable file",
+		},
+		{
+			Name:         "a uid change with a running process",
+			Setup:        `useradd -m -U -u 2200 wtalice && systemd-run --uid=wtalice --unit=wt-sleep sleep 600 && timeout 10 sh -c 'until pgrep -u wtalice sleep; do sleep 0.1; done'`,
+			Args:         &module.User{Name: "wtalice", UID: "2300"},
+			Want:         change("uid 2200 → 2300, also of the files in the home; other files keep the old uid", "processes of wtalice run (sleep); usermod fails while they run"),
+			WantApplyErr: "usermod: user wtalice is currently used by process",
+			After:        `[ "$(id -u wtalice)" = 2200 ]`,
+		},
+		{
+			Name:         "a home change with a running process",
+			Setup:        `useradd -m -U wtalice && systemd-run --uid=wtalice --unit=wt-sleep sleep 600 && timeout 10 sh -c 'until pgrep -u wtalice sleep; do sleep 0.1; done'`,
+			Args:         &module.User{Name: "wtalice", Home: "/srv/w/alice"},
+			Want:         change("home /home/wtalice → /srv/w/alice", "create directory /srv/w (owner root, group root, mode 0755)", "create home /srv/w/alice (owner wtalice, group wtalice, mode 0700)", "processes of wtalice run (sleep); usermod fails while they run"),
+			WantApplyErr: "usermod: user wtalice is currently used by process",
+			After:        `[ "$(getent passwd wtalice | cut -d: -f6)" = /home/wtalice ]`,
+		},
+		{
+			Name:      "an immutable key file",
+			Setup:     `useradd -m -U wtalice && install -d -o wtalice -g wtalice -m 700 /home/wtalice/.ssh && echo '` + k1 + `' | install -o wtalice -g wtalice -m 600 /dev/stdin /home/wtalice/.ssh/authorized_keys && chattr +i /home/wtalice/.ssh/authorized_keys`,
+			Args:      &module.User{Name: "wtalice", AuthorizedKeys: keys(k2)},
+			WantErr:   "/home/wtalice/.ssh/authorized_keys is immutable; chattr -i changes it",
+			Unchanged: `[ "$(cat /home/wtalice/.ssh/authorized_keys)" = "` + k1 + `" ]`,
+		},
+		{
+			Name:    "an immutable key file with another mode",
+			Setup:   `useradd -m -U wtalice && install -d -o wtalice -g wtalice -m 700 /home/wtalice/.ssh && echo '` + k1 + `' | install -o wtalice -g wtalice -m 644 /dev/stdin /home/wtalice/.ssh/authorized_keys && chattr +i /home/wtalice/.ssh/authorized_keys`,
+			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			WantErr: "/home/wtalice/.ssh/authorized_keys is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "an append-only ~/.ssh",
+			Setup:   `useradd -m -U wtalice && install -d -o wtalice -g wtalice -m 700 /home/wtalice/.ssh && chattr +a /home/wtalice/.ssh`,
+			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			WantErr: "/home/wtalice/.ssh is append-only; chattr -a changes it",
+		},
+		{
+			Name:    "an immutable ~/.ssh with another mode",
+			Setup:   `useradd -m -U wtalice && install -d -o wtalice -g wtalice -m 755 /home/wtalice/.ssh && echo '` + k1 + `' | install -o wtalice -g wtalice -m 600 /dev/stdin /home/wtalice/.ssh/authorized_keys && chattr +i /home/wtalice/.ssh`,
+			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			WantErr: "/home/wtalice/.ssh is immutable; chattr -i changes it",
+		},
+		{
+			Name:  "immutable keys that are as the step declares",
+			Setup: `useradd -m -U wtalice && install -d -o wtalice -g wtalice -m 700 /home/wtalice/.ssh && echo '` + k1 + `' | install -o wtalice -g wtalice -m 600 /dev/stdin /home/wtalice/.ssh/authorized_keys && chattr +i /home/wtalice/.ssh/authorized_keys /home/wtalice/.ssh`,
+			Args:  &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
 			Name:  "defaults do not change an existing user",
 			Setup: `useradd -M -d /home/wtalice -s /bin/bash -g users wtalice && mkdir /home/wtalice`,
 			Args:  &module.User{Name: "wtalice"},
@@ -178,7 +237,7 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			Name:  "change uid, group, home, and shell",
 			Setup: `groupadd wtgrp && useradd -m -U -u 2200 -s /bin/sh wtalice`,
 			Args:  &module.User{Name: "wtalice", UID: "2300", Group: "wtgrp", Home: "/srv/w/alice", Shell: "/bin/bash"},
-			Want: change("uid 2200 → 2300, also of the files in the home", "group wtalice → wtgrp, also of the files in the home", "home /home/wtalice → /srv/w/alice",
+			Want: change("uid 2200 → 2300, also of the files in the home; other files keep the old uid", "group wtalice → wtgrp, also of the files in the home", "home /home/wtalice → /srv/w/alice",
 				"create directory /srv/w (owner root, group root, mode 0755)", "create home /srv/w/alice (owner wtalice, group wtgrp, mode 0700)",
 				"shell /bin/sh → /bin/bash"),
 			After: `[ "$(getent passwd wtalice | cut -d: -f3,6,7)" = "2300:/srv/w/alice:/bin/bash" ] && [ "$(id -gn wtalice)" = wtgrp ] && [ "$(stat -c '%U %G %a' /srv/w/alice)" = "wtalice wtgrp 700" ]`,
@@ -323,7 +382,7 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Name:  "a home of the old uid with StrictModes",
 			Setup: `echo 'StrictModes yes' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U -u 2200 wtalice`,
 			Args:  &module.User{Name: "wtalice", UID: "2300", AuthorizedKeys: keys(k1)},
-			Want: change("uid 2200 → 2300, also of the files in the home",
+			Want: change("uid 2200 → 2300, also of the files in the home; other files keep the old uid",
 				"create directory /home/wtalice/.ssh (owner wtalice, group wtalice, mode 0700)",
 				"create file /home/wtalice/.ssh/authorized_keys (owner wtalice, group wtalice, mode 0600)", "add key "+keyLine(k1)),
 			After: `[ "$(stat -c %u /home/wtalice)" = 2300 ]`,
@@ -420,7 +479,7 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 func TestGroupModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "group")
-	reset := `for g in wtgrp wtother; do groupdel $g 2>/dev/null; done; true`
+	reset := `for u in wtu1 wtu2 wtu3; do userdel $u 2>/dev/null; done; for g in wtgrp wtother; do groupdel $g 2>/dev/null; done; true`
 	vmtest.RunCases(t, vm, "group", reset, []vmtest.Case{
 		{
 			Name:      "create",
@@ -447,6 +506,13 @@ func TestGroupModule(t *testing.T) {
 			Args:  &module.Group{Name: "wtgrp", GID: "2700"},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"gid 2600 → 2700; files keep the old gid"}},
 			After: `[ "$(getent group wtgrp)" = "wtgrp:x:2700:" ]`,
+		},
+		{
+			Name:  "change gid of a primary group",
+			Setup: `groupadd -g 2600 wtgrp && useradd -M -g wtgrp wtu2 && useradd -M -g wtgrp wtu1 && useradd -M -U -G wtgrp wtu3`,
+			Args:  &module.Group{Name: "wtgrp", GID: "2700"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"gid 2600 → 2700; files keep the old gid", "the primary group of wtu1, wtu2 moves to gid 2700"}},
+			After: `[ "$(id -g wtu1) $(id -g wtu2)" = "2700 2700" ]`,
 		},
 		{
 			Name:  "ok",

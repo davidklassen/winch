@@ -44,7 +44,7 @@ func TestRepoModule(t *testing.T) {
 	}
 	refresh := "refresh the index of source winch-signed"
 	keyLine := "add key " + fpr + " winch test repository"
-	reset := "pkill -f 'fcntl[.]lockf'; rm -f " + signedFile + " " + signedAsc + " /etc/apt/sources.list.d/vendor.* /var/lib/apt/lists/10.0.2.100_signed_* /var/lib/apt/lists/10.0.2.100:80_signed_* /root/locked; " +
+	reset := "pkill -f 'fcntl[.]lockf'; chattr -ia " + signedFile + " " + signedAsc + " 2>/dev/null; rm -f " + signedFile + " " + signedAsc + " /etc/apt/sources.list.d/vendor.* /var/lib/apt/lists/10.0.2.100_signed_* /var/lib/apt/lists/10.0.2.100:80_signed_* /root/locked; " +
 		"rm -rf /etc/apt/sources.list.d/vendor.list /etc/apt/sources.list.d/debian.sources; sed -i '/10.0.2.100.signed/d' /etc/apt/sources.list 2>/dev/null; rm -rf /root/saved; mkdir -p /etc/apt/keyrings"
 	withOther := func() *module.Repo {
 		r := args()
@@ -103,6 +103,31 @@ func TestRepoModule(t *testing.T) {
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove key " + other + " winch test key <test@example.com>", keyLine, refresh}},
 			WantState: module.State{},
+		},
+		{
+			Name:      "an immutable source file",
+			Setup:     signedSource("bookworm") + " && chattr +i " + signedFile,
+			Args:      args(),
+			WantErr:   signedFile + " is immutable; chattr -i changes it",
+			Unchanged: "grep -q bookworm " + signedFile,
+		},
+		{
+			Name:    "an immutable key file with another mode",
+			Setup:   signedSource("trixie") + " && chmod 600 " + signedAsc + " && chattr +i " + signedAsc,
+			Args:    args(),
+			WantErr: signedAsc + " is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "an append-only key file with another key",
+			Setup:   signedSource("trixie") + " && cat > " + signedAsc + " <<'EOF'\n" + string(otherKey) + "EOF\nchattr +a " + signedAsc,
+			Args:    args(),
+			WantErr: signedAsc + " is append-only; chattr -a changes it",
+		},
+		{
+			Name:  "immutable files that are as the step declares",
+			Setup: signedSource("trixie") + " && chattr +i " + signedFile + " " + signedAsc,
+			Args:  args(),
+			Want:  module.Result{Status: module.OK},
 		},
 		{
 			Name:    "a flat source that the test source has already",

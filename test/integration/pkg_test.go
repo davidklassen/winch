@@ -469,6 +469,12 @@ func TestPkgModule(t *testing.T) {
 			WantErr: "libssl3 is provided by libssl3t64; name that package",
 		},
 		{
+			Name:  "absent of a name that no installed package provides is ok",
+			Setup: localArmhf,
+			Args:  &module.Pkg{Name: []string{"winch-mta"}, Absent: true},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
 			Name: "the providing package converges",
 			Args: &module.Pkg{Name: []string{"libssl3t64"}},
 			Want: module.Result{Status: module.OK},

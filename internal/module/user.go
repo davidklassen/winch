@@ -275,17 +275,30 @@ func (u *User) checkNew(a accounts) (Result, string, string, error) {
 		if err != nil {
 			return Result{}, "", "", err
 		}
-		if fi != nil {
+		switch {
+		case fi != nil:
 			st := fi.Sys().(*syscall.Stat_t)
 			changes = append(changes, fmt.Sprintf("home %s exists (%s)", home, attrLine(userName(st.Uid), groupName(st.Gid), uint32(st.Mode)&0o7777)))
 			args = append(args, "-M")
-		} else {
+		default:
+			skel := ""
+			if u.System {
+				// useradd -m copies /etc/skel also for a system user.
+				args = append(args, "-M")
+				u.mkHome = home
+			} else {
+				skel = ", files from /etc/skel"
+				args = append(args, "-m", "-K", "HOME_MODE=0700")
+			}
 			changes = append(changes, parentChanges(missing[:len(missing)-1])...)
-			changes = append(changes, fmt.Sprintf("home %s (%s, files from /etc/skel)", home, attrLine(u.Name, group, 0o700)))
-			args = append(args, "-m", "-K", "HOME_MODE=0700")
+			changes = append(changes, fmt.Sprintf("home %s (%s%s)", home, attrLine(u.Name, group, 0o700), skel))
 		}
 	}
-	changes = append(changes, "shell "+shell+shellNote(shell))
+	note, err := checkShell(shell)
+	if err != nil {
+		return Result{}, "", "", err
+	}
+	changes = append(changes, "shell "+shell+note)
 	u.account = append(args, "-s", shell, u.Name)
 	return Result{Status: Change, Action: Create, Changes: changes}, home, group, nil
 }
@@ -296,7 +309,7 @@ func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, strin
 	args := []string{"usermod"}
 	var changes []string
 	if u.UID != "" && u.uid() != cur.uid {
-		changes = append(changes, fmt.Sprintf("uid %d → %s, also of the files in the home", cur.uid, u.UID))
+		changes = append(changes, fmt.Sprintf("uid %d → %s, also of the files in the home; other files keep the old uid", cur.uid, u.UID))
 		args = append(args, "-u", string(u.UID))
 	}
 	group := a.groupName(cur.gid)
@@ -330,8 +343,21 @@ func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, strin
 		}
 	}
 	if u.Shell != "" && u.Shell != cur.shell {
-		changes = append(changes, "shell "+cur.shell+" → "+u.Shell+shellNote(u.Shell))
+		note, err := checkShell(u.Shell)
+		if err != nil {
+			return Result{}, "", "", err
+		}
+		changes = append(changes, "shell "+cur.shell+" → "+u.Shell+note)
 		args = append(args, "-s", u.Shell)
+	}
+	if slices.Contains(args, "-u") || slices.Contains(args, "-d") {
+		procs, err := userProcesses("/proc", cur.uid)
+		if err != nil {
+			return Result{}, "", "", err
+		}
+		if len(procs) > 0 {
+			changes = append(changes, fmt.Sprintf("processes of %s run (%s); usermod fails while they run", u.Name, strings.Join(procs, ", ")))
+		}
 	}
 	if len(args) > 1 {
 		u.account = append(args, u.Name)
@@ -342,11 +368,70 @@ func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, strin
 	return Result{Status: Change, Action: Modify, Changes: changes}, home, group, nil
 }
 
-func shellNote(shell string) string {
-	if _, err := os.Stat(shell); err != nil {
-		return " (does not exist yet)"
+// checkShell fails when shell exists and is not an executable file. It
+// returns a note for a shell that does not exist.
+func checkShell(shell string) (string, error) {
+	fi, err := os.Stat(shell)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return " (does not exist yet)", nil
+	case err != nil:
+		return "", err
+	case !fi.Mode().IsRegular() || fi.Mode()&0o111 == 0:
+		return "", fmt.Errorf("shell %s is not an executable file", shell)
 	}
-	return ""
+	return "", nil
+}
+
+// userProcesses returns the sorted names of the processes in the proc file
+// system whose real, effective, or saved uid is uid, as usermod checks them.
+// usermod skips a process in another root, such as a container.
+func userProcesses(proc string, uid uint32) ([]string, error) {
+	entries, err := os.ReadDir(proc)
+	if err != nil {
+		return nil, err
+	}
+	top, err := os.Stat("/")
+	if err != nil {
+		return nil, err
+	}
+	id := strconv.FormatUint(uint64(uid), 10)
+	var names []string
+	for _, e := range entries {
+		if !numberRe.MatchString(e.Name()) {
+			continue
+		}
+		root, err := os.Stat(path.Join(proc, e.Name(), "root"))
+		var data []byte
+		if err == nil {
+			if !os.SameFile(root, top) {
+				continue
+			}
+			data, err = os.ReadFile(path.Join(proc, e.Name(), "status"))
+		}
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+			// The process ended.
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		var name string
+		for line := range strings.Lines(string(data)) {
+			key, value, _ := strings.Cut(strings.TrimSuffix(line, "\n"), ":\t")
+			if key == "Name" {
+				name = value
+			}
+			if key == "Uid" {
+				if slices.Contains(strings.Fields(value)[:3], id) {
+					names = append(names, name)
+				}
+				break
+			}
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names), nil
 }
 
 // homeState returns the missing parts of home, from the top, or its file info
@@ -473,32 +558,54 @@ func (u *User) keyLines(home, group string) ([]string, error) {
 	if len(missing) > 0 {
 		return append(create, keyChanges(nil, *u.AuthorizedKeys)...), nil
 	}
-	fi, err := dir.Stat(".")
+	dirFi, err := dir.Stat(".")
 	if err != nil {
 		return nil, err
 	}
-	lines, err := prefixed(sshDir, fi, u.Name, group, 0o700)
+	lines, err := prefixed(sshDir, dirFi, u.Name, group, 0o700)
 	if err != nil {
 		return nil, err
 	}
 	fi, exists, err := lstat(dir, "authorized_keys", nil)
+	var keys []string
 	switch {
 	case err != nil:
 		return nil, err
 	case !exists:
-		return append(append(lines, create[1]), keyChanges(nil, *u.AuthorizedKeys)...), nil
+		keys = append([]string{create[1]}, keyChanges(nil, *u.AuthorizedKeys)...)
 	case fi.Mode()&fs.ModeSymlink != 0:
 		target, _ := dir.Readlink("authorized_keys")
-		lines = append(lines, fmt.Sprintf("replace the symbolic link %s to %s", file, target), create[1])
-		return append(lines, keyChanges(nil, *u.AuthorizedKeys)...), nil
+		keys = append([]string{fmt.Sprintf("replace the symbolic link %s to %s", file, target), create[1]}, keyChanges(nil, *u.AuthorizedKeys)...)
 	case !fi.Mode().IsRegular():
 		return nil, fmt.Errorf("%s is %s, not a file", file, kind(fi))
+	default:
+		keys, err = u.fileKeyLines(dir, file, fi, group)
+		if err != nil {
+			return nil, err
+		}
 	}
-	attr, err := prefixed(file, fi, u.Name, group, 0o600)
+	lines = append(lines, keys...)
+	if len(lines) == 0 {
+		return nil, nil
+	}
+	// Apply writes authorized_keys through a rename in ~/.ssh.
+	if err := noFlags(dir, ".", dirFi, sshDir); err != nil {
+		return nil, err
+	}
+	if exists {
+		if err := noFlags(dir, "authorized_keys", fi, file); err != nil {
+			return nil, err
+		}
+	}
+	return lines, nil
+}
+
+// fileKeyLines describes the changes of the key file fi in dir.
+func (u *User) fileKeyLines(dir *os.Root, file string, fi fs.FileInfo, group string) ([]string, error) {
+	lines, err := prefixed(file, fi, u.Name, group, 0o600)
 	if err != nil {
 		return nil, err
 	}
-	lines = append(lines, attr...)
 	f, err := openSame(dir, "authorized_keys", fi)
 	if err != nil {
 		return nil, err
@@ -511,8 +618,7 @@ func (u *User) keyLines(home, group string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	want := u.keyText()
-	if string(data) == string(want) {
+	if string(data) == string(u.keyText()) {
 		return lines, nil
 	}
 	var cur []string
