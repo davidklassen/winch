@@ -58,7 +58,7 @@ func TestApplyInterrupted(t *testing.T) {
 		}
 	}
 	var out, errOut bytes.Buffer
-	o := run.Apply(ctx, plan, h.Connector(), run.Text(&out, &errOut))
+	o := run.Apply(ctx, plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
 	for _, host := range []string{"web1", "web2"} {
 		if !errors.Is(o.Failed[host], run.ErrInterrupted) {
 			t.Errorf("%s: error %v, want interrupted", host, o.Failed[host])

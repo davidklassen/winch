@@ -57,55 +57,55 @@ file.
 `
 
 func secretUsage(ctx context.Context, env Env, f *flags, args []string) int {
-	fmt.Fprint(env.Err, secretHelp)
+	fmt.Fprint(env.stderr, secretHelp)
 	return exitInvalid
 }
 
 func secretEncrypt(ctx context.Context, env Env, f *flags, args []string) int {
 	if len(args) != 0 {
-		printError(env.Err, "winch: secret encrypt takes no arguments")
+		printError(env.stderr, "winch: secret encrypt takes no arguments")
 		return exitInvalid
 	}
 	recs, err := project.Recipients(env.Dir)
 	if err != nil {
-		printError(env.Err, err.Error())
+		printError(env.stderr, err.Error())
 		return exitInvalid
 	}
 	in, err := io.ReadAll(env.In)
 	if err != nil {
-		printError(env.Err, fmt.Sprintf("winch: read stdin: %v", err))
+		printError(env.stderr, fmt.Sprintf("winch: read stdin: %v", err))
 		return exitInvalid
 	}
 	value, err := secret.OneLine(string(in))
 	if err != nil {
-		printError(env.Err, fmt.Sprintf("winch: %v", err))
+		printError(env.stderr, fmt.Sprintf("winch: %v", err))
 		return exitInvalid
 	}
 	text, err := secret.Encrypt(value, recs)
 	if err != nil {
-		printError(env.Err, fmt.Sprintf("winch: encrypt: %v", err))
+		printError(env.stderr, fmt.Sprintf("winch: encrypt: %v", err))
 		return exitInvalid
 	}
-	fmt.Fprintf(env.Out, "!secret %s\n", text)
+	fmt.Fprintf(env.stdout, "!secret %s\n", text)
 	return exitOK
 }
 
 func secretRekey(ctx context.Context, env Env, f *flags, args []string) int {
 	if len(args) != 0 {
-		printError(env.Err, "winch: secret rekey takes no arguments")
+		printError(env.stderr, "winch: secret rekey takes no arguments")
 		return exitInvalid
 	}
 	identity, err := env.identity()
 	if err != nil {
-		printError(env.Err, err.Error())
+		printError(env.stderr, err.Error())
 		return exitInvalid
 	}
 	n, files, err := project.Rekey(ctx, env.Dir, identity)
 	if err != nil {
-		printError(env.Err, err.Error())
+		printError(env.stderr, err.Error())
 		return exitInvalid
 	}
-	fmt.Fprintf(env.Out, "rekeyed %s in %s\n", count(n, "secret"), count(files, "file"))
+	fmt.Fprintf(env.stdout, "rekeyed %s in %s\n", count(n, "secret"), count(files, "file"))
 	return exitOK
 }
 

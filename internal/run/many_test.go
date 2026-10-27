@@ -100,7 +100,7 @@ func TestHostsInParallel(t *testing.T) {
 				hook, ok = barrier(3)
 				h.OnApply = hook
 				var out, errOut bytes.Buffer
-				if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+				if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 					t.Fatalf("apply failed: %s", errOut.String())
 				}
 				if !ok() {
@@ -130,7 +130,7 @@ func TestStagesInOrder(t *testing.T) {
 		h.OnCheck, h.OnApply = slow, slow
 		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 		var out, errOut bytes.Buffer
-		run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+		run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
 		last := slices.Index(h.Trace, "apply web1 /etc/motd")
 		first := slices.IndexFunc(h.Trace, func(s string) bool { return strings.HasSuffix(s, " /etc/issue") })
 		if last < 0 || first < last {
@@ -150,7 +150,7 @@ func TestParallelism(t *testing.T) {
 				h.MaxOpen, h.Trace = 0, nil
 				h.OnApply = func(host, main string) { time.Sleep(50 * time.Millisecond) }
 				var out, errOut bytes.Buffer
-				if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+				if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 					t.Fatalf("apply failed: %s", errOut.String())
 				}
 				if h.MaxOpen != n {
@@ -202,7 +202,7 @@ func TestParallelismFailure(t *testing.T) {
 			h.FailApply("web2 /etc/motd")
 			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
-			o := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+			o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
 			got := map[string]string{}
 			for host, err := range o.Failed {
 				got[host] = err.Error()
@@ -250,7 +250,7 @@ func TestHealthGate(t *testing.T) {
 		}
 		h.Trace = nil
 		var out, errOut bytes.Buffer
-		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 			t.Fatalf("apply failed: %s", errOut.String())
 		}
 		want := []string{
@@ -270,7 +270,7 @@ func TestHealthGate(t *testing.T) {
 		h.FailCommand("web1", "curl -sf http://localhost/")
 		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 		var out, errOut bytes.Buffer
-		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
 		if err := o.Failed["web1"]; err == nil || err.Error() != "base: failed: health: curl -sf http://localhost/: did not pass within 30s: exit status 1" {
 			t.Errorf("web1: error %v", err)
 		}
@@ -293,7 +293,7 @@ func TestPlanHealth(t *testing.T) {
 	h.SetFile("web3", "/etc/motd", "hi\n")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
+	plan.Write(plain(&out), plain(&errOut))
 	golden.Assert(t, filepath.Join("testdata", "plan", "health.golden"), output(&out, &errOut))
 }
 
@@ -320,7 +320,7 @@ func TestSerialStart(t *testing.T) {
 				}
 				plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: serial})
 				var out, errOut bytes.Buffer
-				run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+				run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
 				if overlap == serial {
 					t.Errorf("connects overlap: %v", overlap)
 				}
@@ -370,7 +370,7 @@ func TestOneSessionPerHost(t *testing.T) {
 			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: serial})
 			check("plan")
 			var out, errOut bytes.Buffer
-			if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+			if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 				t.Fatalf("apply failed: %s", errOut.String())
 			}
 			check("apply")
@@ -425,7 +425,7 @@ func TestSessionClosesWhenHostStops(t *testing.T) {
 		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 		h.FailApply("web1 /etc/issue")
 		var out, errOut bytes.Buffer
-		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
 		if o.Failed["web2"] == nil {
 			t.Fatalf("web2 did not fail: %s", errOut.String())
 		}
@@ -455,12 +455,12 @@ func TestStagesLeaveHandlerPending(t *testing.T) {
 	h := fakehost.New()
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
+	plan.Write(plain(&out), plain(&errOut))
 	if strings.Contains(out.String(), "handler") || strings.Contains(out.String(), "/etc/app.conf") {
 		t.Errorf("the plan shows the skipped stage:\n%s", out.String())
 	}
 	out.Reset()
-	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatalf("apply failed: %s", errOut.String())
 	}
 	for _, host := range []string{"web1", "web2", "web3"} {
@@ -506,7 +506,7 @@ func TestNoHealthGateAfterInterrupt(t *testing.T) {
 	defer cancel()
 	h.OnApply = func(host, main string) { cancel() }
 	var out, errOut bytes.Buffer
-	o := run.Apply(ctx, plan, h.Connector(), run.Text(&out, &errOut))
+	o := run.Apply(ctx, plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
 	if slices.ContainsFunc(h.Trace, func(s string) bool { return strings.HasPrefix(s, "health ") }) {
 		t.Errorf("a gate ran after the interrupt: %q", h.Trace)
 	}
@@ -530,7 +530,7 @@ func TestParallelismRunningHostsFinish(t *testing.T) {
 			}
 		}
 		var out, errOut bytes.Buffer
-		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
 		if _, ok := h.File("web2", "/etc/motd"); !ok || o.Failed["web2"] != nil {
 			t.Errorf("web2 did not finish the stage: %v", o.Failed["web2"])
 		}
@@ -547,7 +547,7 @@ func TestSerialFailureContinues(t *testing.T) {
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: true})
 	h.SetUnreachable("web2")
 	var out, errOut bytes.Buffer
-	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
 	if _, ok := h.File("web3", "/etc/motd"); !ok || o.Failed["web3"] != nil {
 		t.Errorf("web3 did not run after web2 failed: %v", o.Failed["web3"])
 	}
@@ -566,7 +566,7 @@ func TestHealthGateOnlyAfterAChange(t *testing.T) {
 	h.SetFile("web2", "/etc/motd", "hi\n")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatalf("apply failed: %s", errOut.String())
 	}
 	if _, ok := h.File("web2", "/etc/issue"); !ok {
@@ -639,7 +639,7 @@ func TestPlanIndependentOfFinishOrder(t *testing.T) {
 			}
 			pl := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			var out, errOut, js bytes.Buffer
-			pl.Write(&out, &errOut)
+			pl.Write(plain(&out), plain(&errOut))
 			pl.WriteJSON(run.NewEvents(&js, func() time.Time { return time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC) }))
 			o = planOut{string(output(&out, &errOut)), pl.Hash(), js.String()}
 		})

@@ -2,7 +2,6 @@ package run
 
 import (
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 
@@ -43,7 +42,7 @@ func (p *Plan) changes(host string) bool {
 
 // Write prints the changes per host, hosts with the same changes together,
 // then the summary and the plan hash. Failures go to errOut.
-func (p *Plan) Write(out, errOut io.Writer) {
+func (p *Plan) Write(out, errOut *color.Writer) {
 	bodies := map[string]*color.Text{}
 	for _, sp := range p.Stages {
 		for _, hp := range sp.Hosts {
@@ -151,7 +150,7 @@ func header(t *color.Text, indent, name string) {
 }
 
 // hostError writes the error of a host in red.
-func hostError(w io.Writer, host, err string) {
+func hostError(w *color.Writer, host, err string) {
 	color.Fprint(w, color.Text{{Style: color.Red, Text: host + ": " + secret.PrintableLines(err) + "\n"}})
 }
 

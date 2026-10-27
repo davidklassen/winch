@@ -79,11 +79,11 @@ func TestSecrets(t *testing.T) {
 	h.SetThen("web1", protocol.Then{Recipe: "monit", SHA256: sum("monit-passwd hunter2")})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
+	plan.Write(plain(&out), plain(&errOut))
 	golden.Assert(t, filepath.Join("testdata", "secrets", "plan.golden"), output(&out, &errOut))
 	out.Reset()
 	errOut.Reset()
-	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatalf("apply failed: %s", errOut.String())
 	}
 	golden.Assert(t, filepath.Join("testdata", "secrets", "apply.golden"), applyOutput(&out, &errOut))
@@ -103,7 +103,7 @@ func TestSecretThen(t *testing.T) {
 	p, _ := secretProject(t)
 	plan := run.MakePlan(context.Background(), p, fakehost.New().Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
+	plan.Write(plain(&out), plain(&errOut))
 	golden.Assert(t, filepath.Join("testdata", "secrets", "plan-then.golden"), output(&out, &errOut))
 }
 
@@ -114,7 +114,7 @@ func TestSecretsFailedStep(t *testing.T) {
 	h.FailApply("web1 /etc/monit/hunter2.key")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	if run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+	if run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal("apply did not fail")
 	}
 	// The label masks the path; the error text of the host passes only the
@@ -163,7 +163,7 @@ func TestSecretAnswer(t *testing.T) {
 	h.SetAnswer("web1", "app/token", "old-token")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
+	plan.Write(plain(&out), plain(&errOut))
 	if !strings.Contains(out.String(), "    ~ debconf (secret)\n        answer (secret)\n") {
 		t.Errorf("plan:\n%s%s", out.String(), errOut.String())
 	}

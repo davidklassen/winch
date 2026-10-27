@@ -12,11 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
@@ -122,6 +124,11 @@ func handlerProject(t *testing.T, set ...string) *project.Project {
 	return p
 }
 
+// plain writes to b without color, through a filter without secrets.
+func plain(b *bytes.Buffer) *color.Writer {
+	return color.NewWriter(b, secret.NewFilter().Parts, false)
+}
+
 func output(out, errOut *bytes.Buffer) []byte {
 	return []byte("stdout:\n" + out.String() + "stderr:\n" + errOut.String())
 }
@@ -194,7 +201,7 @@ func TestPlanHandlers(t *testing.T) {
 			}
 			plan := run.MakePlan(context.Background(), handlerProject(t), h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
-			plan.Write(&out, &errOut)
+			plan.Write(plain(&out), plain(&errOut))
 			golden.Assert(t, filepath.Join("testdata", "handlers", "plan-"+tt.name+".golden"), output(&out, &errOut))
 		})
 	}
@@ -204,7 +211,7 @@ func applyAll(t *testing.T, p *project.Project, h *fakehost.Hosts) (bool, []byte
 	t.Helper()
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	ok := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK()
+	ok := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK()
 	return ok, applyOutput(&out, &errOut)
 }
 
@@ -249,7 +256,7 @@ func TestHandlerFollowsApply(t *testing.T) {
 		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 		h.SetFile("web1", "/etc/nginx/a.conf", "a\n")
 		var out, errOut bytes.Buffer
-		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 			t.Fatal(errOut.String())
 		}
 		if len(h.Log["web1"]) != 0 {
@@ -265,7 +272,7 @@ func TestHandlerFollowsApply(t *testing.T) {
 		h.SetFile("web1", "/etc/nginx/a.conf", "a\n")
 		h.SetFile("web1", "/etc/nginx/c.conf", "old\n")
 		var out, errOut bytes.Buffer
-		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 			t.Fatal(errOut.String())
 		}
 		if want := []string{"nginx restart", "nginx reload"}; !slices.Equal(h.Log["web1"], want) {
@@ -292,9 +299,9 @@ func TestFailedHandlerStaysPending(t *testing.T) {
 	h.Fix("web1 nginx")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
+	plan.Write(plain(&out), plain(&errOut))
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-after-failed-handler.golden"), output(&out, &errOut))
-	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
 	if want := []string{"nginx restart", "nginx reload", "command reindex", "nginx reload", "app restart"}; !slices.Equal(h.Log["web1"], want) {
@@ -380,9 +387,9 @@ func TestThen(t *testing.T) {
 		h.Fix("web1 reindex")
 		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 		var out, errOut bytes.Buffer
-		plan.Write(&out, &errOut)
+		plan.Write(plain(&out), plain(&errOut))
 		golden.Assert(t, filepath.Join("testdata", "handlers", "plan-after-failed-then.golden"), output(&out, &errOut))
-		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 			t.Fatal(errOut.String())
 		}
 		if want := []string{"command reindex", "nginx reload", "command reindex", "app restart"}; !slices.Equal(h.Log["web1"], want) {
@@ -468,9 +475,9 @@ func TestStageStepNotifiesEarlierRecipe(t *testing.T) {
 	present(h, "web1", "web2")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
+	plan.Write(plain(&out), plain(&errOut))
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-stage-step.golden"), output(&out, &errOut))
-	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
 	if want := []string{"nginx reload"}; !slices.Equal(h.Log["web1"], want) {
@@ -506,12 +513,12 @@ func TestPendingThen(t *testing.T) {
 	h.SetThen("web2", other...)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
+	plan.Write(plain(&out), plain(&errOut))
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-pending-then.golden"), output(&out, &errOut))
 
 	out.Reset()
 	errOut.Reset()
-	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
 	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-pending-then.golden"), output(&out, &errOut))
@@ -541,11 +548,11 @@ func TestPendingThenOfAChangedStep(t *testing.T) {
 	p := handlerProject(t)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
+	plan.Write(plain(&out), plain(&errOut))
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-pending-then-change.golden"), output(&out, &errOut))
 	out.Reset()
 	errOut.Reset()
-	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
 	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-pending-then-change.golden"), output(&out, &errOut))
@@ -571,13 +578,13 @@ func TestPendingThenOfAHandlerStep(t *testing.T) {
 	h.SetThen("web1", protocol.Then{Recipe: "app", SHA256: sum("app-check\napp-log\n")})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
+	plan.Write(plain(&out), plain(&errOut))
 	out.WriteString("json:\n")
 	plan.WriteJSON(run.NewEvents(&out, func() time.Time { return time.Time{} }))
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-pending-then-handler.golden"), output(&out, &errOut))
 
 	out.Reset()
-	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
 	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-pending-then-handler.golden"), output(&out, &errOut))
@@ -625,7 +632,7 @@ func TestCommandLines(t *testing.T) {
 	h.SetThen("web1", protocol.Then{Stage: "base", SHA256: sum(then)})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
-	plan.Write(&out, &errOut)
+	plan.Write(plain(&out), plain(&errOut))
 	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-command-lines.golden"), output(&out, &errOut))
 
 	out.Reset()
@@ -638,7 +645,7 @@ func TestCommandLines(t *testing.T) {
 	}
 
 	out.Reset()
-	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut)).OK() {
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
 	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-command-lines.golden"), output(&out, &errOut))
@@ -646,7 +653,7 @@ func TestCommandLines(t *testing.T) {
 	h = fakehost.New()
 	h.FailCommand("web1", "systemctl is-active nginx\n\ncurl -sf http://localhost/\n")
 	plan = run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
-	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(&out, &errOut))
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
 	want := "base: failed: health:\n    systemctl is-active nginx\n\n    curl -sf http://localhost/\ndid not pass within 1m0s: exit status 1"
 	if err := o.Failed["web1"]; err == nil || err.Error() != want {
 		t.Errorf("web1: error %q, want %q", err, want)

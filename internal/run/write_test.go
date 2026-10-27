@@ -8,6 +8,7 @@ import (
 	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/secret"
 )
 
 // spec: Modules/file, dir, link
@@ -27,14 +28,15 @@ func TestHostErrorControlCharacters(t *testing.T) {
 	err := "base: failed: file /tmp/x: then: exit status 1: one\n\x1b[2K\x1b[1Atwo\tz\u202E\r"
 	want := "web1: base: failed: file /tmp/x: then: exit status 1: one\n?[2K?[1Atwo\tz??\n"
 	var out, errOut strings.Builder
-	Text(&out, &errOut).Host(HostEvent{Phase: "apply", Host: "web1", Status: "failed", Error: err})
+	w := func(b *strings.Builder) *color.Writer { return color.NewWriter(b, secret.NewFilter().Parts, false) }
+	Text(w(&out), w(&errOut)).Host(HostEvent{Phase: "apply", Host: "web1", Status: "failed", Error: err})
 	if errOut.String() != want {
 		t.Errorf("apply error = %q, want %q", errOut.String(), want)
 	}
 	p := &Plan{Hosts: []project.Host{{Name: "web1"}}, Failed: map[string]error{"web1": errors.New(err)}}
 	out.Reset()
 	errOut.Reset()
-	p.Write(&out, &errOut)
+	p.Write(w(&out), w(&errOut))
 	if errOut.String() != want {
 		t.Errorf("plan error = %q, want %q", errOut.String(), want)
 	}

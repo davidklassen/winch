@@ -25,7 +25,7 @@ func newOutput(env Env, f *flags) *output {
 		if now == nil {
 			now = time.Now
 		}
-		o.ev = run.NewEvents(env.Out, now)
+		o.ev = run.NewEvents(env.stdout, now)
 		o.ev.Write("version", struct {
 			Version int `json:"version"`
 		}{1})
@@ -46,7 +46,7 @@ type diagnostic struct {
 // fail reports an error: on stderr, or as diagnostic events.
 func (o *output) fail(err error) {
 	if o.ev == nil {
-		printError(o.env.Err, err.Error())
+		printError(o.env.stderr, err.Error())
 		return
 	}
 	for _, e := range leaves(err) {
@@ -84,7 +84,7 @@ func newDiagnostic(severity string, err error) diagnostic {
 func (o *output) warn(warnings []*yamlx.Error) {
 	for _, w := range warnings {
 		if o.ev == nil {
-			fmt.Fprintf(o.env.Err, "%s: warning: %s\n", w.Pos, w.Msg)
+			fmt.Fprintf(o.env.stderr, "%s: warning: %s\n", w.Pos, w.Msg)
 			continue
 		}
 		o.ev.Write("diagnostic", newDiagnostic("warning", w))
@@ -94,7 +94,7 @@ func (o *output) warn(warnings []*yamlx.Error) {
 // plan writes the plan: the text, or the planned and host events.
 func (o *output) plan(pl *run.Plan) {
 	if o.ev == nil {
-		pl.Write(o.env.Out, o.env.Err)
+		pl.Write(o.env.stdout, o.env.stderr)
 		return
 	}
 	pl.WriteJSON(o.ev)

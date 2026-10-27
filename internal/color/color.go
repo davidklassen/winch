@@ -66,21 +66,16 @@ func (w *Writer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Fprint writes t to w in one write. On a Writer, the filter sees all of t
-// before the color codes go around each line of a styled span.
-func Fprint(w io.Writer, t Text) {
-	cw, ok := w.(*Writer)
-	if !ok {
-		fmt.Fprint(w, t.String())
-		return
-	}
+// Fprint writes t to w in one write. The filter sees all of t before the
+// color codes go around each line of a styled span.
+func Fprint(w *Writer, t Text) {
 	parts := make([]string, len(t))
 	for i, s := range t {
 		parts[i] = s.Text
 	}
-	parts = cw.filter(parts)
-	if !cw.on {
-		fmt.Fprint(cw.w, strings.Join(parts, ""))
+	parts = w.filter(parts)
+	if !w.on {
+		fmt.Fprint(w.w, strings.Join(parts, ""))
 		return
 	}
 	var b strings.Builder
@@ -98,5 +93,5 @@ func Fprint(w io.Writer, t Text) {
 			}
 		}
 	}
-	fmt.Fprint(cw.w, b.String())
+	fmt.Fprint(w.w, b.String())
 }

@@ -3,7 +3,6 @@ package run_test
 import (
 	"bytes"
 	"context"
-	"io"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -23,7 +22,7 @@ var codes = regexp.MustCompile("\x1b\\[[0-9;]*m")
 // colored runs write twice, with color on and off. It checks that the
 // output with color, without the codes, is the output without color, and
 // returns the output with color.
-func colored(t *testing.T, filter *secret.Filter, format func(out, errOut *bytes.Buffer) []byte, write func(out, errOut io.Writer)) []byte {
+func colored(t *testing.T, filter *secret.Filter, format func(out, errOut *bytes.Buffer) []byte, write func(out, errOut *color.Writer)) []byte {
 	t.Helper()
 	var out, errOut, plainOut, plainErr bytes.Buffer
 	write(color.NewWriter(&out, filter.Parts, true), color.NewWriter(&errOut, filter.Parts, true))
@@ -92,10 +91,10 @@ func colorHosts() *fakehost.Hosts {
 func TestColor(t *testing.T) {
 	filter := secret.NewFilter()
 	plan := run.MakePlan(context.Background(), colorProject(t), colorHosts().Connector(), run.Options{})
-	golden.Assert(t, filepath.Join("testdata", "color", "plan.golden"), colored(t, filter, output, func(out, errOut io.Writer) {
+	golden.Assert(t, filepath.Join("testdata", "color", "plan.golden"), colored(t, filter, output, func(out, errOut *color.Writer) {
 		plan.Write(out, errOut)
 	}))
-	golden.Assert(t, filepath.Join("testdata", "color", "apply.golden"), colored(t, filter, applyOutput, func(out, errOut io.Writer) {
+	golden.Assert(t, filepath.Join("testdata", "color", "apply.golden"), colored(t, filter, applyOutput, func(out, errOut *color.Writer) {
 		run.Apply(context.Background(), plan, colorHosts().Connector(), run.Text(out, errOut))
 	}))
 }
@@ -116,13 +115,13 @@ func secretHosts(fail bool) *fakehost.Hosts {
 func TestColorSecrets(t *testing.T) {
 	p, filter := secretProject(t)
 	plan := run.MakePlan(context.Background(), p, secretHosts(true).Connector(), run.Options{})
-	golden.Assert(t, filepath.Join("testdata", "color", "secrets-plan.golden"), colored(t, filter, output, func(out, errOut io.Writer) {
+	golden.Assert(t, filepath.Join("testdata", "color", "secrets-plan.golden"), colored(t, filter, output, func(out, errOut *color.Writer) {
 		plan.Write(out, errOut)
 	}))
-	golden.Assert(t, filepath.Join("testdata", "color", "secrets-apply.golden"), colored(t, filter, applyOutput, func(out, errOut io.Writer) {
+	golden.Assert(t, filepath.Join("testdata", "color", "secrets-apply.golden"), colored(t, filter, applyOutput, func(out, errOut *color.Writer) {
 		run.Apply(context.Background(), plan, secretHosts(true).Connector(), run.Text(out, errOut))
 	}))
-	golden.Assert(t, filepath.Join("testdata", "color", "secrets-apply-ok.golden"), colored(t, filter, applyOutput, func(out, errOut io.Writer) {
+	golden.Assert(t, filepath.Join("testdata", "color", "secrets-apply-ok.golden"), colored(t, filter, applyOutput, func(out, errOut *color.Writer) {
 		run.Apply(context.Background(), plan, secretHosts(false).Connector(), run.Text(out, errOut))
 	}))
 }

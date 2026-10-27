@@ -63,6 +63,9 @@ type Env struct {
 	Filter *secret.Filter
 	// Now is the clock of the JSON events. Nil means time.Now.
 	Now func() time.Time
+	// stdout and stderr are Out and Err through Filter. Main sets them and
+	// clears Out and Err.
+	stdout, stderr *color.Writer
 }
 
 const mainHelp = `Examples:
@@ -210,14 +213,15 @@ type flags struct {
 
 // Main runs the command in args. All output passes through env.Filter.
 func Main(ctx context.Context, args []string, env Env) int {
-	env.Out = color.NewWriter(env.Out, env.Filter.Parts, env.ColorOut)
-	env.Err = color.NewWriter(env.Err, env.Filter.Parts, env.ColorErr)
+	env.stdout = color.NewWriter(env.Out, env.Filter.Parts, env.ColorOut)
+	env.stderr = color.NewWriter(env.Err, env.Filter.Parts, env.ColorErr)
+	env.Out, env.Err = nil, nil
 	if len(args) == 0 {
-		fmt.Fprint(env.Err, mainHelp)
+		fmt.Fprint(env.stderr, mainHelp)
 		return exitInvalid
 	}
 	if args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
-		fmt.Fprint(env.Out, mainHelp)
+		fmt.Fprint(env.stdout, mainHelp)
 		return exitOK
 	}
 	name := args[0]
@@ -227,8 +231,8 @@ func Main(ctx context.Context, args []string, env Env) int {
 	cmd, ok := commands[name]
 	switch {
 	case !ok && strings.HasPrefix(name, "secret "):
-		printError(env.Err, fmt.Sprintf("winch: unknown secret command %q", args[0]))
-		fmt.Fprintf(env.Err, "\n%s", secretHelp)
+		printError(env.stderr, fmt.Sprintf("winch: unknown secret command %q", args[0]))
+		fmt.Fprintf(env.stderr, "\n%s", secretHelp)
 		return exitInvalid
 	case !ok:
 		var names []string
@@ -238,8 +242,8 @@ func Main(ctx context.Context, args []string, env Env) int {
 			}
 		}
 		slices.Sort(names)
-		printError(env.Err, fmt.Sprintf("winch: unknown command %q%s", args[0], yamlx.Suggest(args[0], names)))
-		fmt.Fprintf(env.Err, "\n%s", mainHelp)
+		printError(env.stderr, fmt.Sprintf("winch: unknown command %q%s", args[0], yamlx.Suggest(args[0], names)))
+		fmt.Fprintf(env.stderr, "\n%s", mainHelp)
 		return exitInvalid
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -274,19 +278,19 @@ func Main(ctx context.Context, args []string, env Env) int {
 	}
 	pos, err := parse(fs, args[1:])
 	if errors.Is(err, flag.ErrHelp) {
-		fmt.Fprint(env.Out, cmd.help)
+		fmt.Fprint(env.stdout, cmd.help)
 		return exitOK
 	}
 	if err != nil {
-		printError(env.Err, fmt.Sprintf("winch %s: %v", name, err))
-		fmt.Fprintf(env.Err, "Run \"winch %s --help\" for the flags.\n", name)
+		printError(env.stderr, fmt.Sprintf("winch %s: %v", name, err))
+		fmt.Fprintf(env.stderr, "Run \"winch %s --help\" for the flags.\n", name)
 		return exitInvalid
 	}
 	return cmd.run(ctx, env, &f, pos)
 }
 
 // printError writes an error line, red on a terminal.
-func printError(w io.Writer, msg string) {
+func printError(w *color.Writer, msg string) {
 	color.Fprint(w, color.Text{{Style: color.Red, Text: msg + "\n"}})
 }
 
@@ -331,7 +335,7 @@ func validate(ctx context.Context, env Env, f *flags, args []string) int {
 	}
 	o.warn(warnings)
 	if o.ev == nil {
-		fmt.Fprintln(env.Out, "ok")
+		fmt.Fprintln(env.stdout, "ok")
 	}
 	return o.end(exitOK, summary{})
 }
@@ -444,16 +448,16 @@ func apply(ctx context.Context, env Env, f *flags, args []string) int {
 		if !env.Terminal {
 			s.command = applyCommand(args[0], f, pl.Hash())
 			if o.ev == nil {
-				fmt.Fprintf(env.Out, "To apply, run: %s\n", s.command)
+				fmt.Fprintf(env.stdout, "To apply, run: %s\n", s.command)
 			}
 			return o.end(worst(code, exitConfirm), s)
 		}
 		if !ask(ctx, env) {
-			fmt.Fprintln(env.Err, "Nothing changed.")
+			fmt.Fprintln(env.stderr, "Nothing changed.")
 			return o.end(code, s)
 		}
 	}
-	rep := run.Text(env.Out, env.Err)
+	rep := run.Text(env.stdout, env.stderr)
 	if o.ev != nil {
 		rep = o.ev
 	}
@@ -463,7 +467,7 @@ func apply(ctx context.Context, env Env, f *flags, args []string) int {
 
 // ask asks for confirmation. An interrupt answers no.
 func ask(ctx context.Context, env Env) bool {
-	fmt.Fprint(env.Err, "Apply these changes? [y/N] ")
+	fmt.Fprint(env.stderr, "Apply these changes? [y/N] ")
 	answer := make(chan string, 1)
 	go func() {
 		a, _ := bufio.NewReader(env.In).ReadString('\n')
@@ -474,7 +478,7 @@ func ask(ctx context.Context, env Env) bool {
 		a = strings.ToLower(strings.TrimSpace(a))
 		return a == "y" || a == "yes"
 	case <-ctx.Done():
-		fmt.Fprintln(env.Err)
+		fmt.Fprintln(env.stderr)
 		return false
 	}
 }

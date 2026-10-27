@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"time"
@@ -88,9 +87,9 @@ func (u unreachable) Unwrap() error { return u.error }
 
 // Text returns a reporter that prints one line per step that changes, and
 // the errors to errOut.
-func Text(out, errOut io.Writer) Reporter { return text{out, errOut} }
+func Text(out, errOut *color.Writer) Reporter { return text{out, errOut} }
 
-type text struct{ out, errOut io.Writer }
+type text struct{ out, errOut *color.Writer }
 
 func (t text) Step(ev StepEvent) {
 	var line color.Text

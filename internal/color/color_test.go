@@ -3,7 +3,6 @@ package color
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,21 +29,18 @@ func TestPrint(t *testing.T) {
 	}
 	tests := []struct {
 		name string
-		w    func(*bytes.Buffer) io.Writer
+		on   bool
 		want string
 	}{
-		{"color on", func(b *bytes.Buffer) io.Writer { return NewWriter(b, mask(), true) },
+		{"color on", true,
 			"  \x1b[33m~\x1b[0m file /etc/motd\n      \x1b[32m+a\x1b[0m\n\n\x1b[32mb\x1b[0m\n\x1b[1mweb\x1b[0m\n"},
-		{"color off", func(b *bytes.Buffer) io.Writer { return NewWriter(b, mask(), false) },
-			"  ~ file /etc/motd\n      +a\n\nb\nweb\n"},
-		{"another writer", func(b *bytes.Buffer) io.Writer { return b },
+		{"color off", false,
 			"  ~ file /etc/motd\n      +a\n\nb\nweb\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var b bytes.Buffer
-			w := tt.w(&b)
-			Fprint(w, text)
+			Fprint(NewWriter(&b, mask(), tt.on), text)
 			if b.String() != tt.want {
 				t.Errorf("Fprint = %q, want %q", b.String(), tt.want)
 			}
