@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"filippo.io/age"
 
@@ -429,7 +430,11 @@ func Rekey(ctx context.Context, dir, inventory string, identity secret.Identity)
 				return 0, nil, err
 			}
 		}
-		lines := strings.SplitAfter(string(data), "\n")
+		orig := strings.SplitAfter(string(data), "\n")
+		lines := slices.Clone(orig)
+		// shift is the change in length of each line by the earlier
+		// replacements on it.
+		shift := map[int]int{}
 		for _, t := range sealed {
 			text, _ := t.Value.(string)
 			plain, err := decrypt(text, ids, identity)
@@ -442,13 +447,23 @@ func Rekey(ctx context.Context, dir, inventory string, identity secret.Identity)
 					return 0, nil, err
 				}
 			}
-			line := lines[t.Pos.Line-1]
-			i := strings.Index(line, text)
+			l := t.Pos.Line - 1
+			// The column counts characters and points at the tag or the
+			// anchor before the text.
+			at := 0
+			for range t.Pos.Col - 1 {
+				_, n := utf8.DecodeRuneInString(orig[l][at:])
+				at += n
+			}
+			at += shift[l]
+			i := strings.Index(lines[l][at:], text)
 			if i < 0 {
 				errs = append(errs, yamlx.Errorf(t.Pos, "!secret: the value is not on one line"))
 				continue
 			}
-			lines[t.Pos.Line-1] = line[:i] + next[text] + line[i+len(text):]
+			i += at
+			lines[l] = lines[l][:i] + next[text] + lines[l][i+len(text):]
+			shift[l] += len(next[text]) - len(text)
 			count++
 		}
 		out = append(out, rewrite{file, path, []byte(strings.Join(lines, ""))})

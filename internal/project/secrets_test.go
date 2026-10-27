@@ -680,6 +680,93 @@ func TestRekeyKeepsEqualValuesEqual(t *testing.T) {
 	}
 }
 
+// spec: Variables/Secrets (winch secret rekey)
+func TestRekeyTaggedNodeOnly(t *testing.T) {
+	k, next, other := newKey(t), newKey(t), newKey(t)
+	// The old texts have two recipients, the new ones one: each new text is
+	// shorter than the old.
+	recs, err := secret.ParseRecipients([]string{k.id.Recipient().String(), other.id.Recipient().String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c, d string
+	for p, plain := range map[*string]string{&c: "hunter2", &d: "other"} {
+		if *p, err = secret.Encrypt(plain, recs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := strings.Repeat("é", 2*len(c))
+	// An item is "!" and the plaintext for a secret, else the plain value.
+	tests := []struct {
+		name, list string
+		want       []string
+	}{
+		{"plain copy before the secret", "[C, !secret C]", []string{c, "!hunter2"}},
+		{"quoted values", `["C", !secret "C"]`, []string{c, "!hunter2"}},
+		{"wide characters before", "[E, C, !secret C]", []string{e, c, "!hunter2"}},
+		{"two secrets", "[!secret C, !secret D]", []string{"!hunter2", "!other"}},
+		{"two equal secrets and a copy", "[!secret C, C, !secret C]", []string{"!hunter2", c, "!hunter2"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			list := strings.NewReplacer("C", c, "D", d, "E", e).Replace(tt.list)
+			dir := writeProject(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  list:\n",
+				"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      list: " + list + "\n",
+				"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
+			})
+			if _, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "inventories", "test.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			n, err := yamlx.Parse("test.yaml", data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			items := find(n, []string{"hosts", "web1", "vars", "list"}).Value.Items
+			if len(items) != len(tt.want) {
+				t.Fatalf("list after rekey:\n%s", data)
+			}
+			for i, item := range items {
+				text, _ := item.Value.(string)
+				got := text
+				if item.Tag == "!secret" {
+					plain, err := secret.Decrypt(text, []age.Identity{next.id})
+					if err != nil {
+						t.Errorf("item %d does not decrypt with the new key: %v", i, err)
+					}
+					got = "!" + plain
+				}
+				if got != tt.want[i] {
+					t.Errorf("item %d = %q, want %q", i, got, tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// spec: Variables/Secrets (winch secret rekey)
+func TestRekeyLineBreakInString(t *testing.T) {
+	k, next := newKey(t), newKey(t)
+	// YAML counts U+2028 as a line break, so the tag is on line 3 for yaml
+	// and the file has only two lines.
+	inv := "hosts:\n  web1:\n    vars:\n      a: \"x\u2028\"\n      pw: !secret " + k.encrypt(t, "hunter2") + "\n"
+	dir := writeProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n  a:\n",
+		"inventories/test.yaml": inv,
+		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
+	})
+	if _, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path}); err == nil {
+		t.Error("Rekey succeeded, want an error")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "inventories", "test.yaml")); string(data) != inv {
+		t.Error("inventories/test.yaml changed")
+	}
+}
+
 // spec: Variables/Secrets (winch secret rekey, the load warning); Inventory
 func TestInventoryOutsideInventories(t *testing.T) {
 	k, next := newKey(t), newKey(t)
