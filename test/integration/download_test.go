@@ -5,12 +5,20 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"io/fs"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/vmtest"
@@ -73,6 +81,7 @@ func TestDownloadModule(t *testing.T) {
 	urlTgz := lab.Serve(t, "download/app.tar.gz", tgz)
 	tgz2 := tarGz(t, []entry{{name: "app/bin/tool", typ: tar.TypeReg, mode: 0o755, body: "#!/bin/sh\necho tool2\n"}})
 	urlTgz2 := lab.Serve(t, "download/app2.tar.gz", tgz2)
+	urlShort := lab.Serve(t, "download/app.tgz", tgz2)
 	late := tarGz(t, []entry{
 		{name: "good", typ: tar.TypeReg, mode: 0o644, body: "x\n"},
 		{name: "../evil", typ: tar.TypeReg, mode: 0o644, body: "x\n"},
@@ -212,6 +221,12 @@ func TestDownloadModule(t *testing.T) {
 			After: `[ "$(cat /tmp/w/opt/xd/f)" = xz ]`,
 		},
 		{
+			Name:  "unpack a tgz",
+			Args:  &module.Download{URL: urlShort, SHA256: sha(tgz2), Path: "/tmp/w/app.tgz", Unpack: "/tmp/w/opt"},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + urlShort, attrs, "unpack into /tmp/w/opt"}},
+			After: `[ "$(/tmp/w/opt/app/bin/tool)" = tool2 ]`,
+		},
+		{
 			Name:  "unpack a zip",
 			Args:  &module.Download{URL: urlZip, SHA256: sha(zbuf.Bytes()), Path: "/tmp/w/z.zip", Unpack: "/tmp/w/opt", Group: "adm"},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + urlZip, "owner root, group adm, mode 0644", "unpack into /tmp/w/opt"}},
@@ -325,4 +340,90 @@ func TestDownloadRun(t *testing.T) {
 	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
+}
+
+// selfSigned returns a PEM file with a self-signed certificate for localhost
+// and its key.
+func selfSigned(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		DNSNames:     []string{"localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})) +
+		string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8}))
+}
+
+// spec: Modules/download
+func TestDownloadNetwork(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "download-network")
+	vm.MustRun(t, "cat > /root/tls.pem <<'EOF'\n"+selfSigned(t)+"EOF")
+	sum := sha([]byte("tool"))
+	// server starts a Python server on port that runs body after listen.
+	// It writes its PID to /root/listening when it accepts connections.
+	server := func(port, body string) string {
+		return `(python3 -c 'import os, socket, ssl, time
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", ` + port + `))
+s.listen()
+open("/root/listening", "w").write(str(os.getpid()))
+` + body + `' >/dev/null 2>&1 &) && timeout 10 sh -c 'until [ -e /root/listening ]; do sleep 0.1; done'`
+	}
+	stall := server("8099", `c, _ = s.accept()
+c.recv(65536)
+c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\npartial")
+time.sleep(600)`)
+	tls := server("8443", `ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain("/root/tls.pem")
+while True:
+    c, _ = s.accept()
+    try:
+        ctx.wrap_socket(c, server_side=True).recv(1)
+    except Exception:
+        pass
+    c.close()`)
+	attrs := "owner root, group root, mode 0644"
+	reset := "! pid=$(cat /root/listening 2>/dev/null) || ! kill $pid || while kill -0 $pid 2>/dev/null; do sleep 0.1; done\n[ -e /etc/ssl/certs ] || mv /etc/ssl/certs.off /etc/ssl/certs\nrm -rf /tmp/w /root/listening /var/lib/winch/downloads/test && mkdir /tmp/w"
+	stalled, untrusted := "http://127.0.0.1:8099/tool", "https://localhost:8443/tool"
+	vmtest.RunCases(t, vm, "download", reset, []vmtest.Case{
+		{
+			Name:         "a server that stops sending fails after the stall limit",
+			Setup:        stall,
+			Args:         &module.Download{URL: stalled, SHA256: sum, Path: "/tmp/w/f"},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + stalled, attrs}},
+			WantApplyErr: "download " + stalled + ": no data for 2m0s",
+			After:        `[ "$(ls -A /tmp/w)" = "" ]`,
+		},
+		{
+			Name:         "an untrusted certificate fails",
+			Setup:        tls,
+			Args:         &module.Download{URL: untrusted, SHA256: sum, Path: "/tmp/w/f"},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + untrusted, attrs}},
+			WantApplyErr: "certificate signed by unknown authority",
+		},
+		{
+			Name:         "https without CA certificates names ca-certificates",
+			Setup:        "mv /etc/ssl/certs /etc/ssl/certs.off && " + tls,
+			Args:         &module.Download{URL: untrusted, SHA256: sum, Path: "/tmp/w/f"},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + untrusted, attrs}},
+			WantApplyErr: "download " + untrusted + ": the host has no CA certificates; install the package ca-certificates with an earlier pkg step",
+		},
+	})
 }

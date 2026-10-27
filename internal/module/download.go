@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -44,7 +46,7 @@ func (d *Download) Main() string { return d.Path }
 
 var sha256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-var archiveTypes = []string{".tar.gz", ".tar.xz", ".zip"}
+var archiveTypes = []string{".tar.gz", ".tgz", ".tar.xz", ".zip"}
 
 func (d *Download) Validate() error {
 	if strings.ContainsFunc(d.URL, unicode.IsControl) {
@@ -67,7 +69,7 @@ func (d *Download) Validate() error {
 			return err
 		}
 		if archiveType(d.Path) == "" {
-			return &yamlx.FieldError{Field: "path", Msg: "unpack needs a path that ends in .tar.gz, .tar.xz, or .zip"}
+			return &yamlx.FieldError{Field: "path", Msg: "unpack needs a path that ends in .tar.gz, .tgz, .tar.xz, or .zip"}
 		}
 		if d.Unpack == d.Path {
 			return &yamlx.FieldError{Field: "unpack", Msg: "must differ from path"}
@@ -252,7 +254,7 @@ func (d *Download) Apply(ctx context.Context, note func(string)) error {
 	defer sub.Remove(tmpName)
 	defer tmp.Close()
 	note("download " + d.URL)
-	sum, err := fetch(ctx, d.URL, tmp)
+	sum, err := fetch(ctx, d.URL, tmp, stallLimit)
 	if err != nil {
 		return fmt.Errorf("download %s: %w", d.URL, err)
 	}
@@ -284,10 +286,40 @@ var client = &http.Client{Transport: func() http.RoundTripper {
 	return t
 }()}
 
-// fetch writes the body of url to w and returns its SHA-256.
-func fetch(ctx context.Context, url string, w io.Writer) (string, error) {
-	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
-	defer cancel()
+// stallLimit is the time without data after which a download fails.
+const stallLimit = 2 * time.Minute
+
+// fetch writes the body of url to w and returns its SHA-256. It fails when
+// no data arrives for stall.
+func fetch(ctx context.Context, url string, w io.Writer, stall time.Duration) (string, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	timer := time.AfterFunc(stall, func() { cancel(fmt.Errorf("no data for %s", stall)) })
+	defer timer.Stop()
+	sum, err := fetchBody(ctx, url, io.MultiWriter(w, writerFunc(func(p []byte) (int, error) {
+		timer.Reset(stall)
+		return len(p), nil
+	})))
+	if err != nil && ctx.Err() != nil {
+		return "", context.Cause(ctx)
+	}
+	var cerr *tls.CertificateVerificationError
+	if errors.As(err, &cerr) {
+		if _, serr := os.Stat(caBundle); errors.Is(serr, fs.ErrNotExist) {
+			return "", errors.New("the host has no CA certificates; install the package ca-certificates with an earlier pkg step")
+		}
+	}
+	return sum, err
+}
+
+// caBundle is the file of the package ca-certificates that Go reads.
+const caBundle = "/etc/ssl/certs/ca-certificates.crt"
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+func fetchBody(ctx context.Context, url string, w io.Writer) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
@@ -359,7 +391,7 @@ func (u unpacker) read(ctx context.Context, f *os.File, typ string) error {
 		return err
 	}
 	switch typ {
-	case ".tar.gz":
+	case ".tar.gz", ".tgz":
 		zr, err := gzip.NewReader(f)
 		if err != nil {
 			return err

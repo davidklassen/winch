@@ -1,6 +1,13 @@
 package module
 
-import "testing"
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+)
 
 // spec: Modules/download
 func TestDownloadValidate(t *testing.T) {
@@ -12,6 +19,7 @@ func TestDownloadValidate(t *testing.T) {
 	}{
 		{"file", "url: https://example.com/tool\n" + sum + "path: /usr/local/bin/tool\nmode: \"0755\"\n", ""},
 		{"unpack", "url: https://example.com/a.tar.gz\n" + sum + "path: /opt/a.tar.gz\nunpack: /opt/a\nowner: app\ngroup: app\n", ""},
+		{"unpack tgz", "url: http://example.com/a\n" + sum + "path: /opt/a.tgz\nunpack: /opt/a\n", ""},
 		{"unpack tar.xz", "url: http://example.com/a\n" + sum + "path: /opt/a.tar.xz\nunpack: /opt/a\n", ""},
 		{"unpack zip", "url: http://example.com/a\n" + sum + "path: /opt/a.zip\nunpack: /opt/a\n", ""},
 		{"no sha256", "url: https://example.com/tool\npath: /x\n", `t.yaml:1:1: missing key "sha256"`},
@@ -25,7 +33,7 @@ func TestDownloadValidate(t *testing.T) {
 		{"relative path", "url: https://example.com/tool\n" + sum + "path: x\n", `t.yaml:3:7: path: must be an absolute path`},
 		{"relative unpack", "url: https://example.com/a\n" + sum + "path: /a.zip\nunpack: opt\n", `t.yaml:4:9: unpack: must be an absolute path`},
 		{"unpack root", "url: https://example.com/a\n" + sum + "path: /a.zip\nunpack: /\n", `t.yaml:4:9: unpack: must not be /`},
-		{"unpack unknown format", "url: https://example.com/a\n" + sum + "path: /opt/a.tgz\nunpack: /opt/a\n", `t.yaml:3:7: path: unpack needs a path that ends in .tar.gz, .tar.xz, or .zip`},
+		{"unpack unknown format", "url: https://example.com/a\n" + sum + "path: /opt/a.tar.bz2\nunpack: /opt/a\n", `t.yaml:3:7: path: unpack needs a path that ends in .tar.gz, .tgz, .tar.xz, or .zip`},
 		{"unpack and mode", "url: https://example.com/a\n" + sum + "path: /opt/a.zip\nunpack: /opt/a\nmode: \"0755\"\n", `t.yaml:5:7: mode: unpack takes the modes of the archive, without write permission for group and others; it takes no mode`},
 		{"unpack into the path", "url: https://example.com/a\n" + sum + "path: /opt/a.zip\nunpack: /opt/a.zip\n", `t.yaml:4:9: unpack: must differ from path`},
 		{"bad mode", "url: https://example.com/a\n" + sum + "path: /x\nmode: \"0855\"\n", `t.yaml:4:7: mode: must be an octal mode such as "0755"`},
@@ -33,5 +41,40 @@ func TestDownloadValidate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Download{}, tt.yaml, tt.want) })
+	}
+}
+
+// spec: Modules/download
+func TestFetchStall(t *testing.T) {
+	const stall = 200 * time.Millisecond
+	tests := []struct {
+		name string
+		gap  time.Duration
+		want string
+	}{
+		{"data in time", stall / 4, ""},
+		{"no data", 2 * stall, "no data for 200ms"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for range 8 {
+					if _, err := w.Write([]byte("x")); err != nil {
+						return
+					}
+					w.(http.Flusher).Flush()
+					select {
+					case <-time.After(tt.gap):
+					case <-r.Context().Done():
+						return
+					}
+				}
+			}))
+			defer srv.Close()
+			_, err := fetch(t.Context(), srv.URL, io.Discard, stall)
+			if got := fmt.Sprint(err); tt.want == "" && err != nil || tt.want != "" && got != tt.want {
+				t.Errorf("fetch error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
