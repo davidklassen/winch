@@ -18,6 +18,7 @@ func main() {
 	// A sudoers without secure_path passes the login user's PATH, often
 	// without /usr/sbin.
 	os.Setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") //nolint:errcheck // cannot fail for a valid name
+	os.Setenv("HOME", "/root")                                                        //nolint:errcheck // cannot fail for a valid name
 	login := helper.LoginUID(os.Getenv("SUDO_UID"), os.Getuid())
 	for _, kv := range os.Environ() {
 		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "SUDO_") {

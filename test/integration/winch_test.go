@@ -324,23 +324,24 @@ func TestWinch(t *testing.T) {
 		}
 	})
 
-	t.Run("host commands run in / with C.UTF-8, PATH, umask 022, and no sudo variables", func(t *testing.T) {
+	t.Run("host commands run in / with C.UTF-8, PATH, HOME, umask 022, and no sudo variables", func(t *testing.T) {
 		// The systemctl in /usr/local/sbin records the environment and the
 		// working directory that a module command gets from the helper.
 		const wrapper = "#!/bin/sh\n{ xargs -0 -n1 < /proc/$$/environ; echo cwd $(readlink /proc/$$/cwd); } > /root/module.env\nexec /usr/bin/systemctl \"$@\"\n"
 		defer vm.MustRun(t, "rm -f /root/.ssh/authorized_keys /etc/sudoers.d/zz-path /usr/local/sbin/systemctl && "+
 			"sed -i '/^umask 077; export PATH/d' /home/admin/.bashrc /root/.bashrc")
-		// A sudoers without secure_path passes the login user's PATH. A strict
-		// umask, a short PATH, and LANGUAGE go in .bashrc before the check for
-		// an interactive shell, so that ssh commands read them.
+		// A sudoers without secure_path and with HOME in env_keep passes the
+		// login user's PATH and HOME. A strict umask, a short PATH, and
+		// LANGUAGE go in .bashrc before the check for an interactive shell, so
+		// that ssh commands read them.
 		vm.MustRun(t, "cp /home/admin/.ssh/authorized_keys /root/.ssh/authorized_keys && "+
-			"echo 'Defaults !secure_path' > /etc/sudoers.d/zz-path && "+
+			"printf 'Defaults !secure_path\\nDefaults env_keep += HOME\\n' > /etc/sudoers.d/zz-path && "+
 			"printf '"+wrapper+"' > /usr/local/sbin/systemctl && chmod 755 /usr/local/sbin/systemctl && "+
 			"sed -i '1i umask 077; export PATH=/usr/bin:/bin LANGUAGE=de' /home/admin/.bashrc /root/.bashrc")
 		path := "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 		files := map[string][]string{
-			"/root/env.out":    {"LC_ALL=C.UTF-8", `LC_CTYPE="C.UTF-8"`, "0022", path},
-			"/root/module.env": {"LC_ALL=C.UTF-8", path, "PWD=/", "cwd /"},
+			"/root/env.out":    {"LC_ALL=C.UTF-8", `LC_CTYPE="C.UTF-8"`, "0022", path, "HOME=/root"},
+			"/root/module.env": {"LC_ALL=C.UTF-8", path, "PWD=/", "cwd /", "HOME=/root"},
 		}
 		for _, user := range []string{"admin", "root"} {
 			dir := vmtest.WriteProject(t, map[string]string{

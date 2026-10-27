@@ -153,7 +153,9 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	if dir == "" {
 		dir = StateDir
 	}
-	args := []string{"-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "RemoteCommand=none", "-o", "PermitLocalCommand=no"}
+	args := []string{"-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+		"-o", "RemoteCommand=none", "-o", "PermitLocalCommand=no",
+		"-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
 	if cfg.Batch {
 		args = append(args, "-o", "BatchMode=yes")
 	}
