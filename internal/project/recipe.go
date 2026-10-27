@@ -135,7 +135,7 @@ func (l *loader) loadRecipes() error {
 			r.Require = append(r.Require, req)
 		}
 		for _, sn := range rf.Steps {
-			st, err := l.loadStep(sn, r, false)
+			st, err := l.loadStep(sn, r, plainStep)
 			rerrs = append(rerrs, err)
 			r.Steps = append(r.Steps, st)
 		}
@@ -173,7 +173,7 @@ func (l *loader) loadHandlers(n *yamlx.Node, r *Recipe) error {
 		}
 		h := &Handler{Name: p.Key, Recipe: r, Pos: p.KeyPos}
 		for _, sn := range p.Value.Items {
-			st, err := l.loadStep(sn, r, true)
+			st, err := l.loadStep(sn, r, handlerStep)
 			errs = append(errs, err)
 			h.Steps = append(h.Steps, st)
 		}

@@ -72,17 +72,22 @@ func Shell(ctx context.Context, command string) error {
 // ShellLimit is Shell with the time limit limit. After the limit, the command
 // gets SIGTERM, and SIGKILL when it still runs after killDelay.
 func ShellLimit(ctx context.Context, command string, limit, killDelay time.Duration) error {
+	// The error shows only the end of the output.
+	out := &tailBuffer{max: 64 << 10}
+	if err := shell(ctx, command, limit, killDelay, out); err != nil {
+		return failure(command, err, string(out.tail()))
+	}
+	return nil
+}
+
+// shell runs command through sh -c in /, with its output in out.
+func shell(ctx context.Context, command string, limit, killDelay time.Duration, out *tailBuffer) error {
 	ctx, cancel := context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = "/"
-	// The error shows only the end of the output.
-	out := &tailBuffer{max: 64 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
-	if err := wait(ctx, cmd, killDelay); err != nil {
-		return failure(command, err, string(out.b))
-	}
-	return nil
+	return wait(ctx, cmd, killDelay)
 }
 
 // wait runs cmd in its own process group. When ctx ends, the group gets
@@ -114,16 +119,63 @@ func wait(ctx context.Context, cmd *exec.Cmd, killDelay time.Duration) error {
 	return err
 }
 
-// tailBuffer keeps the last max bytes written to it.
+// tailBuffer keeps the last max bytes written to it. It trims only at twice
+// max, so a long output is not copied at each write.
 type tailBuffer struct {
 	b   []byte
 	max int
+	cut bool
 }
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
 	t.b = append(t.b, p...)
-	if over := len(t.b) - t.max; over > 0 {
-		t.b = append(t.b[:0], t.b[over:]...)
+	if len(t.b) > 2*t.max {
+		t.b = append(t.b[:0], t.tail()...)
 	}
 	return len(p), nil
+}
+
+// tail returns the last max bytes, and records when it drops some.
+func (t *tailBuffer) tail() []byte {
+	if over := len(t.b) - t.max; over > 0 {
+		t.cut = true
+		return t.b[over:]
+	}
+	return t.b
+}
+
+// ExecResult is the result of a command of winch exec.
+type ExecResult struct {
+	Output   string `json:"output"`
+	ExitCode int    `json:"exit_code"`
+	// Signal is the signal that ended the command, or 0.
+	Signal int `json:"signal,omitempty"`
+}
+
+// Exec runs a command of winch exec as Shell does.
+func Exec(ctx context.Context, command string) (ExecResult, error) {
+	return execLimit(ctx, command, commandLimit, KillDelay)
+}
+
+// execLimit is Exec with the time limit limit. Exit codes and signals are
+// results; the time limit is an error.
+func execLimit(ctx context.Context, command string, limit, killDelay time.Duration) (ExecResult, error) {
+	out := &tailBuffer{max: 1 << 20}
+	err := shell(ctx, command, limit, killDelay, out)
+	tail := out.tail()
+	if err != nil && !errors.As(err, new(*exec.ExitError)) {
+		return ExecResult{}, failure(command, err, string(tail))
+	}
+	res := ExecResult{Output: string(tail)}
+	if out.cut {
+		res.Output = "(output cut to the last 1 MiB)\n" + res.Output
+	}
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
+		res.ExitCode = exit.ExitCode()
+		if ws := exit.Sys().(syscall.WaitStatus); ws.Signaled() {
+			res.Signal = int(ws.Signal())
+			res.ExitCode = 128 + res.Signal
+		}
+	}
+	return res, nil
 }

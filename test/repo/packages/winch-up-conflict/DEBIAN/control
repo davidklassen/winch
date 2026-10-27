@@ -1,0 +1,6 @@
+Package: winch-up-conflict
+Version: 2
+Architecture: all
+Maintainer: winch
+Conflicts: winch-up-old
+Description: test

@@ -1,2 +1,2 @@
-name="a" enabled=false count=0 mode="" (at :0:0) note=<nil> tags=[] pos=test.yaml:1:1
+name="a" enabled=false count=0 mode="" (at ) note=<nil> tags=[] pos=test.yaml:1:1
 hosts=[{Name:h1 Address: Pos:test.yaml:3:3}]

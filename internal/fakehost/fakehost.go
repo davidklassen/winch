@@ -47,6 +47,9 @@ type Hosts struct {
 	groups   map[string]bool
 	answers  map[string]string
 	results  map[string]module.Result
+	execs    map[string]module.ExecResult
+	// failExec and failClose hold the hosts whose exec or close fails.
+	failExec, failClose map[string]bool
 	// OnCheck and OnApply run before each check and each apply of a step,
 	// with the host and the main argument of the step.
 	OnCheck, OnApply func(host, main string)
@@ -81,6 +84,9 @@ func New() *Hosts {
 		failCmd:    map[string]bool{},
 		Log:        map[string][]string{},
 		results:    map[string]module.Result{},
+		execs:      map[string]module.ExecResult{},
+		failExec:   map[string]bool{},
+		failClose:  map[string]bool{},
 		Connects:   map[string]int{},
 		Users:      map[string]string{},
 		down:       map[string]bool{},
@@ -572,10 +578,38 @@ func (c *Conn) Health(ctx context.Context, h protocol.Health) error {
 	return nil
 }
 
+// FailExec makes winch exec fail on a host; FailClose makes its sessions
+// fail to close.
+func (h *Hosts) FailExec(host string)  { h.failExec[host] = true }
+func (h *Hosts) FailClose(host string) { h.failClose[host] = true }
+
 func (c *Conn) Close() error {
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
 	c.hosts.Open--
 	c.hosts.Trace = append(c.hosts.Trace, "close "+c.host)
+	if c.hosts.failClose[c.host] {
+		return errors.New("session: exit status 255")
+	}
 	return nil
+}
+
+func (h *Hosts) SetExec(host string, res module.ExecResult) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.execs[host] = res
+}
+
+// Exec records the command in Log and returns the result that SetExec set.
+func (c *Conn) Exec(ctx context.Context, command string) (module.ExecResult, error) {
+	if ctx.Err() != nil {
+		return module.ExecResult{}, fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
+	}
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "exec "+command)
+	if c.hosts.failExec[c.host] {
+		return module.ExecResult{}, errors.New("session: the helper ended")
+	}
+	return c.hosts.execs[c.host], nil
 }

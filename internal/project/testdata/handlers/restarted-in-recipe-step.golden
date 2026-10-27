@@ -1,1 +1,1 @@
-recipes/db/recipe.yaml:4:7: restarted: only handler steps can use restarted
+recipes/db/recipe.yaml:4:7: restarted: only handler steps and winch run can use restarted

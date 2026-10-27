@@ -354,3 +354,11 @@ func TestNameOrIDFromValue(t *testing.T) {
 		})
 	}
 }
+
+// spec: CLI/Errors
+func TestPosWithoutLine(t *testing.T) {
+	err := Errorf(Pos{File: "winch run: nam=htop"}, `unknown key "nam"`)
+	if got := err.Error(); got != `winch run: nam=htop: unknown key "nam"` {
+		t.Errorf("error = %q", got)
+	}
+}

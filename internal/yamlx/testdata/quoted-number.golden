@@ -1,2 +1,2 @@
-name="10" enabled=false count=0 mode="" (at :0:0) note=<nil> tags=[] pos=test.yaml:1:1
+name="10" enabled=false count=0 mode="" (at ) note=<nil> tags=[] pos=test.yaml:1:1
 hosts=[]

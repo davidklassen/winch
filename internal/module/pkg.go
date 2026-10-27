@@ -67,6 +67,10 @@ var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEN
 // aptLock makes apt wait for another apt, such as unattended-upgrades.
 const aptLock = "DPkg::Lock::Timeout=300"
 
+// aptApply are the flags of an apt-get call that changes packages. It keeps
+// changed conffiles and asks no question.
+var aptApply = []string{"-y", "-q", "-o", aptLock, "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold"}
+
 // aptGet runs apt-get without the time limit. An apt-get that the limit stops
 // leaves dpkg half done.
 func aptGet(ctx context.Context, args ...string) (string, error) {
@@ -382,8 +386,7 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 			return err
 		}
 	}
-	args := []string{p.verb(), "-y", "-q", "-o", aptLock,
-		"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold"}
+	args := append([]string{p.verb()}, aptApply...)
 	if p.verb() == "install" {
 		args = append(args, p.installFlags()...)
 	}

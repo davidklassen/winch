@@ -142,6 +142,26 @@ type nameAt struct {
 // inventory is the path in inventory, or the default from winch.yaml. set
 // holds the --set flags.
 func Load(ctx context.Context, dir, inventory, pipeline string, set []string, keys Keys) (*Project, error) {
+	return load(ctx, dir, inventory, set, keys, func(l *loader) (*Pipeline, error) { return l.loadPipeline(pipeline) })
+}
+
+// Command is a winch run or winch exec on the command line: a host pattern,
+// and for winch run, a module with its key=value arguments.
+type Command struct {
+	Name    string
+	Pattern string
+	Module  string
+	Args    []string
+}
+
+// LoadCommand reads the project in dir with one inventory and a pipeline run.
+// Its one stage run holds the step of c on the hosts of its pattern; without a
+// module, the stage has no steps.
+func LoadCommand(ctx context.Context, dir, inventory string, keys Keys, c Command) (*Project, error) {
+	return load(ctx, dir, inventory, nil, keys, func(l *loader) (*Pipeline, error) { return l.commandPipeline(c) })
+}
+
+func load(ctx context.Context, dir, inventory string, set []string, keys Keys, pipeline func(*loader) (*Pipeline, error)) (*Project, error) {
 	cfg, cfgErr := loadConfig(dir)
 	if cfg == nil {
 		return nil, cfgErr
@@ -149,7 +169,7 @@ func Load(ctx context.Context, dir, inventory, pipeline string, set []string, ke
 	l, lErr := newLoader(dir, cfg)
 	sets, setErr := l.parseSets(set)
 	invs, invErr := l.loadInventories(inventory, cfg, false, sets)
-	pl, plErr := l.loadPipeline(pipeline)
+	pl, plErr := pipeline(l)
 	if err := errors.Join(cfgErr, lErr, setErr, invErr, plErr); err != nil {
 		return nil, err
 	}
@@ -170,6 +190,61 @@ func Load(ctx context.Context, dir, inventory, pipeline string, set []string, ke
 	}
 	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, Warnings: warnings, vars: l.order, filter: keys.Filter, secrets: len(l.sealed) > 0,
 		set: setNames, peers: peerVars(invs[0], l.decls)}, nil
+}
+
+// commandPipeline builds the pipeline of c. Errors name the command and the
+// argument, as a position without a line.
+func (l *loader) commandPipeline(c Command) (*Pipeline, error) {
+	where := yamlx.Pos{File: "winch " + c.Name}
+	s := Stage{Name: "run", Hosts: c.Pattern, HostsPos: where}
+	if c.Module == "" {
+		return &Pipeline{Name: "run", Stages: []Stage{s}}, nil
+	}
+	if _, ok := module.New(c.Module); !ok {
+		return nil, yamlx.Errorf(where, "unknown module %q%s", c.Module, yamlx.Suggest(c.Module, module.Names()))
+	}
+	args := &yamlx.Node{Kind: yamlx.Map, Pos: yamlx.Pos{File: where.File + ": " + c.Module}}
+	var errs []error
+	for _, a := range c.Args {
+		pos := yamlx.Pos{File: where.File + ": " + a}
+		key, text, ok := strings.Cut(a, "=")
+		if !ok || key == "" {
+			errs = append(errs, yamlx.Errorf(pos, "an argument is key=value, such as name=htop"))
+			continue
+		}
+		if slices.ContainsFunc(args.Pairs, func(p yamlx.Pair) bool { return p.Key == key }) {
+			errs = append(errs, yamlx.Errorf(pos, "%s is given twice", key))
+			continue
+		}
+		n, err := parseValue(text, where.File)
+		if err != nil {
+			errs = append(errs, yamlx.Errorf(pos, "%s", err))
+			continue
+		}
+		setPos(n, pos)
+		args.Pairs = append(args.Pairs, yamlx.Pair{Key: key, KeyValue: key, KeyPos: pos, Value: n})
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	step := &yamlx.Node{Kind: yamlx.Map, Pos: where, Pairs: []yamlx.Pair{{Key: c.Module, KeyValue: c.Module, KeyPos: where, Value: args}}}
+	st, err := l.loadStep(step, nil, runStep)
+	if err != nil {
+		return nil, err
+	}
+	s.Steps = []Step{st}
+	return &Pipeline{Name: "run", Stages: []Stage{s}}, nil
+}
+
+func setPos(n *yamlx.Node, pos yamlx.Pos) {
+	n.Pos = pos
+	for _, item := range n.Items {
+		setPos(item, pos)
+	}
+	for i := range n.Pairs {
+		n.Pairs[i].KeyPos = pos
+		setPos(n.Pairs[i].Value, pos)
+	}
 }
 
 // Validate loads every pipeline in dir against an inventory: the one in
@@ -595,7 +670,7 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 			}
 		}
 		for _, sn := range sf.Steps {
-			st, err := l.loadStep(sn, nil, false)
+			st, err := l.loadStep(sn, nil, plainStep)
 			if err == nil {
 				err = l.resolveNotify(&st)
 			}
@@ -619,9 +694,18 @@ var stepFields = []string{"name", "recipe", "vars", "when", "loop", "then", "not
 
 const thenInLoop = "then runs once after the last element; it cannot use item"
 
-// loadStep loads a step of a stage, or of the recipe r. handler is true for a
-// step of a handler.
-func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) {
+// stepKind tells where a step is: in a stage or a recipe, in a handler, or
+// on the command line of winch run.
+type stepKind int
+
+const (
+	plainStep stepKind = iota
+	handlerStep
+	runStep
+)
+
+// loadStep loads a step of a stage, or of the recipe r.
+func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error) {
 	if n.Kind != yamlx.Map {
 		return Step{}, yamlx.Errorf(n.Pos, "a step must be a map, got %s", yamlx.Describe(n))
 	}
@@ -680,7 +764,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 			st.then, err = compileThen(p.Value, thenScope)
 			errs = append(errs, err)
 			continue
-		case p.Key == "notify" && handler:
+		case p.Key == "notify" && kind == handlerStep:
 			errs = append(errs, yamlx.Errorf(p.KeyPos, "a handler step cannot notify"))
 			continue
 		case p.Key == "notify":
@@ -706,10 +790,10 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 		if err := l.loadArgs(&st, m, p.Value, sc); err != nil {
 			errs = append(errs, err)
 		}
-		if p.Key == "service" && !handler {
+		if p.Key == "service" && kind == plainStep {
 			for _, a := range p.Value.Pairs {
 				if a.Key == "restarted" || a.Key == "reloaded" {
-					errs = append(errs, yamlx.Errorf(a.KeyPos, "%s: only handler steps can use %s", a.Key, a.Key))
+					errs = append(errs, yamlx.Errorf(a.KeyPos, "%s: only handler steps and winch run can use %s", a.Key, a.Key))
 				}
 			}
 		}
@@ -728,6 +812,9 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 	if r == nil {
 		for _, p := range argsNode.Pairs {
 			if st.Module == "file" && (p.Key == "template" || p.Key == "source") || st.Module == "repo" && p.Key == "key" {
+				if kind == runStep {
+					return Step{}, yamlx.Errorf(p.Value.Pos, "winch run cannot use %s; use it in a recipe", p.Key)
+				}
 				return Step{}, yamlx.Errorf(p.Value.Pos, "%s: a step in a stage cannot use %s; use it in a recipe", p.Key, p.Key)
 			}
 		}

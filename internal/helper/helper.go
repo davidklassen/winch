@@ -65,6 +65,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			err = handled(req.Params, handlers)
 		case req.Method == "command":
 			err = command(ctx, req.Params, thens)
+		case req.Method == "exec":
+			result, err = execCommand(ctx, req.Params)
 		case req.Method == "health":
 			err = runHealth(ctx, req.Params)
 		case req.Method == "check":
@@ -279,4 +281,12 @@ func command(ctx context.Context, params json.RawMessage, thens records) error {
 		return err
 	}
 	return thens.remove(string(line))
+}
+
+func execCommand(ctx context.Context, params json.RawMessage) (module.ExecResult, error) {
+	var e protocol.Exec
+	if err := json.Unmarshal(params, &e); err != nil {
+		return module.ExecResult{}, fmt.Errorf("decode exec: %w", err)
+	}
+	return module.Exec(ctx, e.Command)
 }

@@ -11,7 +11,12 @@ type Pos struct {
 	Col  int
 }
 
+// String gives only File for a position without a line, such as a
+// command-line argument.
 func (p Pos) String() string {
+	if p.Line == 0 {
+		return p.File
+	}
 	return fmt.Sprintf("%s:%d:%d", p.File, p.Line, p.Col)
 }
 

@@ -1,0 +1,6 @@
+Package: winch-up
+Version: 2
+Architecture: all
+Maintainer: winch
+Depends: ucf
+Description: test

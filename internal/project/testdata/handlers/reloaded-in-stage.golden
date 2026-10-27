@@ -1,1 +1,1 @@
-pipelines/site.yaml:17:11: reloaded: only handler steps can use reloaded
+pipelines/site.yaml:17:11: reloaded: only handler steps and winch run can use reloaded

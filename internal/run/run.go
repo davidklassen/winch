@@ -36,6 +36,7 @@ type Conn interface {
 	Command(ctx context.Context, command string, then protocol.Then) error
 	// Health runs a health gate.
 	Health(ctx context.Context, h protocol.Health) error
+	Exec(ctx context.Context, command string) (module.ExecResult, error)
 	Close() error
 }
 

@@ -70,7 +70,9 @@ func leaves(err error) []error {
 
 func newDiagnostic(severity string, err error) diagnostic {
 	d := diagnostic{Severity: severity, Message: err.Error()}
-	if e, ok := err.(*yamlx.Error); ok {
+	// An error of a command-line argument has no line; its message keeps the
+	// argument.
+	if e, ok := err.(*yamlx.Error); ok && e.Pos.Line > 0 {
 		d.File, d.Line, d.Col, d.Message = e.Pos.File, e.Pos.Line, e.Pos.Col, e.Msg
 	}
 	d.File, d.Message = secret.Printable(d.File), secret.PrintableLines(d.Message)

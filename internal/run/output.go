@@ -113,12 +113,8 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 		groups[i].hosts = append(groups[i].hosts, h.Name)
 	}
 	for _, g := range groups {
-		name := strings.Join(g.hosts, ", ")
-		if len(g.hosts) > 1 {
-			name += fmt.Sprintf(" (%d hosts)", len(g.hosts))
-		}
 		var t color.Text
-		header(&t, "", name)
+		header(&t, "", groupName(g.hosts))
 		t = append(t, g.body...)
 		t.Add(color.Plain, "\n")
 		color.Fprint(out, t)
@@ -140,6 +136,15 @@ func markLine(t *color.Text, prefix, mark, rest string) {
 	t.Add(color.Plain, prefix)
 	t.Add(markStyles[mark], mark)
 	t.Add(color.Plain, rest)
+}
+
+// groupName names the hosts of a block of output that they share.
+func groupName(hosts []string) string {
+	name := strings.Join(hosts, ", ")
+	if len(hosts) > 1 {
+		name += fmt.Sprintf(" (%d hosts)", len(hosts))
+	}
+	return name
 }
 
 // header adds a bold line of a host, stage, or recipe.

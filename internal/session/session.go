@@ -387,6 +387,13 @@ func (s *Session) Health(ctx context.Context, h protocol.Health) error {
 	return s.call("health", h, nil)
 }
 
+// Exec runs a command of winch exec as root on the host.
+func (s *Session) Exec(ctx context.Context, command string) (module.ExecResult, error) {
+	var res module.ExecResult
+	err := s.call("exec", protocol.Exec{Command: command}, &res)
+	return res, err
+}
+
 func (s *Session) step(method, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
 	args, err := json.Marshal(m)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"slices"
 	"time"
 
 	"github.com/davidklassen/winch/internal/cli"
@@ -23,13 +24,13 @@ import (
 func main() {
 	filter := secret.NewFilter()
 	stderr := color.NewWriter(os.Stderr, filter.Parts, false)
-	// The first Ctrl-C ends ctx: no new step starts. The second ends the
+	// The first Ctrl-C ends ctx: no new step or exec command starts. The second ends the
 	// sessions.
 	ctx, stop := context.WithCancel(context.Background())
 	sessions, kill := context.WithCancel(context.Background())
 	// Other commands run no steps, so a Ctrl-C ends them at once. A third
 	// Ctrl-C ends winch.
-	if len(os.Args) > 1 && (os.Args[1] == "plan" || os.Args[1] == "apply") {
+	if len(os.Args) > 1 && slices.Contains([]string{"plan", "apply", "run", "exec"}, os.Args[1]) {
 		interrupts := make(chan os.Signal, 2)
 		signal.Notify(interrupts, os.Interrupt)
 		go func() {

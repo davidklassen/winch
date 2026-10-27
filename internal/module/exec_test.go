@@ -133,8 +133,8 @@ func TestTailBuffer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if string(b.b) != "cdef" {
-		t.Errorf("tail = %q, want cdef", b.b)
+	if string(b.tail()) != "cdef" || !b.cut {
+		t.Errorf("tail = %q, cut %v, want cdef, cut", b.tail(), b.cut)
 	}
 }
 

@@ -143,47 +143,49 @@ func (l *loader) parseSets(set []string) ([]setValue, error) {
 			errs = append(errs, fmt.Errorf("--set %s: %s", s, unknownVariable(name, l.vars)))
 			continue
 		}
-		n, err := yamlx.Parse("--set", []byte(text))
+		n, err := parseValue(text, "--set")
 		if err != nil {
-			msg := err.Error()
-			if ye, ok := errors.AsType[*yamlx.Error](err); ok {
-				msg = ye.Msg
-			}
-			errs = append(errs, fmt.Errorf("--set %s: %s", s, msg))
-			continue
-		}
-		if yamlx.HasComment([]byte(text)) {
-			errs = append(errs, fmt.Errorf("--set %s: YAML drops the comment; quote it: %q", s, text))
-			continue
-		}
-		if n.Kind == yamlx.Null && text == "" {
-			errs = append(errs, fmt.Errorf("--set %s: null is not a value", s))
-			continue
-		}
-		if n.Kind == yamlx.Null {
-			errs = append(errs, fmt.Errorf("--set %s: YAML reads null; quote it: %q", s, text))
-			continue
-		}
-		if t := findTag(n); t != nil {
-			errs = append(errs, fmt.Errorf("--set %s: --set gives no %s values", s, t.Tag))
-			continue
-		}
-		if n.Kind == yamlx.Map {
-			errs = append(errs, fmt.Errorf("--set %s: YAML reads a map; quote it: %q", s, text))
-			continue
-		}
-		quoted := strings.HasPrefix(text, `"`) || strings.HasPrefix(text, "'")
-		if n.Kind == yamlx.Scalar && !quoted && n.Text != text || n.Kind == yamlx.List && !strings.HasPrefix(text, "[") {
-			errs = append(errs, fmt.Errorf("--set %s: YAML changes the text; quote it: %q", s, text))
-			continue
-		}
-		if msg := textChange(n); msg != "" {
-			errs = append(errs, fmt.Errorf("--set %s: %s", s, msg))
+			errs = append(errs, fmt.Errorf("--set %s: %w", s, err))
 			continue
 		}
 		out = append(out, setValue{name: name, value: yamlx.Value(n)})
 	}
 	return out, errors.Join(errs...)
+}
+
+// parseValue parses a value of the command line as YAML. what names the flag
+// or the command.
+func parseValue(text, what string) (*yamlx.Node, error) {
+	n, err := yamlx.Parse(what, []byte(text))
+	if err != nil {
+		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
+			return nil, errors.New(ye.Msg)
+		}
+		return nil, err
+	}
+	if yamlx.HasComment([]byte(text)) {
+		return nil, fmt.Errorf("YAML drops the comment; quote it: %q", text)
+	}
+	if n.Kind == yamlx.Null && text == "" {
+		return nil, errors.New("null is not a value")
+	}
+	if n.Kind == yamlx.Null {
+		return nil, fmt.Errorf("YAML reads null; quote it: %q", text)
+	}
+	if t := findTag(n); t != nil {
+		return nil, fmt.Errorf("%s gives no %s values", what, t.Tag)
+	}
+	if n.Kind == yamlx.Map {
+		return nil, fmt.Errorf("YAML reads a map; quote it: %q", text)
+	}
+	quoted := strings.HasPrefix(text, `"`) || strings.HasPrefix(text, "'")
+	if n.Kind == yamlx.Scalar && !quoted && n.Text != text || n.Kind == yamlx.List && !strings.HasPrefix(text, "[") {
+		return nil, fmt.Errorf("YAML changes the text; quote it: %q", text)
+	}
+	if msg := textChange(n); msg != "" {
+		return nil, errors.New(msg)
+	}
+	return n, nil
 }
 
 // textChange tells which number in a --set value YAML reads with other text,

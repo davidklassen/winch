@@ -71,6 +71,12 @@ type Command struct {
 	Then    Then   `json:"then"`
 }
 
+// Exec is the params of exec, which runs a command of winch exec. Its result
+// is a module.ExecResult.
+type Exec struct {
+	Command string `json:"command"`
+}
+
 // Pending is the result of pending: the records of the project.
 type Pending struct {
 	Handlers []string `json:"handlers"`

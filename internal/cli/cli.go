@@ -81,6 +81,8 @@ Commands:
   validate   Load the project and check it. Connects to no host.
   plan       Show the changes. Change nothing.
   apply      Show the changes, ask, then make them.
+  run        Plan, ask, and apply one module step on some hosts.
+  exec       Run a shell command on some hosts and show its output.
   secret     Make an age key, make or encrypt a secret, or encrypt all
              secrets again.
 
@@ -91,24 +93,30 @@ type command struct {
 	help string
 	// inventory is true when the command takes --inventory.
 	inventory bool
-	// project is true when the command takes --set and --json.
-	project bool
+	// set is true when the command takes --set.
+	set bool
+	// json is true when the command takes --json.
+	json bool
 	// apply is true when the command takes --yes and --check.
 	apply bool
 	// exitCode is true when the command takes --exit-code.
 	exitCode bool
-	// hosts is true when the command connects to hosts: it takes --hosts,
-	// --stages, --user, and --batch.
-	hosts bool
+	// selection is true when the command takes --hosts and --stages.
+	selection bool
+	// sessions is true when the command connects to hosts: it takes --user
+	// and --batch.
+	sessions bool
 	// host is true when the command takes --host.
 	host bool
 	run  func(ctx context.Context, env Env, f *flags, args []string) int
 }
 
 var commands = map[string]command{
-	"validate":        {help: validateHelp, inventory: true, project: true, run: validate},
-	"plan":            {help: planHelp, inventory: true, project: true, exitCode: true, hosts: true, run: plan},
-	"apply":           {help: applyHelp, inventory: true, project: true, apply: true, hosts: true, run: apply},
+	"validate":        {help: validateHelp, inventory: true, set: true, json: true, run: validate},
+	"plan":            {help: planHelp, inventory: true, set: true, json: true, exitCode: true, selection: true, sessions: true, run: plan},
+	"apply":           {help: applyHelp, inventory: true, set: true, json: true, apply: true, selection: true, sessions: true, run: apply},
+	"run":             {help: runHelp, inventory: true, json: true, apply: true, sessions: true, run: runModule},
+	"exec":            {help: execHelp, inventory: true, json: true, sessions: true, run: execCommand},
 	"secret":          {help: secretHelp, run: secretUsage},
 	"secret init":     {help: initHelp, run: secretInit},
 	"secret generate": {help: generateHelp, inventory: true, host: true, run: secretGenerate},
@@ -204,6 +212,60 @@ Flags:
   --json                        Write JSON events on stdout.
 `
 
+const runHelp = `Examples:
+  winch run mail upgrade mode=full
+  winch run 'mail & !mail2' pkg name=[htop,curl]
+  winch run monitor service name=monit restarted=true
+  winch run web file path=/etc/motd content=hello --check a3f9c2e1d07b4c58
+
+Plan, ask, and apply one module step on the hosts of the pattern.
+
+Usage: winch run <pattern> <module> [key=value ...] [flags]
+
+Each value parses as YAML: name=[htop,curl] is a list. Quote a value that
+YAML would change, such as mode='"0644"'. The step runs in a stage named
+run. Unlike a pipeline step, it can use restarted and reloaded.
+
+winch asks only when stdin and stderr are terminals. Without a terminal,
+and without --yes or --check, run prints the plan and exits with code 5.
+Its last line is the command that applies the plan with its hash.
+
+Flags:
+  --inventory <path>            The inventory file for this run.
+  --user [<host>=]<name>        SSH login user, for all hosts or one host.
+                                Repeatable.
+  --batch                       ssh asks no questions, and sessions start
+                                in parallel. The apply question stays.
+  --yes                         Apply without the question.
+  --check <hash>                Apply only when the plan has this hash.
+                                Otherwise exit with code 6 and change
+                                nothing.
+  --json                        Write JSON events on stdout.
+`
+
+const execHelp = `Examples:
+  winch exec all -- uptime
+  winch exec web -- docker logs app --tail 50
+  winch exec 'web & !web3' --json -- systemctl is-active nginx
+
+Run a shell command on the hosts of the pattern, at the same time, and
+show its output. No plan and no question.
+
+Usage: winch exec <pattern> [flags] -- <command ...>
+
+winch joins the words after -- with spaces and runs them through sh -c
+as root, in /. Hosts with the same output and exit code share one block.
+winch exits with code 1 when the command fails on a host.
+
+Flags:
+  --inventory <path>            The inventory file for this run.
+  --user [<host>=]<name>        SSH login user, for all hosts or one host.
+                                Repeatable.
+  --batch                       ssh asks no questions, and sessions start
+                                in parallel.
+  --json                        Write one exec event per host on stdout.
+`
+
 type flags struct {
 	inventory string
 	set       []string
@@ -217,6 +279,7 @@ type flags struct {
 	exitCode bool
 	json     bool
 	host     string
+	command  string
 }
 
 // Main runs the command in args. All output passes through env.Filter.
@@ -260,11 +323,13 @@ func Main(ctx context.Context, args []string, env Env) int {
 	if cmd.inventory {
 		fs.StringVar(&f.inventory, "inventory", "", "")
 	}
-	if cmd.project {
+	if cmd.set {
 		fs.Func("set", "", func(s string) error {
 			f.set = append(f.set, s)
 			return nil
 		})
+	}
+	if cmd.json {
 		fs.BoolVar(&f.json, "json", false, "")
 	}
 	if cmd.apply {
@@ -277,9 +342,11 @@ func Main(ctx context.Context, args []string, env Env) int {
 	if cmd.exitCode {
 		fs.BoolVar(&f.exitCode, "exit-code", false, "")
 	}
-	if cmd.hosts {
+	if cmd.selection {
 		fs.Func("hosts", "", notEmpty(&f.hosts))
 		fs.Func("stages", "", notEmpty(&f.stages))
+	}
+	if cmd.sessions {
 		fs.Func("user", "", func(s string) error {
 			f.users = append(f.users, s)
 			return nil
@@ -289,7 +356,14 @@ func Main(ctx context.Context, args []string, env Env) int {
 	if cmd.host {
 		fs.Func("host", "", notEmpty(&f.host))
 	}
-	pos, err := parse(fs, args[1:])
+	flagArgs := args[1:]
+	// The words after -- of exec are the command, also those that start
+	// with -.
+	if i := slices.Index(flagArgs, "--"); name == "exec" && i >= 0 {
+		f.command = strings.Join(flagArgs[i+1:], " ")
+		flagArgs = flagArgs[:i]
+	}
+	pos, err := parse(fs, flagArgs)
 	if errors.Is(err, flag.ErrHelp) {
 		fmt.Fprint(env.stdout, cmd.help)
 		return exitOK
@@ -375,12 +449,20 @@ func (o *output) load(ctx context.Context, f *flags, cmd string, args []string) 
 		o.fail(fmt.Errorf("winch: %s needs one pipeline", cmd))
 		return nil, false
 	}
+	return o.loadWith(f, cmd, func(keys project.Keys) (*project.Project, error) {
+		return project.Load(ctx, o.env.Dir, f.inventory, args[0], f.set, keys)
+	})
+}
+
+// loadWith loads the project with load and selects the hosts and stages of
+// the flags.
+func (o *output) loadWith(f *flags, cmd string, load func(project.Keys) (*project.Project, error)) (*project.Project, bool) {
 	identity, err := o.env.identity()
 	if err != nil {
 		o.fail(err)
 		return nil, false
 	}
-	p, err := project.Load(ctx, o.env.Dir, f.inventory, args[0], f.set, project.Keys{Identity: identity, Filter: o.env.Filter})
+	p, err := load(project.Keys{Identity: identity, Filter: o.env.Filter})
 	if err != nil {
 		o.fail(err)
 		return nil, false
@@ -435,14 +517,28 @@ var hashRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func apply(ctx context.Context, env Env, f *flags, args []string) int {
 	o := newOutput(env, f)
-	if f.check != nil && !hashRe.MatchString(*f.check) {
-		o.fail(fmt.Errorf("winch: --check %q: a plan hash has 16 hex characters, such as a3f9c2e1d07b4c58", *f.check))
+	if !checkHash(o, f) {
 		return o.end(exitInvalid, summary{})
 	}
 	p, ok := o.load(ctx, f, "apply", args)
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
+	return o.apply(ctx, f, p, append([]string{"apply"}, args...))
+}
+
+func checkHash(o *output, f *flags) bool {
+	if f.check != nil && !hashRe.MatchString(*f.check) {
+		o.fail(fmt.Errorf("winch: --check %q: a plan hash has 16 hex characters, such as a3f9c2e1d07b4c58", *f.check))
+		return false
+	}
+	return true
+}
+
+// apply plans, asks, and applies the pipeline of p. words are the command
+// and its arguments, for the command that applies the plan.
+func (o *output) apply(ctx context.Context, f *flags, p *project.Project, words []string) int {
+	env := o.env
 	connect, opts := env.sessions(f)
 	pl := run.MakePlan(ctx, p, connect, opts)
 	o.plan(pl)
@@ -459,7 +555,7 @@ func apply(ctx context.Context, env Env, f *flags, args []string) int {
 	// the hosts with changes fail as interrupted.
 	if f.check == nil && !f.yes && ctx.Err() == nil {
 		if !env.Terminal {
-			s.command = applyCommand(args[0], f, pl.Hash())
+			s.command = applyCommand(words, f, pl.Hash())
 			if o.ev == nil {
 				fmt.Fprintf(env.stdout, "To apply, run: %s\n", s.command)
 			}
@@ -476,6 +572,69 @@ func apply(ctx context.Context, env Env, f *flags, args []string) int {
 	}
 	s.apply = run.Apply(ctx, pl, connect, rep)
 	return o.end(worst(code, failedCode(s.apply.Failed)), s)
+}
+
+func runModule(ctx context.Context, env Env, f *flags, args []string) int {
+	o := newOutput(env, f)
+	if len(args) < 2 {
+		o.fail(errors.New("winch: run needs a host pattern and a module"))
+		return o.end(exitInvalid, summary{})
+	}
+	if !checkHash(o, f) {
+		return o.end(exitInvalid, summary{})
+	}
+	p, ok := o.loadCommand(ctx, f, project.Command{Name: "run", Pattern: args[0], Module: args[1], Args: args[2:]})
+	if !ok {
+		return o.end(exitInvalid, summary{})
+	}
+	return o.apply(ctx, f, p, append([]string{"run"}, args...))
+}
+
+func execCommand(ctx context.Context, env Env, f *flags, args []string) int {
+	o := newOutput(env, f)
+	if f.command == "" {
+		o.fail(errors.New("winch exec: put the command after --, such as winch exec all -- uptime"))
+		return o.end(exitInvalid, summary{})
+	}
+	if len(args) != 1 {
+		o.fail(errors.New("winch: exec needs one host pattern before --"))
+		return o.end(exitInvalid, summary{})
+	}
+	p, ok := o.loadCommand(ctx, f, project.Command{Name: "exec", Pattern: args[0]})
+	if !ok {
+		return o.end(exitInvalid, summary{})
+	}
+	connect, opts := env.sessions(f)
+	results := run.Exec(ctx, p.Name, p.Pipeline.Stages[0].Targets, f.command, connect, opts)
+	if o.ev != nil {
+		o.ev.Exec(results)
+	} else {
+		run.WriteExec(env.stdout, env.stderr, results)
+	}
+	failed := map[string]error{}
+	code := exitOK
+	for _, r := range results {
+		if r.Err != nil {
+			failed[r.Host] = r.Err
+		}
+		if r.ExitCode != 0 {
+			code = exitFailed
+		}
+	}
+	return o.end(worst(code, failedCode(failed)), summary{})
+}
+
+// loadCommand loads the project with the pipeline of c, which must run on at
+// least one host.
+func (o *output) loadCommand(ctx context.Context, f *flags, c project.Command) (*project.Project, bool) {
+	p, ok := o.loadWith(f, c.Name, func(keys project.Keys) (*project.Project, error) {
+		return project.LoadCommand(ctx, o.env.Dir, f.inventory, keys, c)
+	})
+	if ok && len(p.Pipeline.Stages[0].Targets) == 0 {
+		o.fail(fmt.Errorf("winch %s: the host pattern %q matches no host", c.Name, c.Pattern))
+		return nil, false
+	}
+	return p, ok
 }
 
 // ask asks for confirmation. An interrupt answers no.
@@ -496,9 +655,13 @@ func ask(ctx context.Context, env Env) bool {
 	}
 }
 
-// applyCommand is the command that applies the plan with the hash.
-func applyCommand(pipeline string, f *flags, hash string) string {
-	cmd := "winch apply " + quote(pipeline)
+// applyCommand is the command that applies the plan with the hash. words are
+// the command and its arguments.
+func applyCommand(words []string, f *flags, hash string) string {
+	cmd := "winch"
+	for _, w := range words {
+		cmd += " " + quote(w)
+	}
 	if f.inventory != "" {
 		cmd += " --inventory " + quote(f.inventory)
 	}
