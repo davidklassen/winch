@@ -42,6 +42,7 @@ func parseTemplate(file string, text []byte, sc scope) (*tmplFile, error) {
 	if err := errors.Join(c.errs...); err != nil {
 		return nil, err
 	}
+	failNull(t)
 	return &tmplFile{t: t, item: c.item, reads: c.reads}, nil
 }
 
@@ -62,6 +63,7 @@ func parseInline(pos yamlx.Pos, text string, sc scope) (*template.Template, []st
 	if err := errors.Join(c.errs...); err != nil {
 		return nil, nil, err
 	}
+	failNull(t)
 	return t, c.reads, nil
 }
 
@@ -224,6 +226,59 @@ func (c *nameCheck) field(ident []string, dot, first int) {
 	}
 }
 
+// nullError is the error of an action that prints a null value. text is the
+// pipeline of the action.
+type nullError struct{ text string }
+
+func (nullError) Error() string { return "the value is null" }
+
+// failNull makes each action of t that prints fail on a null value: the
+// template package prints null as "<no value>". It adds the notNull function
+// at the end of the pipeline, after the parse, so that a template cannot call
+// it.
+func failNull(t *template.Template) {
+	t.Funcs(template.FuncMap{"notNull": notNull})
+	var walk func(n tparse.Node)
+	walk = func(n tparse.Node) {
+		switch n := n.(type) {
+		case *tparse.ListNode:
+			if n != nil {
+				for _, x := range n.Nodes {
+					walk(x)
+				}
+			}
+		case *tparse.ActionNode:
+			if len(n.Pipe.Decl) > 0 {
+				return
+			}
+			text := n.Pipe.String()
+			n.Pipe.Cmds = append(n.Pipe.Cmds, &tparse.CommandNode{NodeType: tparse.NodeCommand, Pos: n.Pipe.Pos, Args: []tparse.Node{
+				tparse.NewIdentifier("notNull").SetPos(n.Pipe.Pos),
+				&tparse.StringNode{NodeType: tparse.NodeString, Pos: n.Pipe.Pos, Quoted: strconv.Quote(text), Text: text},
+			}})
+		case *tparse.IfNode:
+			walk(n.List)
+			walk(n.ElseList)
+		case *tparse.RangeNode:
+			walk(n.List)
+			walk(n.ElseList)
+		case *tparse.WithNode:
+			walk(n.List)
+			walk(n.ElseList)
+		}
+	}
+	for _, d := range t.Templates() {
+		walk(d.Root)
+	}
+}
+
+func notNull(text string, v any) (any, error) {
+	if v == nil {
+		return nil, nullError{text}
+	}
+	return v, nil
+}
+
 // index is the built-in index, except that a missing map key is an error.
 func index(item any, keys ...any) (any, error) {
 	v := reflect.ValueOf(item)
@@ -276,7 +331,11 @@ func join(l any, sep string) (string, error) {
 	}
 	parts := make([]string, v.Len())
 	for i := range v.Len() {
-		parts[i] = fmt.Sprint(v.Index(i).Interface())
+		e := v.Index(i).Interface()
+		if e == nil {
+			return "", fmt.Errorf("join: element %d is null", i+1)
+		}
+		parts[i] = fmt.Sprint(e)
 	}
 	return strings.Join(parts, sep), nil
 }

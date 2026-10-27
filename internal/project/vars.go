@@ -438,6 +438,12 @@ func (e *Env) render(t *template.Template) (string, error) {
 	if err == nil {
 		return b.String(), nil
 	}
+	var ne nullError
+	if errors.As(err, &ne) {
+		// The error names the added notNull call; name the action instead.
+		at, _, _ := strings.Cut(err.Error(), " at <")
+		return "", errors.New(at + " at <" + ne.text + ">: " + ne.Error())
+	}
 	m := missingKeyRe.FindStringSubmatch(err.Error())
 	if m == nil {
 		return "", err

@@ -992,7 +992,10 @@ func (st Step) items(e *Env) ([]any, error) {
 		return nil, yamlx.Errorf(n.Pos, "loop: must be a list, got %s", yamlx.Describe(n))
 	}
 	var out []any
-	for _, item := range n.Items {
+	for i, item := range n.Items {
+		if item.Kind == yamlx.Null {
+			return nil, yamlx.Errorf(item.Pos, "loop: element %d is null", i+1)
+		}
 		out = append(out, yamlx.Value(item))
 	}
 	return out, nil

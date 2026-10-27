@@ -702,6 +702,71 @@ func TestArgNull(t *testing.T) {
 	}
 }
 
+// spec: Templates and expressions/Data
+func TestTemplateNull(t *testing.T) {
+	const vars = "  nm: {k: null, d: {j: null}}\n  nl: [a, null]\n"
+	tests := []struct {
+		name string
+		text string
+		// want is the content, or the error without the position.
+		want string
+		// col is the column of the error in the template file.
+		col int
+	}{
+		{"depth 0", "{{ range .vars.nl }}{{ . }}{{ end }}", ".: the value is null", 24},
+		{"depth 1", "{{ .vars.nm.k }}", ".vars.nm.k: the value is null", 4},
+		{"depth 1 list", "{{ index .vars.nl 1 }}", "index .vars.nl 1: the value is null", 4},
+		{"depth 2", "{{ .vars.nm.d.j }}", ".vars.nm.d.j: the value is null", 4},
+		{"variable", "{{ $x := .vars.nm.k }}{{ $x }}", "$x: the value is null", 26},
+		{"defined template", "{{ define \"x\" }}{{ .k }}{{ end }}{{ template \"x\" .vars.nm }}", ".k: the value is null", 20},
+		{"join", "{{ join .vars.nl \",\" }}", "join .vars.nl \",\": error calling join: join: element 2 is null", 4},
+		{"condition", "{{ if .vars.nm.k }}set{{ else }}null{{ end }}", "null", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name+" file", func(t *testing.T) {
+			got := evalOne(t, vars, "  - file:\n      path: /a\n      template: t.tmpl\n",
+				map[string]string{"recipes/r/templates/t.tmpl": tt.text})
+			want := tt.want
+			if tt.col > 0 {
+				want = fmt.Sprintf("error: recipes/r/templates/t.tmpl:1:%d: %s", tt.col, tt.want)
+			}
+			if got != want {
+				t.Errorf("got  %q\nwant %q", got, want)
+			}
+		})
+		t.Run(tt.name+" tpl", func(t *testing.T) {
+			got := evalOne(t, vars, "  - file:\n      path: /a\n      content: !tpl '"+tt.text+"'\n", nil)
+			want := tt.want
+			if tt.col > 0 {
+				want = "error: recipes/r/recipe.yaml:4:16: content: " + tt.want
+			}
+			if got != want {
+				t.Errorf("got  %q\nwant %q", got, want)
+			}
+		})
+	}
+}
+
+// spec: Steps
+func TestLoopNull(t *testing.T) {
+	tests := []struct {
+		name string
+		loop string
+		want string
+	}{
+		{"literal", "[a, null]", "error: recipes/r/recipe.yaml:5:15: loop: element 2 is null"},
+		{"expression", "!expr vars.nl", "error: recipes/r/recipe.yaml:5:11: loop: element 2 is null"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evalOne(t, "  nl: [a, null]\n", "  - file:\n      path: !tpl '/srv/{{ .item }}'\n      content: x\n    loop: "+tt.loop+"\n", nil)
+			if got != tt.want {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // spec: Variables ("unless when skips the recipe step there"); Running a pipeline/Plan
 func TestStartRecipeWhen(t *testing.T) {
 	files := map[string]string{
