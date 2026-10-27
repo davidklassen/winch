@@ -223,6 +223,28 @@ func Decrypt(text string, ids []age.Identity) (string, error) {
 	return string(plain), nil
 }
 
+// Stanzas returns the number of recipients that text, base64 of an age file,
+// is encrypted for. It needs no identity.
+func Stanzas(text string) (int, error) {
+	data, err := decode(text)
+	if err != nil {
+		return 0, err
+	}
+	var c stanzaCounter
+	if _, err := age.Decrypt(bytes.NewReader(data), &c); !errors.Is(err, age.ErrIncorrectIdentity) {
+		return 0, err
+	}
+	return c.n, nil
+}
+
+// stanzaCounter is an identity that counts the stanzas and unwraps none.
+type stanzaCounter struct{ n int }
+
+func (c *stanzaCounter) Unwrap(stanzas []*age.Stanza) ([]byte, error) {
+	c.n = len(stanzas)
+	return nil, age.ErrIncorrectIdentity
+}
+
 // OneLine returns the value for winch secret encrypt: a value with no line
 // break before its end loses its trailing newline.
 func OneLine(value string) (string, error) {

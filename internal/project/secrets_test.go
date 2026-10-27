@@ -1076,3 +1076,54 @@ func TestWriteSecretThroughLink(t *testing.T) {
 		t.Errorf("target:\n%s", data)
 	}
 }
+
+// spec: Variables/Secrets (winch validate warns about the recipients)
+func TestValidateWarnsOldRecipients(t *testing.T) {
+	tests := []struct {
+		name              string
+		encrypted, listed int
+		want              string
+	}{
+		{"a member joined", 2, 3, "this secret is encrypted for 2 recipients; winch.yaml lists 3; run winch secret rekey"},
+		{"one recipient", 1, 2, "this secret is encrypted for 1 recipient; winch.yaml lists 2; run winch secret rekey"},
+		{"a member left", 3, 1, "this secret is encrypted for 3 recipients; winch.yaml lists 1; run winch secret rekey"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var keys []testKey
+			var pubs []string
+			for range max(tt.encrypted, tt.listed) {
+				k := newKey(t)
+				keys = append(keys, k)
+				pubs = append(pubs, k.id.Recipient().String())
+			}
+			rec, err := secret.ParseRecipients(pubs[:tt.encrypted])
+			if err != nil {
+				t.Fatal(err)
+			}
+			text, err := secret.Encrypt("hunter2", rec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := writeProject(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + strings.Join(pubs[:tt.listed], "\n  - ") + "\nvars:\n  pw:\n",
+				"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + text + "\n",
+				"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
+			})
+			warnings, err := Validate(dir, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "inventories/test.yaml:4:11: " + tt.want
+			if len(warnings) != 1 || warnings[0].Error() != want {
+				t.Errorf("warnings = %v, want %q", warnings, want)
+			}
+			if _, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: keys[0].path}); err != nil {
+				t.Fatal(err)
+			}
+			if warnings, err := Validate(dir, "", nil); err != nil || len(warnings) != 0 {
+				t.Errorf("after rekey: warnings = %v, %v", warnings, err)
+			}
+		})
+	}
+}

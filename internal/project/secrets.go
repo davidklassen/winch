@@ -86,6 +86,31 @@ func walkTags(n *yamlx.Node, f func(*yamlx.Node)) {
 	}
 }
 
+// staleSecrets returns a warning for each sealed value whose number of
+// recipients is not n. age records only the number, not the keys.
+func (l *loader) staleSecrets(n int) ([]*yamlx.Error, error) {
+	var out []*yamlx.Error
+	var errs []error
+	for _, s := range l.sealed {
+		got, err := secret.Stanzas(s.s.Text)
+		if err != nil {
+			errs = append(errs, yamlx.Errorf(s.pos, "!secret: %v", err))
+			continue
+		}
+		if got != n {
+			out = append(out, yamlx.Errorf(s.pos, "this secret is encrypted for %s; winch.yaml lists %d; run winch secret rekey", recipientCount(got), n))
+		}
+	}
+	return out, errors.Join(errs...)
+}
+
+func recipientCount(n int) string {
+	if n == 1 {
+		return "1 recipient"
+	}
+	return fmt.Sprintf("%d recipients", n)
+}
+
 // unsealAll decrypts every sealed value with the identity of keys, and adds
 // each plaintext to the filter.
 func (l *loader) unsealAll(ctx context.Context, keys Keys) error {

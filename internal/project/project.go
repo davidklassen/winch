@@ -211,8 +211,12 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err != nil {
 		return nil, err
 	}
+	stale, err := l.staleSecrets(len(cfg.Recipients))
+	if err != nil {
+		return nil, err
+	}
 	yml, err := ymlFiles(dir)
-	return slices.Concat(warnings, l.warnings, l.secretFileWarnings(invs, pls), yml), err
+	return slices.Concat(warnings, l.warnings, l.secretFileWarnings(invs, pls), stale, yml), err
 }
 
 // ymlFiles returns a warning for each .yml file in pipelines/ and in a recipe
