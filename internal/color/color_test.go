@@ -100,3 +100,25 @@ func TestKeyBlockColor(t *testing.T) {
 		t.Errorf("Fprint = %q, want %q", b.String(), want)
 	}
 }
+
+// spec: Variables/Secrets in output (text filter); CLI/JSON output
+func TestWriteJSON(t *testing.T) {
+	f := secret.NewFilter()
+	f.Add("1234")
+	f.Add("type")
+	f.Add(`hunt"er`)
+	tests := []struct {
+		in, want string
+	}{
+		{`{"type":"a type","line":1234}` + "\n", `{"type":"a (secret)","line":1234}` + "\n"},
+		{`{"k":["x hunt\"er y",1234,"\\"]}`, `{"k":["x (secret) y",1234,"\\"]}`},
+		{`{"k":"12\t34 \u0026"}`, `{"k":"12\t34 \u0026"}`},
+	}
+	for _, tt := range tests {
+		var b bytes.Buffer
+		err := NewWriter(&b, f.Parts, false).WriteJSON([]byte(tt.in))
+		if b.String() != tt.want || err != nil {
+			t.Errorf("WriteJSON(%s) wrote %s, %v; want %s", tt.in, b.String(), err, tt.want)
+		}
+	}
+}

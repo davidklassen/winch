@@ -11,8 +11,7 @@ import (
 	"github.com/davidklassen/winch/internal/secret"
 )
 
-// Events writes JSON events, one object per line. Each event is one write,
-// so the secret filter of the writer sees the whole line.
+// Events writes JSON events, one object per line and one write per line.
 type Events struct {
 	w   *color.Writer
 	now func() time.Time
@@ -22,9 +21,7 @@ func NewEvents(w *color.Writer, now func() time.Time) *Events {
 	return &Events{w: w, now: now}
 }
 
-// Write writes the event v, a struct, with its type and the time first. The
-// JSON escapes <, >, and & as json.Marshal does, as the JSON form of a secret
-// in the filter does.
+// Write writes the event v, a struct, with its type and the time first.
 func (e *Events) Write(typ string, v any) {
 	head, _ := json.Marshal(struct {
 		Type string `json:"type"`
@@ -38,7 +35,7 @@ func (e *Events) Write(typ string, v any) {
 		line = append(line, '}')
 	}
 	// A failed write of stdout has no one to tell.
-	_, _ = e.w.Write(append(line, '\n'))
+	_ = e.w.WriteJSON(append(line, '\n'))
 }
 
 // Events is the Reporter of apply that writes applied and host events.

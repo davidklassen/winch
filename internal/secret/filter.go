@@ -22,15 +22,16 @@ func NewFilter() *Filter {
 	return &Filter{values: map[string]bool{}}
 }
 
-// Add adds a secret value: the value and each of its lines, in plain,
-// JSON-escaped, base64, and URL-encoded form, and as the output prints it,
-// also JSON-escaped. It skips text shorter than 4
+// Add adds a secret value: the value and each of its lines, without the
+// white space around them, in plain and JSON-escaped form, and as the output
+// prints it, also JSON-escaped. It adds the base64 and URL-encoded forms of
+// both the trimmed and the exact text. It skips text shorter than 4
 // characters, and true and false.
 func (f *Filter) Add(value string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, v := range append([]string{value}, strings.Split(value, "\n")...) {
-		v = strings.TrimSpace(v)
+	for _, exact := range append([]string{value}, strings.Split(value, "\n")...) {
+		v := strings.TrimSpace(exact)
 		if utf8.RuneCountInString(v) < 4 || v == "true" || v == "false" {
 			continue
 		}
@@ -39,9 +40,11 @@ func (f *Filter) Add(value string) {
 			j, _ := json.Marshal(s)
 			f.values[string(j[1:len(j)-1])] = true
 		}
-		f.values[base64.RawStdEncoding.EncodeToString([]byte(v))] = true
-		f.values[url.QueryEscape(v)] = true
-		f.values[url.PathEscape(v)] = true
+		for _, s := range []string{v, exact} {
+			f.values[base64.RawStdEncoding.EncodeToString([]byte(s))] = true
+			f.values[url.QueryEscape(s)] = true
+			f.values[url.PathEscape(s)] = true
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -288,4 +289,33 @@ func applyByHost(out string) string {
 	}
 	slices.SortStableFunc(lines[from:to], func(a, b string) int { return strings.Compare(host(a), host(b)) })
 	return strings.Join(lines, "")
+}
+
+// spec: Variables/Secrets in output (text filter); CLI/JSON output
+func TestJSONNumericSecret(t *testing.T) {
+	identity, id := newIdentity(t)
+	dir := secretProject(t, id)
+	setPassword(t, dir, encrypt(t, dir, "1234"))
+	// The file step that reads the secret without a mode warns at line 1234.
+	pipeline := strings.Repeat("#\n", 1229) + `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/pw
+          content: !tpl "pw={{ .vars.pw }}\n"
+`
+	if err := os.WriteFile(filepath.Join(dir, "pipelines/site.yaml"), []byte(pipeline), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "plan", "site", "--json")
+	var warning map[string]any
+	for _, l := range jsonLines(t, r.out) {
+		if l["type"] == "diagnostic" {
+			warning = l
+		}
+	}
+	if warning["line"] != float64(1234) || !strings.Contains(warning["message"].(string), "set mode") {
+		t.Errorf("exit %d, warning %v; want the mode warning at line 1234", r.code, warning)
+	}
 }

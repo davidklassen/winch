@@ -540,3 +540,37 @@ func TestSecretGenerate(t *testing.T) {
 		}
 	}
 }
+
+// spec: Variables/Secrets in output (text filter)
+func TestSecretBase64Output(t *testing.T) {
+	identity, id := newIdentity(t)
+	dir := secretProject(t, id)
+	setPassword(t, dir, encrypt(t, dir, "first-line\nsecond-line\n"))
+	// The base64 of the exact value, with its last newline.
+	command := "echo Zmlyc3QtbGluZQpzZWNvbmQtbGluZQo= | base64 -d"
+	pipeline := `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/pw
+          content: !tpl "{{ .vars.pw }}"
+          mode: "0600"
+        then: "` + command + `"
+`
+	if err := os.WriteFile(filepath.Join(dir, "pipelines/site.yaml"), []byte(pipeline), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	h.FailCommand("web1", command)
+	for _, args := range [][]string{{"apply", "site", "--yes"}, {"apply", "site", "--yes", "--json"}} {
+		h.SetFile("web1", "/etc/pw", "old\n")
+		r := winchWith(t, dir, "", identity, "", h, false, "", args...)
+		if r.code != exitFailed || !strings.Contains(r.out+r.err, "then: echo (secret)= | base64 -d: exit status 1") {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, r.code, r.out, r.err)
+		}
+		if strings.Contains(r.out+r.err, "Zmlyc3Qt") {
+			t.Errorf("%v: the output shows the base64 of the secret:\n%s%s", args, r.out, r.err)
+		}
+	}
+}

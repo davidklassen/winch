@@ -2,6 +2,7 @@
 package color
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -64,6 +65,39 @@ func (w *Writer) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	return len(p), nil
+}
+
+// WriteJSON writes p, JSON text, with the secrets masked inside each string
+// value. Object keys stay, and so does text outside strings, so p stays
+// valid JSON with its fields.
+func (w *Writer) WriteJSON(p []byte) error {
+	out := make([]byte, 0, len(p))
+	for i := 0; i < len(p); {
+		if p[i] != '"' {
+			out = append(out, p[i])
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(p) && p[j] != '"' {
+			if p[j] == '\\' {
+				j++
+			}
+			j++
+		}
+		j++
+		if j < len(p) && p[j] == ':' {
+			out = append(out, p[i:j]...)
+		} else {
+			var s string
+			_ = json.Unmarshal(p[i:min(j, len(p))], &s)
+			b, _ := json.Marshal(w.filter([]string{s})[0])
+			out = append(out, b...)
+		}
+		i = j
+	}
+	_, err := w.w.Write(out)
+	return err
 }
 
 // Fprint writes t to w in one write. The filter sees all of t before the
