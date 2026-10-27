@@ -122,7 +122,7 @@ func result(p *Project, err error) []byte {
 	return []byte(describe(p))
 }
 
-// spec: Project layout; Inventory; Inventory/Host patterns; Pipelines; Steps
+// spec: Project layout; Inventory; Inventory/Host patterns; Pipelines; Steps; Templates and expressions/Data
 func TestLoad(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -187,6 +187,19 @@ func TestLoad(t *testing.T) {
 				"      - service: {name: getty@tty1, running: true}\n" +
 				"      - service: {name: a@b@c, running: true}\n" +
 				"      - service: {name: nginx, running: true}\n")}},
+		{name: "arg-null-running", files: map[string]string{"pipelines/site.yaml": stage(
+			"      - service: {name: app, running: ~}\n" +
+				"      - service:\n" +
+				"          name: app\n" +
+				"          running:\n" +
+				"          enabled: true\n" +
+				"      - service: {name: app, running: ~, enabled: !expr \"true\"}\n")}},
+		{name: "arg-null-validate", files: map[string]string{"pipelines/site.yaml": stage(
+			"      - file:\n" +
+				"          path: /x\n" +
+				"          content: a\n" +
+				"          validate:\n" +
+				"      - pkg: {name: [a, ~]}\n")}},
 		{name: "owner-group-numbers", files: map[string]string{"pipelines/site.yaml": stage(
 			"      - file: {path: /a, content: a, owner: -1}\n" +
 				"      - file: {path: /b, content: a, owner: 1.5}\n" +

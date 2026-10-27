@@ -915,6 +915,7 @@ func (st Step) sets(name string) bool {
 // computed values decode again for each host; the load checks their keys
 // and the types of the other values.
 func (l *loader) loadArgs(st *Step, m module.Module, n *yamlx.Node, sc scope) error {
+	sc.args = true
 	v, err := compileValue(n, sc)
 	if err != nil {
 		return err
@@ -926,7 +927,6 @@ func (l *loader) loadArgs(st *Step, m module.Module, n *yamlx.Node, sc scope) er
 		st.Args = m
 		return nil
 	}
-	v.args = true
 	st.args = v
 	return yamlx.DecodeLazy(n, m)
 }

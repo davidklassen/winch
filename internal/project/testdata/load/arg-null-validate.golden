@@ -1,0 +1,2 @@
+pipelines/site.yaml:8:20: validate: null is not a value
+pipelines/site.yaml:9:25: name: null is not a value

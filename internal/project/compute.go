@@ -49,6 +49,9 @@ type scope struct {
 	sealed bool
 	// noMatch is the reason that match() is not allowed, or "" when it is.
 	noMatch string
+	// args is true in module arguments: a literal null fails there. The
+	// decoder would leave a pointer argument unset for it.
+	args bool
 }
 
 const itemOutsideLoop = "item is defined only in a step with loop"
@@ -338,7 +341,7 @@ type value struct {
 // compileValue compiles the tagged scalars of n. It returns nil when n has
 // none.
 func compileValue(n *yamlx.Node, sc scope) (*value, error) {
-	v := &value{node: n, computed: map[*yamlx.Node]*computed{}}
+	v := &value{node: n, args: sc.args, computed: map[*yamlx.Node]*computed{}}
 	var errs []error
 	var walk func(n *yamlx.Node, name string)
 	walk = func(n *yamlx.Node, name string) {
@@ -350,6 +353,8 @@ func compileValue(n *yamlx.Node, sc scope) (*value, error) {
 			c, err := compile(n, sc)
 			errs = append(errs, err)
 			v.computed[n] = c
+		case n.Kind == yamlx.Null && sc.args && name != "":
+			errs = append(errs, yamlx.Errorf(n.Pos, "%snull is not a value", prefix(name)))
 		case n.Kind == yamlx.Map:
 			for _, p := range n.Pairs {
 				walk(p.Value, p.Key)
