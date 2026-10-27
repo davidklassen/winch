@@ -415,6 +415,69 @@ func TestLoadWarnings(t *testing.T) {
 	check("Validate", warnings)
 }
 
+// spec: Variables/Secrets in output
+func TestLoadSecretFileModeWarning(t *testing.T) {
+	const msg = "the file holds a secret and others can read it; set mode"
+	for _, tt := range []struct {
+		name, file string
+		files      map[string]string
+		want       string
+	}{
+		{"no mode", `content: !tpl "pw={{ .vars.pw }}"`, nil, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"0644", "content: !tpl \"pw={{ .vars.pw }}\"\n      mode: \"0644\"", nil, "recipes/r/recipe.yaml:5:13: " + msg},
+		{"0604", "content: !tpl \"pw={{ .vars.pw }}\"\n      mode: \"0604\"", nil, "recipes/r/recipe.yaml:5:13: " + msg},
+		{"0640", "content: !tpl \"pw={{ .vars.pw }}\"\n      mode: \"0640\"", nil, ""},
+		{"computed mode", "content: !tpl \"pw={{ .vars.pw }}\"\n      mode: !expr '\"0644\"'", nil, ""},
+		{"no secret", `content: !tpl "x={{ .vars.short }}"`, nil, ""},
+		{"plain content", `content: "x"`, nil, ""},
+		{"secret default", `content: !expr vars.token`, nil, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"default reads secret", `content: !expr vars.line`, nil, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ .vars.line }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template without secret", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ .vars.short }}\n"}, ""},
+		{"absent", "absent: true", nil, ""},
+		{"loop over secrets", "content: !expr item\n    loop: !expr values(vars.users)", nil, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"plain content in loop over secrets", "content: x\n    loop: !expr values(vars.users)", nil, ""},
+		{"computed template name in loop over secrets", "template: !expr '\"t.tmpl\"'\n    loop: !expr values(vars.users)", map[string]string{"recipes/r/templates/t.tmpl": "{{ .item }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"handler", "content: x\nhandlers:\n  h:\n    - file:\n        path: /etc/h\n        content: !expr vars.token", nil, "recipes/r/recipe.yaml:7:7: " + msg},
+		{"recipe step value", "", map[string]string{
+			"recipes/r/recipe.yaml": "vars:\n  r_pw:\nsteps:\n  - file:\n      path: /a\n      content: !expr vars.r_pw\n",
+			"pipelines/site.yaml":   stage("      - recipe: r\n        vars: {r_pw: !expr vars.pw}\n"),
+		}, "recipes/r/recipe.yaml:4:5: " + msg},
+		{"stage step", "content: x", map[string]string{
+			"pipelines/site.yaml": stage("      - recipe: r\n      - file:\n          path: /a\n          content: !expr vars.pw\n"),
+		}, "pipelines/site.yaml:6:9: " + msg},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			k := newKey(t)
+			all := with(secretProject, with(map[string]string{"recipes/r/recipe.yaml": recipe("  - file:\n      path: /etc/app.conf\n      " + tt.file + "\n")}, tt.files))
+			all["winch.yaml"] = strings.Replace(all["winch.yaml"], "RECIPIENT", k.id.Recipient().String(), 1)
+			dir := writeProject(t, k.sealFiles(t, all))
+			p, err := Load(t.Context(), dir, "", "site", nil, k.keys())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := warningText(p.Warnings); got != tt.want {
+				t.Errorf("Load warnings = %q, want %q", got, tt.want)
+			}
+			warnings, err := Validate(dir, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := warningText(warnings); got != tt.want {
+				t.Errorf("Validate warnings = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func warningText(ws []*yamlx.Error) string {
+	var out []string
+	for _, w := range ws {
+		out = append(out, w.Error())
+	}
+	return strings.Join(out, "\n")
+}
+
 // spec: Variables/Secrets (winch secret rekey)
 func TestRekey(t *testing.T) {
 	oldKey, newKey2 := newKey(t), newKey(t)

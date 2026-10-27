@@ -169,6 +169,13 @@ func (f *File) WithoutContent() Module {
 	return &c
 }
 
+// OthersRead reports whether the mode, or the default mode, lets others read
+// the file.
+func (f *File) OthersRead() bool {
+	_, _, mode, err := attrs("", "", f.Mode, "0644")
+	return err == nil && mode&0o004 != 0
+}
+
 func (f *File) Text() ([]byte, string) {
 	return f.Data, notText(f.Data)
 }

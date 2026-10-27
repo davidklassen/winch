@@ -120,6 +120,14 @@ type Step struct {
 	// tmplReads are the variables that the template file of the step reads
 	// by name. A computed file name reads those of all templates of the recipe.
 	tmplReads []string
+	// open is set for a file step whose mode lets others read the file.
+	open *openFile
+}
+
+type openFile struct {
+	pos yamlx.Pos
+	// reads are the variables that the content of the file reads.
+	reads []string
 }
 
 // nameAt is a handler name of notify, with the handler after the load.
@@ -154,7 +162,7 @@ func Load(ctx context.Context, dir, inventory, pipeline string, set []string, ke
 	if err != nil {
 		return nil, err
 	}
-	warnings = append(warnings, l.warnings...)
+	warnings = slices.Concat(warnings, l.warnings, l.secretFileWarnings(invs, []*Pipeline{pl}))
 	setNames := map[string]bool{}
 	for _, v := range sets {
 		setNames[v.name] = true
@@ -179,12 +187,14 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err != nil {
 		return nil, err
 	}
+	var pls []*Pipeline
 	for _, file := range files {
 		pl, err := l.decodePipeline(file)
 		errs = append(errs, err)
 		if err != nil {
 			continue
 		}
+		pls = append(pls, pl)
 		for _, inv := range invs {
 			errs = append(errs, resolve(inv, pl))
 		}
@@ -197,7 +207,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 		return nil, err
 	}
 	yml, err := ymlFiles(dir)
-	return slices.Concat(warnings, l.warnings, yml), err
+	return slices.Concat(warnings, l.warnings, l.secretFileWarnings(invs, pls), yml), err
 }
 
 // ymlFiles returns a warning for each .yml file in pipelines/ and in a recipe
@@ -681,8 +691,103 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, handler bool) (Step, error) 
 	}
 	if st.Module == "file" {
 		st.tmplReads = r.templateReads(argsNode)
+		st.open = openContent(st, args.(*module.File), argsNode)
 	}
 	return st, nil
+}
+
+// openContent returns the content reads of the file step st when its mode
+// lets others read the file, or nil.
+func openContent(st Step, f *module.File, n *yamlx.Node) *openFile {
+	if f.Absent || !f.OthersRead() {
+		return nil
+	}
+	pos := st.Pos
+	var reads []string
+	computed := false
+	for _, p := range n.Pairs {
+		switch {
+		case p.Key == "template":
+			computed = true
+		case p.Key == "mode" && p.Value.Tag != "":
+			return nil
+		case p.Key == "mode":
+			pos = p.Value.Pos
+		case p.Key == "content" && st.args != nil && st.args.computed[p.Value] != nil:
+			reads = st.args.computed[p.Value].reads
+			computed = true
+		}
+	}
+	reads = slices.Concat(reads, st.tmplReads)
+	if computed && st.loop != nil {
+		reads = append(reads, st.loop.reads()...)
+	}
+	if len(reads) == 0 {
+		return nil
+	}
+	return &openFile{pos, reads}
+}
+
+// secretFileWarnings returns a warning for each file step whose content
+// reads a secret variable and whose mode lets others read the file. The steps
+// are those of the stages of pls and of every recipe. A variable is secret
+// when a value or a default holds a !secret, or when a default or a value of
+// a recipe step reads a secret variable.
+func (l *loader) secretFileWarnings(invs []*Inventory, pls []*Pipeline) []*yamlx.Error {
+	secret := map[string]bool{}
+	for _, inv := range invs {
+		for _, h := range inv.Hosts {
+			for name, v := range h.Vars {
+				if hasSealed(v) {
+					secret[name] = true
+				}
+			}
+		}
+	}
+	var steps []Step
+	for _, pl := range pls {
+		for _, s := range pl.Stages {
+			steps = append(steps, s.Steps...)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(l.recipes)) {
+		if r := l.recipes[name]; r != nil {
+			steps = append(steps, r.Steps...)
+			for _, h := range r.Handlers {
+				steps = append(steps, h.Steps...)
+			}
+		}
+	}
+	vars := slices.Clone(l.decls)
+	for _, v := range l.decls {
+		if v.node == nil {
+			continue
+		}
+		walkTags(v.node, func(t *yamlx.Node) {
+			if t.Tag == "!secret" {
+				secret[v.Name] = true
+			}
+		})
+	}
+	for _, st := range steps {
+		vars = append(vars, st.vars...)
+	}
+	isSecret := func(name string) bool { return secret[name] }
+	for changed := true; changed; {
+		changed = false
+		for _, v := range vars {
+			if !secret[v.Name] && v.computed != nil && slices.ContainsFunc(v.computed.reads(), isSecret) {
+				secret[v.Name], changed = true, true
+			}
+		}
+	}
+	var out []*yamlx.Error
+	for _, st := range steps {
+		if st.open != nil && slices.ContainsFunc(st.open.reads, isSecret) {
+			out = append(out, yamlx.Errorf(st.open.pos, "the file holds a secret and others can read it; set mode"))
+		}
+	}
+	return out
 }
 
 // stepVars loads the vars of a recipe step: declared variables and their

@@ -108,6 +108,7 @@ steps:
   - file:
       path: /etc/peers-token
       content: !tpl "{{ .vars.peers_token }}\n"
+      mode: "0600"
 `,
 		"recipes/peers/templates/peers.tmpl": "{{ range .vars.peers_list }}{{ .name }} {{ .short }} {{ .vars.token }}\n{{ end }}",
 	})
