@@ -41,9 +41,17 @@ func (e *Events) Write(typ string, v any) {
 }
 
 // Events is the Reporter of apply that writes applied and host events.
-func (e *Events) Step(ev StepEvent) { e.Write("applied", ev) }
-func (e *Events) Host(ev HostEvent) { e.Write("host", ev) }
-func (e *Events) Done(*Outcome)     {}
+func (e *Events) Step(ev StepEvent) {
+	ev.Error = secret.PrintableLines(ev.Error)
+	e.Write("applied", ev)
+}
+
+func (e *Events) Host(ev HostEvent) {
+	ev.Error = secret.PrintableLines(ev.Error)
+	e.Write("host", ev)
+}
+
+func (e *Events) Done(*Outcome) {}
 
 // WriteJSON writes a planned event for each checked step and each handler
 // that will run, of the hosts that did not fail, then a host event per host.
@@ -72,7 +80,7 @@ func (p *Plan) WriteJSON(e *Events) {
 		case p.changes(h.Name):
 			ev.Status = "change"
 		}
-		e.Write("host", ev)
+		e.Host(ev)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/davidklassen/winch/internal/run"
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -72,6 +73,7 @@ func newDiagnostic(severity string, err error) diagnostic {
 	if e, ok := err.(*yamlx.Error); ok {
 		d.File, d.Line, d.Col, d.Message = e.Pos.File, e.Pos.Line, e.Pos.Col, e.Msg
 	}
+	d.File, d.Message = secret.Printable(d.File), secret.PrintableLines(d.Message)
 	// An !expr error ends with the expression and a line with a caret under
 	// the error.
 	if msg, snippet, ok := strings.Cut(d.Message, "\n | "); ok {
@@ -84,7 +86,7 @@ func newDiagnostic(severity string, err error) diagnostic {
 func (o *output) warn(warnings []*yamlx.Error) {
 	for _, w := range warnings {
 		if o.ev == nil {
-			fmt.Fprintf(o.env.stderr, "%s: warning: %s\n", w.Pos, w.Msg)
+			fmt.Fprint(o.env.stderr, secret.PrintableLines(fmt.Sprintf("%s: warning: %s\n", w.Pos, w.Msg)))
 			continue
 		}
 		o.ev.Write("diagnostic", newDiagnostic("warning", w))

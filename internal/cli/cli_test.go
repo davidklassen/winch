@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"maps"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/davidklassen/winch/internal/fakehost"
+	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -350,5 +353,60 @@ func TestSet(t *testing.T) {
 	r = winch(t, dir, fakehost.New(), false, "", "validate", "--set", "vars.greting=x")
 	if r.code != exitInvalid || !strings.Contains(r.err, `--set vars.greting=x: unknown variable "greting"; did you mean "greeting"?`) {
 		t.Errorf("validate with an unknown variable: exit %d, stderr %q", r.code, r.err)
+	}
+}
+
+// spec: CLI/Output
+func TestLoadErrorPrintable(t *testing.T) {
+	const rlo = "\u202e"
+	pipeline := func(step string) string {
+		return "stages:\n  - name: base\n    hosts: all\n    steps:\n      - " + step + "\n"
+	}
+	tests := []struct {
+		name  string
+		files map[string]string
+	}{
+		{name: "template-path", files: map[string]string{
+			"pipelines/site.yaml":       pipeline("recipe: nginx"),
+			"recipes/nginx/recipe.yaml": "steps:\n  - file:\n      path: /a\n      template: a" + rlo + "b.tmpl\n",
+		}},
+		{name: "recipe-name", files: map[string]string{
+			"pipelines/site.yaml":               pipeline("recipe: a" + rlo + "b"),
+			"recipes/a" + rlo + "b/recipe.yaml": "steps:\n  - fiel: {}\n",
+		}},
+		{name: "require-snippet-control-characters", files: map[string]string{
+			"pipelines/site.yaml":       pipeline("recipe: nginx"),
+			"recipes/nginx/recipe.yaml": "require:\n  - !expr \"\\\"\\e[2J\\\" + 1\"\nsteps: []\n",
+		}},
+		{name: "require-snippet-format-characters", files: map[string]string{
+			"pipelines/site.yaml":       pipeline("recipe: nginx"),
+			"recipes/nginx/recipe.yaml": "require:\n  - !expr \"\\\"\\u202E\\\" + 1\"\nsteps: []\n",
+		}},
+		{name: "require-check-format-characters", files: map[string]string{
+			"pipelines/site.yaml":       pipeline("recipe: nginx"),
+			"recipes/nginx/recipe.yaml": "require:\n  - !expr \"\\\"\\u202E\\\" + $env\"\nsteps: []\n",
+		}},
+		{name: "require-field-format-characters", files: map[string]string{
+			"pipelines/site.yaml":       pipeline("recipe: nginx"),
+			"recipes/nginx/recipe.yaml": "require:\n  - !expr \"facts[\\\"\\u202E\\\"] == 1\"\nsteps: []\n",
+		}},
+		{name: "warning", files: map[string]string{
+			"pipelines/site.yaml":         pipeline("pkg: {name: curl}"),
+			"pipelines/a" + rlo + "b.yml": "stages: []\n",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := map[string]string{
+				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"inventories/test.yaml": "hosts:\n  web1: {}\n",
+			}
+			maps.Copy(files, tt.files)
+			dir := vmtest.WriteProject(t, files)
+			text := winch(t, dir, fakehost.New(), false, "", "validate")
+			js := winch(t, dir, fakehost.New(), false, "", "validate", "--json")
+			golden.Assert(t, filepath.Join("testdata", "printable", tt.name+".golden"),
+				[]byte("text:\n"+text.err+"json:\n"+js.out))
+		})
 	}
 }

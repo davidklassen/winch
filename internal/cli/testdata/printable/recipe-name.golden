@@ -1,0 +1,6 @@
+text:
+recipes/a?b: a recipe name has only lowercase letters, digits, and _
+json:
+{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","message":"recipes/a?b: a recipe name has only lowercase letters, digits, and _"}
+{"type":"summary","time":"2026-10-26T12:00:00Z","exit_code":3}

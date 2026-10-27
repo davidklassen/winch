@@ -34,9 +34,8 @@ func (f *Filter) Add(value string) {
 		if utf8.RuneCountInString(v) < 4 || v == "true" || v == "false" {
 			continue
 		}
-		f.values[v] = true
-		f.values[Printable(v)] = true
-		for _, s := range []string{v, Printable(v)} {
+		for _, s := range []string{v, Printable(v), PrintableLines(v)} {
+			f.values[s] = true
 			j, _ := json.Marshal(s)
 			f.values[string(j[1:len(j)-1])] = true
 		}

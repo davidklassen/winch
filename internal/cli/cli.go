@@ -295,7 +295,7 @@ func Main(ctx context.Context, args []string, env Env) int {
 
 // printError writes an error line, red on a terminal.
 func printError(w *color.Writer, msg string) {
-	color.Fprint(w, color.Text{{Style: color.Red, Text: msg + "\n"}})
+	color.Fprint(w, color.Text{{Style: color.Red, Text: secret.PrintableLines(msg) + "\n"}})
 }
 
 // notEmpty returns a flag function that sets *v and rejects an empty value.

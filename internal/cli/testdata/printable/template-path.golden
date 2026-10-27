@@ -1,0 +1,6 @@
+text:
+recipes/nginx/recipe.yaml:4:17: template: recipes/nginx/templates/a?b.tmpl does not exist
+json:
+{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","file":"recipes/nginx/recipe.yaml","line":4,"col":17,"message":"template: recipes/nginx/templates/a?b.tmpl does not exist"}
+{"type":"summary","time":"2026-10-26T12:00:00Z","exit_code":3}

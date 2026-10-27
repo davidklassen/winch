@@ -1,0 +1,8 @@
+text:
+recipes/nginx/recipe.yaml:2:5: require: invalid operation: + (mismatched types string and int)
+ | "?" + 1
+ | ....^
+json:
+{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","file":"recipes/nginx/recipe.yaml","line":2,"col":5,"message":"require: invalid operation: + (mismatched types string and int)","expr":"\"?\" + 1","expr_col":5}
+{"type":"summary","time":"2026-10-26T12:00:00Z","exit_code":3}

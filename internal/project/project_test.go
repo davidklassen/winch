@@ -502,18 +502,6 @@ func TestLoadRecipes(t *testing.T) {
 		{name: "require-snippet", files: map[string]string{
 			"recipes/nginx/recipe.yaml": "require:\n  - !expr facts.os.id == \"debian\" &&& true\nsteps: []\n",
 		}},
-		{name: "require-snippet-control-characters", files: map[string]string{
-			"recipes/nginx/recipe.yaml": "require:\n  - !expr \"\\\"\\e[2J\\\" + 1\"\nsteps: []\n",
-		}},
-		{name: "require-snippet-format-characters", files: map[string]string{
-			"recipes/nginx/recipe.yaml": "require:\n  - !expr \"\\\"\\u202E\\\" + 1\"\nsteps: []\n",
-		}},
-		{name: "require-check-format-characters", files: map[string]string{
-			"recipes/nginx/recipe.yaml": "require:\n  - !expr \"\\\"\\u202E\\\" + $env\"\nsteps: []\n",
-		}},
-		{name: "require-field-format-characters", files: map[string]string{
-			"recipes/nginx/recipe.yaml": "require:\n  - !expr \"facts[\\\"\\u202E\\\"] == 1\"\nsteps: []\n",
-		}},
 		{name: "recipe-twice-in-stage", files: map[string]string{
 			"pipelines/site.yaml": stage("      - recipe: pkg\n      - recipe: pkg\n"),
 		}},

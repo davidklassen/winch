@@ -190,7 +190,7 @@ func (c *exprCheck) fail(n ast.Node, msg string) {
 
 func (c *exprCheck) snippet(n ast.Node) string {
 	fe := &file.Error{Location: n.Location()}
-	return secret.PrintableLines(fe.Bind(c.src).Snippet)
+	return fe.Bind(c.src).Snippet
 }
 
 func (c *exprCheck) Visit(np *ast.Node) {
@@ -299,7 +299,7 @@ func exprMessage(err error, names []string) string {
 			msg = fmt.Sprintf("unknown %s %q%s", f.noun, m[2], yamlx.Suggest(m[2], f.names))
 		}
 	}
-	return secret.PrintableLines(msg + fe.Snippet)
+	return msg + fe.Snippet
 }
 
 func fieldTags(v any) []string {

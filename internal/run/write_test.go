@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/module"
@@ -39,6 +40,19 @@ func TestHostErrorControlCharacters(t *testing.T) {
 	p.Write(w(&out), w(&errOut))
 	if errOut.String() != want {
 		t.Errorf("plan error = %q, want %q", errOut.String(), want)
+	}
+	wantJSON := `"error":"base: failed: file /tmp/x: then: exit status 1: one\n?[2K?[1Atwo\tz??"`
+	ev := NewEvents(&out, time.Now)
+	for name, write := range map[string]func(){
+		"host":    func() { ev.Host(HostEvent{Phase: "apply", Host: "web1", Status: "failed", Error: err}) },
+		"applied": func() { ev.Step(StepEvent{Host: "web1", Status: "failed", Error: err}) },
+		"plan":    func() { p.WriteJSON(ev) },
+	} {
+		out.Reset()
+		write()
+		if !strings.Contains(out.String(), wantJSON) {
+			t.Errorf("%s event = %s, want %s", name, out.String(), wantJSON)
+		}
 	}
 }
 

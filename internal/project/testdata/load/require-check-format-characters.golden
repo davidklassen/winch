@@ -1,3 +1,0 @@
-recipes/nginx/recipe.yaml:2:5: require: $env is not allowed
- | "?" + $env
- | ......^
