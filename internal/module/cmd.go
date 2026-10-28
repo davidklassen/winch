@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -19,6 +21,7 @@ type Cmd struct {
 	Creates string `yaml:"creates" json:"creates,omitempty"`
 	User    string `yaml:"user" json:"user,omitempty"`
 	Dir     string `yaml:"dir" json:"dir,omitempty"`
+	Timeout *int   `yaml:"timeout" json:"timeout,omitempty"`
 }
 
 func (c *Cmd) Main() string { return firstLine(c.Command) }
@@ -36,6 +39,14 @@ func firstLine(command string) string {
 func (c *Cmd) Validate() error {
 	if err := checkCommand("command", &c.Command); err != nil {
 		return err
+	}
+	if c.Timeout != nil {
+		if *c.Timeout < 1 {
+			return &yamlx.FieldError{Field: "timeout", Msg: "must be 1 or more seconds"}
+		}
+		if int64(*c.Timeout) > math.MaxInt64/int64(time.Second) {
+			return &yamlx.FieldError{Field: "timeout", Msg: fmt.Sprintf("must be at most %d seconds", math.MaxInt64/int64(time.Second))}
+		}
 	}
 	if c.Creates != "" {
 		if err := checkAbs("creates", c.Creates); err != nil {
@@ -90,7 +101,11 @@ func (c *Cmd) Apply(ctx context.Context, _ func(string)) error {
 		}
 		as = &runAs{user: u, groups: groups}
 	}
-	err := shellLimit(ctx, c.Command, cmp.Or(c.Dir, "/"), as, commandLimit, KillDelay)
+	limit := commandLimit
+	if c.Timeout != nil {
+		limit = time.Duration(*c.Timeout) * time.Second
+	}
+	err := shellLimit(ctx, c.Command, cmp.Or(c.Dir, "/"), as, limit, KillDelay)
 	// exec names sh, not the directory, when the user cannot enter it.
 	if pe, ok := errors.AsType[*fs.PathError](err); ok && pe.Op == "fork/exec" && c.Dir != "" {
 		return fmt.Errorf("dir %s: %w", c.Dir, pe.Err)

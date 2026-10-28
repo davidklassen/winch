@@ -14,6 +14,13 @@ func TestCmdValidate(t *testing.T) {
 		want string
 	}{
 		{"command", "command: make install\n", ""},
+		{"timeout", "command: make install\ntimeout: 1200\n", ""},
+		{"smallest timeout", "command: x\ntimeout: 1\n", ""},
+		{"largest timeout", "command: x\ntimeout: 9223372036\n", ""},
+		{"zero timeout", "command: x\ntimeout: 0\n", `t.yaml:2:10: timeout: must be 1 or more seconds`},
+		{"negative timeout", "command: x\ntimeout: -1\n", `t.yaml:2:10: timeout: must be 1 or more seconds`},
+		{"overflowing timeout", "command: x\ntimeout: 9223372037\n", `t.yaml:2:10: timeout: must be at most 9223372036 seconds`},
+		{"timeout with user", "command: x\nuser: root\ntimeout: 0\n", `t.yaml:3:10: timeout: must be 1 or more seconds`},
 		{"all fields", "command: make install\ncreates: /usr/local/bin/app\nuser: deploy\ndir: /srv/app\n", ""},
 		{"no command", "creates: /x\n", `t.yaml:1:1: missing key "command"`},
 		{"empty command", "command: \"\"\n", `t.yaml:1:10: command: must not be empty`},

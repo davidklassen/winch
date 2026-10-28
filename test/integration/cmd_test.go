@@ -1,12 +1,48 @@
 package integration
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
+
+// spec: Modules (the command limit); Modules/cmd
+func TestCmdTimeout(t *testing.T) {
+	t.Parallel()
+	lab.StartVM(t, "cmdtimeout")
+	for _, tt := range []struct {
+		timeout int
+		code    int
+	}{
+		{2, 1},
+		{10, 0},
+	} {
+		t.Run(fmt.Sprint(tt.timeout), func(t *testing.T) {
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: timeout\ninventory: inventories/test.yaml\n",
+				"inventories/test.yaml": "hosts:\n  cmdtimeout: {}\n",
+				"pipelines/site.yaml": fmt.Sprintf(`stages:
+  - name: s
+    hosts: all
+    steps:
+      - cmd:
+          command: sleep 5
+          timeout: %d
+`, tt.timeout),
+			})
+			r := lab.Winch(t, dir, "apply", "site", "--yes")
+			if r.Code != tt.code {
+				t.Errorf("apply: exit %d, want %d; stderr %q", r.Code, tt.code, r.Stderr)
+			}
+			if tt.code != 0 && !strings.Contains(r.Stderr, "sleep 5: no result after 2s") {
+				t.Errorf("timeout error does not name the limit: %q", r.Stderr)
+			}
+		})
+	}
+}
 
 // spec: Modules/cmd; Modules (the command rules); Running a pipeline/Plan
 func TestCmdModule(t *testing.T) {
