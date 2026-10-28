@@ -18,7 +18,7 @@ func TestExec(t *testing.T) {
 	vms[0].MustRun(t, "echo a > /root/name")
 	vms[1].MustRun(t, "echo b > /root/name")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: demo\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  exec-a: {}\n  exec-b: {}\n",
 	})
 
@@ -81,7 +81,7 @@ func TestExecInterrupt(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "exec-int")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: demo\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  exec-int: {}\n",
 	})
 	// start runs command with winch exec and waits until the command creates

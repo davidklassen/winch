@@ -40,7 +40,7 @@ func colored(t *testing.T, filter *secret.Filter, format func(out, errOut *bytes
 func colorProject(t *testing.T) *project.Project {
 	t.Helper()
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n  web3: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: web

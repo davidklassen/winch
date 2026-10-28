@@ -20,7 +20,7 @@ import (
 // loop, and the unreachable host web3.
 func jsonProject(t *testing.T) string {
 	return vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n  web3:\n    address: unreachable\n",
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -71,31 +71,31 @@ func TestJSON(t *testing.T) {
 		{name: "apply-fails", dir: jsonProject, setup: func(h *fakehost.Hosts) {
 			h.FailApply("web1 /srv/b.html")
 		}, args: []string{"apply", "site", "--json", "--yes"}},
-		{name: "apply-no-terminal", dir: jsonProject, args: []string{"apply", "site", "--json", "--inventory", "inventories/test.yaml"}},
+		{name: "apply-no-terminal", dir: jsonProject, args: []string{"apply", "site", "--json", "--inventory", "test"}},
 		{name: "validate-errors", dir: func(t *testing.T) string {
 			return vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nfoo: 1\n",
+				"winch.yaml":            "name: acme\ninventory: test\nfoo: 1\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
 				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: \"x\\n\"\n        when: !expr 'true &&& false'\n",
 			})
 		}, args: []string{"validate", "--json"}},
 		{name: "plan-warning", dir: func(t *testing.T) string {
 			return vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nvars:\n  token:\n",
+				"winch.yaml":            "name: acme\ninventory: test\nvars:\n  token:\n",
 				"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: " + fakeSecret(t, "ghp.txt") + "\n",
 				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/token\n          content: !expr vars.token\n",
 			})
 		}, args: []string{"plan", "site", "--json"}},
 		{name: "plan-host-error-printable", dir: func(t *testing.T) string {
 			return vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
 				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: !expr 'string(int(\"\u202e\" + host.name))'\n",
 			})
 		}, args: []string{"plan", "site", "--json"}},
 		{name: "plan-cmd", dir: func(t *testing.T) string {
 			return vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
 				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - assert:\n          command: probe\n          message: x\n      - cmd:\n          command: apt-get clean\n",
 			})
@@ -104,7 +104,7 @@ func TestJSON(t *testing.T) {
 		{name: "apply-stale-check", dir: jsonProject, args: []string{"apply", "site", "--json", "--check", "0badc0de0badc0de"}},
 		{name: "apply-confirm", dir: func(t *testing.T) string {
 			return vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
 				"pipelines/site.yaml": `stages:
   - name: base

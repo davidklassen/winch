@@ -791,7 +791,7 @@ func TestUsers(t *testing.T) {
 	vm := lab.StartVM(t, "users")
 	vm.MustRun(t, `useradd -M -U Debian-wt`)
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  " + vm.Name + ": {}\n",
 		"pipelines/site.yaml": `stages:
   - name: people
@@ -843,7 +843,7 @@ func TestUserKeysLogin(t *testing.T) {
 useradd -m -U -s /bin/bash wtdev && usermod -p '*' wtdev && chown root /home/wtdev && chmod 755 /home/wtdev
 systemctl reload ssh`)
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  " + vm.Name + ": {}\n",
 		"pipelines/site.yaml": `stages:
   - name: people

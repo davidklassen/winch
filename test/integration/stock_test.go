@@ -365,7 +365,7 @@ func TestPurgePipeline(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "purgepipe")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: purge\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: purge\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  purgepipe: {}\n",
 		"pipelines/site.yaml":   purgePipeline,
 		"pipelines/other.yaml":  "stages:\n  - name: s\n    hosts: all\n    steps:\n      - file:\n          path: /etc/w/other\n          content: other\n",

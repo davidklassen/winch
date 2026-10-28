@@ -1,1 +1,1 @@
-winch.yaml:2:12: inventory "inventories/prdo.yaml" does not exist
+winch.yaml:2:12: unknown inventory "prdo"

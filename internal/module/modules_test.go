@@ -403,7 +403,9 @@ func TestUnitValidate(t *testing.T) {
 		{"only a type", "name: .service\nsource: a\n", `t.yaml:1:7: name: ".service" needs a name before the type`},
 		{"slash", "name: a/b.service\nsource: a\n", `t.yaml:1:7: name: "a/b.service" is not a unit name`},
 		{"too long", "name: " + strings.Repeat("a", 248) + ".service\nsource: a\n", `t.yaml:1:7: name: has 256 characters; a unit name has at most 255`},
-		{"no source", "name: app.service\n", `t.yaml:1:1: missing key "source"`},
+		{"no source", "name: app.service\n", `t.yaml:1:1: content: a unit needs content or source`},
+		{"content", "name: app.service\ncontent: \"\"\n", ""},
+		{"content and source", "name: app.service\ncontent: a\nsource: a\n", `t.yaml:2:10: content: a unit has only one of content and source`},
 		{"source outside files", "name: app.service\nsource: ../app.service\n", `t.yaml:2:9: source: must be a clean relative path, such as "a/b.conf"`},
 		{"absent", "name: app.service\nsource: a\nabsent: true\n", `t.yaml:3:1: unknown key "absent"`},
 	}

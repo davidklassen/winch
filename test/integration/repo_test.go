@@ -246,7 +246,7 @@ func TestRepoAfterAbsentStep(t *testing.T) {
 	vm := lab.StartVM(t, "repo-absent")
 	vm.MustRun(t, "echo 'deb [signed-by=/usr/share/keyrings/x.gpg] "+signedURL+" trixie main' > /etc/apt/sources.list.d/vendor.list")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: demo\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  repo-absent: {}\n",
 		"pipelines/site.yaml":   "stages:\n  - name: apt\n    hosts: all\n    steps:\n      - recipe: signed\n",
 		"recipes/signed/recipe.yaml": `steps:

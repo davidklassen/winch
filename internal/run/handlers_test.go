@@ -22,7 +22,7 @@ import (
 )
 
 var handlerFiles = map[string]string{
-	"winch.yaml": "name: acme\ninventory: inventories/test.yaml\n",
+	"winch.yaml": "name: acme\ninventory: test\n",
 	"inventories/test.yaml": `hosts:
   web1: {}
   web2:
@@ -602,7 +602,7 @@ func TestPendingThenOfAHandlerStep(t *testing.T) {
 // spec: CLI/Output; CLI/JSON output
 func TestCommandLines(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -680,7 +680,7 @@ func TestFailedStepKeepsEarlierRecordsOnly(t *testing.T) {
 // spec: Steps
 func TestFixedThenRuns(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: mail
@@ -725,7 +725,7 @@ func TestFixedThenRuns(t *testing.T) {
 
 func TestInsertedStepKeepsPendingThen(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: mail
@@ -772,7 +772,7 @@ func TestInsertedStepKeepsPendingThen(t *testing.T) {
 // spec: Modules/download; Handlers; Steps
 func TestDownloadOKNotifiesNothing(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":   "stages:\n  - name: tools\n    hosts: all\n    steps:\n      - recipe: tool\n",
 		"recipes/tool/recipe.yaml": `steps:

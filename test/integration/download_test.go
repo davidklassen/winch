@@ -158,7 +158,7 @@ func TestDownloadModule(t *testing.T) {
 
 	t.Run("temporary unpack warns", func(t *testing.T) {
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: download-warning\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: download-warning\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  download:\n    address: 127.0.0.1\n",
 			"pipelines/site.yaml":   "stages:\n  - name: tools\n    hosts: all\n    steps:\n      - download:\n          url: " + urlTgz + "\n          sha256: " + sha(tgz) + "\n          path: /opt/app.tar.gz\n          unpack: /tmp/app\n",
 		})
@@ -401,7 +401,7 @@ func TestDownloadRun(t *testing.T) {
 	tool := []byte("#!/bin/sh\necho tool\n")
 	url := lab.Serve(t, "download-run/tool", tool)
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  " + vm.Name + ": {}\n",
 		"pipelines/site.yaml": `stages:
   - name: tools

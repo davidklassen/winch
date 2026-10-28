@@ -39,7 +39,7 @@ func TestRecipes(t *testing.T) {
       - recipe: nginx
 `
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: demo\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  recipes: {}\n  recipes-other: {}\n",
 		"pipelines/web.yaml":    "stages:\n" + web,
 		"pipelines/site.yaml": "stages:\n" + web + `  - name: other

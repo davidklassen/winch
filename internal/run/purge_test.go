@@ -12,7 +12,7 @@ import (
 )
 
 var purgeFiles = map[string]string{
-	"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+	"winch.yaml":            "name: acme\ninventory: test\n",
 	"inventories/test.yaml": "hosts:\n  web1: {}\n",
 	"pipelines/site.yaml": `stages:
   - name: base

@@ -501,7 +501,7 @@ func TestPkgConfiguresAfterAFix(t *testing.T) {
 	vm := lab.StartVM(t, "fragile")
 	vm.MustRun(t, fragileDeb+" && "+halfConfigure)
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: demo\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  fragile: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -545,7 +545,7 @@ func TestPkgPlanRules(t *testing.T) {
 	}
 	// winch-up-deps depends on winch-up-new.
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":             "name: pkgplan\ninventory: inventories/test.yaml\n",
+		"winch.yaml":             "name: pkgplan\ninventory: test\n",
 		"inventories/test.yaml":  "hosts:\n  pkgplan: {}\n",
 		"pipelines/install.yaml": pipeline(deps + gone),
 		"pipelines/remove.yaml":  pipeline(gone + deps),

@@ -20,7 +20,7 @@ import (
 func loadWeb1(t *testing.T, files map[string]string) *project.Project {
 	t.Helper()
 	all := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 	}
 	for k, v := range files {

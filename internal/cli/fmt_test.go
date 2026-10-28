@@ -31,8 +31,28 @@ func readFile(t *testing.T, path string) string {
 // spec: CLI (winch fmt); Steps (winch fmt)
 func TestFmt(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml": "name: acme\ninventory: hosts.yaml\nvars:\n    domain: example.com\n",
-		"hosts.yaml": "hosts:\n    web1: {}\n    web2:\n        vars:\n            motd_text: hi\n",
+		"winch.yaml": "name: acme\ninventory: hosts\nvars:\n    domain: example.com\n" + `recipes:
+    other:
+        steps:
+        -   notify: done
+            pkg:
+                name: htop
+        handlers:
+            done:
+            -   cmd:
+                    command: "true"
+                name: Done
+pipelines:
+    extra:
+        stages:
+        -   name: x
+            hosts: all
+            steps:
+            -   notify: other.done
+                pkg:
+                    name: curl
+`,
+		"inventories/hosts.yaml": "hosts:\n    web1: {}\n    web2:\n        vars:\n            motd_text: hi\n",
 		"pipelines/site.yaml": `stages:
 -   name: base
     hosts: all
@@ -60,13 +80,33 @@ handlers:
 	before := planOf(t, dir)
 
 	r := winch(t, dir, fakehost.New(), false, "", "fmt")
-	want := "hosts.yaml\npipelines/site.yaml\nrecipes/motd/recipe.yaml\nwinch.yaml\n"
+	want := "inventories/hosts.yaml\npipelines/site.yaml\nrecipes/motd/recipe.yaml\nwinch.yaml\n"
 	if r.code != exitOK || r.out != want || r.err != "" {
 		t.Fatalf("fmt: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 	formatted := map[string]string{
-		"winch.yaml": "name: acme\ninventory: hosts.yaml\nvars:\n  domain: example.com\n",
-		"hosts.yaml": "hosts:\n  web1: {}\n  web2:\n    vars:\n      motd_text: hi\n",
+		"winch.yaml": "name: acme\ninventory: hosts\nvars:\n  domain: example.com\n" + `recipes:
+  other:
+    steps:
+      - pkg:
+          name: htop
+        notify: done
+    handlers:
+      done:
+        - name: Done
+          cmd:
+            command: "true"
+pipelines:
+  extra:
+    stages:
+      - name: x
+        hosts: all
+        steps:
+          - pkg:
+              name: curl
+            notify: other.done
+`,
+		"inventories/hosts.yaml": "hosts:\n  web1: {}\n  web2:\n    vars:\n      motd_text: hi\n",
 		"pipelines/site.yaml": `stages:
   - name: base
     hosts: all
@@ -127,24 +167,20 @@ func TestFmtError(t *testing.T) {
 	if r.code != exitInvalid || r.err != "winch: fmt takes no arguments\n" {
 		t.Errorf("with an argument: exit %d, stderr %q", r.code, r.err)
 	}
-	r = winch(t, vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: acme\ninventory: hosts.yaml\n"}), fakehost.New(), false, "", "fmt")
-	if r.code != exitInvalid || r.err != "hosts.yaml: no such file\n" {
-		t.Errorf("without the inventory: exit %d, stderr %q", r.code, r.err)
-	}
 }
 
 // spec: CLI (winch fmt)
 func TestFmtFiles(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":       "name: acme\nnope:\n    a: 1\n",
-		"pipelines/a.yaml": "stages:\n-   name: a\n",
-		"other/hosts.yaml": "hosts:\n    web1: {}\n",
+		"winch.yaml":             "name: acme\nnope:\n    a: 1\n",
+		"pipelines/a.yaml":       "stages:\n-   name: a\n",
+		"inventories/hosts.yaml": "hosts:\n    web1: {}\n",
 	})
 	if err := os.Symlink("a.yaml", filepath.Join(dir, "pipelines/b.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	r := winch(t, dir, fakehost.New(), false, "", "fmt", "--inventory", "other/hosts.yaml")
-	want := "other/hosts.yaml\npipelines/a.yaml\nwinch.yaml\n"
+	r := winch(t, dir, fakehost.New(), false, "", "fmt")
+	want := "inventories/hosts.yaml\npipelines/a.yaml\nwinch.yaml\n"
 	if r.code != exitOK || r.out != want {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}

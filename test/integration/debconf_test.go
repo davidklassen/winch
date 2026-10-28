@@ -135,7 +135,7 @@ func TestPackageSources(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "sources")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":                              "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":                              "name: acme\ninventory: test\n",
 		"inventories/test.yaml":                   "hosts:\n  " + vm.Name + ": {}\n",
 		"pipelines/site.yaml":                     "stages:\n  - name: packages\n    hosts: all\n    steps:\n      - recipe: packages\n",
 		"recipes/packages/files/winch-signed.asc": string(vmtest.RepoKey),

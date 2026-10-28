@@ -164,7 +164,7 @@ ExecReload=/bin/touch /root/reloaded
 U
 systemctl daemon-reload && systemctl start winch-run`)
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: demo\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  run: {}\n",
 	})
 
@@ -207,7 +207,7 @@ systemctl daemon-reload && systemctl start winch-run`)
 
 	t.Run("restarted in a stage is a load error", func(t *testing.T) {
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: demo\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  run: {}\n",
 			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - service:\n          name: winch-run\n          restarted: true\n",
 		})

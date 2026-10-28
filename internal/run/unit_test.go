@@ -21,7 +21,7 @@ func TestUnitFromLoop(t *testing.T) {
 		"a.timer":   "[Timer]\nOnCalendar=daily\n[Install]\nWantedBy=timers.target\n",
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":   steps("      - recipe: web\n"),
 		"recipes/web/recipe.yaml": `steps:
@@ -73,7 +73,7 @@ func TestUnitComputedErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
 				"pipelines/site.yaml":   steps("      - recipe: web\n"),
 				"recipes/web/recipe.yaml": `steps:
@@ -103,7 +103,7 @@ func TestUnitComputedErrors(t *testing.T) {
 func TestServiceGetsNewUnitFile(t *testing.T) {
 	const a, b, c = "[Service]\nExecStart=/a\n", "[Service]\nExecStart=/b\n", "[Service]\nExecStart=/c\n"
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: one

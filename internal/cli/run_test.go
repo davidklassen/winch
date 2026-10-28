@@ -12,7 +12,7 @@ import (
 
 func runProject(t *testing.T) string {
 	return vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\ngroups:\n  none:\n    hosts: []\n",
 	})
 }
@@ -96,11 +96,11 @@ func TestRunArgs(t *testing.T) {
 // spec: CLI/Prompts; Running a pipeline/Apply (--check)
 func TestRunConfirm(t *testing.T) {
 	dir := runProject(t)
-	args := []string{"run", "web1", "file", "path=/etc/motd", "content=hi there", "--inventory", "inventories/test.yaml", "--user", "web1=deploy"}
+	args := []string{"run", "web1", "file", "path=/etc/motd", "content=hi there", "--inventory", "test", "--user", "web1=deploy"}
 	h := fakehost.New()
 	r := winch(t, dir, h, false, "", args...)
 	hash := planHash(t, r.out)
-	want := "To apply, run: winch run web1 file path=/etc/motd 'content=hi there' --inventory inventories/test.yaml --user web1=deploy --check " + hash + "\n"
+	want := "To apply, run: winch run web1 file path=/etc/motd 'content=hi there' --inventory test --user web1=deploy --check " + hash + "\n"
 	if r.code != exitConfirm || !strings.HasSuffix(r.out, want) || h.Applies != 0 {
 		t.Errorf("exit %d, applies %d, stdout %q, want suffix %q", r.code, h.Applies, r.out, want)
 	}

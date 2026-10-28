@@ -70,8 +70,8 @@ type Env struct {
 
 const mainHelp = `Examples:
   winch validate
-  winch plan site --inventory inventories/test.yaml
-  winch apply site --inventory inventories/test.yaml
+  winch plan site --inventory test
+  winch apply site --inventory test
 
 winch configures Linux servers over SSH.
 
@@ -114,7 +114,7 @@ type command struct {
 
 var commands = map[string]command{
 	"validate":        {help: validateHelp, inventory: true, set: true, json: true, run: validate},
-	"fmt":             {help: fmtHelp, inventory: true, run: format},
+	"fmt":             {help: fmtHelp, run: format},
 	"plan":            {help: planHelp, inventory: true, set: true, json: true, exitCode: true, selection: true, sessions: true, run: plan},
 	"apply":           {help: applyHelp, inventory: true, set: true, json: true, apply: true, selection: true, sessions: true, run: apply},
 	"run":             {help: runHelp, inventory: true, json: true, apply: true, sessions: true, run: runModule},
@@ -123,12 +123,12 @@ var commands = map[string]command{
 	"secret init":     {help: initHelp, run: secretInit},
 	"secret generate": {help: generateHelp, inventory: true, host: true, run: secretGenerate},
 	"secret encrypt":  {help: encryptHelp, run: secretEncrypt},
-	"secret rekey":    {help: rekeyHelp, inventory: true, run: secretRekey},
+	"secret rekey":    {help: rekeyHelp, run: secretRekey},
 }
 
 const validateHelp = `Examples:
   winch validate
-  winch validate --inventory inventories/production.yaml
+  winch validate --inventory production
   winch validate --set vars.release=1.4.2
 
 Load the project and check schemas, names, and module arguments.
@@ -136,10 +136,10 @@ Load the project and check schemas, names, and module arguments.
 Usage: winch validate [flags]
 
 Without --inventory and without inventory in winch.yaml, validate checks
-every file in inventories/.
+every inventory.
 
 Flags:
-  --inventory <path>            The inventory file to check.
+  --inventory <name>            The inventory to check.
   --set vars.<name>=<value>     Set a variable. The value parses as YAML.
                                 Repeatable.
   --json                        Write JSON events on stdout.
@@ -147,7 +147,7 @@ Flags:
 
 const planHelp = `Examples:
   winch plan site
-  winch plan site --inventory inventories/production.yaml
+  winch plan site --inventory production
   winch plan site --set vars.nginx_port=8080
   winch plan site --hosts 'web & !web3' --stages nginx,site
   winch plan site --exit-code
@@ -158,7 +158,7 @@ nothing.
 Usage: winch plan <pipeline> [flags]
 
 Flags:
-  --inventory <path>            The inventory file for this run.
+  --inventory <name>            The inventory for this run.
   --hosts <pattern>             Run only on these hosts: a group or a host,
                                 with "," for union, "&" for intersection,
                                 and "!" for exclusion.
@@ -176,7 +176,7 @@ Flags:
 
 const applyHelp = `Examples:
   winch apply site
-  winch apply site --inventory inventories/test.yaml --yes
+  winch apply site --inventory test --yes
   winch apply site --hosts mail --stages mail
   winch apply site --check a3f9c2e1d07b4c58
 
@@ -196,7 +196,7 @@ The first Ctrl-C lets the running step on each host finish and starts no
 new step. A second Ctrl-C ends the sessions at once.
 
 Flags:
-  --inventory <path>            The inventory file for this run.
+  --inventory <name>            The inventory for this run.
   --hosts <pattern>             Run only on these hosts: a group or a host,
                                 with "," for union, "&" for intersection,
                                 and "!" for exclusion.
@@ -233,7 +233,7 @@ and without --yes or --check, run prints the plan and exits with code 5.
 Its last line is the command that applies the plan with its hash.
 
 Flags:
-  --inventory <path>            The inventory file for this run.
+  --inventory <name>            The inventory for this run.
   --user [<host>=]<name>        SSH login user, for all hosts or one host.
                                 Repeatable.
   --batch                       ssh asks no questions, and sessions start
@@ -260,7 +260,7 @@ as root, in /. Hosts with the same output and exit code share one block.
 winch exits with code 1 when the command fails on a host.
 
 Flags:
-  --inventory <path>            The inventory file for this run.
+  --inventory <name>            The inventory for this run.
   --user [<host>=]<name>        SSH login user, for all hosts or one host.
                                 Repeatable.
   --batch                       ssh asks no questions, and sessions start

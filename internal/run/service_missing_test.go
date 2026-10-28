@@ -43,7 +43,7 @@ func TestMissingUnitNoteSelection(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":                     "name: missing\ninventory: inventories/test.yaml\n",
+				"winch.yaml":                     "name: missing\ninventory: test\n",
 				"inventories/test.yaml":          "hosts:\n  web1: {}\n  web2: {}\n",
 				"pipelines/site.yaml":            "stages:\n" + tt.pipeline,
 				"recipes/cleanup/recipe.yaml":    "steps:\n  - file:\n      path: !expr item\n      absent: true\n    loop: [/etc/systemd/system/app.service]\n",

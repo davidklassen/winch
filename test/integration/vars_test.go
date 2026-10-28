@@ -17,7 +17,7 @@ func TestVarsWhenLoop(t *testing.T) {
 
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml": `name: demo
-inventory: inventories/test.yaml
+inventory: test
 vars:
   relay: false
 `,

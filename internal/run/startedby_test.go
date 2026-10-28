@@ -56,7 +56,7 @@ func TestStartedBy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
 				"pipelines/site.yaml":   "stages:\n" + tt.pipeline,
 			})

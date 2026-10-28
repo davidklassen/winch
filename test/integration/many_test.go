@@ -82,7 +82,7 @@ func TestMany(t *testing.T) {
 		}
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml": "name: many\ninventory: inventories/test.yaml\nrecipients: [" + id.Recipient().String() + "]\n" +
+		"winch.yaml": "name: many\ninventory: test\nrecipients: [" + id.Recipient().String() + "]\n" +
 			"vars:\n  web_text: one\n  token:\n",
 		"inventories/test.yaml": "hosts:\n  many-a:\n    vars:\n      token: !secret " + sealed[0] + "\n  many-b:\n    vars:\n      token: !secret " + sealed[1] + "\n" +
 			"groups:\n  web:\n    hosts: [many-a, many-b]\n",

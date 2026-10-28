@@ -64,7 +64,7 @@ func TestOrderUserAfterOwner(t *testing.T) {
 				pl = tt.pipeline
 			}
 			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
 				"pipelines/site.yaml":   pl,
 			})
@@ -315,7 +315,7 @@ var orderCases = []orderCase{
 // spec: Modules/repo
 func TestRepoGetsRemovedPaths(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml": steps(`      - repo:
           name: a
@@ -621,7 +621,7 @@ handlers:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			files := map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
 				"pipelines/site.yaml":   tt.pipeline,
 			}

@@ -18,7 +18,7 @@ func TestOneHandshakePerHost(t *testing.T) {
 		vm.MustRun(t, "cp /home/admin/.ssh/authorized_keys /root/.ssh/authorized_keys")
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: sess\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: sess\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  sess-a:\n    user: root\n  sess-b:\n    user: root\n",
 		"pipelines/site.yaml": `stages:
   - name: one

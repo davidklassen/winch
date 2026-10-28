@@ -24,7 +24,7 @@ import (
 func manyProject(t *testing.T, stages string) *project.Project {
 	t.Helper()
 	p, err := project.Load(t.Context(), vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":              "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":              "name: acme\ninventory: test\n",
 		"inventories/test.yaml":   "hosts:\n  web1: {}\n  web2: {}\n  web3: {}\n",
 		"pipelines/site.yaml":     "stages:\n" + stages,
 		"recipes/app/recipe.yaml": manyRecipe,
@@ -480,7 +480,7 @@ func TestStagesLeaveHandlerPending(t *testing.T) {
 // spec: Running a pipeline/Plan; CLI (--stages)
 func TestSkippedStageRequirement(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":                 "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":                 "name: acme\ninventory: test\n",
 		"inventories/test.yaml":      "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":        "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: ubuntu\n" + motdStage,
 		"recipes/ubuntu/recipe.yaml": "require:\n  - !expr 'facts.os.id == \"ubuntu\"'\nsteps: []\n",
@@ -651,7 +651,7 @@ func TestPlanIndependentOfFinishOrder(t *testing.T) {
 		var o planOut
 		synctest.Test(t, func(t *testing.T) {
 			p, err := project.Load(t.Context(), vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n  web3: {}\n  web4: {}\n  web5: {}\n",
 				"pipelines/site.yaml": "stages:\n" + motdStage + `  - name: app
     hosts: all

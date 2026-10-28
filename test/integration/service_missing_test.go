@@ -15,7 +15,7 @@ func TestServiceMissingUnitFile(t *testing.T) {
 	const stop = "      - service: {name: winch-missing, running: false}\n"
 	const remove = "      - file: {path: /etc/systemd/system/winch-missing.service, absent: true}\n"
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":              "name: servicemissing\ninventory: inventories/test.yaml\n",
+		"winch.yaml":              "name: servicemissing\ninventory: test\n",
 		"inventories/test.yaml":   "hosts:\n  servicemissing: {}\n",
 		"pipelines/stop.yaml":     "stages:\n  - name: services\n    hosts: all\n    steps:\n" + stop,
 		"pipelines/before.yaml":   "stages:\n  - name: services\n    hosts: all\n    steps:\n" + remove + stop,

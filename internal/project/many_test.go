@@ -11,7 +11,7 @@ import (
 )
 
 var manyProject = map[string]string{
-	"winch.yaml": "name: acme\ninventory: inventories/test.yaml\n",
+	"winch.yaml": "name: acme\ninventory: test\n",
 	"inventories/test.yaml": `hosts:
   web1: {}
   web2: {}
@@ -231,7 +231,7 @@ const stepVarsProject = `stages:
 `
 
 var stepVarsFiles = map[string]string{
-	"winch.yaml": "name: acme\ninventory: inventories/test.yaml\nvars:\n  domain: acme.com\n",
+	"winch.yaml": "name: acme\ninventory: test\nvars:\n  domain: acme.com\n",
 	"inventories/test.yaml": `hosts:
   web1:
     vars:
@@ -340,7 +340,7 @@ func TestStepVarsLoad(t *testing.T) {
 			want: "item is defined only in a step with loop"},
 		{name: "other key", pipeline: "      - recipe: site\n        loop: [a]\n",
 			want: `pipelines/site.yaml:6:9: a recipe step has only name, recipe, vars, and when, not "loop"`},
-		{name: "match in a default", winch: "name: acme\ninventory: inventories/test.yaml\nvars:\n  domain: acme.com\n  peers: !expr 'match(\"all\")'\n", pipeline: "      - recipe: site\n",
+		{name: "match in a default", winch: "name: acme\ninventory: test\nvars:\n  domain: acme.com\n  peers: !expr 'match(\"all\")'\n", pipeline: "      - recipe: site\n",
 			want: "winch.yaml:5:10: a default cannot use match()"},
 	}
 	for _, tt := range tests {
@@ -358,7 +358,7 @@ func TestStepVarsLoad(t *testing.T) {
 }
 
 var matchFiles = map[string]string{
-	"winch.yaml": "name: acme\ninventory: inventories/test.yaml\nvars:\n  mail_server: false\n  role: !expr 'vars.mail_server ? \"mail\" : \"node\"'\n",
+	"winch.yaml": "name: acme\ninventory: test\nvars:\n  mail_server: false\n  role: !expr 'vars.mail_server ? \"mail\" : \"node\"'\n",
 	"inventories/test.yaml": `hosts:
   mail.acme.com:
     address: 192.0.2.10
@@ -531,7 +531,7 @@ func TestMatchComputedDefault(t *testing.T) {
 func TestMatchSecret(t *testing.T) {
 	k := newKey(t)
 	files := with(matchFiles, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + k.id.Recipient().String() + "]\nvars:\n  mail_server: false\n  role: node\n  token: x\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + k.id.Recipient().String() + "]\nvars:\n  mail_server: false\n  role: node\n  token: x\n",
 		"inventories/test.yaml": "hosts:\n  a:\n    vars:\n      token: {{secret:peer-token-a}}\n  b:\n    vars:\n      token: {{secret:peer-token-b}}\n",
 		"pipelines/site.yaml": `stages:
   - name: monit

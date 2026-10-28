@@ -21,7 +21,7 @@ import (
 )
 
 var hashFiles = map[string]string{
-	"winch.yaml": "name: acme\ninventory: inventories/test.yaml\nvars:\n  greeting:\n",
+	"winch.yaml": "name: acme\ninventory: test\nvars:\n  greeting:\n",
 	"inventories/test.yaml": `hosts:
   web1:
     vars:
@@ -235,7 +235,7 @@ func hashSecretProject(t *testing.T, value, pipeline string, recipe string) *pro
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + id.Recipient().String() + "]\nvars:\n  pw:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + id.Recipient().String() + "]\nvars:\n  pw:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + text + "\n",
 		"pipelines/site.yaml":   pipeline,
 	}

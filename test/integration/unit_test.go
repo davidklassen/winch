@@ -132,7 +132,7 @@ func TestUnitPipeline(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "unitpipe")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":                         "name: units\ninventory: inventories/test.yaml\n",
+		"winch.yaml":                         "name: units\ninventory: test\n",
 		"inventories/test.yaml":              "hosts:\n  unitpipe: {}\n",
 		"pipelines/site.yaml":                "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: app\n",
 		"recipes/app/recipe.yaml":            unitRecipe,
@@ -306,7 +306,7 @@ func TestUnitChangesKind(t *testing.T) {
 		"printf '%s' '"+kindStatic+"[Install]\nAlias=winch-m.service\n' > /etc/systemd/system/winch-ma.service && systemctl enable winch-ma\n"+
 		"systemctl daemon-reload")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":                        "name: units\ninventory: inventories/test.yaml\n",
+		"winch.yaml":                        "name: units\ninventory: test\n",
 		"inventories/test.yaml":             "hosts:\n  unitkindpipe: {}\n",
 		"pipelines/site.yaml":               "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: app\n",
 		"recipes/app/recipe.yaml":           kindRecipe,

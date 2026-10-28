@@ -53,7 +53,7 @@ winch secret rekey.
 const generateHelp = `Examples:
   winch secret generate vars.monit_password
   winch secret generate vars.db_password --host db1.acme.com
-  winch secret generate vars.db_password --inventory inventories/production.yaml
+  winch secret generate vars.db_password --inventory production
 
 Make a random password of 32 letters and digits, encrypt it for the
 recipients in winch.yaml, and write it as a !secret value into the vars of
@@ -64,7 +64,7 @@ Usage: winch secret generate vars.<name> [flags]
 The variable must be declared, and must not be in those vars yet.
 
 Flags:
-  --inventory <path>            The inventory file to write.
+  --inventory <name>            The inventory to write.
   --host <name>                 Write into the vars of this host.
 `
 
@@ -83,16 +83,12 @@ stays as it is.
 
 const rekeyHelp = `Examples:
   winch secret rekey
-  winch secret rekey --inventory envs/prod/hosts.yaml
 
 Encrypt all secrets in winch.yaml, the inventories, and the recipes again
 for the recipients in winch.yaml, and list the files it rewrote. Run it
 after a change of the recipients.
 
-Usage: winch secret rekey [flags]
-
-Flags:
-  --inventory <path>            Also rekey this inventory file.
+Usage: winch secret rekey
 
 winch reads the age identity from the stdout of the command in
 WINCH_AGE_IDENTITY_CMD, which runs through sh -c. Without it, winch reads
@@ -198,7 +194,7 @@ func secretRekey(ctx context.Context, env Env, f *flags, args []string) int {
 		printError(env.stderr, err.Error())
 		return exitInvalid
 	}
-	n, files, err := project.Rekey(ctx, env.Dir, f.inventory, identity)
+	n, files, err := project.Rekey(ctx, env.Dir, identity)
 	if err != nil {
 		printError(env.stderr, err.Error())
 		return exitInvalid

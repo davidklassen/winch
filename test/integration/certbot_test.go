@@ -192,7 +192,7 @@ func TestCertbotPendingHooks(t *testing.T) {
 	for _, hook := range []string{"deploy_hook", "post_hook"} {
 		t.Run(hook, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: hooks\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",
 				"pipelines/site.yaml": fmt.Sprintf(`stages:
   - name: test
@@ -244,7 +244,7 @@ func TestCertbotPendingHooks(t *testing.T) {
 
 	t.Run("partial recovery", func(t *testing.T) {
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: hooks\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",
 			"pipelines/site.yaml": `stages:
   - name: test
@@ -299,7 +299,7 @@ func TestCertbotPendingHooks(t *testing.T) {
 	t.Run("a failed challenge leaves no pending hook", func(t *testing.T) {
 		step := func(webroot string) map[string]string {
 			return map[string]string{
-				"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: hooks\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",
 				"pipelines/site.yaml": `stages:
   - name: test
@@ -337,7 +337,7 @@ func TestCertbotPendingHooks(t *testing.T) {
 
 	t.Run("certbot killed during deploy_hook", func(t *testing.T) {
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: hooks\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",
 			"pipelines/site.yaml": `stages:
   - name: test
@@ -376,7 +376,7 @@ func TestCertbotPendingHooks(t *testing.T) {
 	t.Run("record failure prevents issue", func(t *testing.T) {
 		vm.MustRun(t, "mkdir -p /var/lib/winch/certbot-hooks && mount -t tmpfs none /var/lib/winch/certbot-hooks && mount -o remount,ro /var/lib/winch/certbot-hooks")
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: hooks\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",
 			"pipelines/site.yaml": `stages:
   - name: test

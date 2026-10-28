@@ -20,7 +20,7 @@ import (
 func load(t *testing.T, web3 string) *project.Project {
 	t.Helper()
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n  web3:\n    address: " + web3 + "\n",
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -155,7 +155,7 @@ func TestHasChangesIgnoresFailedHosts(t *testing.T) {
 // spec: Modules/pkg; Running a pipeline/Plan
 func TestIndexRefreshOncePerRun(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -195,7 +195,7 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
 // spec: CLI/Output; Modules/file, dir, link
 func TestPlanContentReasons(t *testing.T) {
 	p := loadFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
 		"recipes/app/recipe.yaml": `steps:
@@ -277,7 +277,7 @@ func TestPlanParents(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := loadFiles(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
 				"pipelines/site.yaml":   tt.pipeline,
 			})
@@ -300,7 +300,7 @@ func TestPlanParents(t *testing.T) {
 // spec: Running a pipeline/Apply
 func TestApplyChecksStagesWithoutChange(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: install
@@ -340,7 +340,7 @@ func TestApplyChecksStagesWithoutChange(t *testing.T) {
 }
 
 var recipes = map[string]string{
-	"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+	"winch.yaml":            "name: acme\ninventory: test\n",
 	"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
 	"pipelines/site.yaml": `stages:
   - name: web
@@ -503,7 +503,7 @@ func TestApplyRecipes(t *testing.T) {
 
 var varsFiles = map[string]string{
 	"winch.yaml": `name: acme
-inventory: inventories/test.yaml
+inventory: test
 vars:
   mail_server: false
   port: 80

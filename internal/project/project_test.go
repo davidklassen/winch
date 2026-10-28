@@ -21,7 +21,7 @@ import (
 )
 
 var base = map[string]string{
-	"winch.yaml": "name: acme\ninventory: inventories/test.yaml\n",
+	"winch.yaml": "name: acme\ninventory: test\n",
 	"inventories/test.yaml": `hosts:
   web1:
     address: 192.0.2.1
@@ -140,16 +140,16 @@ func TestLoad(t *testing.T) {
 		{name: "inventory-flag", files: map[string]string{
 			"winch.yaml":            "name: acme\n",
 			"inventories/prod.yaml": "hosts:\n  web2: {}\n",
-		}, inventory: "inventories/prod.yaml"},
+		}, inventory: "prod"},
 		{name: "flag-beats-default", files: map[string]string{
 			"inventories/prod.yaml": "hosts:\n  web2: {}\n",
-		}, inventory: "inventories/prod.yaml"},
+		}, inventory: "prod"},
 		{name: "no-inventory", files: map[string]string{"winch.yaml": "name: acme\n"}},
-		{name: "missing-inventory-file", inventory: "inventories/nope.yaml"},
-		{name: "missing-default-inventory", files: map[string]string{"winch.yaml": "name: acme\ninventory: inventories/prdo.yaml\n"}},
+		{name: "missing-inventory-file", inventory: "nope"},
+		{name: "missing-default-inventory", files: map[string]string{"winch.yaml": "name: acme\ninventory: prdo\n"}},
 		{name: "pipeline-name-with-dots", pipeline: "web.v2", files: map[string]string{"pipelines/web.v2.yaml": "stages:\n  - {name: a, hosts: all, steps: []}\n"}},
 		{name: "no-winch-yaml", files: map[string]string{"winch.yaml": ""}},
-		{name: "no-name", files: map[string]string{"winch.yaml": "inventory: inventories/test.yaml\n"}},
+		{name: "no-name", files: map[string]string{"winch.yaml": "inventory: test\n"}},
 		{name: "winch-unknown-key", files: map[string]string{"winch.yaml": "name: acme\ninventroy: x\n"}},
 		{name: "host-unknown-key", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    adress: 1.2.3.4\n"}},
 		{name: "all-with-hosts", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1: {}\ngroups:\n  all:\n    hosts: [web1]\n"}},
@@ -252,7 +252,7 @@ func TestLoad(t *testing.T) {
           name: nginx
 `}},
 		{name: "errors-in-two-files", files: map[string]string{
-			"winch.yaml":          "name: acme\ninventory: inventories/test.yaml\nfoo: 1\n",
+			"winch.yaml":          "name: acme\ninventory: test\nfoo: 1\n",
 			"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    bar: 1\n    steps: []\n",
 		}},
 	}
@@ -287,7 +287,7 @@ func TestValidate(t *testing.T) {
 			"winch.yaml":            "name: acme\n",
 			"inventories/prod.yaml": "hosts:\n  web1: {}\n",
 			"pipelines/site.yaml":   "stages:\n  - name: a\n    hosts: web2\n    steps: []\n",
-		}, inventory: "inventories/test.yaml"},
+		}, inventory: "test"},
 		{name: "every-pipeline", files: map[string]string{
 			"pipelines/other.yaml": "stages:\n  - name: a\n    hosts: all\n    steps:\n      - pkg: {}\n",
 		}},

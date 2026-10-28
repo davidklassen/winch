@@ -14,9 +14,11 @@ import (
 
 type Unit struct {
 	Name      string    `yaml:"name,required" json:"name"`
-	Source    string    `yaml:"source,required" json:"-"`
+	Source    string    `yaml:"source" json:"-"`
 	SourcePos yamlx.Pos `json:"-"`
-	// Data is the content of the source file in the recipe's files.
+	Content   *string   `yaml:"content" json:"-"`
+	// Data is the content, or the content of the source file in the recipe's
+	// files.
 	Data       []byte `json:"data"`
 	DataSHA256 string `json:"data_sha256,omitempty"`
 }
@@ -49,8 +51,15 @@ func (u *Unit) Validate() error {
 	case len(u.Name) > 255:
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters; a unit name has at most 255", len(u.Name))}
 	}
-	if u.Source == "" {
+	switch {
+	case u.Content != nil && u.SourcePos.Line > 0:
+		return &yamlx.FieldError{Field: "content", Msg: "a unit has only one of content and source"}
+	case u.Content != nil:
+		return nil
+	case u.SourcePos.Line > 0 && u.Source == "":
 		return &yamlx.FieldError{Field: "source", Msg: "must not be empty"}
+	case u.Source == "":
+		return &yamlx.FieldError{Field: "content", Msg: "a unit needs content or source"}
 	}
 	return checkRelative("source", u.Source)
 }

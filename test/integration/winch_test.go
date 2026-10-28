@@ -17,7 +17,7 @@ import (
 
 func project(t *testing.T, inventory string) string {
 	return vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: demo\ninventory: test\n",
 		"inventories/test.yaml": inventory,
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -103,7 +103,7 @@ func TestWinch(t *testing.T) {
 
 	t.Run("the plan leaves out a parent that an earlier step creates", func(t *testing.T) {
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: demo\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
 			"pipelines/site.yaml": `stages:
   - name: base
@@ -140,7 +140,7 @@ func TestWinch(t *testing.T) {
 	t.Run("the plan fails a cmd as a user that a later step creates", func(t *testing.T) {
 		write := func(steps string) string {
 			return vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: demo\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
 				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n" + steps,
 			})
@@ -173,7 +173,7 @@ func TestWinch(t *testing.T) {
 	t.Run("plan and apply name a followed link", func(t *testing.T) {
 		vm.MustRun(t, "rm -rf /srv/linked && mkdir -p /srv/linked/t && chmod 700 /srv/linked/t && ln -s t /srv/linked/l")
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: demo\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
 			"pipelines/site.yaml": `stages:
   - name: base
@@ -217,7 +217,7 @@ func TestWinch(t *testing.T) {
 
 	t.Run("plan and apply wait for another apt run and name it", func(t *testing.T) {
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: demo\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
 			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - pkg:\n          name: hello\n",
 		})
@@ -248,7 +248,7 @@ func TestWinch(t *testing.T) {
 
 	t.Run("the refresh waits for another apt run that holds the index lock", func(t *testing.T) {
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: demo\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
 			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - pkg:\n          name: sl\n",
 		})
@@ -305,7 +305,7 @@ func TestWinch(t *testing.T) {
 		vm.MustRun(t, "cp /home/admin/.ssh/authorized_keys /root/.ssh/authorized_keys")
 		defer vm.MustRun(t, ": > /root/.ssh/authorized_keys")
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: demo\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n    user: root\n",
 			"pipelines/site.yaml": `stages:
   - name: base
@@ -399,7 +399,7 @@ func TestWinch(t *testing.T) {
 		}
 		for _, user := range []string{"admin", "root"} {
 			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: demo\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n    user: " + user + "\n",
 				"pipelines/site.yaml": `stages:
   - name: base

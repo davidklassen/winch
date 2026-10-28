@@ -45,7 +45,7 @@ func secretProject(t *testing.T) (*project.Project, *secret.Filter) {
 		t.Fatal(err)
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + recipient.String() + "]\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      monit_password: !secret " + text + "\n",
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: monit\n",
 		"recipes/monit/recipe.yaml": `vars:
@@ -136,7 +136,7 @@ func TestSecretAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + recipient.String() + "]\nvars:\n  token:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\nvars:\n  token:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: !secret " + text + "\n",
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -182,7 +182,7 @@ func TestSecretContentReasons(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + recipient.String() + "]\nvars:\n  tls_key:\n  big:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\nvars:\n  tls_key:\n  big:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      tls_key: !secret " + key + "\n      big: !secret " + big + "\n",
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -217,7 +217,7 @@ func TestPlanLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + recipient.String() + "]\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      redis_password: !secret " + text + "\n",
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: redis\n",
 		"recipes/redis/recipe.yaml": `vars:
@@ -270,7 +270,7 @@ func TestSecretHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + recipient.String() + "]\nvars:\n  token:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\nvars:\n  token:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: !secret " + text + "\n",
 		"pipelines/site.yaml": `stages:
   - name: base

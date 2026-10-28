@@ -14,6 +14,7 @@ import (
 )
 
 type Inventory struct {
+	// File names the inventory in messages.
 	File   string
 	Hosts  []Host  `yaml:"hosts"`
 	Groups []Group `yaml:"groups"`
@@ -70,14 +71,14 @@ func hasPort(s string) bool {
 	return strings.Contains(s, ":") && err != nil
 }
 
-// loadInventory loads an inventory file. Its variables must be declared; the
+// loadInventory loads the inventory p. Its variables must be declared; the
 // values of set come last.
-func (l *loader) loadInventory(file string, set []setValue) (*Inventory, error) {
-	n, err := parse(l.dir, file)
+func (l *loader) loadInventory(p part, set []setValue) (*Inventory, error) {
+	n, err := p.parse(l.dir)
 	if err != nil {
 		return nil, err
 	}
-	inv := &Inventory{File: file}
+	inv := &Inventory{File: p.label("inventories")}
 	if err := yamlx.Decode(n, inv); err != nil {
 		return nil, err
 	}

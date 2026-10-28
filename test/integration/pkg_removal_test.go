@@ -15,7 +15,7 @@ func TestPkgRemovalInOneRun(t *testing.T) {
 	vm.MustRun(t, installNeedsHello)
 	const stage = "stages:\n  - name: packages\n    hosts: all\n    steps:\n"
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: pkgremoval\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: pkgremoval\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  pkgremoval: {}\n",
 		"pipelines/postfix.yaml": stage +
 			"      - pkg: {name: postfix}\n",

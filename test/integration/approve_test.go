@@ -80,7 +80,7 @@ func TestApprove(t *testing.T) {
 	t.Run("SIGINT during a package install lets the install finish", func(t *testing.T) {
 		vm.MustRun(t, "apt-get update -qq && rm -f /root/winch-wait.started /root/winch-wait.go /root/after")
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: demo\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  approve:\n    address: 127.0.0.1\n",
 			"pipelines/site.yaml": `stages:
   - name: base
@@ -120,7 +120,7 @@ func TestApprove(t *testing.T) {
 	t.Run("a second SIGINT ends winch, and the install finishes on the host", func(t *testing.T) {
 		vm.MustRun(t, "dpkg --purge winch-wait >/dev/null; rm -f /root/winch-wait.started /root/winch-wait.go /root/after")
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: demo\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  approve:\n    address: 127.0.0.1\n",
 			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - pkg:\n          name: winch-wait\n",
 		})

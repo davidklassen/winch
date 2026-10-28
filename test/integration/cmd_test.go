@@ -22,7 +22,7 @@ func TestCmdTimeout(t *testing.T) {
 	} {
 		t.Run(fmt.Sprint(tt.timeout), func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: timeout\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: timeout\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  cmdtimeout: {}\n",
 				"pipelines/site.yaml": fmt.Sprintf(`stages:
   - name: s
@@ -204,7 +204,7 @@ func TestCmdPipeline(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "cmdpipe")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":              "name: cmds\ninventory: inventories/test.yaml\n",
+		"winch.yaml":              "name: cmds\ninventory: test\n",
 		"inventories/test.yaml":   "hosts:\n  cmdpipe: {}\n",
 		"pipelines/site.yaml":     "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: app\n",
 		"pipelines/uptime.yaml":   "stages:\n  - name: s\n    hosts: all\n    steps:\n      - cmd:\n          command: uptime\n",
@@ -279,7 +279,7 @@ func TestCmdHandler(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "cmdhandler")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":                 "name: reconf\ninventory: inventories/test.yaml\n",
+		"winch.yaml":                 "name: reconf\ninventory: test\n",
 		"inventories/test.yaml":      "hosts:\n  cmdhandler: {}\n",
 		"pipelines/site.yaml":        "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: reconf\n",
 		"recipes/reconf/recipe.yaml": reconfRecipe,

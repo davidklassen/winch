@@ -13,9 +13,9 @@ import (
 )
 
 // Format fixes the indentation and the step key order of the project files.
-// inventory is the path of --inventory, or empty. It writes no file when a
-// file fails. It returns the files it changed, sorted.
-func Format(dir, inventory string) ([]string, error) {
+// It writes no file when a file fails. It returns the files it changed,
+// sorted.
+func Format(dir string) ([]string, error) {
 	type rewrite struct {
 		name, path string
 		data       []byte
@@ -56,13 +56,12 @@ func Format(dir, inventory string) ([]string, error) {
 		}
 	}
 
-	// A winch.yaml with a schema error still names its inventory.
-	cfg, err := loadConfig(dir)
-	if cfg == nil {
+	// fmt formats a winch.yaml with a schema error.
+	if cfg, err := loadConfig(dir); cfg == nil {
 		return nil, err
 	}
-	format("winch.yaml", nil)
-	invs, err := inventories(dir, cfg, inventory)
+	format("winch.yaml", []string{"pipelines.*.stages.*.steps", "recipes.*.steps", "recipes.*.handlers.*"})
+	invs, err := list(dir, "inventories")
 	if err != nil {
 		return nil, err
 	}

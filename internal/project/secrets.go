@@ -341,29 +341,10 @@ func AddRecipient(dir, key string) (bool, error) {
 	return true, replaceFile(path, []byte(text))
 }
 
-// inventories returns the inventory files of the project: the files in
-// inventories/, the default inventory of winch.yaml, and flag.
-func inventories(dir string, cfg *Config, flag string) ([]string, error) {
-	files, err := list(dir, "inventories")
-	if err != nil {
-		return nil, err
-	}
-	for _, f := range []string{cfg.Inventory, flag} {
-		if f == "" {
-			continue
-		}
-		if f = filepath.ToSlash(filepath.Clean(f)); !slices.Contains(files, f) {
-			files = append(files, f)
-		}
-	}
-	return files, nil
-}
-
 // Rekey encrypts every secret in winch.yaml, the inventories, and the recipes
-// again for the recipients in winch.yaml. inventory is the path of
-// --inventory, or empty. It writes no file when a secret fails. It returns
-// the number of secrets and the files it rewrote.
-func Rekey(ctx context.Context, dir, inventory string, identity secret.Identity) (int, []string, error) {
+// again for the recipients in winch.yaml. It writes no file when a secret
+// fails. It returns the number of secrets and the files it rewrote.
+func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, []string, error) {
 	cfg, err := loadConfig(dir)
 	if err != nil {
 		return 0, nil, err
@@ -372,7 +353,7 @@ func Rekey(ctx context.Context, dir, inventory string, identity secret.Identity)
 	if err != nil {
 		return 0, nil, err
 	}
-	invs, err := inventories(dir, cfg, inventory)
+	invs, err := list(dir, "inventories")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -510,8 +491,8 @@ func replaceFile(path string, data []byte) error {
 
 // scanProject returns a warning for each private key or token in the
 // project files that is not a !secret.
-func scanProject(dir, inventory string, cfg *Config) ([]*yamlx.Error, error) {
-	invs, err := inventories(dir, cfg, inventory)
+func scanProject(dir string) ([]*yamlx.Error, error) {
+	invs, err := list(dir, "inventories")
 	if err != nil {
 		return nil, err
 	}
@@ -578,9 +559,9 @@ func scanProject(dir, inventory string, cfg *Config) ([]*yamlx.Error, error) {
 
 // WriteSecret encrypts plain for the recipients, and writes it as the value
 // of the variable name into the vars of the group all in the inventory, or of
-// host when host is not empty. inventory is the path of --inventory, or
+// host when host is not empty. inventory is the name of --inventory, or
 // empty. It keeps the comments and the layout of the file, and returns the
-// name of the file.
+// name of the inventory.
 func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	cfg, err := loadConfig(dir)
 	if err != nil {
@@ -590,19 +571,33 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	l := &loader{dir: dir, vars: map[string]*Var{}, files: map[string]*recipeFile{}, recipes: map[string]*Recipe{}}
+	ly, err := readLayout(dir, cfg)
+	if err != nil {
+		return "", err
+	}
+	l := &loader{dir: dir, layout: ly, vars: map[string]*Var{}, files: map[string]*recipeFile{}, recipes: map[string]*Recipe{}}
 	if err := errors.Join(append(l.declare(cfg.Vars, ""), l.readRecipes())...); err != nil {
 		return "", err
 	}
 	if l.vars[name] == nil {
 		return "", errors.New(unknownVariable(name, l.vars))
 	}
-	file := inventory
-	if file == "" {
-		file = cfg.Inventory
+	if inventory == "" {
+		inventory = cfg.Inventory
 	}
-	if file == "" {
+	if inventory == "" {
 		return "", errors.New("no inventory: use --inventory, or set inventory in winch.yaml")
+	}
+	inv, err := ly.inventory(inventory)
+	if err != nil {
+		return "", err
+	}
+	// A key in winch.yaml is the map at prefix.
+	file, label := inv.file, inv.label("inventories")
+	var prefix []string
+	if inv.node != nil {
+		file = "winch.yaml"
+		prefix = []string{"inventories", inv.name}
 	}
 	path, err := filepath.EvalSymlinks(projectPath(dir, file))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -619,17 +614,17 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	keys := []string{"groups", "all", "vars", name}
+	keys := slices.Concat(prefix, []string{"groups", "all", "vars", name})
 	where := "the group all"
 	if host != "" {
-		keys = []string{"hosts", host, "vars", name}
+		keys = slices.Concat(prefix, []string{"hosts", host, "vars", name})
 		where = fmt.Sprintf("host %q", host)
-		if find(n, keys[:2]) == nil {
-			return "", fmt.Errorf("host %q is not in %s", host, file)
+		if find(n, keys[:len(prefix)+2]) == nil {
+			return "", fmt.Errorf("host %q is not in %s", host, label)
 		}
 	}
 	if find(n, keys) != nil {
-		return "", fmt.Errorf("variable %q is already in the vars of %s in %s", name, where, file)
+		return "", fmt.Errorf("variable %q is already in the vars of %s in %s", name, where, label)
 	}
 	text, err := secret.Encrypt(plain, recs)
 	if err != nil {
@@ -640,9 +635,9 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	// layout.
 	after, err := yamlx.Parse(file, []byte(out))
 	if err != nil || !reflect.DeepEqual(yamlx.Value(after), withValue(yamlx.Value(n), keys, text)) {
-		return "", fmt.Errorf("cannot write vars.%s into %s; add it by hand", name, file)
+		return "", fmt.Errorf("cannot write vars.%s into %s; add it by hand", name, label)
 	}
-	return file, replaceFile(path, []byte(out))
+	return label, replaceFile(path, []byte(out))
 }
 
 // find returns the pair at the path of keys in n, or nil.

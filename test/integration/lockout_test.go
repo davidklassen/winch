@@ -53,7 +53,7 @@ func TestLockoutFirewall(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "firewall")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":                                    "name: demo\ninventory: inventories/test.yaml\n",
+		"winch.yaml":                                    "name: demo\ninventory: test\n",
 		"inventories/test.yaml":                         "hosts:\n  firewall: {}\n",
 		"pipelines/site.yaml":                           "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: nftables\n",
 		"recipes/nftables/recipe.yaml":                  nftablesRecipe,
@@ -108,7 +108,7 @@ func TestLockoutKeys(t *testing.T) {
 	vm := lab.StartVM(t, "keys")
 	other := fakeKey('4', "other")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: demo\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  keys: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: base

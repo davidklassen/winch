@@ -106,7 +106,7 @@ func TestBatch(t *testing.T) {
 // spec: Pipelines; Running a pipeline/Health gates; CLI/JSON output
 func TestJSONHealth(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":   strings.Replace(motd, "    hosts: all\n", "    hosts: all\n    health:\n      command: systemctl is-active nginx\n", 1),
 	})
@@ -131,7 +131,7 @@ func TestEmptySelection(t *testing.T) {
 // spec: Running a pipeline/Health gates; CLI/JSON output
 func TestJSONHealthApply(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":   strings.Replace(motd, "    hosts: all\n", "    hosts: all\n    health:\n      command: check\n", 1),
 	})

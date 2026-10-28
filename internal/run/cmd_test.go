@@ -15,7 +15,7 @@ import (
 )
 
 var cmdFiles = map[string]string{
-	"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+	"winch.yaml":            "name: acme\ninventory: test\n",
 	"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n  web3: {}\n",
 	"pipelines/site.yaml": `stages:
   - name: checks
@@ -88,7 +88,7 @@ func TestApplyCmd(t *testing.T) {
 // spec: Steps (a step that runs a command counts as changed); Handlers
 func TestCmdNotifies(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
 		"recipes/app/recipe.yaml": `steps:
@@ -130,7 +130,7 @@ handlers:
 // spec: CLI/Output (the summary); Steps (a pending then)
 func TestPendingThenOfCmdCounts(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: app migrate\n        then: echo done\n",
 	}
@@ -145,7 +145,7 @@ func TestPendingThenOfCmdCounts(t *testing.T) {
 // spec: Running a pipeline/Apply; Modules/cmd
 func TestApplyOnlyUnknown(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: uptime\n",
 	}
@@ -158,7 +158,7 @@ func TestApplyOnlyUnknown(t *testing.T) {
 // spec: Modules/assert; Running a pipeline/Failures
 func TestAssertFails(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -195,7 +195,7 @@ func TestAssertFails(t *testing.T) {
 // spec: Modules/reboot (a host whose plan has only * steps); CLI ("--exit-code")
 func TestAssertOnly(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - assert:\n          command: probe\n          message: x\n",
 	}

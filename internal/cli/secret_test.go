@@ -55,7 +55,7 @@ const secretPipeline = `stages:
 func secretProject(t *testing.T, id *age.X25519Identity) string {
 	t.Helper()
 	return vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + id.Recipient().String() + "\nvars:\n  pw:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + id.Recipient().String() + "\nvars:\n  pw:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: PW\n",
 		"pipelines/site.yaml":   secretPipeline,
 	})
@@ -179,20 +179,17 @@ func TestSecretRekey(t *testing.T) {
 	}
 }
 
-// spec: Variables/Secrets (winch secret rekey, --inventory)
+// spec: Variables/Secrets (winch secret rekey)
 func TestSecretRekeyInventory(t *testing.T) {
 	identity, id := newIdentity(t)
 	dir := secretProject(t, id)
 	setPassword(t, dir, encrypt(t, dir, "hunter2"))
-	prod := filepath.Join(dir, "envs", "prod.yaml")
-	if err := os.MkdirAll(filepath.Dir(prod), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	prod := filepath.Join(dir, "inventories", "prod.yaml")
 	if err := os.WriteFile(prod, []byte("hosts:\n  web2:\n    vars:\n      pw: "+encrypt(t, dir, "prod-pw")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r := winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "rekey", "--inventory", "envs/prod.yaml")
-	if want := "rekeyed 2 secrets in 2 files\n  envs/prod.yaml\n  inventories/test.yaml\n"; r.code != exitOK || r.out != want {
+	r := winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "rekey")
+	if want := "rekeyed 2 secrets in 2 files\n  inventories/prod.yaml\n  inventories/test.yaml\n"; r.code != exitOK || r.out != want {
 		t.Errorf("rekey: exit %d, stdout %q, stderr %q; want %q", r.code, r.out, r.err, want)
 	}
 }
@@ -201,7 +198,7 @@ func TestSecretRekeyInventory(t *testing.T) {
 func TestLoadWarning(t *testing.T) {
 	token := fakeSecret(t, "ghp.txt")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nvars:\n  token:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nvars:\n  token:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: " + token + "\n",
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/token\n          content: !expr vars.token\n",
 	})
@@ -316,7 +313,7 @@ func TestAgeIdentityCmd(t *testing.T) {
 	})
 	t.Run("no command without secrets", func(t *testing.T) {
 		plain := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + id.Recipient().String() + "\n",
+			"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + id.Recipient().String() + "\n",
 			"inventories/test.yaml": "hosts:\n  web1:\n",
 			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/a\n          content: a\n",
 		})
@@ -467,7 +464,7 @@ func TestSecretInit(t *testing.T) {
 func TestSecretGenerate(t *testing.T) {
 	_, id := newIdentity(t)
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + id.Recipient().String() + "\nvars:\n  pw:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + id.Recipient().String() + "\nvars:\n  pw:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n",
 	})
 	path := filepath.Join(dir, "inventories", "test.yaml")

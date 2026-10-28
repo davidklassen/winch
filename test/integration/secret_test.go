@@ -32,7 +32,7 @@ func TestSecretInCommandErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + id.Recipient().String() + "\nvars:\n  pw:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + id.Recipient().String() + "\nvars:\n  pw:\n",
 		"inventories/test.yaml": "hosts:\n  " + vm.Name + ":\n    vars:\n      pw: !secret " + text + "\n",
 		"pipelines/validate.yaml": `stages:
   - name: base
@@ -96,7 +96,7 @@ func TestSecretBinaryFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + id.Recipient().String() + "\nvars:\n  tls_key:\n",
+			"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + id.Recipient().String() + "\nvars:\n  tls_key:\n",
 			"inventories/test.yaml": "hosts:\n  " + vm.Name + ":\n    vars:\n      tls_key: !secret " + text + "\n",
 			"pipelines/site.yaml": `stages:
   - name: base

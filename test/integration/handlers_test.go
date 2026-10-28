@@ -103,7 +103,7 @@ func TestHandlers(t *testing.T) {
 	// first, so it needs its own VM.
 	other := lab.StartVM(t, "handlers-b")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":               "name: hdemo\ninventory: inventories/test.yaml\n",
+		"winch.yaml":               "name: hdemo\ninventory: test\n",
 		"inventories/test.yaml":    "hosts:\n  handlers: {}\n  handlers-b: {}\ngroups:\n  apps:\n    hosts: [handlers]\n",
 		"pipelines/site.yaml":      handlersPipeline,
 		"recipes/conf/recipe.yaml": confRecipe,
@@ -248,7 +248,7 @@ func TestHandlers(t *testing.T) {
 
 	t.Run("a failed validate leaves only the records of earlier runs", func(t *testing.T) {
 		vdir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: vdemo\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: vdemo\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  handlers: {}\n",
 			"pipelines/site.yaml":   "stages:\n  - name: v\n    hosts: all\n    steps:\n      - recipe: v\n",
 			"recipes/v/recipe.yaml": validateRecipe,

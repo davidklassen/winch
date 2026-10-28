@@ -51,6 +51,9 @@ type Config struct {
 	InventoryPos yamlx.Pos
 	Recipients   []string    `yaml:"recipients"`
 	Vars         *yamlx.Node `yaml:"vars"`
+	Inventories  *yamlx.Node `yaml:"inventories"`
+	Pipelines    *yamlx.Node `yaml:"pipelines"`
+	Recipes      *yamlx.Node `yaml:"recipes"`
 }
 
 var projectNameRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
@@ -152,10 +155,10 @@ type nameAt struct {
 }
 
 // Load reads the project in dir with one inventory and one pipeline. The
-// inventory is the path in inventory, or the default from winch.yaml. set
+// inventory is the one named inventory, or the default from winch.yaml. set
 // holds the --set flags.
 func Load(ctx context.Context, dir, inventory, pipeline string, set []string, keys Keys) (*Project, error) {
-	return load(ctx, dir, inventory, set, keys, "pipelines/"+pipeline+".yaml", func(l *loader) (*Pipeline, error) { return l.loadPipeline(pipeline) })
+	return load(ctx, dir, inventory, set, keys, pipeline, func(l *loader) (*Pipeline, error) { return l.loadPipeline(pipeline) })
 }
 
 // Command is a winch run or winch exec on the command line: a host pattern,
@@ -175,8 +178,8 @@ func LoadCommand(ctx context.Context, dir, inventory string, keys Keys, c Comman
 }
 
 // load loads the project with the pipeline that pipeline returns, and every
-// pipeline file other than file.
-func load(ctx context.Context, dir, inventory string, set []string, keys Keys, file string, pipeline func(*loader) (*Pipeline, error)) (*Project, error) {
+// pipeline other than the one named skip.
+func load(ctx context.Context, dir, inventory string, set []string, keys Keys, skip string, pipeline func(*loader) (*Pipeline, error)) (*Project, error) {
 	cfg, cfgErr := loadConfig(dir)
 	if cfg == nil {
 		return nil, cfgErr
@@ -194,7 +197,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, f
 	// The other pipelines count only for dir purge; their warnings show in
 	// winch validate.
 	n := len(l.warnings)
-	others, othersErr := l.otherPipelines(file)
+	others, othersErr := l.otherPipelines(skip)
 	l.warnings = l.warnings[:n]
 	for _, o := range others {
 		othersErr = errors.Join(othersErr, resolve(invs[0], o, map[*Recipe]bool{}))
@@ -202,7 +205,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, f
 	if err := l.unsealAll(ctx, keys); err != nil {
 		return nil, err
 	}
-	warnings, err := scanProject(dir, inventory, cfg)
+	warnings, err := scanProject(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -275,8 +278,8 @@ func setPos(n *yamlx.Node, pos yamlx.Pos) {
 }
 
 // Validate loads every pipeline in dir against an inventory: the one in
-// inventory, the default from winch.yaml, or else every file in
-// inventories/. set holds the --set flags.
+// inventory, the default from winch.yaml, or else every inventory. set holds
+// the --set flags.
 func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	cfg, cfgErr := loadConfig(dir)
 	if cfg == nil {
@@ -286,17 +289,13 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	sets, setErr := l.parseSets(set)
 	invs, invErr := l.loadInventories(inventory, cfg, true, sets)
 	errs := []error{cfgErr, lErr, setErr, invErr}
-	files, err := list(dir, "pipelines")
-	if err != nil {
-		return nil, err
-	}
 	var pls []*Pipeline
 	checked := map[*Inventory]map[*Recipe]bool{}
 	for _, inv := range invs {
 		checked[inv] = map[*Recipe]bool{}
 	}
-	for _, file := range files {
-		pl, err := l.decodePipeline(file)
+	for _, p := range l.layout.pipelines {
+		pl, err := l.decodePipeline(p)
 		errs = append(errs, err)
 		if err != nil {
 			continue
@@ -309,7 +308,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-	warnings, err := scanProject(dir, inventory, cfg)
+	warnings, err := scanProject(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +343,8 @@ func ymlFiles(dir string) ([]*yamlx.Error, error) {
 }
 
 type loader struct {
-	dir string
+	dir    string
+	layout layout
 	// vars are the declarations by name, decls in file order, and order in
 	// the order in which defaults evaluate.
 	vars  map[string]*Var
@@ -362,45 +362,41 @@ type loader struct {
 // loads the recipes.
 func newLoader(dir string, cfg *Config) (*loader, error) {
 	l := &loader{dir: dir, vars: map[string]*Var{}, files: map[string]*recipeFile{}, recipes: map[string]*Recipe{}}
-	errs := l.declare(cfg.Vars, "")
+	var err error
+	l.layout, err = readLayout(dir, cfg)
+	errs := append([]error{err}, l.declare(cfg.Vars, "")...)
 	errs = append(errs, l.readRecipes(), l.compileDefaults(), l.loadRecipes(), l.resolveRecipeNotify())
 	return l, errors.Join(errs...)
 }
 
-// loadInventories loads the inventory in flag, or the default from
-// winch.yaml. Without both, it loads every file in inventories/ when all is
-// true. It returns the inventories that loaded.
+// loadInventories loads the inventory flag, or the default from winch.yaml.
+// Without both, it loads every inventory when all is true. It returns the
+// inventories that loaded.
 func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setValue) ([]*Inventory, error) {
-	switch {
-	case flag != "":
-		inv, err := l.loadInventory(flag, set)
-		if err != nil {
-			return nil, err
-		}
-		return []*Inventory{inv}, nil
-	case cfg.Inventory != "":
-		inv, err := l.loadInventory(cfg.Inventory, set)
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, yamlx.Errorf(cfg.InventoryPos, "inventory %q does not exist", cfg.Inventory)
+	if flag != "" || cfg.Inventory != "" {
+		p, err := l.layout.inventory(cmp.Or(flag, cfg.Inventory))
+		if err != nil && flag == "" {
+			err = yamlx.Errorf(cfg.InventoryPos, "%s", err)
 		}
 		if err != nil {
 			return nil, err
 		}
+		inv, err := l.loadInventory(p, set)
+		if err != nil {
+			return nil, err
+		}
 		return []*Inventory{inv}, nil
-	case !all:
+	}
+	if !all {
 		return nil, errors.New("no inventory: use --inventory, or set inventory in winch.yaml")
 	}
-	files, err := list(l.dir, "inventories")
-	if err != nil {
-		return nil, err
-	}
-	if len(files) == 0 {
+	if len(l.layout.inventories) == 0 {
 		return nil, errors.New("no inventory: use --inventory, set inventory in winch.yaml, or add a file to inventories/")
 	}
 	var invs []*Inventory
 	var errs []error
-	for _, file := range files {
-		inv, err := l.loadInventory(file, set)
+	for _, p := range l.layout.inventories {
+		inv, err := l.loadInventory(p, set)
 		errs = append(errs, err)
 		if err == nil {
 			invs = append(invs, inv)
@@ -638,38 +634,26 @@ func (h *healthFile) Validate() error {
 }
 
 func (l *loader) loadPipeline(name string) (*Pipeline, error) {
-	files, err := list(l.dir, "pipelines")
-	if err != nil {
-		return nil, err
-	}
-	file := "pipelines/" + name + ".yaml"
-	if !slices.Contains(files, file) {
-		var names []string
-		for _, f := range files {
-			names = append(names, pipelineName(f))
-		}
+	i := slices.IndexFunc(l.layout.pipelines, func(p part) bool { return p.name == name })
+	if i < 0 {
 		yml := "pipelines/" + name + ".yml"
 		if _, err := os.Stat(filepath.Join(l.dir, yml)); err == nil {
 			return nil, fmt.Errorf("unknown pipeline %q; winch reads only .yaml files: rename %s to %s.yaml", name, yml, name)
 		}
-		return nil, fmt.Errorf("unknown pipeline %q%s", name, yamlx.Suggest(name, names))
+		return nil, fmt.Errorf("unknown pipeline %q%s", name, yamlx.Suggest(name, partNames(l.layout.pipelines)))
 	}
-	return l.decodePipeline(file)
+	return l.decodePipeline(l.layout.pipelines[i])
 }
 
-// otherPipelines loads every pipeline file of the project other than skip.
+// otherPipelines loads every pipeline of the project other than skip.
 func (l *loader) otherPipelines(skip string) ([]*Pipeline, error) {
-	files, err := list(l.dir, "pipelines")
-	if err != nil {
-		return nil, err
-	}
 	var out []*Pipeline
 	var errs []error
-	for _, file := range files {
-		if file == skip {
+	for _, p := range l.layout.pipelines {
+		if p.name == skip {
 			continue
 		}
-		pl, err := l.decodePipeline(file)
+		pl, err := l.decodePipeline(p)
 		errs = append(errs, err)
 		if err == nil {
 			out = append(out, pl)
@@ -678,12 +662,8 @@ func (l *loader) otherPipelines(skip string) ([]*Pipeline, error) {
 	return out, errors.Join(errs...)
 }
 
-func pipelineName(file string) string {
-	return strings.TrimSuffix(filepath.Base(file), ".yaml")
-}
-
-func (l *loader) decodePipeline(file string) (*Pipeline, error) {
-	n, err := parse(l.dir, file)
+func (l *loader) decodePipeline(p part) (*Pipeline, error) {
+	n, err := p.parse(l.dir)
 	if err != nil {
 		return nil, err
 	}
@@ -691,7 +671,7 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 	if err := yamlx.Decode(n, &pf); err != nil {
 		return nil, err
 	}
-	pl := &Pipeline{Name: pipelineName(file)}
+	pl := &Pipeline{Name: p.name}
 	var errs []error
 	if len(pf.Stages) == 0 {
 		i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "stages" })
@@ -738,8 +718,14 @@ func (l *loader) decodePipeline(file string) (*Pipeline, error) {
 	return pl, nil
 }
 
-// recipeOnly are the arguments that read a recipe's files or templates.
-var recipeOnly = map[string][]string{"file": {"template", "source"}, "repo": {"key"}, "unit": {"source"}}
+// recipeOnly are the arguments of each module that read a recipe's files or
+// templates, with the argument that a recipe in winch.yaml uses in their
+// place.
+var recipeOnly = map[string]map[string]string{
+	"file": {"template": "content with !tpl", "source": "content"},
+	"repo": {"key": "key_content"},
+	"unit": {"source": "content"},
+}
 
 // stepFields are the step keys in the order of winch fmt.
 var stepFields = []string{"name", "recipe", "vars", "when", "loop", "then", "confirm_access", "notify"}
@@ -878,14 +864,19 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 			}
 		}
 	}
-	if r == nil {
+	if r == nil || r.inline {
 		for _, p := range argsNode.Pairs {
-			if slices.Contains(recipeOnly[st.Module], p.Key) {
-				if kind == runStep {
-					return Step{}, yamlx.Errorf(p.Value.Pos, "winch run cannot use %s; use it in a recipe", p.Key)
-				}
-				return Step{}, yamlx.Errorf(p.Value.Pos, "%s: a step in a stage cannot use %s; use it in a recipe", p.Key, p.Key)
+			alt, ok := recipeOnly[st.Module][p.Key]
+			if !ok {
+				continue
 			}
+			switch {
+			case kind == runStep:
+				return Step{}, yamlx.Errorf(p.Value.Pos, "winch run cannot use %s; use it in a recipe", p.Key)
+			case r != nil:
+				return Step{}, yamlx.Errorf(p.Value.Pos, "%s: a recipe in winch.yaml cannot use %s; use %s, or move the recipe to recipes/%s/", p.Key, p.Key, alt, r.Name)
+			}
+			return Step{}, yamlx.Errorf(p.Value.Pos, "%s: a step in a stage cannot use %s; use it in a recipe", p.Key, p.Key)
 		}
 	}
 	if f, ok := st.Args.(*module.File); ok {

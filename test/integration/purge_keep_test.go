@@ -13,7 +13,7 @@ func TestPurgePostmap(t *testing.T) {
 	vm := lab.StartVM(t, "postmap")
 	vm.MustRun(t, "mkdir /etc/winch-maps && touch /etc/winch-maps/stale")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: purge\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: purge\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  postmap: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: maps

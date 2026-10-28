@@ -101,7 +101,7 @@ systemctl daemon-reload && systemctl enable winch-bsock.socket && systemctl show
 		vm.MustRun(t, socketReset+"\nsystemctl enable --now winch-sock.socket && systemctl start winch-sock.service")
 		pipeline := "stages:\n  - name: s\n    hosts: all\n    steps:\n"
 		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: sdemo\ninventory: inventories/test.yaml\n",
+			"winch.yaml":            "name: sdemo\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  startedby: {}\n",
 			"pipelines/alone.yaml":  pipeline + stopSock,
 			"pipelines/both.yaml":   pipeline + stopSock + stopSocket,

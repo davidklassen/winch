@@ -20,7 +20,7 @@ func TestSQLQuote(t *testing.T) {
 		vars.WriteString("    - " + strconv.Quote(v) + "\n")
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n" + vars.String(),
+		"winch.yaml":            "name: demo\ninventory: test\n" + vars.String(),
 		"inventories/test.yaml": "hosts:\n  sqlquote: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: db

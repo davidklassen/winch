@@ -7,7 +7,7 @@ import (
 )
 
 var writtenProject = map[string]string{
-	"winch.yaml": "name: acme\ninventory: inventories/test.yaml\n",
+	"winch.yaml": "name: acme\ninventory: test\n",
 	"inventories/test.yaml": `hosts:
   web1: {}
   db1: {}

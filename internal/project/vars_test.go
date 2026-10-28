@@ -20,7 +20,7 @@ var debian13 = facts.Facts{OS: facts.OS{ID: "debian", Version: "13", Codename: "
 
 var varsProject = map[string]string{
 	"winch.yaml": `name: acme
-inventory: inventories/test.yaml
+inventory: test
 vars:
   domain:
   mail_server: false
@@ -493,7 +493,7 @@ func TestEval(t *testing.T) {
 func evalOne(t *testing.T, vars, step string, files map[string]string) string {
 	t.Helper()
 	all := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nvars:\n" + vars,
+		"winch.yaml":            "name: acme\ninventory: test\nvars:\n" + vars,
 		"inventories/test.yaml": "hosts:\n  web1:\n    address: 192.0.2.1\n",
 		"pipelines/site.yaml":   stage("      - recipe: r\n"),
 		"recipes/r/recipe.yaml": recipe(step),
@@ -801,7 +801,7 @@ func TestLoopNull(t *testing.T) {
 // spec: Variables ("unless when skips the recipe step there"); Running a pipeline/Plan
 func TestStartRecipeWhen(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nvars:\n  on: false\n",
+		"winch.yaml":            "name: acme\ninventory: test\nvars:\n  on: false\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2:\n    vars:\n      on: true\n",
 		"pipelines/site.yaml": `stages:
   - name: web
@@ -842,7 +842,7 @@ func TestStartRecipeWhen(t *testing.T) {
 // spec: Variables ("A host evaluates only the defaults that it uses")
 func TestStartOnlyRunningDefaults(t *testing.T) {
 	files := map[string]string{
-		"winch.yaml": "name: acme\ninventory: inventories/test.yaml\nvars:\n  site_title: !expr 'upper(vars.tools_a)'\n",
+		"winch.yaml": "name: acme\ninventory: test\nvars:\n  site_title: !expr 'upper(vars.tools_a)'\n",
 		"inventories/test.yaml": `hosts:
   web1: {}
   mail1:
@@ -923,7 +923,7 @@ func TestStartOnlyRunningDefaults(t *testing.T) {
 // spec: Variables ("A host evaluates only the defaults that it uses: the defaults that the `when` of each step reads, the defaults that the steps which run on it read, and the defaults that those read.")
 func TestStartUsedDefaults(t *testing.T) {
 	base := map[string]string{
-		"winch.yaml": "name: acme\ninventory: inventories/test.yaml\nvars:\n  admins: []\n  first_admin: !expr 'vars.admins[0]'\n",
+		"winch.yaml": "name: acme\ninventory: test\nvars:\n  admins: []\n  first_admin: !expr 'vars.admins[0]'\n",
 		"inventories/test.yaml": `hosts:
   web1:
     vars:

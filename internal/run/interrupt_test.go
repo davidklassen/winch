@@ -18,7 +18,7 @@ import (
 func interruptProject(t *testing.T) *project.Project {
 	t.Helper()
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
 		// With parallelism 1, web2 starts only after web1.
 		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    parallelism: 1\n    steps:\n      - recipe: app\n",

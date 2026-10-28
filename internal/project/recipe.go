@@ -34,6 +34,8 @@ type Recipe struct {
 	Handlers  []*Handler
 	root      string
 	templates map[string]*tmplFile
+	// inline is true for a recipe in winch.yaml.
+	inline bool
 }
 
 type Handler struct {
@@ -71,6 +73,7 @@ type recipeFile struct {
 	Vars     *yamlx.Node   `yaml:"vars"`
 	Steps    []*yamlx.Node `yaml:"steps,required"`
 	Handlers *yamlx.Node   `yaml:"handlers"`
+	inline   bool
 }
 
 var recipeNameRe = regexp.MustCompile(`^[a-z0-9_]+$`)
@@ -79,29 +82,23 @@ var recipeNameRe = regexp.MustCompile(`^[a-z0-9_]+$`)
 // failed to load. That error was reported once.
 var errReported = errors.New("the recipe failed to load")
 
-// readRecipes reads the recipe.yaml of every recipe and declares its
-// variables.
+// readRecipes reads every recipe and declares its variables.
 func (l *loader) readRecipes() error {
-	entries, err := os.ReadDir(filepath.Join(l.dir, "recipes"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read recipes: %w", err)
-	}
 	var errs []error
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		name := e.Name()
+	for _, p := range l.layout.recipes {
+		name := p.name
 		l.recipes[name] = nil
 		dir := "recipes/" + name
-		if !recipeNameRe.MatchString(name) {
+		switch {
+		case recipeNameRe.MatchString(name):
+		case p.node != nil:
+			errs = append(errs, yamlx.Errorf(p.pos, "recipe %q: a recipe name has only lowercase letters, digits, and _", name))
+			continue
+		default:
 			errs = append(errs, fmt.Errorf("%s: a recipe name has only lowercase letters, digits, and _", dir))
 			continue
 		}
-		n, err := parse(l.dir, dir+"/recipe.yaml")
+		n, err := p.parse(l.dir)
 		if errors.Is(err, fs.ErrNotExist) {
 			hint := ""
 			if _, err := os.Stat(filepath.Join(l.dir, dir, "recipe.yml")); err == nil {
@@ -120,6 +117,7 @@ func (l *loader) readRecipes() error {
 			continue
 		}
 		errs = append(errs, l.declare(rf.Vars, name)...)
+		rf.inline = p.node != nil
 		l.files[name] = &rf
 	}
 	return errors.Join(errs...)
@@ -131,7 +129,7 @@ func (l *loader) loadRecipes() error {
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(l.files)) {
 		rf := l.files[name]
-		r := &Recipe{Name: name, Dir: "recipes/" + name, root: filepath.Join(l.dir, "recipes", name)}
+		r := &Recipe{Name: name, Dir: "recipes/" + name, root: filepath.Join(l.dir, "recipes", name), inline: rf.inline}
 		for _, v := range l.decls {
 			if v.Recipe == name {
 				r.Vars = append(r.Vars, v)
@@ -267,8 +265,13 @@ func (r *Recipe) content(f *module.File, loops bool) (*template.Template, error)
 	return nil, nil
 }
 
-// unitContent sets the data of a unit step of r from its source file.
+// unitContent sets the data of a unit step of r from its content or its
+// source file.
 func (r *Recipe) unitContent(u *module.Unit) error {
+	if u.Content != nil {
+		u.Data = []byte(*u.Content)
+		return nil
+	}
 	data, err := r.readFile("files", u.Source)
 	if err != nil {
 		return yamlx.Errorf(u.SourcePos, "source: %v", err)
@@ -277,23 +280,29 @@ func (r *Recipe) unitContent(u *module.Unit) error {
 	return nil
 }
 
-// key sets the key data of a repo step of r from its key file, and returns
-// its warnings.
+// key sets the key data of a repo step of r from key_content or its key
+// file, and returns its warnings.
 func (r *Recipe) key(k *module.Repo) ([]*yamlx.Error, error) {
-	if k.Key == "" {
-		return nil, nil
-	}
-	data, err := r.readFile("files", k.Key)
 	var warnings []string
-	if err == nil {
-		warnings, err = k.SetKey(r.Dir+"/files/"+k.Key, data, time.Now())
+	var err error
+	pos, prefix := k.KeyPos, "key: "
+	switch {
+	case k.KeyContent != nil:
+		pos, prefix = k.KeyContentPos, ""
+		warnings, err = k.SetKey("key_content", []byte(*k.KeyContent), time.Now())
+	case k.Key != "":
+		var data []byte
+		data, err = r.readFile("files", k.Key)
+		if err == nil {
+			warnings, err = k.SetKey(r.Dir+"/files/"+k.Key, data, time.Now())
+		}
 	}
 	if err != nil {
-		return nil, yamlx.Errorf(k.KeyPos, "key: %v", err)
+		return nil, yamlx.Errorf(pos, "%s%v", prefix, err)
 	}
 	var out []*yamlx.Error
 	for _, w := range warnings {
-		out = append(out, yamlx.Errorf(k.KeyPos, "key: %s", w))
+		out = append(out, yamlx.Errorf(pos, "%s%s", prefix, w))
 	}
 	return out, nil
 }

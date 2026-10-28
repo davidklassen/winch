@@ -85,7 +85,7 @@ func TestReboot(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "reboot")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: demo\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  reboot: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: base

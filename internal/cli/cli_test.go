@@ -19,7 +19,7 @@ import (
 
 func writeProject(t *testing.T, pipeline string) string {
 	return vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
 		"pipelines/site.yaml":   pipeline,
 	})
@@ -131,7 +131,7 @@ func TestNoHost(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": tt.inventory,
 				"pipelines/site.yaml":   tt.pipeline,
 			})
@@ -238,12 +238,12 @@ func TestApply(t *testing.T) {
 	})
 	t.Run("no terminal", func(t *testing.T) {
 		h := fakehost.New()
-		r := winch(t, dir, h, false, "", "apply", "site", "--inventory", "inventories/test.yaml")
+		r := winch(t, dir, h, false, "", "apply", "site", "--inventory", "test")
 		if r.code != exitConfirm {
 			t.Errorf("exit %d, want %d", r.code, exitConfirm)
 		}
 		// spec: CLI/Prompts
-		if want := "To apply, run: winch apply site --inventory inventories/test.yaml --check " + planHash(t, r.out) + "\n"; !strings.HasSuffix(r.out, want) {
+		if want := "To apply, run: winch apply site --inventory test --check " + planHash(t, r.out) + "\n"; !strings.HasSuffix(r.out, want) {
 			t.Errorf("stdout = %q, want suffix %q", r.out, want)
 		}
 		if h.Applies != 0 {
@@ -367,7 +367,7 @@ const greeting = `stages:
 // spec: CLI ("--set vars.<name>=<value>"); Variables/Sources
 func TestSet(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nvars:\n  greeting: hello\n",
+		"winch.yaml":            "name: acme\ninventory: test\nvars:\n  greeting: hello\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":   greeting,
 	})
@@ -436,7 +436,7 @@ func TestLoadErrorPrintable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			files := map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
 			}
 			maps.Copy(files, tt.files)

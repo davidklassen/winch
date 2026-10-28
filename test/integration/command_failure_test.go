@@ -28,7 +28,7 @@ func TestProjectCommandFailure(t *testing.T) {
 				vm.MustRun(t, "touch /root/command-file")
 			}
 			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: commands\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: commands\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  command-failure: {}\n",
 				"pipelines/site.yaml":   "stages:\n  - name: test\n    hosts: all\n" + tt.health + "    steps:\n      - cmd:\n          command: 'true'\n" + tt.steps + "  - name: after\n    hosts: all\n    steps:\n      - cmd:\n          command: touch /root/command-after\n",
 			})
@@ -56,7 +56,7 @@ func TestCertbotCommandFailure(t *testing.T) {
 	for _, hook := range []string{"pre_hook", "post_hook", "deploy_hook"} {
 		t.Run(hook, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+				"winch.yaml":            "name: hooks\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  hook-failure: {}\n",
 				"pipelines/site.yaml":   fmt.Sprintf("stages:\n  - name: test\n    hosts: all\n    steps:\n      - certbot:\n          name: %s\n          domains: [a.example.com]\n          email: admin@example.com\n          %s: |\n            false\n            true\n", hook, hook),
 			})
@@ -84,7 +84,7 @@ func TestCertbotHookShell(t *testing.T) {
 		hooks += fmt.Sprintf("          %s: |\n            if true; then\n              printf \"it's literal: $HOME\\n\" >> /root/%s\n            fi\n", hook, hook)
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: hooks\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  hook-shell: {}\n",
 		"pipelines/site.yaml":   "stages:\n  - name: test\n    hosts: all\n    steps:\n      - certbot:\n          name: a.example.com\n          domains: [a.example.com]\n          email: admin@example.com\n" + hooks,
 	})

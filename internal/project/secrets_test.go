@@ -81,7 +81,7 @@ func (k testKey) keys() Keys {
 
 var secretProject = map[string]string{
 	"winch.yaml": `name: acme
-inventory: inventories/test.yaml
+inventory: test
 recipients: [RECIPIENT]
 vars:
   pw:
@@ -319,7 +319,7 @@ func TestLoadSecretErrors(t *testing.T) {
 			want: "inventories/test.yaml:4:11: !secret: the value is not base64"},
 		{name: "not age", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret aGVsbG8=\n"},
 			want: "inventories/test.yaml:4:11: !secret: the value is not an age file"},
-		{name: "bad recipient", files: map[string]string{"winch.yaml": "name: acme\ninventory: inventories/test.yaml\nrecipients: [age1nope]\nvars:\n  pw:\n"},
+		{name: "bad recipient", files: map[string]string{"winch.yaml": "name: acme\ninventory: test\nrecipients: [age1nope]\nvars:\n  pw:\n"},
 			want: "winch.yaml:3:13: recipients: "},
 		{name: "set gives a secret", set: []string{"vars.pw=!secret abc"},
 			want: "--set vars.pw=!secret abc: --set gives no !secret values"},
@@ -409,7 +409,7 @@ func TestLoadWarnings(t *testing.T) {
 		}
 	}
 	check("Load", p.Warnings)
-	warnings, err := Validate(dir, "inventories/test.yaml", nil)
+	warnings, err := Validate(dir, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,7 +483,7 @@ func warningText(ws []*yamlx.Error) string {
 func TestRekey(t *testing.T) {
 	oldKey, newKey2 := newKey(t), newKey(t)
 	files := oldKey.sealFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - NEW # the new key\nvars:\n  pw:\n  token: {{secret:winch-token}}\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - NEW # the new key\nvars:\n  pw:\n  token: {{secret:winch-token}}\n",
 		"inventories/test.yaml": "# comment\nhosts:\n  web1:\n    vars:\n      pw: &a {{secret:hunter2}}   # trailing\n      list: [{{secret:one}}, \"x\"]\n",
 		"recipes/r/recipe.yaml": "vars:\n  r_key: {{secret:line1\\nline2\\n}}\n  r_quoted: !secret \"QUOTED\"\nsteps: []\n",
 	})
@@ -493,7 +493,7 @@ func TestRekey(t *testing.T) {
 	files["pipelines/site.yaml"] = "stages:\n  - {name: a, hosts: all, steps: []}\n"
 	dir := writeProject(t, files)
 
-	n, rewritten, err := Rekey(t.Context(), dir, "", secret.Identity{Path: oldKey.path})
+	n, rewritten, err := Rekey(t.Context(), dir, secret.Identity{Path: oldKey.path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +546,7 @@ func TestRekeyFailsWhole(t *testing.T) {
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + other.encrypt(t, "x") + "\n",
 	})
 	dir := writeProject(t, files)
-	_, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path})
+	_, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
 	if err == nil || !strings.HasPrefix(err.Error(), "inventories/test.yaml:4:11: !secret: the identity in "+k.path+" is not a recipient") {
 		t.Errorf("Rekey = %v", err)
 	}
@@ -561,7 +561,7 @@ func TestRekeyFailsWhole(t *testing.T) {
 func TestRekeyWritesThroughLink(t *testing.T) {
 	k, next := newKey(t), newKey(t)
 	dir := writeProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n",
 		"inventories/test.yaml": "",
 		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 		"shared/hosts.yaml":     "hosts:\n  web1:\n    vars:\n      pw: !secret " + k.encrypt(t, "hunter2") + "\n",
@@ -583,7 +583,7 @@ func TestRekeyWritesThroughLink(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if n, files, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path}); err != nil || n != 1 || !slices.Equal(files, []string{"inventories/prod.yaml"}) {
+	if n, files, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path}); err != nil || n != 1 || !slices.Equal(files, []string{"inventories/prod.yaml"}) {
 		t.Fatalf("Rekey = %d secrets in %v, %v; want 1 in inventories/prod.yaml", n, files, err)
 	}
 	for link, target := range links {
@@ -631,7 +631,7 @@ func TestSecretAlias(t *testing.T) {
 	k := newKey(t)
 	text := k.encrypt(t, "hunter2")
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + k.id.Recipient().String() + "]\nvars:\n  pw:\n  users: {}\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + k.id.Recipient().String() + "]\nvars:\n  pw:\n  users: {}\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: &pw !secret " + text + "\ngroups:\n  all:\n    vars:\n      users:\n        alice: *pw\n",
 		"pipelines/site.yaml":   stage("      - file:\n          path: /a\n          content: !tpl \"{{ .vars.pw }} {{ .vars.users.alice }}\\n\"\n"),
 	}
@@ -665,14 +665,14 @@ func TestRekeyKeepsEqualValuesEqual(t *testing.T) {
 	text := k.encrypt(t, "hunter2")
 	inv := "hosts:\n  web1: {}\ngroups:\n  a:\n    hosts: [web1]\n    vars:\n      pw: !secret " + text + "\n  b:\n    hosts: [web1]\n    vars:\n      pw: !secret " + text + "\n"
 	dir := writeProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + k.id.Recipient().String() + "]\nvars:\n  pw:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + k.id.Recipient().String() + "]\nvars:\n  pw:\n",
 		"inventories/test.yaml": inv,
 		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
 	if _, err := Load(t.Context(), dir, "", "site", nil, k.keys()); err != nil {
 		t.Fatalf("Load before rekey: %v", err)
 	}
-	if _, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path}); err != nil {
+	if _, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(t.Context(), dir, "", "site", nil, k.keys()); err != nil {
@@ -711,11 +711,11 @@ func TestRekeyTaggedNodeOnly(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			list := strings.NewReplacer("C", c, "D", d, "E", e).Replace(tt.list)
 			dir := writeProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  list:\n",
+				"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  list:\n",
 				"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      list: " + list + "\n",
 				"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 			})
-			if _, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path}); err != nil {
+			if _, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path}); err != nil {
 				t.Fatal(err)
 			}
 			data, err := os.ReadFile(filepath.Join(dir, "inventories", "test.yaml"))
@@ -755,11 +755,11 @@ func TestRekeyLineBreakInString(t *testing.T) {
 	// and the file has only two lines.
 	inv := "hosts:\n  web1:\n    vars:\n      a: \"x\u2028\"\n      pw: !secret " + k.encrypt(t, "hunter2") + "\n"
 	dir := writeProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n  a:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n  a:\n",
 		"inventories/test.yaml": inv,
 		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
-	if _, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path}); err == nil {
+	if _, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path}); err == nil {
 		t.Error("Rekey succeeded, want an error")
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, "inventories", "test.yaml")); string(data) != inv {
@@ -767,32 +767,32 @@ func TestRekeyLineBreakInString(t *testing.T) {
 	}
 }
 
-// spec: Variables/Secrets (winch secret rekey, the load warning); Inventory
-func TestInventoryOutsideInventories(t *testing.T) {
+// spec: Variables/Secrets (winch secret rekey, the load warning); Project layout
+func TestInventoryInWinchYAML(t *testing.T) {
 	k, next := newKey(t), newKey(t)
 	dir := writeProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: prod.yaml\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n  token:\n",
-		"prod.yaml":             "hosts:\n  web1:\n    vars:\n      pw: !secret " + k.encrypt(t, "hunter2") + "\n      token: " + fakeSecret(t, "ghp.txt") + "\n",
+		"winch.yaml": "name: acme\ninventory: prod\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n  token:\n" +
+			"inventories:\n  prod:\n    hosts:\n      web1:\n        vars:\n          pw: !secret " + k.encrypt(t, "hunter2") + "\n          token: " + fakeSecret(t, "ghp.txt") + "\n",
 		"inventories/test.yaml": "",
 		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
-	n, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: k.path})
-	if err != nil || n != 1 {
-		t.Errorf("Rekey = %d, %v; want the secret of prod.yaml", n, err)
+	n, files, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
+	if err != nil || n != 1 || !slices.Equal(files, []string{"winch.yaml"}) {
+		t.Errorf("Rekey = %d in %v, %v; want the secret of winch.yaml", n, files, err)
 	}
 	warnings, err := Validate(dir, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warnings) != 1 || warnings[0].Pos.File != "prod.yaml" {
-		t.Errorf("warnings = %v, want one in prod.yaml", warnings)
+	if len(warnings) != 1 || warnings[0].Pos.File != "winch.yaml" {
+		t.Errorf("warnings = %v, want one in winch.yaml", warnings)
 	}
 }
 
 // spec: Variables/Secrets; CLI (winch validate)
 func TestValidateChecksSecretForm(t *testing.T) {
 	dir := writeProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nvars:\n  pw:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nvars:\n  pw:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret YWdl\n",
 		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
@@ -861,21 +861,20 @@ func TestSecretDefaultError(t *testing.T) {
 	}
 }
 
-// spec: Variables/Secrets (winch secret rekey, --inventory)
-func TestRekeyInventoryFlag(t *testing.T) {
+// spec: Variables/Secrets (winch secret rekey)
+func TestRekeyEveryInventory(t *testing.T) {
 	k, next := newKey(t), newKey(t)
 	dir := writeProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + k.encrypt(t, "test-pw") + "\n",
-		"envs/prod/hosts.yaml":  "hosts:\n  web2:\n    vars:\n      pw: !secret " + k.encrypt(t, "prod-pw") + "\n",
-		"envs/stage/hosts.yaml": "hosts:\n  web3:\n    vars:\n      pw: !secret " + k.encrypt(t, "stage-pw") + "\n",
+		"inventories/prod.yaml": "hosts:\n  web2:\n    vars:\n      pw: !secret " + k.encrypt(t, "prod-pw") + "\n",
 		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
-	n, files, err := Rekey(t.Context(), dir, "envs/prod/hosts.yaml", secret.Identity{Path: k.path})
-	if want := []string{"envs/prod/hosts.yaml", "inventories/test.yaml"}; err != nil || n != 2 || !slices.Equal(files, want) {
+	n, files, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
+	if want := []string{"inventories/prod.yaml", "inventories/test.yaml"}; err != nil || n != 2 || !slices.Equal(files, want) {
 		t.Fatalf("Rekey = %d secrets in %v, %v; want 2 in %v", n, files, err, want)
 	}
-	for name, plain := range map[string]string{"envs/prod/hosts.yaml": "prod-pw", "inventories/test.yaml": "test-pw"} {
+	for name, plain := range map[string]string{"inventories/prod.yaml": "prod-pw", "inventories/test.yaml": "test-pw"} {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatal(err)
@@ -890,51 +889,28 @@ func TestRekeyInventoryFlag(t *testing.T) {
 	}
 }
 
-// spec: Variables/Secrets (winch secret rekey, --inventory)
-func TestRekeyInventoryFlagPaths(t *testing.T) {
-	k, next := newKey(t), newKey(t)
-	files := map[string]string{
-		"winch.yaml":           "name: acme\nrecipients: [" + next.id.Recipient().String() + "]\nvars:\n  pw:\n",
-		"envs/prod/hosts.yaml": "hosts:\n  web2:\n    vars:\n      pw: !secret " + k.encrypt(t, "prod-pw") + "\n",
-	}
-	dir := writeProject(t, files)
-	abs := filepath.Join(dir, "envs", "prod", "hosts.yaml")
-	if n, got, err := Rekey(t.Context(), dir, abs, secret.Identity{Path: k.path}); err != nil || n != 1 || !slices.Equal(got, []string{filepath.ToSlash(abs)}) {
-		t.Errorf("Rekey with an absolute path = %d secrets in %v, %v; want 1 in %s", n, got, err, abs)
-	}
-	if _, _, err := Rekey(t.Context(), dir, "envs/typo.yaml", secret.Identity{Path: k.path}); err == nil || err.Error() != "envs/typo.yaml: no such file" {
-		t.Errorf("Rekey with a missing inventory = %v", err)
-	}
-}
-
 // spec: Variables/Secrets in output (the load warning); CLI (--inventory)
 func TestLoadWarningInventoryFlag(t *testing.T) {
 	inventory := "hosts:\n  web1:\n    vars:\n      token: " + fakeSecret(t, "ghp.txt") + "\n"
 	dir := writeProject(t, map[string]string{
-		"winch.yaml":          "name: acme\nvars:\n  token:\n",
-		"envs/prod.yaml":      inventory,
-		"pipelines/site.yaml": "stages:\n  - {name: a, hosts: all, steps: []}\n",
+		"winch.yaml":            "name: acme\nvars:\n  token:\n",
+		"inventories/prod.yaml": inventory,
+		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
-	abs := filepath.Join(t.TempDir(), "hosts.yaml")
-	if err := os.WriteFile(abs, []byte(inventory), 0o600); err != nil {
+	want := "inventories/prod.yaml:4:14: this looks like a GitHub token; use !secret"
+	warnings, err := Validate(dir, "prod", nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, file := range []string{"envs/prod.yaml", abs} {
-		want := filepath.ToSlash(file) + ":4:14: this looks like a GitHub token; use !secret"
-		warnings, err := Validate(dir, file, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(warnings) != 1 || warnings[0].Error() != want {
-			t.Errorf("Validate warnings = %v, want [%s]", warnings, want)
-		}
-		p, err := Load(t.Context(), dir, file, "site", nil, Keys{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(p.Warnings) != 1 || p.Warnings[0].Error() != want {
-			t.Errorf("Load warnings = %v, want [%s]", p.Warnings, want)
-		}
+	if len(warnings) != 1 || warnings[0].Error() != want {
+		t.Errorf("Validate warnings = %v, want [%s]", warnings, want)
+	}
+	p, err := Load(t.Context(), dir, "prod", "site", nil, Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Warnings) != 1 || p.Warnings[0].Error() != want {
+		t.Errorf("Load warnings = %v, want [%s]", p.Warnings, want)
 	}
 }
 
@@ -945,10 +921,10 @@ func TestLoadWarningInventoryOnce(t *testing.T) {
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: " + fakeSecret(t, "ghp.txt") + "\n",
 		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
-	if err := os.Symlink("inventories/test.yaml", filepath.Join(dir, "link.yaml")); err != nil {
+	if err := os.Symlink("test.yaml", filepath.Join(dir, "inventories", "link.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	for _, file := range []string{filepath.Join(dir, "inventories/test.yaml"), "link.yaml"} {
+	for _, file := range []string{"test", "link"} {
 		warnings, err := Validate(dir, file, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -1058,7 +1034,7 @@ func TestWriteSecret(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + k.id.Recipient().String() + "\nvars:\n  pw:\n  domain: x\n  motd: x\n",
+				"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + k.id.Recipient().String() + "\nvars:\n  pw:\n  domain: x\n  motd: x\n",
 				"inventories/test.yaml": tt.inv,
 			})
 			path := filepath.Join(dir, "inventories", "test.yaml")
@@ -1102,15 +1078,15 @@ func TestWriteSecretErrors(t *testing.T) {
 		{"not declared", "", "", "", "tokn", `unknown variable "tokn"`},
 		{"an unknown host", "", "", "web9", "token", `host "web9" is not in inventories/test.yaml`},
 		{"no inventory", "name: acme\nrecipients:\n  - KEY\nvars:\n  pw:\n  token:\n", "", "", "pw", "no inventory: use --inventory, or set inventory in winch.yaml"},
-		{"a missing inventory", "", "inventories/prod.yaml", "", "pw", "inventories/prod.yaml: no such file"},
+		{"a missing inventory", "", "prod", "", "pw", `unknown inventory "prod"`},
 		{"a null value", "", "", "web2", "pw", `variable "pw" is already in the vars of host "web2" in inventories/test.yaml`},
-		{"no recipients", "name: acme\ninventory: inventories/test.yaml\nvars:\n  pw:\n  token:\n", "", "", "pw", "winch.yaml has no recipients"},
+		{"no recipients", "name: acme\ninventory: test\nvars:\n  pw:\n  token:\n", "", "", "pw", "winch.yaml has no recipients"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := tt.cfg
 			if cfg == "" {
-				cfg = "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - KEY\nvars:\n  pw:\n  token:\n"
+				cfg = "name: acme\ninventory: test\nrecipients:\n  - KEY\nvars:\n  pw:\n  token:\n"
 			}
 			dir := writeProject(t, map[string]string{
 				"winch.yaml":            strings.Replace(cfg, "KEY", k.id.Recipient().String(), 1),
@@ -1131,7 +1107,7 @@ func TestWriteSecretErrors(t *testing.T) {
 func TestWriteSecretBrokenRecipe(t *testing.T) {
 	k := newKey(t)
 	dir := writeProject(t, map[string]string{
-		"winch.yaml":                   "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + k.id.Recipient().String() + "\n",
+		"winch.yaml":                   "name: acme\ninventory: test\nrecipients:\n  - " + k.id.Recipient().String() + "\n",
 		"inventories/test.yaml":        "hosts:\n  web1:\n",
 		"recipes/db/recipe.yaml":       "vars:\n  db_password:\nsteps:\n  - file:\n      path: /etc/db.conf\n      template: db.conf\n",
 		"recipes/db/templates/db.conf": "{{ .vars.db_password ",
@@ -1145,11 +1121,11 @@ func TestWriteSecretBrokenRecipe(t *testing.T) {
 func TestWriteSecretInventoryFlag(t *testing.T) {
 	k := newKey(t)
 	dir := writeProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + k.id.Recipient().String() + "\nvars:\n  pw:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + k.id.Recipient().String() + "\nvars:\n  pw:\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n",
 		"inventories/prod.yaml": "hosts:\n  web2:\n",
 	})
-	file, err := WriteSecret(dir, "inventories/prod.yaml", "", "pw", "hunter2")
+	file, err := WriteSecret(dir, "prod", "", "pw", "hunter2")
 	if err != nil || file != "inventories/prod.yaml" {
 		t.Fatalf("WriteSecret = %q, %v", file, err)
 	}
@@ -1168,7 +1144,7 @@ func TestWriteSecretInventoryFlag(t *testing.T) {
 func TestWriteSecretThroughLink(t *testing.T) {
 	k := newKey(t)
 	dir := writeProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + k.id.Recipient().String() + "\nvars:\n  pw:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + k.id.Recipient().String() + "\nvars:\n  pw:\n",
 		"inventories/test.yaml": "",
 	})
 	target := filepath.Join(t.TempDir(), "shared.yaml")
@@ -1222,7 +1198,7 @@ func TestValidateWarnsOldRecipients(t *testing.T) {
 				t.Fatal(err)
 			}
 			dir := writeProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\nrecipients:\n  - " + strings.Join(pubs[:tt.listed], "\n  - ") + "\nvars:\n  pw:\n",
+				"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + strings.Join(pubs[:tt.listed], "\n  - ") + "\nvars:\n  pw:\n",
 				"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + text + "\n",
 				"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 			})
@@ -1234,7 +1210,7 @@ func TestValidateWarnsOldRecipients(t *testing.T) {
 			if len(warnings) != 1 || warnings[0].Error() != want {
 				t.Errorf("warnings = %v, want %q", warnings, want)
 			}
-			if _, _, err := Rekey(t.Context(), dir, "", secret.Identity{Path: keys[0].path}); err != nil {
+			if _, _, err := Rekey(t.Context(), dir, secret.Identity{Path: keys[0].path}); err != nil {
 				t.Fatal(err)
 			}
 			if warnings, err := Validate(dir, "", nil); err != nil || len(warnings) != 0 {

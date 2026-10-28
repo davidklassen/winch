@@ -155,7 +155,7 @@ func TestExitCode(t *testing.T) {
 	}
 
 	pending := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":              "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":              "name: acme\ninventory: test\n",
 		"inventories/test.yaml":   "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":     handlerPipeline,
 		"recipes/app/recipe.yaml": appRecipe,
@@ -167,7 +167,7 @@ func TestExitCode(t *testing.T) {
 		t.Errorf("a plan with only a pending handler: exit %d, want %d", r.code, exitChanges)
 	}
 	unknown := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: apt-get clean\n",
 	})
@@ -187,7 +187,7 @@ func TestExitCode(t *testing.T) {
 // spec: CLI/Exit codes; Running a pipeline/Failures
 func TestUnreachableExit(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2:\n    address: unreachable\n",
 		"pipelines/site.yaml":   motd,
 	})

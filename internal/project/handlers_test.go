@@ -10,7 +10,7 @@ import (
 )
 
 var handlersProject = map[string]string{
-	"winch.yaml": "name: acme\ninventory: inventories/test.yaml\n",
+	"winch.yaml": "name: acme\ninventory: test\n",
 	"inventories/test.yaml": `hosts:
   web1: {}
   web2: {}
@@ -201,7 +201,7 @@ func TestLoadHandlers(t *testing.T) {
 			"recipes/unused/recipe.yaml": "steps:\n  - file:\n      path: /x\n      content: hi\n    notify: nginx.nope\n",
 		}},
 		{name: "bad-project-name", files: map[string]string{
-			"winch.yaml": "name: ../acme\ninventory: inventories/test.yaml\n",
+			"winch.yaml": "name: ../acme\ninventory: test\n",
 		}},
 	}
 	for _, tt := range tests {

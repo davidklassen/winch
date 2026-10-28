@@ -27,7 +27,11 @@ type Repo struct {
 	Components yamlx.Strings `yaml:"components" json:"components,omitempty"`
 	Key        string        `yaml:"key" json:"-"`
 	KeyPos     yamlx.Pos     `json:"-"`
-	// KeyData is the content of the key file in the recipe's files.
+	KeyContent *string       `yaml:"key_content" json:"-"`
+	// KeyContentPos is the position of key_content.
+	KeyContentPos yamlx.Pos `json:"-"`
+	// KeyData is key_content, or the content of the key file in the recipe's
+	// files.
 	KeyData []byte `json:"key_data,omitempty"`
 	// Removed are the paths that earlier steps of the host remove. The
 	// controller sets them.
@@ -97,6 +101,9 @@ func (r *Repo) Validate() error {
 		return &yamlx.FieldError{Field: "components", Msg: `a flat suite, which ends in "/", has no components`}
 	case !flat && len(r.Components) == 0:
 		return &yamlx.FieldError{Field: "suite", Msg: `needs components, such as [main]; only a flat suite, which ends in "/", has none`}
+	}
+	if r.KeyPos.Line > 0 && r.KeyContent != nil {
+		return &yamlx.FieldError{Field: "key_content", Msg: "a repo has at most one of key and key_content"}
 	}
 	return checkRelative("key", r.Key)
 }

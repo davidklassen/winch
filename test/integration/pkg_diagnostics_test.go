@@ -15,7 +15,7 @@ func TestPkgDiagnostics(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "pkgdiagnostics")
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":              "name: pkgdiagnostics\ninventory: inventories/test.yaml\n",
+		"winch.yaml":              "name: pkgdiagnostics\ninventory: test\n",
 		"inventories/test.yaml":   "hosts:\n  pkgdiagnostics: {}\n",
 		"pipelines/typo.yaml":     "stages:\n  - name: packages\n    hosts: all\n    steps:\n      - pkg: {name: apache, absent: true}\n",
 		"pipelines/conflict.yaml": "stages:\n  - name: packages\n    hosts: all\n    steps:\n      - pkg: {name: winch-conflict}\n",
@@ -100,7 +100,7 @@ func TestPkgForeignRemovalHint(t *testing.T) {
 	vm := lab.StartVM(t, "pkgforeign")
 	vm.MustRun(t, `dpkg --add-architecture armhf && mkdir -p /root/foreign/DEBIAN && printf 'Package: hello\nVersion: 1\nArchitecture: armhf\nMulti-Arch: foreign\nMaintainer: winch\nDescription: test\n' > /root/foreign/DEBIAN/control && dpkg-deb -b /root/foreign /root/hello.deb >/dev/null && dpkg -i /root/hello.deb >/dev/null && apt-get update -q >/dev/null`)
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":              "name: pkgforeign\ninventory: inventories/test.yaml\n",
+		"winch.yaml":              "name: pkgforeign\ninventory: test\n",
 		"inventories/test.yaml":   "hosts:\n  pkgforeign: {}\n",
 		"pipelines/conflict.yaml": "stages:\n  - name: packages\n    hosts: all\n    steps:\n      - pkg: {name: winch-conflict}\n",
 	})
