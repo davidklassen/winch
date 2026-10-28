@@ -72,7 +72,11 @@ func Touches(m Module) []Touch {
 	case *Timezone:
 		return []Touch{{localtime, true}, {timezoneFile, true}}
 	case *Firewall:
-		return []Touch{{firewallFile, true}, {firewallUnitP, true}, {firewallWants, true}}
+		var out []Touch
+		for _, p := range firewallPaths {
+			out = append(out, Touch{p, true})
+		}
+		return out
 	}
 	return nil
 }

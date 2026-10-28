@@ -22,8 +22,8 @@ type Firewall struct {
 	Absent bool   `yaml:"absent" json:"absent,omitempty"`
 	// What the check found to do.
 	data                                      []byte
-	writeFile, writeUnit, enable, load, start bool
-	stop, reload, deleteTable                 bool
+	writeFile, writeUnit, writeDropIn, enable bool
+	load, stop, reload, deleteTable           bool
 }
 
 // Rule accepts traffic to its ports from the sources in From, or from every
@@ -35,24 +35,25 @@ type Rule struct {
 }
 
 const (
-	firewallFile  = "/etc/winch/firewall.nft"
-	firewallUnit  = "winch-firewall.service"
-	firewallUnitP = unitDir + "/" + firewallUnit
-	firewallWants = unitDir + "/sysinit.target.wants/" + firewallUnit
+	firewallFile   = "/etc/winch/firewall.nft"
+	FirewallUnit   = "winch-firewall.service"
+	firewallUnitP  = unitDir + "/" + FirewallUnit
+	firewallWants  = unitDir + "/sysinit.target.wants/" + FirewallUnit
+	firewallDropIn = unitDir + "/nftables.service.d/winch.conf"
 	// firewallList is the listing that nft made of the table after the last
 	// load, so the check finds a rule that someone changed by hand.
 	firewallList = "/var/lib/winch/firewall.list"
 )
 
-// firewallUnitText loads the rules at boot. A start, restart, or reload of
-// nftables.service flushes the whole rule set, so the table loads after each.
+var firewallPaths = []string{firewallFile, firewallUnitP, firewallWants, firewallDropIn}
+
+// firewallUnitText loads the rules at boot, also when nftables.service is
+// disabled.
 const firewallUnitText = `[Unit]
 Description=winch firewall
 Wants=network-pre.target
 Before=network-pre.target shutdown.target
 After=nftables.service
-PartOf=nftables.service
-ReloadPropagatedFrom=nftables.service
 Conflicts=shutdown.target
 DefaultDependencies=no
 
@@ -60,10 +61,16 @@ DefaultDependencies=no
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/sbin/nft -f ` + firewallFile + `
-ExecReload=/usr/sbin/nft -f ` + firewallFile + `
 
 [Install]
 WantedBy=sysinit.target
+`
+
+// firewallDropInText loads the rules inside every start, restart, and reload
+// of nftables.service, which flush the whole rule set.
+const firewallDropInText = `[Service]
+ExecStartPost=/usr/sbin/nft -f ` + firewallFile + `
+ExecReload=/usr/sbin/nft -f ` + firewallFile + `
 `
 
 func (f *Firewall) Main() string { return "" }
@@ -367,12 +374,23 @@ func (f *Firewall) Check(ctx context.Context, st *State, _ func(string)) (Result
 	if unit.fi != nil && string(unit.old) != firewallUnitText {
 		lines = append([]string{"rewrite " + firewallUnitP}, lines...)
 	}
-	if f.writeUnit = lines != nil; f.writeUnit {
-		changes = append(append(changes, lines...), "daemon-reload")
+	f.writeUnit = lines != nil
+	changes = append(changes, lines...)
+	dropIn, lines, err := checkRepoFile(firewallDropIn, []byte(firewallDropInText))
+	if err != nil {
+		return Result{}, err
+	}
+	if dropIn.fi != nil && string(dropIn.old) != firewallDropInText {
+		lines = append([]string{"rewrite " + firewallDropIn}, lines...)
+	}
+	f.writeDropIn = lines != nil
+	changes = append(changes, lines...)
+	if f.writeUnit || f.writeDropIn {
+		changes = append(changes, "daemon-reload")
 	}
 	if _, err := os.Lstat(firewallWants); errors.Is(err, fs.ErrNotExist) {
 		f.enable = true
-		changes = append(changes, "enable "+firewallUnit)
+		changes = append(changes, "enable "+FirewallUnit)
 	} else if err != nil {
 		return Result{}, err
 	}
@@ -381,14 +399,6 @@ func (f *Firewall) Check(ctx context.Context, st *State, _ func(string)) (Result
 	}
 	if f.load {
 		changes = append(changes, "load the rules")
-	}
-	u, err := showUnit(ctx, firewallUnit)
-	if err != nil {
-		return Result{}, err
-	}
-	// Only an active unit loads the rules again after nftables.service.
-	if f.start = !u.up(); f.start {
-		changes = append(changes, "start "+firewallUnit)
 	}
 	if changes == nil {
 		return Result{Status: OK}, nil
@@ -428,16 +438,17 @@ func listTable(ctx context.Context) (string, error) {
 
 func (f *Firewall) checkAbsent(ctx context.Context) (Result, error) {
 	var changes []string
-	u, err := showUnit(ctx, firewallUnit)
+	u, err := showUnit(ctx, FirewallUnit)
 	if err != nil {
 		return Result{}, err
 	}
 	if f.stop = u.up(); f.stop {
-		changes = append(changes, "stop "+firewallUnit)
+		changes = append(changes, "stop "+FirewallUnit)
 	}
 	for _, p := range []struct{ path, change string }{
-		{firewallWants, "disable " + firewallUnit},
+		{firewallWants, "disable " + FirewallUnit},
 		{firewallUnitP, "remove " + firewallUnitP},
+		{firewallDropIn, "remove " + firewallDropIn},
 		{firewallFile, "remove " + firewallFile},
 	} {
 		_, err := os.Lstat(p.path)
@@ -484,37 +495,35 @@ func (f *Firewall) Apply(ctx context.Context, _ func(string)) error {
 			return err
 		}
 	}
+	if f.writeDropIn {
+		if err := writeRoot(firewallDropIn, []byte(firewallDropInText), 0, 0, 0o644); err != nil {
+			return err
+		}
+	}
 	// systemctl enable reloads the units itself.
-	if f.writeUnit && !f.enable {
+	if (f.writeUnit || f.writeDropIn) && !f.enable {
 		if _, err := run(ctx, nil, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
 	if f.enable {
-		if _, err := run(ctx, nil, "systemctl", "enable", "--", firewallUnit); err != nil {
+		if _, err := run(ctx, nil, "systemctl", "enable", "--", FirewallUnit); err != nil {
 			return err
 		}
 	}
 	if f.load {
-		if err := loadFirewall(ctx); err != nil {
-			return err
-		}
-	}
-	if f.start {
-		if _, err := run(ctx, nil, "systemctl", "start", "--", firewallUnit); err != nil {
-			return err
-		}
+		return loadFirewall(ctx)
 	}
 	return nil
 }
 
 func (f *Firewall) applyAbsent(ctx context.Context) error {
 	if f.stop {
-		if _, err := run(ctx, nil, "systemctl", "stop", "--", firewallUnit); err != nil {
+		if _, err := run(ctx, nil, "systemctl", "stop", "--", FirewallUnit); err != nil {
 			return err
 		}
 	}
-	for _, p := range []string{firewallWants, firewallUnitP, firewallFile} {
+	for _, p := range []string{firewallWants, firewallUnitP, firewallDropIn, firewallFile} {
 		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
@@ -572,5 +581,5 @@ func (f *Firewall) Writes() []string {
 	if f.Absent {
 		return nil
 	}
-	return []string{firewallFile, firewallUnitP, firewallWants}
+	return firewallPaths
 }

@@ -608,6 +608,9 @@ func (hr *hostRun) same(st project.Step, where string) error {
 			return fmt.Errorf("%s: the firewall is also in %s; a host has one firewall step", where, other.where)
 		}
 		hr.managed["the firewall"] = managed{where, st.Module, m}
+		if err := add("the unit "+module.FirewallUnit, m); err != nil {
+			return err
+		}
 		for _, t := range module.Touches(m) {
 			if err := add("the path "+t.Path, m); err != nil {
 				return err

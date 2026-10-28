@@ -29,7 +29,7 @@ func TestFirewallModule(t *testing.T) {
 	// Create.
 	project(firewall + "        - tcp: 22\n")
 	r := lab.Winch(t, dir, "plan")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "+ firewall\n        add tcp 22\n        create directory /etc/winch") || !strings.Contains(r.Stdout, "enable winch-firewall.service\n        load the rules\n        start winch-firewall.service\n") {
+	if r.Code != 0 || !strings.Contains(r.Stdout, "+ firewall\n        add tcp 22\n        create directory /etc/winch") || !strings.Contains(r.Stdout, "create file /etc/systemd/system/nftables.service.d/winch.conf") || !strings.Contains(r.Stdout, "enable winch-firewall.service\n        load the rules\n\n") {
 		t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	if r := lab.Winch(t, dir, "apply", "--yes"); r.Code != 0 {
@@ -38,7 +38,7 @@ func TestFirewallModule(t *testing.T) {
 	if out := vm.MustRun(t, table); !strings.Contains(out, "policy drop;") || !strings.Contains(out, "tcp dport 22 accept") {
 		t.Fatalf("the table after apply:\n%s", out)
 	}
-	if out := vm.MustRun(t, "systemctl is-enabled winch-firewall.service; systemctl is-active winch-firewall.service"); out != "enabled\nactive\n" {
+	if out := vm.MustRun(t, "systemctl is-enabled winch-firewall.service"); out != "enabled\n" {
 		t.Errorf("winch-firewall.service: %q", out)
 	}
 	if r := lab.Winch(t, dir, "plan"); r.Code != 0 || !unchanged(r.Stdout, 1) {
@@ -100,13 +100,12 @@ func TestFirewallModule(t *testing.T) {
 		}
 	}
 
-	// A restart or a reload of nftables.service, which flushes the rule set,
-	// keeps the table. systemctl returns before the job of
-	// winch-firewall.service ends. The restart comes first: it starts
+	// A start, restart, or reload of nftables.service, which flushes the rule
+	// set, keeps the table. The restart comes first: it starts
 	// nftables.service, and a reload needs an active unit.
-	for _, cmd := range []string{"systemctl restart nftables", "systemctl reload nftables"} {
+	for _, cmd := range []string{"systemctl restart nftables", "systemctl reload nftables", "systemctl stop nftables && systemctl start nftables"} {
 		vm.MustRun(t, cmd)
-		if out := vm.MustRun(t, "for i in $(seq 50); do nft list tables | grep -q 'inet winch' && break; sleep 0.1; done; nft list tables"); !strings.Contains(out, "table inet winch\n") {
+		if out := vm.MustRun(t, "nft list tables"); !strings.Contains(out, "table inet winch\n") {
 			t.Errorf("the tables after %s:\n%s", cmd, out)
 		}
 		if r := lab.Winch(t, dir, "plan"); r.Code != 0 || !unchanged(r.Stdout, 1) {
@@ -114,15 +113,15 @@ func TestFirewallModule(t *testing.T) {
 		}
 	}
 
-	// A stopped unit does not load the table after nftables.service, so the
-	// plan starts it.
-	vm.MustRun(t, "systemctl stop winch-firewall.service")
+	// A drop-in that changed by hand comes back.
+	vm.MustRun(t, "sed -i /ExecStartPost/d /etc/systemd/system/nftables.service.d/winch.conf")
 	r = lab.Winch(t, dir, "apply", "--yes")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "~ firewall\n        start winch-firewall.service\n\n") {
-		t.Errorf("apply after a stop of the unit: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	if r.Code != 0 || !strings.Contains(r.Stdout, "~ firewall\n        rewrite /etc/systemd/system/nftables.service.d/winch.conf\n") || !strings.Contains(r.Stdout, "daemon-reload\n") {
+		t.Errorf("apply after a change of the drop-in: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
-	if out := vm.MustRun(t, "systemctl is-active winch-firewall.service"); out != "active\n" {
-		t.Errorf("winch-firewall.service after apply: %q", out)
+	vm.MustRun(t, "systemctl stop nftables && systemctl start nftables")
+	if out := vm.MustRun(t, "nft list tables"); !strings.Contains(out, "table inet winch\n") {
+		t.Errorf("the tables after the repair of the drop-in and a start of nftables:\n%s", out)
 	}
 
 	// Another step on the firewall file fails the plan.
@@ -131,6 +130,14 @@ func TestFirewallModule(t *testing.T) {
 	r = lab.Winch(t, dir, "plan")
 	if r.Code != 1 || !strings.Contains(r.Stderr, "file /etc/winch/firewall.nft: the path /etc/winch/firewall.nft is also in ") {
 		t.Errorf("plan with a file step on the firewall file: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+
+	// A service step on the unit of the firewall fails the plan.
+	project(firewall + "        - tcp: [22, 80]\n        - udp: 51820\n          from: [10.0.0.0/8, 2001:db8::/32]\n" +
+		"  - service:\n      name: winch-firewall\n      running: false\n")
+	r = lab.Winch(t, dir, "plan")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "service winch-firewall: the unit winch-firewall.service is also in ") {
+		t.Errorf("plan with a service step on the firewall unit: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 
 	// The rules close the session's SSH port.
@@ -191,7 +198,7 @@ func TestFirewallModule(t *testing.T) {
 	if r.Code != 0 || !strings.Contains(r.Stdout, "- firewall\n        stop winch-firewall.service\n") {
 		t.Fatalf("apply of absent: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
-	if out := vm.MustRun(t, "nft list tables; ls /etc/winch /etc/systemd/system/winch-firewall.service /etc/systemd/system/sysinit.target.wants/winch-firewall.service 2>&1 || true"); strings.Contains(out, "inet winch") || !strings.Contains(out, "inet f2b-table") || !strings.Contains(out, "ip filter") || strings.Contains(out, "firewall.nft") || strings.Count(out, "No such file") != 2 {
+	if out := vm.MustRun(t, "nft list tables; ls /etc/winch /etc/systemd/system/winch-firewall.service /etc/systemd/system/sysinit.target.wants/winch-firewall.service /etc/systemd/system/nftables.service.d/winch.conf 2>&1 || true"); strings.Contains(out, "inet winch") || !strings.Contains(out, "inet f2b-table") || !strings.Contains(out, "ip filter") || strings.Contains(out, "firewall.nft") || strings.Count(out, "No such file") != 3 {
 		t.Errorf("after absent:\n%s", out)
 	}
 	if out := vm.MustRun(t, "systemctl is-active winch-firewall.service || true"); out != "inactive\n" {
@@ -200,4 +207,6 @@ func TestFirewallModule(t *testing.T) {
 	if r := lab.Winch(t, dir, "plan"); r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("plan after absent: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
+	// Without the drop-in, nftables.service does not load the removed file.
+	vm.MustRun(t, "systemctl restart nftables")
 }

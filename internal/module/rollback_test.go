@@ -358,8 +358,8 @@ func TestTouches(t *testing.T) {
 		{&Unit{Name: "app.service"}, []Touch{{"/etc/systemd/system/app.service", true}}},
 		{&Certbot{Name: "mail"}, []Touch{{"/etc/letsencrypt/renewal/mail.conf", true}, {"/etc/letsencrypt/live/mail", true}, {"/etc/letsencrypt/archive/mail", true}}},
 		{&Service{Name: "ssh", Running: &no}, nil},
-		{&Firewall{}, []Touch{{"/etc/winch/firewall.nft", true}, {"/etc/systemd/system/winch-firewall.service", true}, {"/etc/systemd/system/sysinit.target.wants/winch-firewall.service", true}}},
-		{&Firewall{Absent: true}, []Touch{{"/etc/winch/firewall.nft", true}, {"/etc/systemd/system/winch-firewall.service", true}, {"/etc/systemd/system/sysinit.target.wants/winch-firewall.service", true}}},
+		{&Firewall{}, []Touch{{"/etc/winch/firewall.nft", true}, {"/etc/systemd/system/winch-firewall.service", true}, {"/etc/systemd/system/sysinit.target.wants/winch-firewall.service", true}, {"/etc/systemd/system/nftables.service.d/winch.conf", true}}},
+		{&Firewall{Absent: true}, []Touch{{"/etc/winch/firewall.nft", true}, {"/etc/systemd/system/winch-firewall.service", true}, {"/etc/systemd/system/sysinit.target.wants/winch-firewall.service", true}, {"/etc/systemd/system/nftables.service.d/winch.conf", true}}},
 	}
 	for _, tt := range tests {
 		if got := Touches(tt.m); !slices.Equal(got, tt.want) {
