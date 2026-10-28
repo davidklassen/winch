@@ -48,12 +48,13 @@ func TestUserModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "user")
 	reset := `systemctl stop wt-sleep 2>/dev/null || true
-for u in wtalice wtbob wtsvc; do pkill -9 -u $u; userdel $u 2>/dev/null; done
+for u in wtalice wtbob wtsvc Debian-wt; do pkill -9 -u $u; userdel $u 2>/dev/null; done
 sed -i '/^wtbob:/d' /etc/passwd /etc/shadow
-for g in wtalice wtbob wtsvc wtgrp wtnew wtother; do groupdel $g 2>/dev/null; done
+sed -i 's|:/home/admin/:|:/home/admin:|' /etc/passwd
+for g in wtalice wtbob wtsvc wtgrp wtnew wtother Debian-wt; do groupdel $g 2>/dev/null; done
 gpasswd -d admin wtalice 2>/dev/null
 chattr -R -ia /home/wtalice 2>/dev/null
-rm -rf /home/wtalice /home/wtbob /srv/w /var/lib/wtsvc /opt/wt /root/.ssh /etc/ssh/sshd_config.d/wt.conf
+rm -rf /home/wtalice /home/wtbob /home/Debian-wt /srv/w /var/lib/wtsvc /opt/wt /root/.ssh /etc/ssh/sshd_config.d/wt.conf
 sed -i '/ one$/d' /home/admin/.ssh/authorized_keys
 true`
 	k1, k2, k3 := fakeKey('1', "one"), fakeKey('2', "two"), fakeKey('3', "three")
@@ -327,7 +328,7 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			Name:    "a password that is not a crypt hash",
 			Setup:   `useradd -m -U wtalice`,
 			Args:    &module.User{Name: "wtalice", Password: "hunter2"},
-			WantErr: "password is not a crypt hash, such as one from mkpasswd -m yescrypt",
+			WantErr: "password is not a crypt hash, such as one from mkpasswd -m yescrypt, or \"!\" or \"*\"",
 		},
 		{
 			Name:  "change password",
@@ -341,6 +342,65 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			Setup: `useradd -m -U -p '` + hash1 + `' wtalice`,
 			Args:  &module.User{Name: "wtalice", Password: hash1},
 			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "lock the password",
+			Setup: `useradd -m -U -p '` + hash1 + `' wtalice`,
+			Args:  &module.User{Name: "wtalice", Password: "!" + hash1},
+			Want:  change("lock the password"),
+			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '!` + hash1 + `' ]`,
+		},
+		{
+			Name:  "unlock the password",
+			Setup: `useradd -m -U -p '!` + hash1 + `' wtalice`,
+			Args:  &module.User{Name: "wtalice", Password: hash1},
+			Want:  change("unlock the password"),
+			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '` + hash1 + `' ]`,
+		},
+		{
+			Name:  "a locked new password",
+			Setup: `useradd -m -U -p '` + hash1 + `' wtalice`,
+			Args:  &module.User{Name: "wtalice", Password: "!" + hash2},
+			Want:  change("change password"),
+			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '!` + hash2 + `' ]`,
+		},
+		{
+			Name:  "a password of !",
+			Setup: `useradd -m -U -p '` + hash1 + `' wtalice`,
+			Args:  &module.User{Name: "wtalice", Password: "!"},
+			Want:  change("lock the password"),
+			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '!' ]`,
+		},
+		{
+			Name:  "a password of * for a new user",
+			Args:  &module.User{Name: "wtalice", Password: "*"},
+			Want:  create("group wtalice (new)", "home /home/wtalice (owner wtalice, group wtalice, mode 0700, files from /etc/skel)", "shell /bin/sh", "set password"),
+			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '*' ]`,
+		},
+		{
+			Name:  "a home with a trailing slash in /etc/passwd",
+			Setup: `useradd -m -U wtalice && sed -i 's|:/home/wtalice:|:/home/wtalice/:|' /etc/passwd`,
+			Args:  &module.User{Name: "wtalice", Home: "/home/wtalice"},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "the home of the login user with a trailing slash in /etc/passwd",
+			Setup: `sed -i 's|:/home/admin:|:/home/admin/:|' /etc/passwd`,
+			Args:  &module.User{Name: "admin", Home: "/home/admin"},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "a user with a Debian name that exists",
+			Setup: `groupadd wtgrp && useradd -m -U Debian-wt`,
+			Args:  &module.User{Name: "Debian-wt", Groups: &[]string{"wtgrp"}},
+			Want:  change("add to group wtgrp"),
+			After: `[ "$(id -nG Debian-wt)" = "Debian-wt wtgrp" ]`,
+		},
+		{
+			Name:      "a new user with a Debian name",
+			Args:      &module.User{Name: "Debian-wt"},
+			WantErr:   `user Debian-wt does not exist, and winch creates only names with lower-case letters, digits, "_", and "-" that start with a letter or "_"`,
+			Unchanged: `! getent passwd Debian-wt`,
 		},
 		{
 			Name:  "change comment",
@@ -656,7 +716,7 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 func TestGroupModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "group")
-	reset := `for u in wtu1 wtu2 wtu3; do userdel $u 2>/dev/null; done; for g in wtgrp wtother; do groupdel $g 2>/dev/null; done; true`
+	reset := `for u in wtu1 wtu2 wtu3; do userdel $u 2>/dev/null; done; for g in wtgrp wtother Debian-wt; do groupdel $g 2>/dev/null; done; true`
 	vmtest.RunCases(t, vm, "group", reset, []vmtest.Case{
 		{
 			Name:      "create",
@@ -704,6 +764,19 @@ func TestGroupModule(t *testing.T) {
 			Want:  module.Result{Status: module.OK},
 		},
 		{
+			Name:  "a group with a Debian name that exists",
+			Setup: `groupadd -g 2600 Debian-wt`,
+			Args:  &module.Group{Name: "Debian-wt", GID: "2700"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"gid 2600 → 2700; files keep the old gid"}},
+			After: `[ "$(getent group Debian-wt)" = "Debian-wt:x:2700:" ]`,
+		},
+		{
+			Name:      "a new group with a Debian name",
+			Args:      &module.Group{Name: "Debian-wt"},
+			WantErr:   `group Debian-wt does not exist, and winch creates only names with lower-case letters, digits, "_", and "-" that start with a letter or "_"`,
+			Unchanged: `! getent group Debian-wt`,
+		},
+		{
 			Name:    "a gid of another group",
 			Setup:   `groupadd -g 2800 wtother`,
 			Args:    &module.Group{Name: "wtgrp", GID: "2800"},
@@ -716,6 +789,7 @@ func TestGroupModule(t *testing.T) {
 func TestUsers(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "users")
+	vm.MustRun(t, `useradd -M -U Debian-wt`)
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
 		"inventories/test.yaml": "hosts:\n  " + vm.Name + ": {}\n",
@@ -729,9 +803,14 @@ func TestUsers(t *testing.T) {
       - user:
           name: wtdev
           group: wtteam
+          groups: [Debian-wt]
           shell: /bin/bash
           authorized_keys:
             - ` + strings.TrimSpace(vmtest.PublicKey) + `
+      - cmd:
+          command: id -un > /tmp/wt-user
+          creates: /tmp/wt-user
+          user: Debian-wt
 `,
 	})
 	r := lab.Winch(t, dir, "plan", "site")
@@ -741,6 +820,7 @@ func TestUsers(t *testing.T) {
 	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
 		t.Fatalf("apply: exit %d", r.Code)
 	}
+	vm.MustRun(t, `[ "$(cat /tmp/wt-user)" = Debian-wt ] && [ "$(id -nG wtdev)" = "wtteam Debian-wt" ]`)
 	cmd := exec.CommandContext(t.Context(), "ssh", "-l", "wtdev", vm.Name, "id -un; id -gn")
 	cmd.Env = lab.Env()
 	out, err := cmd.CombinedOutput()

@@ -25,8 +25,9 @@ func TestCmdValidate(t *testing.T) {
 		{"creates with ?", "command: x\ncreates: /opt/app?\n", `t.yaml:2:10: creates: names one path; "?" is not allowed`},
 		{"creates with [", "command: x\ncreates: /opt/app[12]\n", `t.yaml:2:10: creates: names one path; "[" is not allowed`},
 		{"relative dir", "command: x\ndir: srv/app\n", `t.yaml:2:6: dir: must be an absolute path`},
-		{"bad user", "command: x\nuser: Deploy\n", `t.yaml:2:7: user: "Deploy" is not a user name; a name has lower-case letters, digits, "_", and "-", and starts with a letter or "_"`},
-		{"numeric user", "command: x\nuser: \"1000\"\n", `t.yaml:2:7: user: "1000" is not a user name; a name has lower-case letters, digits, "_", and "-", and starts with a letter or "_"`},
+		{"Debian user", "command: x\nuser: Debian-exim\n", ""},
+		{"bad user", "command: x\nuser: \"a b\"\n", `t.yaml:2:7: user: "a b" is not a user name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
+		{"numeric user", "command: x\nuser: \"1000\"\n", `t.yaml:2:7: user: "1000" is not a user name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
 		{"unknown key", "command: x\ncreate: /x\n", `t.yaml:2:1: unknown key "create"; did you mean "creates"?`},
 	}
 	for _, tt := range tests {

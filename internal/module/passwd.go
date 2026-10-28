@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -69,6 +70,7 @@ func parsePasswd(file string, data []byte) ([]passwdEntry, error) {
 		if e.home == "" {
 			e.home = "/"
 		}
+		e.home = path.Clean(e.home)
 		if e.shell == "" {
 			e.shell = "/bin/sh"
 		}

@@ -30,16 +30,26 @@ func (g *Group) Validate() error {
 	return checkID("gid", g.GID)
 }
 
-var accountRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
+// An account that exists may have a name such as Debian-exim; winch creates
+// only newAccountRe names.
+var (
+	accountRe    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
+	newAccountRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
+)
 
-// checkAccountName checks a user or a group name, as useradd and groupadd
-// do without --badname.
 func checkAccountName(field, what, name string) error {
 	if !accountRe.MatchString(name) {
-		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf(`%q is not a %s name; a name has lower-case letters, digits, "_", and "-", and starts with a letter or "_"`, name, what)}
+		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf(`%q is not a %s name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`, name, what)}
 	}
 	if len(name) > 32 {
 		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf("has %d characters; a name has at most 32", len(name))}
+	}
+	return nil
+}
+
+func checkNewAccount(what, name string) error {
+	if !newAccountRe.MatchString(name) {
+		return fmt.Errorf(`%s %s does not exist, and winch creates only names with lower-case letters, digits, "_", and "-" that start with a letter or "_"`, what, name)
 	}
 	return nil
 }
@@ -72,6 +82,9 @@ func (g *Group) Check(ctx context.Context, _ *State, _ func(string)) (Result, er
 		}
 	}
 	if !exists {
+		if err := checkNewAccount("group", g.Name); err != nil {
+			return Result{}, err
+		}
 		var changes []string
 		g.todo = []string{"groupadd"}
 		if g.GID != "" {

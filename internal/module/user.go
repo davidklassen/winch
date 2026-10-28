@@ -45,14 +45,15 @@ type User struct {
 	keyHome string
 }
 
-// hashRe matches a crypt hash, such as $y$… or $6$…, also locked with "!".
-var hashRe = regexp.MustCompile(`^!?\$[0-9a-z]+\$[./0-9A-Za-z$=,+-]+$`)
+// hashRe matches a crypt hash, such as $y$… or $6$…, also locked with "!",
+// and the passwords "!" and "*" that lock the account.
+var hashRe = regexp.MustCompile(`^(!?\$[0-9a-z]+\$[./0-9A-Za-z$=,+-]+|!|\*)$`)
 
 // checkHash fails for a password that is not a crypt hash. Check, not
 // Validate, runs it: a password from a secret is a placeholder in Validate.
 func checkHash(pw string) error {
 	if !hashRe.MatchString(pw) {
-		return errors.New("password is not a crypt hash, such as one from mkpasswd -m yescrypt")
+		return errors.New(`password is not a crypt hash, such as one from mkpasswd -m yescrypt, or "!" or "*"`)
 	}
 	return nil
 }
@@ -166,6 +167,9 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 		}
 		res, home, group, err = u.checkExisting(a, cur)
 	} else {
+		if err := checkNewAccount("user", u.Name); err != nil {
+			return Result{}, err
+		}
 		res, home, group, err = u.checkNew(a)
 	}
 	if err != nil || u.AuthorizedKeys == nil {
@@ -444,7 +448,7 @@ func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, strin
 			return Result{}, "", "", err
 		}
 		if pw != u.Password {
-			changes = append(changes, "change password")
+			changes = append(changes, passwordChange(pw, u.Password))
 			u.password = true
 		}
 	}
@@ -464,6 +468,20 @@ func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, strin
 		return Result{Status: OK}, home, group, nil
 	}
 	return Result{Status: Change, Action: Modify, Changes: changes}, home, group, nil
+}
+
+// passwordChange describes the change of the password hash from cur to want.
+// A lock or unlock keeps the hash; any other new hash is a change. passwd -S
+// shows a hash that starts with "!" or "*" as locked.
+func passwordChange(cur, want string) string {
+	locked := func(pw string) bool { return strings.HasPrefix(pw, "!") || strings.HasPrefix(pw, "*") }
+	switch {
+	case !locked(cur) && (want == "!"+cur || want == "!" || want == "*"):
+		return "lock the password"
+	case !locked(want) && cur == "!"+want:
+		return "unlock the password"
+	}
+	return "change password"
 }
 
 // checkShell fails when shell exists and is not an executable file. It

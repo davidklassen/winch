@@ -61,13 +61,15 @@ func TestUserValidate(t *testing.T) {
 		{"numeric group", "name: a\ngroup: 100\n", ""},
 		{"underscore and digits", "name: _rspamd-2\n", ""},
 		{"no name", "uid: 5\n", `t.yaml:1:1: missing key "name"`},
-		{"upper case", "name: Alice\n", `t.yaml:1:7: name: "Alice" is not a user name; a name has lower-case letters, digits, "_", and "-", and starts with a letter or "_"`},
-		{"leading digit", "name: 1a\n", `t.yaml:1:7: name: "1a" is not a user name; a name has lower-case letters, digits, "_", and "-", and starts with a letter or "_"`},
+		{"upper case", "name: Debian-exim\n", ""},
+		{"dot", "name: john.doe\n", ""},
+		{"leading dot", "name: .a\n", `t.yaml:1:7: name: ".a" is not a user name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
+		{"leading digit", "name: 1a\n", `t.yaml:1:7: name: "1a" is not a user name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
 		{"too long", "name: " + strings.Repeat("a", 33) + "\n", `t.yaml:1:7: name: has 33 characters; a name has at most 32`},
 		{"uid name", "name: a\nuid: alice\n", `t.yaml:2:6: uid: must be a numeric ID, such as "1000"`},
 		{"uid negative", "name: a\nuid: -1\n", `t.yaml:2:6: uid: must be a numeric ID, such as "1000"`},
 		{"uid too large", "name: a\nuid: 4294967295\n", `t.yaml:2:6: uid: an ID must be below 4294967295`},
-		{"bad group", "name: a\ngroup: \"a b\"\n", `t.yaml:2:8: group: "a b" is not a group name; a name has lower-case letters, digits, "_", and "-", and starts with a letter or "_"`},
+		{"bad group", "name: a\ngroup: \"a b\"\n", `t.yaml:2:8: group: "a b" is not a group name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
 		{"relative home", "name: a\nhome: var/a\n", `t.yaml:2:7: home: must be an absolute path`},
 		{"unclean home", "name: a\nhome: /srv/app/\n", `t.yaml:2:7: home: must be a clean path, such as "/srv/app"`},
 		{"dot dot home", "name: a\nhome: /srv/../app\n", `t.yaml:2:7: home: ".." is not allowed; write the path without it`},
@@ -101,9 +103,10 @@ func TestUserValidate(t *testing.T) {
 		{"system keys with home", "name: a\nsystem: true\nhome: /var/a\nauthorized_keys: []\n", ""},
 		{"unknown key", "name: a\ngroupz: [sudo]\n", `t.yaml:2:1: unknown key "groupz"; did you mean "group"?`},
 		{"groups", "name: a\ngroups: [sudo, docker]\n", ""},
+		{"Debian groups", "name: a\ngroup: Debian-exim\ngroups: [Debian-snmp, john.doe]\n", ""},
 		{"no groups", "name: a\ngroups: []\n", ""},
 		{"groups a string", "name: a\ngroups: sudo\n", `t.yaml:2:9: groups: expected a list, got the string "sudo"`},
-		{"bad group in groups", "name: a\ngroups: [sudo, \"A\"]\n", `t.yaml:2:9: groups: "A" is not a group name; a name has lower-case letters, digits, "_", and "-", and starts with a letter or "_"`},
+		{"bad group in groups", "name: a\ngroups: [sudo, \"-A\"]\n", `t.yaml:2:9: groups: "-A" is not a group name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
 		{"repeated group", "name: a\ngroups: [sudo, docker, sudo]\n", `t.yaml:2:9: groups: element 3 repeats element 1`},
 		{"password", "name: a\npassword: $y$j9T$abc$def\n", ""},
 		{"locked password", "name: a\npassword: '!$6$abc$def'\n", ""},
@@ -134,7 +137,10 @@ func TestCheckHash(t *testing.T) {
 		{"$6$a:b", false},
 		{"$6$a b", false},
 		{"$6$a\nb", false},
-		{"!", false},
+		{"!", true},
+		{"*", true},
+		{"!!", false},
+		{"*$6$salt$hash", false},
 	}
 	for _, tt := range tests {
 		err := checkHash(tt.pw)
@@ -158,7 +164,8 @@ func TestGroupValidate(t *testing.T) {
 		{"all fields", "name: vmail\ngid: 5000\nsystem: true\n", ""},
 		{"quoted gid", "name: vmail\ngid: \"5000\"\n", ""},
 		{"no name", "gid: 5\n", `t.yaml:1:1: missing key "name"`},
-		{"bad name", "name: \"-x\"\n", `t.yaml:1:7: name: "-x" is not a group name; a name has lower-case letters, digits, "_", and "-", and starts with a letter or "_"`},
+		{"Debian name", "name: Debian-exim\n", ""},
+		{"bad name", "name: \"-x\"\n", `t.yaml:1:7: name: "-x" is not a group name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
 		{"gid name", "name: a\ngid: abc\n", `t.yaml:2:6: gid: must be a numeric ID, such as "1000"`},
 		{"gid too large", "name: a\ngid: \"99999999999\"\n", `t.yaml:2:6: gid: an ID must be below 4294967295`},
 		{"absent", "name: a\nabsent: true\n", `t.yaml:2:1: unknown key "absent"`},
@@ -169,7 +176,7 @@ func TestGroupValidate(t *testing.T) {
 }
 
 func TestParsePasswd(t *testing.T) {
-	data := "# a comment\nroot:x:0:0:root:/root:/bin/bash\n\nalice:x:1000:1000:Alice,,,:/home/alice:/bin/bash\nsvc:x:999:999:::\n"
+	data := "# a comment\nroot:x:0:0:root:/root:/bin/bash\n\nalice:x:1000:1000:Alice,,,:/home/alice:/bin/bash\nsvc:x:999:999:::\nadmin:x:1001:1001::/home/admin/:/bin/sh\n"
 	got, err := parsePasswd("/etc/passwd", []byte(data))
 	if err != nil {
 		t.Fatal(err)
@@ -179,6 +186,7 @@ func TestParsePasswd(t *testing.T) {
 		{name: "alice", uid: 1000, gid: 1000, comment: "Alice,,,", home: "/home/alice", shell: "/bin/bash"},
 		// Empty fields are what login uses.
 		{name: "svc", uid: 999, gid: 999, home: "/", shell: "/bin/sh"},
+		{name: "admin", uid: 1001, gid: 1001, home: "/home/admin", shell: "/bin/sh"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
@@ -466,6 +474,26 @@ func TestSSHDSpec(t *testing.T) {
 		}
 		if err != nil || got != tt.want {
 			t.Errorf("sshdSpec(%q) = %q, %v, want %q", tt.conn, got, err, tt.want)
+		}
+	}
+}
+
+// spec: Modules/user and group
+func TestPasswordChange(t *testing.T) {
+	tests := []struct{ cur, want, line string }{
+		{"$6$a$old", "!$6$a$old", "lock the password"},
+		{"$6$a$old", "!", "lock the password"},
+		{"$6$a$old", "*", "lock the password"},
+		{"$6$a$old", "!$6$a$new", "change password"},
+		{"!$6$a$old", "$6$a$old", "unlock the password"},
+		{"!$6$a$old", "$6$a$new", "change password"},
+		{"*", "$6$a$new", "change password"},
+		{"!!", "!", "change password"},
+		{"$6$a$old", "$6$a$new", "change password"},
+	}
+	for _, tt := range tests {
+		if got := passwordChange(tt.cur, tt.want); got != tt.line {
+			t.Errorf("passwordChange(%q, %q) = %q, want %q", tt.cur, tt.want, got, tt.line)
 		}
 	}
 }
