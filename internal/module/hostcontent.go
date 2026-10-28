@@ -14,7 +14,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 const (
@@ -34,9 +33,12 @@ type hostContent struct {
 	// nil.
 	missing error
 	sum     string
-	owner   string
-	group   string
-	mode    uint32
+	// owner and group are those of the archive entry of stock. They are
+	// empty for copy_from, and its mode has no setuid, setgid, or sticky
+	// bit: a user's file must not give that user a root config.
+	owner string
+	group string
+	mode  uint32
 	// content is the archive entry of stock, or the source file of
 	// copy_from.
 	content io.ReadSeeker
@@ -73,8 +75,7 @@ func copySource(p string) (*hostContent, error) {
 		f.Close()
 		return nil, fmt.Errorf("read %s: %w", p, err)
 	}
-	st := fi.Sys().(*syscall.Stat_t)
-	h.owner, h.group, h.mode = userName(st.Uid), groupName(st.Gid), uint32(st.Mode)&0o7777
+	h.mode = uint32(fi.Mode().Perm())
 	return h, nil
 }
 

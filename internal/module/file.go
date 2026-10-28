@@ -282,7 +282,10 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	old := new("")
 	if hc != nil {
 		content, old, srcSum = []string{hc.line}, nil, hc.sum
-		if !known {
+		switch {
+		case !known && f.CopyFrom != "":
+			want = fmt.Sprintf("owner %s, group %s, mode from %s", owner, group, hc.from) + userNote(owner, group)
+		case !known:
 			want = "owner, group, and mode from " + hc.from
 		}
 	}
@@ -372,18 +375,16 @@ func (f *File) hostContent(ctx context.Context) (*hostContent, error) {
 }
 
 // wanted returns the owner, group, and mode with their defaults: those of hc
-// when it is not nil, else root and 0644. known is false when the defaults
-// come from a source that does not exist yet.
+// when it is not nil, else root and 0644. known is false when a default comes
+// from a source that does not exist yet.
 func (f *File) wanted(hc *hostContent) (owner, group string, mode uint32, known bool, err error) {
 	if hc == nil {
 		owner, group, mode, err = attrs(f.Owner, f.Group, f.Mode, "0644")
 		return owner, group, mode, true, err
 	}
-	if hc.missing != nil && (f.Owner == "" || f.Group == "" || f.Mode == "") {
-		return "", "", 0, false, nil
-	}
+	known = hc.missing == nil || f.Mode != "" && (f.CopyFrom != "" || (f.Owner != "" && f.Group != ""))
 	owner, group, mode, err = attrs(cmp.Or(f.Owner, yamlx.NameOrID(hc.owner)), cmp.Or(f.Group, yamlx.NameOrID(hc.group)), f.Mode, fmt.Sprintf("%04o", hc.mode))
-	return owner, group, mode, true, err
+	return owner, group, mode, known, err
 }
 
 // checkAttrs checks a step without content: only the owner, group, and mode
