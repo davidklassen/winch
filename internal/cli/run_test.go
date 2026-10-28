@@ -73,7 +73,7 @@ func TestRunArgs(t *testing.T) {
 		{"assert with no argument", []string{"web1", "assert"}, "winch run: winch run cannot use assert; run a check with winch exec"},
 		{"unit source", []string{"web1", "unit", "name=app.service", "source=app.service"}, "winch run: source=app.service: winch run cannot use source; use it in a recipe"},
 		{"unknown host", []string{"web9", "pkg", "name=htop"}, `winch run: unknown host or group "web9" in inventories/test.yaml; did you mean "web1"?`},
-		{"no host", []string{"none", "pkg", "name=htop"}, `winch run: the host pattern "none" matches no host`},
+		{"no host", []string{"none", "pkg", "name=htop"}, `winch run: the host pattern "none" matches no host in inventories/test.yaml`},
 		{"a YAML error", []string{"web1", "file", "path=/x", "content=[a"}, "winch run: content=[a: "},
 		{"a bad hash", []string{"web1", "pkg", "name=htop", "--check", "xyz"}, "a plan hash has 16 hex characters"},
 		{"--hosts", []string{"web1", "pkg", "name=htop", "--hosts", "web1"}, "flag provided but not defined: -hosts"},
@@ -266,7 +266,7 @@ func TestExecArgs(t *testing.T) {
 		{"no pattern", []string{"--", "uptime"}, "winch: exec needs one host pattern before --"},
 		{"two patterns", []string{"web1", "web2", "--", "uptime"}, "winch: exec needs one host pattern before --"},
 		{"--yes", []string{"all", "--yes", "--", "uptime"}, "flag provided but not defined: -yes"},
-		{"no host", []string{"none", "--", "uptime"}, `winch exec: the host pattern "none" matches no host`},
+		{"no host", []string{"none", "--", "uptime"}, `winch exec: the host pattern "none" matches no host in inventories/test.yaml`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			h := fakehost.New()

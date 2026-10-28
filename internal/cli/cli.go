@@ -626,17 +626,11 @@ func execCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	return o.end(worst(code, failedCode(failed)), summary{})
 }
 
-// loadCommand loads the project with the pipeline of c, which must run on at
-// least one host.
+// loadCommand loads the project with the pipeline of c.
 func (o *output) loadCommand(ctx context.Context, f *flags, c project.Command) (*project.Project, bool) {
-	p, ok := o.loadWith(f, c.Name, func(keys project.Keys) (*project.Project, error) {
+	return o.loadWith(f, c.Name, func(keys project.Keys) (*project.Project, error) {
 		return project.LoadCommand(ctx, o.env.Dir, f.inventory, keys, c)
 	})
-	if ok && len(p.Pipeline.Stages[0].Targets) == 0 {
-		o.fail(fmt.Errorf("winch %s: the host pattern %q matches no host", c.Name, c.Pattern))
-		return nil, false
-	}
-	return p, ok
 }
 
 // ask asks for confirmation. An interrupt answers no.

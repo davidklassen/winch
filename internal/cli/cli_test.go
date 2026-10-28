@@ -113,6 +113,44 @@ func TestInvalidProject(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Order; CLI/Exit codes
+func TestNoHost(t *testing.T) {
+	const twoStages = "stages:\n  - name: base\n    hosts: all\n    steps: []\n  - name: mail\n    hosts: mail\n    steps: []\n"
+	const noStage = "no stage of pipeline site matches a host in inventories/test.yaml"
+	tests := []struct {
+		name      string
+		inventory string
+		pipeline  string
+		want      string
+	}{
+		{"an empty inventory", "", motd, `the host pattern "all" matches no host in inventories/test.yaml`},
+		{"a comment-only inventory", "# no hosts yet\n", motd, `the host pattern "all" matches no host in inventories/test.yaml`},
+		{"two stages on an empty inventory", "groups:\n  mail:\n    hosts: []\n", twoStages, noStage},
+		{"no stage matches a host", "hosts:\n  web1: {}\ngroups:\n  mail:\n    hosts: []\n", strings.Replace(twoStages, "hosts: all\n", "hosts: mail\n", 1), noStage},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+				"inventories/test.yaml": tt.inventory,
+				"pipelines/site.yaml":   tt.pipeline,
+			})
+			for _, args := range [][]string{{"plan", "site"}, {"plan", "site", "--exit-code"}, {"apply", "site", "--yes"}} {
+				cmd := strings.Join(args, " ")
+				h := fakehost.New()
+				r := winch(t, dir, h, false, "", args...)
+				want := "winch " + args[0] + ": " + tt.want + "\n"
+				if r.code != exitInvalid || r.err != want {
+					t.Errorf("%s: exit %d, stderr %q, want %q", cmd, r.code, r.err, want)
+				}
+				if len(h.Connects) != 0 {
+					t.Errorf("%s: winch contacted a host", cmd)
+				}
+			}
+		})
+	}
+}
+
 func TestValidate(t *testing.T) {
 	r := winch(t, writeProject(t, motd), fakehost.New(), false, "", "validate")
 	if r.code != exitOK || r.out != "ok\n" {

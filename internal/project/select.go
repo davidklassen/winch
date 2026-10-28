@@ -19,7 +19,8 @@ type Selection struct {
 // Select sets the users of the hosts, marks the stages that the selection
 // leaves out as skipped, and keeps in each stage only the hosts of the host
 // pattern. A skipped stage keeps its hosts: the requirements and the
-// handlers of its recipes still count.
+// handlers of its recipes still count. A run in which no stage has a host is
+// an error.
 func (p *Project) Select(sel Selection) error {
 	if err := p.setUsers(sel.Users); err != nil {
 		return err
@@ -60,10 +61,16 @@ func (p *Project) Select(sel Selection) error {
 		}
 	}
 	runs := slices.ContainsFunc(p.Pipeline.Stages, func(s Stage) bool { return !s.Skipped && len(s.Targets) > 0 })
-	if flags != nil && !runs {
+	switch {
+	case runs:
+		return nil
+	case flags != nil:
 		return fmt.Errorf("%s: no selected stage runs on these hosts", strings.Join(flags, " "))
+	case len(p.Pipeline.Stages) == 1:
+		return fmt.Errorf("the host pattern %q matches no host in %s", p.Pipeline.Stages[0].Hosts, p.Inventory.File)
+	default:
+		return fmt.Errorf("no stage of pipeline %s matches a host in %s", p.Pipeline.Name, p.Inventory.File)
 	}
-	return nil
 }
 
 // setUsers sets the login user of the hosts from --user values: name for all
