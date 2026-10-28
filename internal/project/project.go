@@ -226,6 +226,9 @@ func (l *loader) commandPipeline(c Command) (*Pipeline, error) {
 	if _, ok := module.New(c.Module); !ok {
 		return nil, yamlx.Errorf(where, "unknown module %q%s", c.Module, yamlx.Suggest(c.Module, module.Names()))
 	}
+	if c.Module == "assert" {
+		return nil, yamlx.Errorf(where, "winch run cannot use assert; run a check with winch exec")
+	}
 	args := &yamlx.Node{Kind: yamlx.Map, Pos: yamlx.Pos{File: where.File + ": " + c.Module}}
 	var errs []error
 	for _, a := range c.Args {
