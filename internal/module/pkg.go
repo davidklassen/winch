@@ -93,6 +93,25 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
+	var unknown []string
+	for _, n := range missing {
+		if _, ok := pkgs[n]; !ok && !known[n] && foreign[n] == "" && len(providers[n]) == 0 {
+			unknown = append(unknown, n)
+		}
+	}
+	if len(unknown) > 0 {
+		entries, err := os.ReadDir(filepath.Dir(indexLock))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return Result{}, fmt.Errorf("read package index: %w", err)
+		}
+		if slices.ContainsFunc(entries, func(e os.DirEntry) bool {
+			return !e.IsDir() && strings.Contains(e.Name(), "_Packages")
+		}) {
+			for _, n := range unknown {
+				note("apt does not know " + n)
+			}
+		}
+	}
 	names := slices.Clone(p.Name)
 	for i, n := range names {
 		if _, ok := pkgs[n]; !ok && foreign[n] != "" {
@@ -302,14 +321,18 @@ func (p *Pkg) dependents(ctx context.Context, note func(string)) ([]string, erro
 	if err != nil {
 		return nil, err
 	}
+	return parseRemovals(out, p.todo), nil
+}
+
+func parseRemovals(out string, own []string) []string {
 	var others []string
 	for line := range strings.SplitSeq(out, "\n") {
 		f := strings.Fields(line)
-		if len(f) >= 2 && (f[0] == "Remv" || f[0] == "Purg") && !slices.Contains(p.todo, f[1]) {
+		if len(f) >= 2 && (f[0] == "Remv" || f[0] == "Purg") && !slices.Contains(own, f[1]) {
 			others = append(others, f[1])
 		}
 	}
-	return others, nil
+	return others
 }
 
 // simulate runs the apt-get call of the step with -s. It holds the package
@@ -327,8 +350,19 @@ func (p *Pkg) simulate(ctx context.Context, note func(string), flags ...string) 
 // upgrades with the step's packages. A held one fails.
 func (p *Pkg) others(ctx context.Context, note func(string)) ([]string, error) {
 	// apt does not upgrade a held package and fails without its name.
-	out, err := p.simulate(ctx, note, append(p.installFlags(), "-o", "APT::Ignore-Hold=true")...)
+	out, err := p.simulate(ctx, note, append(p.installFlags(), "--remove", "-o", "APT::Ignore-Hold=true")...)
 	if err != nil {
+		return nil, err
+	}
+	var errs []error
+	for _, n := range parseRemovals(out, nil) {
+		if strings.Contains(n, ":") {
+			errs = append(errs, fmt.Errorf("apt must remove %s; first run apt-get remove %s", n, n))
+		} else {
+			errs = append(errs, fmt.Errorf("apt must remove %s; first run a pkg step with name: %s and absent: true in a separate run", n, n))
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
 	own := slices.Clone(p.todo)
@@ -337,7 +371,6 @@ func (p *Pkg) others(ctx context.Context, note func(string)) ([]string, error) {
 		own = append(own, n)
 	}
 	installs, upgrades := parseSimulation(out, own)
-	var errs []error
 	for _, n := range slices.Concat(installs, upgrades) {
 		if p.pkgs[n].held {
 			errs = append(errs, fmt.Errorf("%s is held; apt-mark unhold %s changes it", n, n))
@@ -376,8 +409,7 @@ func parseSimulation(out string, own []string) (installs, upgrades []string) {
 
 // installFlags are the flags of an install that change what apt installs.
 func (p *Pkg) installFlags() []string {
-	// An install that would remove a conflicting package fails.
-	flags := []string{"--no-remove"}
+	var flags []string
 	switch {
 	case p.Recommends == nil:
 	case *p.Recommends:
@@ -416,7 +448,7 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 	}
 	args := append([]string{p.verb()}, aptApply...)
 	if p.verb() == "install" {
-		args = append(args, p.installFlags()...)
+		args = append(args, append(p.installFlags(), "--no-remove")...)
 	}
 	if err := waitLocks(ctx, dpkgLocks, note); err != nil {
 		return err

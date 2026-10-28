@@ -330,7 +330,7 @@ func TestPkgModule(t *testing.T) {
 			State:   module.State{IndexFresh: true},
 			Setup:   localOnly + " && " + install + " hello",
 			Args:    &module.Pkg{Name: []string{"winch-conflict"}},
-			WantErr: "Packages need to be removed but remove is disabled",
+			WantErr: "apt must remove hello; first run a pkg step with name: hello and absent: true in a separate run",
 		},
 		{
 			Name:    "a step that names a package of an interrupted dpkg fails",
