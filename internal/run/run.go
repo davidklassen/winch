@@ -372,6 +372,7 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		if err := hr.repo(&steps[i].Step, where); err != nil {
 			return nil, err
 		}
+		hr.removedPkgs(&steps[i].Step)
 		if err := hr.same(p.Step, where); err != nil {
 			return nil, err
 		}
@@ -525,6 +526,24 @@ func (hr *hostRun) repo(st *project.Step, where string) error {
 	c.Removed = hr.removed
 	st.Args = &c
 	return nil
+}
+
+// removedPkgs gives a pkg step the packages that earlier absent pkg steps of
+// the host remove, with the packages that apt removes with them.
+func (hr *hostRun) removedPkgs(st *project.Step) {
+	p, ok := st.Args.(*module.Pkg)
+	if !ok || p.Absent {
+		return
+	}
+	var removed []string
+	for _, e := range hr.pkgs {
+		if e.pkg.Absent {
+			removed = slices.Concat(removed, e.pkg.Name, e.others)
+		}
+	}
+	c := *p
+	c.Removed = removed
+	st.Args = &c
 }
 
 // same fails a step that manages a path, package, unit, user, or group that

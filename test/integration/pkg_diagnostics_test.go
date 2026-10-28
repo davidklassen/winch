@@ -7,6 +7,9 @@ import (
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
+// installNeedsHello installs winch-needs-hello, which depends on hello.
+const installNeedsHello = `mkdir -p /root/needs-hello/DEBIAN && printf 'Package: winch-needs-hello\nVersion: 1\nArchitecture: all\nDepends: hello\nMaintainer: winch\nDescription: test\n' > /root/needs-hello/DEBIAN/control && dpkg-deb -b /root/needs-hello /root/needs-hello.deb >/dev/null && dpkg -i /root/needs-hello.deb >/dev/null`
+
 // spec: Modules/pkg
 func TestPkgDiagnostics(t *testing.T) {
 	t.Parallel()
@@ -52,17 +55,17 @@ func TestPkgDiagnostics(t *testing.T) {
 	})
 	t.Run("a needed removal names the package and fix", func(t *testing.T) {
 		r := lab.Winch(t, dir, "plan", "conflict")
-		want := "apt must remove hello; first run a pkg step with name: hello and absent: true in a separate run"
+		want := "apt must remove hello; add a pkg step with name: hello and absent: true before this step"
 		if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
 			t.Errorf("plan: exit %d, want %q, stdout %q, stderr %q", r.Code, want, r.Stdout, r.Stderr)
 		}
 		vm.MustRun(t, "dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii' && ! dpkg -s winch-conflict >/dev/null 2>&1")
 	})
 	t.Run("each needed removal names the package and fix", func(t *testing.T) {
-		vm.MustRun(t, `mkdir -p /root/needs-hello/DEBIAN && printf 'Package: winch-needs-hello\nVersion: 1\nArchitecture: all\nDepends: hello\nMaintainer: winch\nDescription: test\n' > /root/needs-hello/DEBIAN/control && dpkg-deb -b /root/needs-hello /root/needs-hello.deb >/dev/null && dpkg -i /root/needs-hello.deb >/dev/null`)
+		vm.MustRun(t, installNeedsHello)
 		r := lab.Winch(t, dir, "plan", "conflict")
 		for _, n := range []string{"hello", "winch-needs-hello"} {
-			want := "apt must remove " + n + "; first run a pkg step with name: " + n + " and absent: true in a separate run"
+			want := "apt must remove " + n + "; add a pkg step with name: " + n + " and absent: true before this step"
 			if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
 				t.Errorf("plan: exit %d, want %q, stdout %q, stderr %q", r.Code, want, r.Stdout, r.Stderr)
 			}
@@ -72,7 +75,7 @@ func TestPkgDiagnostics(t *testing.T) {
 	t.Run("a needed removal after the refresh names the package and fix", func(t *testing.T) {
 		vm.MustRun(t, "rm /var/lib/apt/lists/10.0.2.100_test_*")
 		r := lab.Winch(t, dir, "apply", "conflict", "--yes")
-		want := "apt must remove hello; first run a pkg step with name: hello and absent: true in a separate run"
+		want := "apt must remove hello; add a pkg step with name: hello and absent: true before this step"
 		if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
 			t.Errorf("apply: exit %d, want %q, stdout %q, stderr %q", r.Code, want, r.Stdout, r.Stderr)
 		}

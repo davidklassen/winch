@@ -22,6 +22,9 @@ type Pkg struct {
 	Recommends *bool         `yaml:"recommends" json:"recommends,omitempty"`
 	Purge      bool          `yaml:"purge" json:"purge,omitempty"`
 	Absent     bool          `yaml:"absent" json:"absent,omitempty"`
+	// Removed are the packages that earlier steps of the host remove. The
+	// run sets them.
+	Removed []string `json:"removed,omitempty"`
 
 	// Check sets these for Apply.
 	refresh bool
@@ -355,11 +358,11 @@ func (p *Pkg) others(ctx context.Context, note func(string)) ([]string, error) {
 		return nil, err
 	}
 	var errs []error
-	for _, n := range parseRemovals(out, nil) {
+	for _, n := range parseRemovals(out, p.Removed) {
 		if strings.Contains(n, ":") {
 			errs = append(errs, fmt.Errorf("apt must remove %s; first run apt-get remove %s", n, n))
 		} else {
-			errs = append(errs, fmt.Errorf("apt must remove %s; first run a pkg step with name: %s and absent: true in a separate run", n, n))
+			errs = append(errs, fmt.Errorf("apt must remove %s; add a pkg step with name: %s and absent: true before this step", n, n))
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
