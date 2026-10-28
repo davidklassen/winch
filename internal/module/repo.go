@@ -102,9 +102,10 @@ func (r *Repo) Validate() error {
 }
 
 // SetKey sets the key data to data, the content of the key file name. data
-// must be ASCII-armored OpenPGP public keys, and at least one primary key
-// must not have expired at now. It returns a warning for each expired key
-// and each key that expires within 30 days.
+// must be ASCII-armored OpenPGP public keys, and at least one key must be able
+// to sign at now. It returns a warning for each key that cannot sign, each key
+// that stops signing within 30 days, and each key that apt rejects for its
+// algorithm or hash.
 func (r *Repo) SetKey(name string, data []byte, now time.Time) ([]string, error) {
 	keys, err := parsePGPKeys(data)
 	if errors.Is(err, errNotArmored) {
@@ -113,23 +114,61 @@ func (r *Repo) SetKey(name string, data []byte, now time.Time) ([]string, error)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	var expired, warnings []string
+	var dead, warnings []string
 	for _, k := range keys {
+		signer, until, ok := lastSigner(k)
 		switch {
-		case k.expires.IsZero():
-		case !now.Before(k.expires):
-			msg := fmt.Sprintf("the key %s expired on %s", k.fingerprint, k.expires.Format(time.DateOnly))
-			expired = append(expired, msg)
+		case !ok:
+			msg := fmt.Sprintf("the key %s has no key or subkey that can sign", k.fingerprint)
+			dead = append(dead, msg)
 			warnings = append(warnings, name+": "+msg)
-		case k.expires.Sub(now) < 30*24*time.Hour:
-			warnings = append(warnings, fmt.Sprintf("%s: the key %s expires on %s", name, k.fingerprint, k.expires.Format(time.DateOnly)))
+		case until.IsZero():
+		case !now.Before(until):
+			msg := fmt.Sprintf("%s expired on %s", signer, until.Format(time.DateOnly))
+			dead = append(dead, msg)
+			warnings = append(warnings, name+": "+msg)
+		case until.Sub(now) < 30*24*time.Hour:
+			warnings = append(warnings, fmt.Sprintf("%s: %s expires on %s", name, signer, until.Format(time.DateOnly)))
+		}
+		if k.weak != "" {
+			warnings = append(warnings, fmt.Sprintf("%s: the key %s %s", name, k.fingerprint, k.weak))
+		}
+		for _, s := range k.subkeys {
+			if s.weak != "" {
+				warnings = append(warnings, fmt.Sprintf("%s: the signing subkey %s of the key %s %s", name, s.fingerprint, k.fingerprint, s.weak))
+			}
 		}
 	}
-	if len(expired) == len(keys) {
-		return nil, fmt.Errorf("%s: %s", name, strings.Join(expired, "; "))
+	if len(dead) == len(keys) {
+		return nil, fmt.Errorf("%s: %s", name, strings.Join(dead, "; "))
 	}
 	r.KeyData = data
 	return warnings, nil
+}
+
+// lastSigner returns the part of k that can sign longest, for a message, and
+// when it stops, or zero for never. The primary key's expiry ends every
+// subkey. ok is false when no part of k can sign.
+func lastSigner(k pgpKey) (signer string, until time.Time, ok bool) {
+	var last *pgpSubkey
+	if !k.signs {
+		for i, s := range k.subkeys {
+			if last == nil || !last.expires.IsZero() && (s.expires.IsZero() || s.expires.After(last.expires)) {
+				last = &k.subkeys[i]
+			}
+		}
+		if last == nil {
+			return "", time.Time{}, false
+		}
+		until = last.expires
+	}
+	if !k.expires.IsZero() && (until.IsZero() || k.expires.Before(until)) {
+		last, until = nil, k.expires
+	}
+	if last != nil {
+		return fmt.Sprintf("the signing subkey %s of the key %s", last.fingerprint, k.fingerprint), until, true
+	}
+	return "the key " + k.fingerprint, until, true
 }
 
 // Source names the step's source: two steps with the same Source write the same

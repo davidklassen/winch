@@ -79,13 +79,22 @@ const (
 	testFpr     = "08F59DAD86F61D67A6A960698445EE6567433B2C"
 	rsaFpr      = "68211508469BEE79A13385E5EE1E5094B9E465ED"
 	expiringFpr = "98E68808D2F3430CFF79D49BADF72694C8CF341E"
+	// subkey-expired.asc and subkey-renewed.asc: a primary key that only
+	// certifies, and a signing subkey.
+	subPrimaryFpr = "6106974DDD1D043FCDB2370EEAAFB33105B1B0C4"
+	subFpr        = "D7930139E249DA499CA8A969B26122648A0487A5"
 )
 
 // spec: Modules/repo
 func TestParsePGPKeys(t *testing.T) {
-	testKey := pgpKey{fingerprint: testFpr, userID: "winch test key <test@example.com>"}
-	rsaKey := pgpKey{fingerprint: rsaFpr, userID: "winch rsa key <rsa@example.com>"}
-	expiring := pgpKey{fingerprint: expiringFpr, userID: "winch expiring key <expiring@example.com>"}
+	testKey := pgpKey{fingerprint: testFpr, userID: "winch test key <test@example.com>", signs: true}
+	rsaKey := pgpKey{fingerprint: rsaFpr, userID: "winch rsa key <rsa@example.com>", signs: true}
+	expiring := pgpKey{fingerprint: expiringFpr, userID: "winch expiring key <expiring@example.com>", signs: true}
+	expiringAt := func(t time.Time) pgpKey {
+		k := expiring
+		k.expires = t
+		return k
+	}
 	tests := []struct {
 		file    string
 		want    []pgpKey
@@ -93,8 +102,8 @@ func TestParsePGPKeys(t *testing.T) {
 	}{
 		{"key.asc", []pgpKey{testKey}, ""},
 		{"rsa.asc", []pgpKey{rsaKey}, ""},
-		{"expiring.asc", []pgpKey{{expiring.fingerprint, expiring.userID, time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC), ""}}, ""},
-		{"renewed.asc", []pgpKey{{expiring.fingerprint, expiring.userID, time.Date(2027, 6, 1, 0, 0, 0, 0, time.UTC), ""}}, ""},
+		{"expiring.asc", []pgpKey{expiringAt(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC))}, ""},
+		{"renewed.asc", []pgpKey{expiringAt(time.Date(2027, 6, 1, 0, 0, 0, 0, time.UTC))}, ""},
 		{"two-keys.asc", []pgpKey{testKey, rsaKey}, ""},
 		{"two-blocks.asc", []pgpKey{testKey, rsaKey}, ""},
 		{"key.gpg", nil, "is not an ASCII-armored OpenPGP public key"},
@@ -199,6 +208,7 @@ func TestRepoSetKey(t *testing.T) {
 	expiring := string(readTestdata(t, "expiring.asc"))
 	renewed := string(readTestdata(t, "renewed.asc"))
 	both := string(readTestdata(t, "key.asc")) + expiring
+	subExpired := string(readTestdata(t, "subkey-expired.asc"))
 	jan := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	april, aprilFpr := buildKey(testSig{created: jan, lifetime: 100})
 	february, februaryFpr := buildKey(testSig{created: jan, lifetime: 400})
@@ -220,6 +230,16 @@ func TestRepoSetKey(t *testing.T) {
 			"a.asc: the key " + februaryFpr + " expires on 2025-02-04",
 		}, ""},
 		{"second key expires soon", both, day(2024, 12, 21), []string{"a.asc: the key " + expiringFpr + " expires on 2024-12-31"}, ""},
+		{"signing subkey expired", subExpired, day(2025, 3, 1), nil, "a.asc: the signing subkey " + subFpr + " of the key " + subPrimaryFpr + " expired on 2025-01-31"},
+		{"signing subkey expires soon", subExpired, day(2025, 1, 20), []string{"a.asc: the signing subkey " + subFpr + " of the key " + subPrimaryFpr + " expires on 2025-01-31"}, ""},
+		{"signing subkey renewed", string(readTestdata(t, "subkey-renewed.asc")), day(2026, 11, 1), nil, ""},
+		{"signing subkey expired next to a valid key", string(readTestdata(t, "key.asc")) + subExpired, day(2025, 3, 1), []string{"a.asc: the signing subkey " + subFpr + " of the key " + subPrimaryFpr + " expired on 2025-01-31"}, ""},
+		{"no signing key", string(readTestdata(t, "cert-only.asc")), day(2026, 11, 1), nil, "a.asc: the key BD44CA8AB9AC4BFA6B0396B1EFDEA27A4FE0448C has no key or subkey that can sign"},
+		{"signing subkey revoked", string(readTestdata(t, "subkey-revoked.asc")), day(2026, 11, 1), nil, "a.asc: the key BD44CA8AB9AC4BFA6B0396B1EFDEA27A4FE0448C has no key or subkey that can sign"},
+		{"RSA with 1024 bits", string(readTestdata(t, "rsa1024.asc")), day(2026, 11, 1), []string{"a.asc: the key 994EE216D45F86766171F0796821F1FA657A11A5 is RSA with 1024 bits; apt rejects RSA keys under 2048 bits"}, ""},
+		{"DSA", string(readTestdata(t, "dsa.asc")), day(2026, 11, 1), []string{"a.asc: the key 3F75E778760C0255F4062371D274C72FC5BB6594 is DSA; apt rejects DSA keys"}, ""},
+		{"SHA-1 self-signature", string(readTestdata(t, "sha1.asc")), day(2026, 11, 1), []string{"a.asc: the key 42EA6B67E06B03AB85A3ACC38DB5D5E055CE3E2A has a SHA-1 binding signature; apt rejects SHA-1 signatures"}, ""},
+		{"SHA-1 subkey binding", string(readTestdata(t, "sha1-subkey.asc")), day(2026, 11, 1), []string{"a.asc: the signing subkey 3069B443F169A07443B243C2F914270C4B19B209 of the key B69A1C32A5F73DA759DC14FF17FB76E580AEFDD0 has a SHA-1 binding signature; apt rejects SHA-1 signatures"}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -235,6 +255,92 @@ func TestRepoSetKey(t *testing.T) {
 				t.Fatalf("SetKey = %q, %v; want %q", got, err, tt.want)
 			}
 		})
+	}
+}
+
+// spec: Modules/repo
+func TestRepoSigningSubkeys(t *testing.T) {
+	packets := func(name string) []packet {
+		var b64 strings.Builder
+		for line := range strings.Lines(string(readTestdata(t, name))) {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "=") {
+				b64.WriteString(line)
+			}
+		}
+		raw, err := base64.StdEncoding.DecodeString(b64.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := readPackets(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	tests := []struct {
+		name, file string
+		edit       func([]packet) []packet
+		wantErr    string
+		wantWarn   string
+	}{
+		{"unbound subkey", "subkey-expired.asc", func(p []packet) []packet {
+			return p[:len(p)-1]
+		}, "has no key or subkey that can sign", ""},
+		{"encryption subkey", "subkey-renewed.asc", func(p []packet) []packet {
+			p[3].body[5] = 16
+			return p
+		}, "has no key or subkey that can sign", ""},
+		{"SHA-1 embedded signature", "sha1-subkey.asc", func(p []packet) []packet {
+			p[len(p)-1].body[3] = 10
+			return p
+		}, "", "has a SHA-1 binding signature"},
+		{"expired then live subkey", "subkey-expired.asc", func(p []packet) []packet {
+			extra := packets("subkey-renewed.asc")[3:]
+			extra[0].body[len(extra[0].body)-1] ^= 1
+			return append(p, extra...)
+		}, "", ""},
+		{"live then expired subkey", "subkey-renewed.asc", func(p []packet) []packet {
+			extra := packets("subkey-expired.asc")[3:]
+			extra[0].body[len(extra[0].body)-1] ^= 1
+			return append(p, extra...)
+		}, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var raw []byte
+			// These edits test packet metadata, not cryptographic signatures.
+			for _, p := range tt.edit(packets(tt.file)) {
+				raw = append(raw, 0xc0|p.tag, 255)
+				raw = binary.BigEndian.AppendUint32(raw, uint32(len(p.body)))
+				raw = append(raw, p.body...)
+			}
+			data := []byte(armorBegin + "\n\n" + base64.StdEncoding.EncodeToString(raw) + "\n" + armorEnd + "\n")
+			var r Repo
+			warnings, err := r.SetKey("a.asc", data, time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("SetKey error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantWarn == "" && len(warnings) != 0 || tt.wantWarn != "" && (len(warnings) != 1 || !strings.Contains(warnings[0], tt.wantWarn)) {
+				t.Errorf("warnings = %q, want %q", warnings, tt.wantWarn)
+			}
+		})
+	}
+}
+
+// spec: Modules/repo
+func TestLastSignerPrimaryExpiry(t *testing.T) {
+	expiry := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	k := pgpKey{fingerprint: "primary", expires: expiry, subkeys: []pgpSubkey{{fingerprint: "sub"}}}
+	signer, until, ok := lastSigner(k)
+	if !ok || signer != "the key primary" || !until.Equal(expiry) {
+		t.Errorf("lastSigner = %q, %v, %t; want primary expiry %v", signer, until, ok, expiry)
 	}
 }
 

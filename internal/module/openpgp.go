@@ -19,8 +19,20 @@ type pgpKey struct {
 	fingerprint, userID string
 	// expires is when the primary key expires, or zero.
 	expires time.Time
+	// signs reports whether the primary key can sign.
+	signs bool
+	// weak says why apt rejects the primary key, or is empty.
+	weak string
+	// subkeys are the signing subkeys that are not revoked.
+	subkeys []pgpSubkey
 	// data is the packets of the key; a renewed key has new data.
 	data string
+}
+
+type pgpSubkey struct {
+	fingerprint string
+	expires     time.Time
+	weak        string
 }
 
 const (
@@ -30,21 +42,31 @@ const (
 
 var errNotArmored = errors.New("is not an ASCII-armored OpenPGP public key")
 
+const sha1Binding = "has a SHA-1 binding signature; apt rejects SHA-1 signatures"
+
 // OpenPGP packet tags, signature types, and signature subpacket types.
 const (
 	tagSignature = 2
 	tagPublicKey = 6
 	tagUserID    = 13
+	tagSubkey    = 14
 
 	sigCertGeneric  = 0x10
 	sigCertPositive = 0x13
+	sigSubkey       = 0x18
 	sigDirect       = 0x1f
 	sigRevocation   = 0x20
+	sigSubkeyRevoke = 0x28
 
 	subCreated   = 2
 	subExpires   = 9
 	subIssuer    = 16
+	subKeyFlags  = 27
+	subEmbedded  = 32
 	subIssuerFpr = 33
+
+	flagSign = 0x02
+	hashSHA1 = 2
 )
 
 // parsePGPKeys reads the keys of one or more ASCII-armored public key blocks.
@@ -116,7 +138,8 @@ func parseBlock(body string) ([]pgpKey, error) {
 }
 
 // parsePGPKey reads a key from its packets, the primary key first. The newest
-// self-signature of the primary key sets when it expires.
+// self-signature of the primary key sets when it expires and whether it signs;
+// the newest binding signature of a subkey does the same for the subkey.
 func parsePGPKey(packets []packet) (pgpKey, error) {
 	key := packets[0].body
 	if len(key) == 0 {
@@ -125,25 +148,45 @@ func parsePGPKey(packets []packet) (pgpKey, error) {
 	if key[0] != 4 {
 		return pgpKey{}, fmt.Errorf("the key has version %d; winch reads version 4", key[0])
 	}
-	if len(key) < 5 {
+	if len(key) < 6 {
 		return pgpKey{}, errors.New("the key data ends inside a packet")
 	}
-	h := sha1.New()
-	h.Write([]byte{0x99})
-	h.Write(binary.BigEndian.AppendUint16(nil, uint16(len(key))))
-	h.Write(key)
-	fpr := h.Sum(nil)
-	k := pgpKey{fingerprint: strings.ToUpper(hex.EncodeToString(fpr))}
-	created := time.Unix(int64(binary.BigEndian.Uint32(key[1:5])), 0).UTC()
-	var newest time.Time
+	fpr := pgpFingerprint(key)
+	k := pgpKey{fingerprint: strings.ToUpper(hex.EncodeToString(fpr)), weak: weakAlgorithm(key)}
+	// sub is the subkey that the packets now belong to.
+	var sub []byte
+	var subSig selfSig
+	bound, revoked := false, false
+	endSubkey := func() {
+		if len(sub) < 6 || sub[0] != 4 || !bound || revoked || !subSig.signs(sub[5]) {
+			return
+		}
+		s := pgpSubkey{fingerprint: strings.ToUpper(hex.EncodeToString(pgpFingerprint(sub))), weak: weakAlgorithm(sub)}
+		if subSig.expires > 0 {
+			s.expires = keyCreated(sub).Add(time.Duration(subSig.expires) * time.Second)
+		}
+		if s.weak == "" && (subSig.hash == hashSHA1 || subSig.backHash == hashSHA1) {
+			s.weak = sha1Binding
+		}
+		k.subkeys = append(k.subkeys, s)
+	}
+	var primary selfSig
 	var data strings.Builder
 	for i, p := range packets {
 		data.Write(p.raw)
 		if i == 0 {
 			continue
 		}
-		if p.tag == tagUserID && k.userID == "" {
-			k.userID = string(p.body)
+		switch p.tag {
+		case tagUserID:
+			if k.userID == "" && sub == nil {
+				k.userID = string(p.body)
+			}
+			continue
+		case tagSubkey:
+			endSubkey()
+			sub, subSig, bound, revoked = p.body, selfSig{}, false, false
+			continue
 		}
 		if p.tag != tagSignature {
 			continue
@@ -151,33 +194,88 @@ func parsePGPKey(packets []packet) (pgpKey, error) {
 		t := sigType(p.body)
 		// A key revocation comes before the user IDs and binds to the
 		// primary key.
-		if k.userID == "" && t == sigRevocation {
+		if k.userID == "" && sub == nil && t == sigRevocation {
 			return pgpKey{}, fmt.Errorf("the key %s is revoked", k.fingerprint)
 		}
-		if t != sigDirect && (t < sigCertGeneric || t > sigCertPositive) {
-			continue
-		}
 		s, ok := parseSelfSig(p.body, fpr)
-		if !ok || s.created.Before(newest) {
+		if !ok {
 			continue
 		}
-		newest, k.expires = s.created, time.Time{}
-		if s.expires > 0 {
-			k.expires = created.Add(time.Duration(s.expires) * time.Second)
+		switch {
+		case sub != nil && t == sigSubkeyRevoke:
+			revoked = true
+		case sub != nil && t == sigSubkey && !s.created.Before(subSig.created):
+			subSig, bound = s, true
+		case sub == nil && (t == sigDirect || t >= sigCertGeneric && t <= sigCertPositive) && !s.created.Before(primary.created):
+			primary = s
 		}
+	}
+	endSubkey()
+	k.signs = primary.signs(key[5])
+	if primary.expires > 0 {
+		k.expires = keyCreated(key).Add(time.Duration(primary.expires) * time.Second)
+	}
+	if k.weak == "" && primary.hash == hashSHA1 {
+		k.weak = sha1Binding
 	}
 	k.data = data.String()
 	return k, nil
+}
+
+// pgpFingerprint returns the fingerprint of a version 4 key packet body.
+func pgpFingerprint(key []byte) []byte {
+	h := sha1.New()
+	h.Write([]byte{0x99})
+	h.Write(binary.BigEndian.AppendUint16(nil, uint16(len(key))))
+	h.Write(key)
+	return h.Sum(nil)
+}
+
+func keyCreated(key []byte) time.Time {
+	return time.Unix(int64(binary.BigEndian.Uint32(key[1:5])), 0).UTC()
+}
+
+// weakAlgorithm says why apt rejects the algorithm of a version 4 key
+// packet body, or returns "".
+func weakAlgorithm(key []byte) string {
+	switch key[5] {
+	case 17:
+		return "is DSA; apt rejects DSA keys"
+	case 1, 2, 3:
+		if len(key) < 8 {
+			return ""
+		}
+		if bits := binary.BigEndian.Uint16(key[6:8]); bits < 2048 {
+			return fmt.Sprintf("is RSA with %d bits; apt rejects RSA keys under 2048 bits", bits)
+		}
+	}
+	return ""
 }
 
 type selfSig struct {
 	created time.Time
 	// expires is the key lifetime in seconds, or 0.
 	expires uint32
+	// flags is the key flags subpacket, or nil.
+	flags []byte
+	// hash is the hash algorithm; backHash is the one of the embedded
+	// signature, or 0.
+	hash, backHash byte
+}
+
+// Without key flags, the algorithm decides whether the key can sign.
+func (s selfSig) signs(algorithm byte) bool {
+	switch algorithm {
+	case 1, 3, 17, 19, 22, 27, 28: // RSA, DSA, ECDSA, EdDSA.
+		return s.flags == nil || len(s.flags) > 0 && s.flags[0]&flagSign != 0
+	default:
+		return false
+	}
 }
 
 // parseSelfSig reads a version 4 signature that the key with fingerprint fpr
-// issued. Only the hashed area sets the creation and expiration times.
+// issued. Only the hashed area sets the creation and expiration times and the
+// key flags.
 func parseSelfSig(body, fpr []byte) (selfSig, bool) {
 	if len(body) < 6 || body[0] != 4 {
 		return selfSig{}, false
@@ -190,7 +288,7 @@ func parseSelfSig(body, fpr []byte) (selfSig, bool) {
 	if len(body) < 8+n+m {
 		return selfSig{}, false
 	}
-	var s selfSig
+	s := selfSig{hash: body[3]}
 	self := false
 	for i, area := range [][]byte{body[6 : 6+n], body[8+n : 8+n+m]} {
 		for typ, v := range subpackets(area) {
@@ -199,10 +297,14 @@ func parseSelfSig(body, fpr []byte) (selfSig, bool) {
 				self = self || string(v) == string(fpr[12:])
 			case typ == subIssuerFpr && len(v) == 21 && v[0] == 4:
 				self = self || string(v[1:]) == string(fpr)
+			case typ == subEmbedded && len(v) > 3 && v[0] == 4:
+				s.backHash = v[3]
 			case i == 0 && typ == subCreated && len(v) == 4:
 				s.created = time.Unix(int64(binary.BigEndian.Uint32(v)), 0).UTC()
 			case i == 0 && typ == subExpires && len(v) == 4:
 				s.expires = binary.BigEndian.Uint32(v)
+			case i == 0 && typ == subKeyFlags:
+				s.flags = v
 			}
 		}
 	}
