@@ -116,8 +116,19 @@ func (r *Repo) SetKey(name string, data []byte, now time.Time) ([]string, error)
 	}
 	var dead, warnings []string
 	for _, k := range keys {
+		var weak []string
+		if k.weak != "" {
+			weak = append(weak, fmt.Sprintf("the key %s %s", k.fingerprint, k.weak))
+		}
+		for _, s := range k.subkeys {
+			if s.weak != "" {
+				weak = append(weak, fmt.Sprintf("the signing subkey %s of the key %s %s", s.fingerprint, k.fingerprint, s.weak))
+			}
+		}
 		signer, until, ok := lastSigner(k)
 		switch {
+		case !ok && len(weak) > 0:
+			dead = append(dead, strings.Join(weak, "; "))
 		case !ok:
 			msg := fmt.Sprintf("the key %s has no key or subkey that can sign", k.fingerprint)
 			dead = append(dead, msg)
@@ -130,13 +141,8 @@ func (r *Repo) SetKey(name string, data []byte, now time.Time) ([]string, error)
 		case until.Sub(now) < 30*24*time.Hour:
 			warnings = append(warnings, fmt.Sprintf("%s: %s expires on %s", name, signer, until.Format(time.DateOnly)))
 		}
-		if k.weak != "" {
-			warnings = append(warnings, fmt.Sprintf("%s: the key %s %s", name, k.fingerprint, k.weak))
-		}
-		for _, s := range k.subkeys {
-			if s.weak != "" {
-				warnings = append(warnings, fmt.Sprintf("%s: the signing subkey %s of the key %s %s", name, s.fingerprint, k.fingerprint, s.weak))
-			}
+		for _, w := range weak {
+			warnings = append(warnings, name+": "+w)
 		}
 	}
 	if len(dead) == len(keys) {
@@ -148,11 +154,18 @@ func (r *Repo) SetKey(name string, data []byte, now time.Time) ([]string, error)
 
 // lastSigner returns the part of k that can sign longest, for a message, and
 // when it stops, or zero for never. The primary key's expiry ends every
-// subkey. ok is false when no part of k can sign.
+// subkey. A weak primary key also ends its subkeys, because it makes their
+// binding signatures. ok is false when no part of k that apt accepts can sign.
 func lastSigner(k pgpKey) (signer string, until time.Time, ok bool) {
+	if k.weak != "" {
+		return "", time.Time{}, false
+	}
 	var last *pgpSubkey
 	if !k.signs {
 		for i, s := range k.subkeys {
+			if s.weak != "" {
+				continue
+			}
 			if last == nil || !last.expires.IsZero() && (s.expires.IsZero() || s.expires.After(last.expires)) {
 				last = &k.subkeys[i]
 			}

@@ -1,12 +1,14 @@
 package module
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -209,6 +211,11 @@ func TestRepoSetKey(t *testing.T) {
 	renewed := string(readTestdata(t, "renewed.asc"))
 	both := string(readTestdata(t, "key.asc")) + expiring
 	subExpired := string(readTestdata(t, "subkey-expired.asc"))
+	valid := string(readTestdata(t, "key.asc"))
+	rsa1024Msg := "a.asc: the key 994EE216D45F86766171F0796821F1FA657A11A5 is RSA with 1024 bits; apt rejects RSA keys under 2048 bits"
+	dsaMsg := "a.asc: the key 3F75E778760C0255F4062371D274C72FC5BB6594 is DSA; apt rejects DSA keys"
+	sha1SelfMsg := "a.asc: the key 42EA6B67E06B03AB85A3ACC38DB5D5E055CE3E2A has a SHA-1 binding signature; apt rejects SHA-1 signatures"
+	sha1SubMsg := "a.asc: the signing subkey 3069B443F169A07443B243C2F914270C4B19B209 of the key B69A1C32A5F73DA759DC14FF17FB76E580AEFDD0 has a SHA-1 binding signature; apt rejects SHA-1 signatures"
 	jan := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	april, aprilFpr := buildKey(testSig{created: jan, lifetime: 100})
 	february, februaryFpr := buildKey(testSig{created: jan, lifetime: 400})
@@ -236,10 +243,14 @@ func TestRepoSetKey(t *testing.T) {
 		{"signing subkey expired next to a valid key", string(readTestdata(t, "key.asc")) + subExpired, day(2025, 3, 1), []string{"a.asc: the signing subkey " + subFpr + " of the key " + subPrimaryFpr + " expired on 2025-01-31"}, ""},
 		{"no signing key", string(readTestdata(t, "cert-only.asc")), day(2026, 11, 1), nil, "a.asc: the key BD44CA8AB9AC4BFA6B0396B1EFDEA27A4FE0448C has no key or subkey that can sign"},
 		{"signing subkey revoked", string(readTestdata(t, "subkey-revoked.asc")), day(2026, 11, 1), nil, "a.asc: the key BD44CA8AB9AC4BFA6B0396B1EFDEA27A4FE0448C has no key or subkey that can sign"},
-		{"RSA with 1024 bits", string(readTestdata(t, "rsa1024.asc")), day(2026, 11, 1), []string{"a.asc: the key 994EE216D45F86766171F0796821F1FA657A11A5 is RSA with 1024 bits; apt rejects RSA keys under 2048 bits"}, ""},
-		{"DSA", string(readTestdata(t, "dsa.asc")), day(2026, 11, 1), []string{"a.asc: the key 3F75E778760C0255F4062371D274C72FC5BB6594 is DSA; apt rejects DSA keys"}, ""},
-		{"SHA-1 self-signature", string(readTestdata(t, "sha1.asc")), day(2026, 11, 1), []string{"a.asc: the key 42EA6B67E06B03AB85A3ACC38DB5D5E055CE3E2A has a SHA-1 binding signature; apt rejects SHA-1 signatures"}, ""},
-		{"SHA-1 subkey binding", string(readTestdata(t, "sha1-subkey.asc")), day(2026, 11, 1), []string{"a.asc: the signing subkey 3069B443F169A07443B243C2F914270C4B19B209 of the key B69A1C32A5F73DA759DC14FF17FB76E580AEFDD0 has a SHA-1 binding signature; apt rejects SHA-1 signatures"}, ""},
+		{"RSA with 1024 bits", string(readTestdata(t, "rsa1024.asc")), day(2026, 11, 1), nil, rsa1024Msg},
+		{"DSA", string(readTestdata(t, "dsa.asc")), day(2026, 11, 1), nil, dsaMsg},
+		{"SHA-1 self-signature", string(readTestdata(t, "sha1.asc")), day(2026, 11, 1), nil, sha1SelfMsg},
+		{"SHA-1 subkey binding", string(readTestdata(t, "sha1-subkey.asc")), day(2026, 11, 1), nil, sha1SubMsg},
+		{"RSA with 1024 bits next to a valid key", valid + string(readTestdata(t, "rsa1024.asc")), day(2026, 11, 1), []string{rsa1024Msg}, ""},
+		{"DSA next to a valid key", valid + string(readTestdata(t, "dsa.asc")), day(2026, 11, 1), []string{dsaMsg}, ""},
+		{"SHA-1 self-signature next to a valid key", valid + string(readTestdata(t, "sha1.asc")), day(2026, 11, 1), []string{sha1SelfMsg}, ""},
+		{"SHA-1 subkey binding next to a valid key", valid + string(readTestdata(t, "sha1-subkey.asc")), day(2026, 11, 1), []string{sha1SubMsg}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -278,6 +289,24 @@ func TestRepoSigningSubkeys(t *testing.T) {
 		}
 		return p
 	}
+	// graft adds the subkeys of the key in from to the key in into, and makes
+	// their binding signatures name the primary key of into as the issuer.
+	graft := func(into, from string) []packet {
+		p := packets(into)
+		oldFpr, newFpr := pgpFingerprint(packets(from)[0].body), pgpFingerprint(p[0].body)
+		extra := packets(from)[3:]
+		extra[0].body[len(extra[0].body)-1] ^= 1
+		for i := range extra {
+			extra[i].body = bytes.ReplaceAll(extra[i].body, oldFpr, newFpr)
+			extra[i].body = bytes.ReplaceAll(extra[i].body, oldFpr[12:], newFpr[12:])
+		}
+		return append(p, extra...)
+	}
+	twoWeakSubkeys := func(p []packet) []packet {
+		extra := packets("sha1-subkey.asc")[3:]
+		extra[0].body[len(extra[0].body)-1] ^= 1
+		return append(p, extra...)
+	}
 	tests := []struct {
 		name, file string
 		edit       func([]packet) []packet
@@ -294,7 +323,17 @@ func TestRepoSigningSubkeys(t *testing.T) {
 		{"SHA-1 embedded signature", "sha1-subkey.asc", func(p []packet) []packet {
 			p[len(p)-1].body[3] = 10
 			return p
+		}, "has a SHA-1 binding signature", ""},
+		{"two weak subkeys", "sha1-subkey.asc", twoWeakSubkeys, "has a SHA-1 binding signature", ""},
+		{"two weak subkeys next to a valid key", "sha1-subkey.asc", func(p []packet) []packet {
+			return append(twoWeakSubkeys(p), packets("key.asc")...)
 		}, "", "has a SHA-1 binding signature"},
+		{"weak primary key with a strong subkey", "sha1.asc", func([]packet) []packet {
+			return graft("sha1.asc", "subkey-renewed.asc")
+		}, "has a SHA-1 binding signature", ""},
+		{"weak subkey outlives a strong subkey", "sha1-subkey.asc", func([]packet) []packet {
+			return graft("sha1-subkey.asc", "subkey-expired.asc")
+		}, "expired on 2025-01-31", ""},
 		{"expired then live subkey", "subkey-expired.asc", func(p []packet) []packet {
 			extra := packets("subkey-renewed.asc")[3:]
 			extra[0].body[len(extra[0].body)-1] ^= 1
@@ -327,7 +366,7 @@ func TestRepoSigningSubkeys(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tt.wantWarn == "" && len(warnings) != 0 || tt.wantWarn != "" && (len(warnings) != 1 || !strings.Contains(warnings[0], tt.wantWarn)) {
+			if tt.wantWarn == "" && len(warnings) != 0 || tt.wantWarn != "" && (len(warnings) == 0 || slices.ContainsFunc(warnings, func(w string) bool { return !strings.Contains(w, tt.wantWarn) })) {
 				t.Errorf("warnings = %q, want %q", warnings, tt.wantWarn)
 			}
 		})
