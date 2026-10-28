@@ -341,14 +341,19 @@ func unwrappedCertbotHook(hook string) string {
 	return command
 }
 
-func (c *Certbot) PrepareHooks() {
-	if c.issue && c.DeployHook != nil && !slices.Contains(c.PendingHooks, "deploy_hook") {
-		c.PendingHooks = append(c.PendingHooks, "deploy_hook")
+// HooksToRun returns the hooks that apply runs: the pending hooks, and, when it
+// issues, deploy_hook and post_hook. The helper records them as pending until
+// apply ends, in case the run stops.
+func (c *Certbot) HooksToRun() []string {
+	hooks := slices.Clone(c.PendingHooks)
+	if c.issue && c.DeployHook != nil && !slices.Contains(hooks, "deploy_hook") {
+		hooks = append(hooks, "deploy_hook")
 	}
-	if c.issue && c.PostHook != nil && !slices.Contains(c.PendingHooks, "post_hook") {
-		c.PendingHooks = append(c.PendingHooks, "post_hook")
+	if c.issue && c.PostHook != nil && !slices.Contains(hooks, "post_hook") {
+		hooks = append(hooks, "post_hook")
 	}
-	slices.Sort(c.PendingHooks)
+	slices.Sort(hooks)
+	return hooks
 }
 
 func (c *Certbot) Apply(ctx context.Context, _ func(string)) error {
@@ -379,24 +384,38 @@ func (c *Certbot) Apply(ctx context.Context, _ func(string)) error {
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := wait(ctx, cmd, KillDelay)
 	output := out.String()
-	var failedHooks []string
-	for line := range strings.Lines(output) {
-		if hook := failedCertbotHook(line); hook != "" {
-			failedHooks = append(failedHooks, strings.ReplaceAll(hook, "-", "_"))
+	pending := c.PendingHooks
+	if err != nil {
+		// A certbot that was killed after it saved the certificate may not
+		// have run its hooks, and its output shows no hook failure.
+		if cur, rerr := readCertState(letsencrypt, c.Name); rerr == nil && cur != nil && c.changes(cur) == nil {
+			pending = c.HooksToRun()
 		}
 	}
-	for _, hook := range []string{"deploy_hook", "post_hook"} {
-		failed := slices.Contains(failedHooks, hook)
-		if failed && !slices.Contains(c.PendingHooks, hook) {
-			c.PendingHooks = append(c.PendingHooks, hook)
-		} else if !failed && err == nil {
-			c.PendingHooks = slices.DeleteFunc(c.PendingHooks, func(h string) bool { return h == hook })
-		}
-	}
+	c.PendingHooks = pendingHooks(pending, output, err == nil)
 	if err != nil {
 		return failure("certbot certonly", err, output)
 	}
 	return hookFailure(output)
+}
+
+// pendingHooks returns the hooks that are pending after certbot ran with the
+// output out: the hooks that failed, and, when certbot failed, the hooks that
+// were pending before, as certbot may not have run them.
+func pendingHooks(pending []string, out string, ok bool) []string {
+	var failed []string
+	for line := range strings.Lines(out) {
+		if hook := failedCertbotHook(line); hook != "" {
+			failed = append(failed, strings.ReplaceAll(hook, "-", "_"))
+		}
+	}
+	var next []string
+	for _, hook := range []string{"deploy_hook", "post_hook"} {
+		if slices.Contains(failed, hook) || !ok && slices.Contains(pending, hook) {
+			next = append(next, hook)
+		}
+	}
+	return next
 }
 
 // hookFailure returns an error with certbot's lines about the hooks that

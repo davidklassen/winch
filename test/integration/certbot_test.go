@@ -296,6 +296,83 @@ func TestCertbotPendingHooks(t *testing.T) {
 		}
 	})
 
+	t.Run("a failed challenge leaves no pending hook", func(t *testing.T) {
+		step := func(webroot string) map[string]string {
+			return map[string]string{
+				"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+				"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",
+				"pipelines/site.yaml": `stages:
+  - name: test
+    hosts: all
+    steps:
+      - certbot:
+          name: challenge
+          domains: [a.example.com]
+          email: admin@example.com
+          authenticator: webroot
+          webroot_path: ` + webroot + `
+          deploy_hook: echo deploy >> /root/challenge-hooks
+          post_hook: echo post >> /root/challenge-hooks
+`,
+			}
+		}
+		good := vmtest.WriteProject(t, step("/var/www/html"))
+		if r := lab.Winch(t, good, "apply", "site", "--yes"); r.Code != 0 {
+			t.Fatalf("first apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		// nginx does not serve this directory, so Pebble's challenge fails.
+		vm.MustRun(t, "mkdir -p /root/unserved && rm /root/challenge-hooks")
+		r := lab.Winch(t, vmtest.WriteProject(t, step("/root/unserved")), "apply", "site", "--yes")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "Some challenges have failed") || strings.Contains(r.Stderr, "reported error code") {
+			t.Fatalf("apply with a failing challenge: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if got := vm.MustRun(t, "cat /root/challenge-hooks"); got != "post\n" {
+			t.Errorf("hooks after the failed challenge = %q, want a successful post_hook", got)
+		}
+		r = lab.Winch(t, good, "plan", "site", "--exit-code")
+		if r.Code != 0 || !unchanged(r.Stdout, 1) {
+			t.Errorf("plan of the old step after a failed challenge: exit %d, want no pending hook\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+
+	t.Run("certbot killed during deploy_hook", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+			"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",
+			"pipelines/site.yaml": `stages:
+  - name: test
+    hosts: all
+    steps:
+      - certbot:
+          name: killed
+          domains: [a.example.com]
+          email: admin@example.com
+          deploy_hook: |
+            exec >/dev/null 2>&1
+            if [ ! -e /root/killed ]; then
+              touch /root/killed
+              pkill -9 -x certbot
+              exit 1
+            fi
+            echo deploy >> /root/killed-runs
+`,
+		})
+		r := lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 1 || strings.Contains(r.Stderr, "reported error code") {
+			t.Fatalf("apply with a killed certbot: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		r = lab.Winch(t, dir, "plan", "site", "--exit-code")
+		if r.Code != 2 || !strings.Contains(r.Stdout, "pending deploy_hook") {
+			t.Fatalf("plan after the kill: exit %d, want pending deploy_hook\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if r = lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+			t.Fatalf("retry apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if got := vm.MustRun(t, "cat /root/killed-runs"); got != "deploy\n" {
+			t.Errorf("deploy_hook runs = %q, want one", got)
+		}
+	})
+
 	t.Run("record failure prevents issue", func(t *testing.T) {
 		vm.MustRun(t, "mkdir -p /var/lib/winch/certbot-hooks && mount -t tmpfs none /var/lib/winch/certbot-hooks && mount -o remount,ro /var/lib/winch/certbot-hooks")
 		dir := vmtest.WriteProject(t, map[string]string{

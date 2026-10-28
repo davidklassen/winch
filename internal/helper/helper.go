@@ -286,9 +286,8 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		return out, m.Apply(ctx, note)
 	}
 	if isCertbot {
-		c.PrepareHooks()
-		if len(c.PendingHooks) > 0 {
-			if err := record(certbotHooks, strings.Join(c.PendingHooks, ","), c.Name); err != nil {
+		if hooks := c.HooksToRun(); len(hooks) > 0 {
+			if err := record(certbotHooks, strings.Join(hooks, ","), c.Name); err != nil {
 				return out, err
 			}
 		}

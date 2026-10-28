@@ -340,6 +340,37 @@ func TestHookFailure(t *testing.T) {
 	}
 }
 
+// spec: Modules/certbot (pending hooks)
+func TestPendingHooks(t *testing.T) {
+	const (
+		deployFailed = "Hook 'deploy-hook' reported error code 3\nHook 'deploy-hook' ran with error output:\n Hook 'post-hook' reported error code 9\n"
+		postFailed   = "Some challenges have failed.\nHook 'post-hook' reported error code 1\n"
+		challenge    = "Certbot failed to authenticate some domains (authenticator: webroot).\nSome challenges have failed.\n"
+	)
+	for _, tt := range []struct {
+		name    string
+		pending []string
+		out     string
+		ok      bool
+		want    []string
+	}{
+		{"success", nil, "Successfully received certificate.\n", true, nil},
+		{"a failed challenge", nil, challenge, false, nil},
+		{"a failed deploy_hook", nil, deployFailed, true, []string{"deploy_hook"}},
+		{"a failed post_hook after a failed challenge", nil, postFailed, false, []string{"post_hook"}},
+		{"pending hooks that ran", []string{"deploy_hook", "post_hook"}, "Successfully received certificate.\n", true, nil},
+		{"pending hooks after a failed challenge", []string{"deploy_hook", "post_hook"}, challenge, false, []string{"deploy_hook", "post_hook"}},
+		{"a pending hook that fails again", []string{"post_hook"}, postFailed, true, []string{"post_hook"}},
+		{"deploy_hook comes before post_hook", []string{"post_hook"}, "Hook 'post-hook' reported error code 1\nHook 'deploy-hook' reported error code 1\n", true, []string{"deploy_hook", "post_hook"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pendingHooks(tt.pending, tt.out, tt.ok); !slices.Equal(got, tt.want) {
+				t.Errorf("pendingHooks = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // spec: Modules/certbot (compare hooks as the step gives them)
 func TestCertbotWrappedHooks(t *testing.T) {
 	for _, key := range []string{"pre_hook", "post_hook", "deploy_hook"} {
@@ -435,11 +466,13 @@ func TestCertbotPendingHookOrder(t *testing.T) {
 		DeployHook: new(`echo deploy >> "$WINCH_HOOK_LOG"`),
 		PostHook:   new(`echo post >> "$WINCH_HOOK_LOG"`),
 	}
-	c.PrepareHooks()
-	if want := []string{"deploy_hook", "post_hook"}; !slices.Equal(c.PendingHooks, want) {
-		t.Errorf("pending before issue = %v, want %v", c.PendingHooks, want)
+	if got, want := c.HooksToRun(), []string{"deploy_hook", "post_hook"}; !slices.Equal(got, want) {
+		t.Errorf("hooks to run = %v, want %v", got, want)
 	}
-	c.issue = false
+	if want := []string{"post_hook"}; !slices.Equal(c.PendingHooks, want) {
+		t.Errorf("pending after HooksToRun = %v, want %v", c.PendingHooks, want)
+	}
+	c.PendingHooks, c.issue = []string{"deploy_hook", "post_hook"}, false
 	if err := c.Apply(t.Context(), func(string) {}); err != nil {
 		t.Fatal(err)
 	}
