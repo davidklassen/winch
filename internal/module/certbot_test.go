@@ -311,7 +311,7 @@ func TestCertbotArgs(t *testing.T) {
 		{
 			"webroot with everything",
 			&Certbot{Name: "example.com", Domains: []string{"example.com", "www.example.com"}, Email: "a@example.com", Authenticator: "webroot", WebrootPath: "/var/www", PreHook: new("a b"), PostHook: new("-c"), DeployHook: new("d\ne"), ReuseKey: true},
-			slices.Concat(base, []string{"--authenticator=webroot", "--webroot-path=/var/www", "--pre-hook=a b", "--post-hook=-c", "--deploy-hook=d\ne", "--reuse-key", "--force-renewal"}),
+			slices.Concat(base, []string{"--authenticator=webroot", "--webroot-path=/var/www", "--pre-hook=sh -ec 'a b'", "--post-hook=sh -ec '-c'", "--deploy-hook=sh -ec 'd\ne'", "--reuse-key", "--force-renewal"}),
 		},
 	}
 	for _, tt := range tests {
@@ -337,5 +337,91 @@ func TestHookFailure(t *testing.T) {
 	want := "a hook failed:\nHook 'pre-hook' reported error code 1\nHook 'deploy-hook' reported error code 3\nHook 'deploy-hook' ran with error output:\n oops\n two"
 	if err := hookFailure(failed); err == nil || err.Error() != want {
 		t.Errorf("got %v\nwant %s", err, want)
+	}
+}
+
+// spec: Modules/certbot (compare hooks as the step gives them)
+func TestCertbotWrappedHooks(t *testing.T) {
+	for _, key := range []string{"pre_hook", "post_hook", "deploy_hook"} {
+		for _, saved := range []string{"echo 'hello'\ntrue", "sh -ec 'echo '\\''hello'\\''\ntrue'"} {
+			t.Run(key+"/"+saved, func(t *testing.T) {
+				command := "echo 'hello'\ntrue"
+				c := &Certbot{Name: "example.com", Domains: []string{"example.com"}, Email: "a@example.com"}
+				switch key {
+				case "pre_hook":
+					c.PreHook = &command
+				case "post_hook":
+					c.PostHook = &command
+				case "deploy_hook":
+					c.DeployHook = &command
+				}
+				cur := &certState{domains: c.Domains, settings: map[string]string{"authenticator": "nginx", "reuse_key": "false", key: saved}}
+				if got := c.changes(cur); len(got) != 0 {
+					t.Errorf("same hook: changes %q", got)
+				}
+				command = "echo changed\ntrue"
+				if got := c.changes(cur); len(got) == 0 {
+					t.Error("changed hook was ignored")
+				}
+			})
+		}
+	}
+}
+
+// spec: Modules/certbot (the check reads the renewal file)
+func TestParseConfobjClosingQuotes(t *testing.T) {
+	for _, q := range []string{"'", `"`} {
+		for _, tail := range []string{q, q + q} {
+			t.Run(q+tail, func(t *testing.T) {
+				want := "sh -ec 'echo one\necho two" + tail
+				data := "hook = " + strings.Repeat(q, 3) + want + strings.Repeat(q, 3) + " # comment with " + strings.Repeat(q, 3) + "\n"
+				got, err := parseConfobj([]byte(data))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if v := got[""]["hook"]; len(v) != 1 || v[0] != want {
+					t.Errorf("got %q, want %q", v, want)
+				}
+			})
+		}
+	}
+}
+
+// spec: Modules/certbot (compare hooks as the step gives them)
+func TestCertbotWrappedHookChanges(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		hook *string
+		want string
+	}{
+		{"later line", new("echo one\necho new"), "deploy_hook changes after its first line"},
+		{"first line", new("echo new\necho old"), "deploy_hook echo one ... → echo new ..."},
+		{"removed hook", nil, "deploy_hook echo one ... → (none)"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Certbot{Name: "example.com", Domains: []string{"example.com"}, Email: "a@example.com", DeployHook: tt.hook}
+			cur := &certState{domains: c.Domains, settings: map[string]string{"authenticator": "nginx", "reuse_key": "false", "deploy_hook": "sh -ec 'echo one\necho old'"}}
+			if got := c.changes(cur); len(got) == 0 || got[0] != tt.want {
+				t.Errorf("changes %q, want first line %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnwrappedCertbotHook(t *testing.T) {
+	for _, hook := range []string{"echo raw", "sh -ec '", "sh -ec ''", "sh -ec 'true'; echo 'extra'"} {
+		if got := unwrappedCertbotHook(hook); got != hook {
+			t.Errorf("unwrapped %q as %q", hook, got)
+		}
+	}
+}
+
+// spec: Modules/certbot (existing matching hooks stay as stored)
+func TestCertbotMatchingLiteralWrapper(t *testing.T) {
+	hook := "sh -ec 'true'"
+	c := &Certbot{Name: "example.com", Domains: []string{"example.com"}, Email: "a@example.com", DeployHook: &hook}
+	cur := &certState{domains: c.Domains, settings: map[string]string{"authenticator": "nginx", "reuse_key": "false", "deploy_hook": hook}}
+	if got := c.changes(cur); len(got) != 0 {
+		t.Errorf("matching literal hook: changes %q", got)
 	}
 }

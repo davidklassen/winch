@@ -58,6 +58,7 @@ func TestExecCommand(t *testing.T) {
 		command string
 		want    ExecResult
 	}{
+		{"an earlier failure does not stop exec", "false\ntrue", ExecResult{}},
 		{"output and exit code", "echo a; echo b >&2; exit 3", ExecResult{Output: "a\nb\n", ExitCode: 3}},
 		{"runs in / with stdin from /dev/null", "pwd; cat", ExecResult{Output: "/\n"}},
 		{"a signal", "echo x; kill -9 $$", ExecResult{Output: "x\n", ExitCode: 137, Signal: 9}},

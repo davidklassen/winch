@@ -63,7 +63,7 @@ func failure(what string, err error, out string) error {
 	return fmt.Errorf("%s: %w: %s", what, err, strings.Join(lines[max(0, len(lines)-10):], "\n"))
 }
 
-// Shell runs a command of the project through sh -c, in / and with stdin
+// Shell runs a command of the project through sh -ec, in / and with stdin
 // from /dev/null. On a failure, the error holds the end of the output.
 func Shell(ctx context.Context, command string) error {
 	return ShellLimit(ctx, command, commandLimit, KillDelay)
@@ -85,18 +85,18 @@ type runAs struct {
 func shellLimit(ctx context.Context, command, dir string, as *runAs, limit, killDelay time.Duration) error {
 	// The error shows only the end of the output.
 	out := &tailBuffer{max: 64 << 10}
-	if err := shell(ctx, command, dir, as, limit, killDelay, out); err != nil {
+	if err := shell(ctx, "-ec", command, dir, as, limit, killDelay, out); err != nil {
 		return failure(command, err, string(out.tail()))
 	}
 	return nil
 }
 
-// shell runs command through sh -c in dir, with its output in out. With as,
+// shell runs command in dir, with its output in out. With as,
 // it runs as that user, with the user's HOME, USER, and LOGNAME.
-func shell(ctx context.Context, command, dir string, as *runAs, limit, killDelay time.Duration, out *tailBuffer) error {
+func shell(ctx context.Context, options, command, dir string, as *runAs, limit, killDelay time.Duration, out *tailBuffer) error {
 	ctx, cancel := context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd := exec.CommandContext(ctx, "sh", options, command)
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = out, out
 	if as != nil {
@@ -178,7 +178,7 @@ type ExecResult struct {
 	Signal int `json:"signal,omitempty"`
 }
 
-// Exec runs a command of winch exec as Shell does.
+// Exec runs a command of winch exec through sh -c.
 func Exec(ctx context.Context, command string) (ExecResult, error) {
 	return execLimit(ctx, command, commandLimit, KillDelay)
 }
@@ -187,7 +187,7 @@ func Exec(ctx context.Context, command string) (ExecResult, error) {
 // results; the time limit is an error.
 func execLimit(ctx context.Context, command string, limit, killDelay time.Duration) (ExecResult, error) {
 	out := &tailBuffer{max: 1 << 20}
-	err := shell(ctx, command, "/", nil, limit, killDelay, out)
+	err := shell(ctx, "-c", command, "/", nil, limit, killDelay, out)
 	tail := out.tail()
 	if err != nil && !errors.As(err, new(*exec.ExitError)) {
 		return ExecResult{}, failure(command, err, string(tail))

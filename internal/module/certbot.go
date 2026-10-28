@@ -214,6 +214,9 @@ func (c *Certbot) changes(cur *certState) []string {
 	}
 	for _, s := range c.settings() {
 		old := cur.settings[s.key]
+		if old != s.value && strings.HasSuffix(s.key, "_hook") {
+			old = unwrappedCertbotHook(old)
+		}
 		if old == s.value {
 			continue
 		}
@@ -293,13 +296,34 @@ func (c *Certbot) args() []string {
 		hook *string
 	}{{"--pre-hook", c.PreHook}, {"--post-hook", c.PostHook}, {"--deploy-hook", c.DeployHook}} {
 		if h.hook != nil {
-			args = append(args, h.flag+"="+*h.hook)
+			args = append(args, h.flag+"="+certbotHook(*h.hook))
 		}
 	}
 	if c.ReuseKey {
 		args = append(args, "--reuse-key")
 	}
 	return append(args, "--force-renewal")
+}
+
+func certbotHook(command string) string {
+	return "sh -ec '" + strings.ReplaceAll(command, "'", `'\''`) + "'"
+}
+
+func unwrappedCertbotHook(hook string) string {
+	command, ok := strings.CutPrefix(hook, "sh -ec '")
+	if !ok {
+		return hook
+	}
+	command, ok = strings.CutSuffix(command, "'")
+	if !ok {
+		return hook
+	}
+	command = strings.ReplaceAll(command, `'\''`, "'")
+	if command == "" || certbotHook(command) != hook {
+		return hook
+	}
+
+	return command
 }
 
 func (c *Certbot) Apply(ctx context.Context, _ func(string)) error {

@@ -84,7 +84,7 @@ md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.con
 				"deploy_hook echo old >> /root/deployed → echo deployed >> /root/deployed",
 				"issue the certificate again, with a new key; run deploy_hook",
 			}},
-			After: `[ "$(cat /root/deployed)" = deployed ] && grep -qx 'renew_hook = echo deployed >> /root/deployed' /etc/letsencrypt/renewal/a.example.com.conf`,
+			After: `[ "$(cat /root/deployed)" = deployed ] && python3 -c ` + vmtest.Quote(`from configobj import ConfigObj; assert ConfigObj("/etc/letsencrypt/renewal/a.example.com.conf")["renewalparams"]["renew_hook"] == "sh -ec 'echo deployed >> /root/deployed'"`),
 		},
 		{
 			Name:  "reuse_key keeps the key",

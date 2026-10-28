@@ -53,6 +53,9 @@ func parseConfobj(data []byte) (map[string]map[string][]string, error) {
 			if end < 0 {
 				return nil, fmt.Errorf("line %d: %s is not closed", n, q)
 			}
+			for end+3 < len(body) && body[end+3] == q[0] {
+				end++
+			}
 			if after := strings.TrimSpace(body[end+3:]); after != "" && after[0] != '#' {
 				return nil, fmt.Errorf("line %d: text after the closing %s", n, q)
 			}
