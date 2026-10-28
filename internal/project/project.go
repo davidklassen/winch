@@ -617,13 +617,22 @@ func loadConfig(dir string) (*Config, error) {
 	return &cfg, yamlx.Decode(n, &cfg)
 }
 
+// pipelineFile holds stages, or the fields of its one stage.
 type pipelineFile struct {
-	Stages []stageFile `yaml:"stages,required"`
+	Stages         []stageFile `yaml:"stages"`
+	StagesPos      yamlx.Pos
+	Hosts          string `yaml:"hosts"`
+	HostsPos       yamlx.Pos
+	Parallelism    *int `yaml:"parallelism"`
+	ParallelismPos yamlx.Pos
+	Health         *healthFile   `yaml:"health"`
+	Steps          []*yamlx.Node `yaml:"steps"`
+	Handlers       *yamlx.Node   `yaml:"handlers"`
 }
 
 type stageFile struct {
 	Name           string `yaml:"name,required"`
-	Hosts          string `yaml:"hosts,required"`
+	Hosts          string `yaml:"hosts"`
 	HostsPos       yamlx.Pos
 	Parallelism    *int `yaml:"parallelism"`
 	ParallelismPos yamlx.Pos
@@ -700,18 +709,34 @@ func (l *loader) decodePipeline(p part) (*Pipeline, error) {
 	}
 	pl := &Pipeline{Name: p.name}
 	var errs []error
-	if len(pf.Stages) == 0 {
-		i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "stages" })
-		errs = append(errs, yamlx.Errorf(n.Pairs[i].Value.Pos, "stages: a pipeline needs at least one stage"))
+	stages := pf.Stages
+	switch {
+	case pf.Stages != nil:
+		if len(pf.Stages) == 0 {
+			errs = append(errs, yamlx.Errorf(pf.StagesPos, "stages: a pipeline needs at least one stage"))
+		}
+		for _, f := range n.Pairs {
+			if f.Key != "stages" {
+				errs = append(errs, yamlx.Errorf(f.KeyPos, "%s: a pipeline with stages cannot have %s; put it in a stage", f.Key, f.Key))
+			}
+		}
+	case pf.Steps == nil:
+		errs = append(errs, yamlx.Errorf(n.Pos, "a pipeline needs steps or stages"))
+	default:
+		stages = []stageFile{{Name: p.name, Hosts: pf.Hosts, HostsPos: pf.HostsPos, Parallelism: pf.Parallelism, ParallelismPos: pf.ParallelismPos,
+			Health: pf.Health, Steps: pf.Steps, Handlers: pf.Handlers, Pos: n.Pos}}
 	}
 	seen := map[string]bool{}
-	for _, sf := range pf.Stages {
+	for _, sf := range stages {
 		if seen[sf.Name] {
 			errs = append(errs, yamlx.Errorf(sf.Pos, "duplicate stage name %q", sf.Name))
 		}
 		seen[sf.Name] = true
 		errs = append(errs, printableName("stage", sf.Name, sf.Pos))
 		s := Stage{Name: sf.Name, Pipeline: pl.Name, Hosts: sf.Hosts, HostsPos: sf.HostsPos}
+		if sf.HostsPos == (yamlx.Pos{}) {
+			s.Hosts, s.HostsPos = "all", sf.Pos
+		}
 		if sf.Parallelism != nil {
 			if *sf.Parallelism < 1 {
 				errs = append(errs, yamlx.Errorf(sf.ParallelismPos, "parallelism: must be 1 or more"))

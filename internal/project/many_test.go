@@ -711,3 +711,39 @@ func TestNameCharacters(t *testing.T) {
 		})
 	}
 }
+
+// spec: Pipelines; CLI (--stages)
+func TestPipelineWithoutStages(t *testing.T) {
+	p, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{
+		"pipelines/site.yaml": `hosts: web
+parallelism: 1
+health:
+  command: "true"
+steps:
+  - file:
+      path: /x
+      content: x
+    notify: done
+handlers:
+  done:
+    - cmd:
+        command: "true"
+`,
+	})), "", "site", nil, Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Pipeline.Stages) != 1 {
+		t.Fatalf("stages: %d", len(p.Pipeline.Stages))
+	}
+	s := p.Pipeline.Stages[0]
+	if s.Name != "site" || s.Pipeline != "site" || hostNames(s.Targets) != "web1,web2,web3" || s.Parallelism != 1 || s.Health == nil || s.Health.Command != "true" {
+		t.Errorf("stage %s of %s: targets %s, parallelism %d, health %v", s.Name, s.Pipeline, hostNames(s.Targets), s.Parallelism, s.Health)
+	}
+	if len(s.Handlers) != 1 || s.Handlers[0].Stage != "site" || len(s.Steps) != 1 || len(s.Steps[0].Notify) != 1 {
+		t.Errorf("handlers %v, steps %v", s.Handlers, s.Steps)
+	}
+	if err := p.Select(Selection{Stages: "site"}); err != nil || p.Pipeline.Stages[0].Skipped {
+		t.Errorf("--stages site: %v, skipped %v", err, p.Pipeline.Stages[0].Skipped)
+	}
+}

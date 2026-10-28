@@ -56,8 +56,28 @@ pipelines:
                 -   cmd:
                         command: "true"
                     name: X
+    quick:
+        steps:
+        -   notify: y
+            pkg:
+                name: jq
+        handlers:
+            y:
+            -   cmd:
+                    command: "true"
+                name: Y
 `,
 		"inventories/hosts.yaml": "hosts:\n    web1: {}\n    web2:\n        vars:\n            motd_text: hi\n",
+		"pipelines/short.yaml": `steps:
+-   notify: z
+    pkg:
+        name: tree
+handlers:
+    z:
+    -   cmd:
+            command: "true"
+        name: Z
+`,
 		"pipelines/site.yaml": `stages:
 -   name: base
     hosts: all
@@ -94,7 +114,7 @@ handlers:
 	before := planOf(t, dir)
 
 	r := winch(t, dir, fakehost.New(), false, "", "fmt")
-	want := "inventories/hosts.yaml\npipelines/site.yaml\nrecipes/motd/recipe.yaml\nwinch.yaml\n"
+	want := "inventories/hosts.yaml\npipelines/short.yaml\npipelines/site.yaml\nrecipes/motd/recipe.yaml\nwinch.yaml\n"
 	if r.code != exitOK || r.out != want || r.err != "" {
 		t.Fatalf("fmt: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
@@ -124,8 +144,28 @@ pipelines:
             - name: X
               cmd:
                 command: "true"
+  quick:
+    steps:
+      - pkg:
+          name: jq
+        notify: y
+    handlers:
+      y:
+        - name: Y
+          cmd:
+            command: "true"
 `,
 		"inventories/hosts.yaml": "hosts:\n  web1: {}\n  web2:\n    vars:\n      motd_text: hi\n",
+		"pipelines/short.yaml": `steps:
+  - pkg:
+      name: tree
+    notify: z
+handlers:
+  z:
+    - name: Z
+      cmd:
+        command: "true"
+`,
 		"pipelines/site.yaml": `stages:
   - name: base
     hosts: all

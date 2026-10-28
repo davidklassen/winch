@@ -1,0 +1,2 @@
+pipelines/site.yaml:3:1: hosts: a pipeline with stages cannot have hosts; put it in a stage
+pipelines/site.yaml:4:1: steps: a pipeline with stages cannot have steps; put it in a stage

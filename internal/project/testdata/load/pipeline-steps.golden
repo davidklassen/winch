@@ -1,0 +1,6 @@
+project acme, inventory inventories/test.yaml
+host web1 address=192.0.2.1 user=admin
+host web2 address=web2 user=deploy
+pipeline site
+stage site hosts=all targets=web1,web2
+  file {"path":"/etc/motd"} data="hi" at pipelines/site.yaml:2:5
