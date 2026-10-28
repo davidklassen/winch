@@ -42,15 +42,10 @@ func TestPkgDiagnostics(t *testing.T) {
 			t.Errorf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 		}
 	})
-	t.Run("each unknown install name is noted", func(t *testing.T) {
+	t.Run("an unknown install name gives no note", func(t *testing.T) {
 		r := lab.Winch(t, dir, "plan", "unknown")
-		if r.Code != 0 || !strings.Contains(r.Stdout, "other packages: known after the refresh") {
-			t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
-		}
-		for _, n := range []string{"apache", "winch-no-such-package"} {
-			if !strings.Contains(r.Stdout+r.Stderr, "apt does not know "+n) {
-				t.Errorf("missing note for %s: stdout %q, stderr %q", n, r.Stdout, r.Stderr)
-			}
+		if r.Code != 0 || !strings.Contains(r.Stdout, "other packages: known after the refresh") || strings.Contains(r.Stdout+r.Stderr, "apt does not know") {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 		}
 	})
 	t.Run("a needed removal names the package and fix", func(t *testing.T) {

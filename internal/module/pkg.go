@@ -96,9 +96,11 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
+	// An install of an unknown name plans as known after the refresh: a repo
+	// step earlier in the run can add the name.
 	var unknown []string
 	for _, n := range missing {
-		if _, ok := pkgs[n]; !ok && !known[n] && foreign[n] == "" && len(providers[n]) == 0 {
+		if _, ok := pkgs[n]; p.Absent && !ok && !known[n] && foreign[n] == "" && len(providers[n]) == 0 {
 			unknown = append(unknown, n)
 		}
 	}
