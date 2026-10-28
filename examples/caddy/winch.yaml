@@ -36,7 +36,7 @@ steps:
   - name: Serve the site over HTTPS
     file:
       path: /etc/caddy/Caddyfile
-      validate: caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      validate: caddy validate --config /etc/caddy/Caddyfile
       content: !tpl |
         {
         	email {{ .vars.acme_email }}

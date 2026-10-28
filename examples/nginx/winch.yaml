@@ -3,7 +3,7 @@
 #
 #   winch plan
 #   winch apply
-name: simple
+name: nginx
 
 hosts:
   web1.example.com: {}
