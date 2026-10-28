@@ -90,14 +90,32 @@ func TestExecLongOutput(t *testing.T) {
 // cancelWhenReady cancels the returned context when the command has created
 // the file ready.
 func cancelWhenReady(t *testing.T, ready string) context.Context {
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	done := make(chan bool, 1)
+	t.Cleanup(func() {
+		cancel()
+		if !<-done {
+			t.Error("exec did not become ready")
+		}
+	})
 	go func() {
+		seen := false
+		defer func() {
+			cancel()
+			done <- seen
+		}()
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
 		for {
 			if _, err := os.Stat(ready); err == nil {
-				cancel()
+				seen = true
 				return
 			}
-			time.Sleep(10 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
 		}
 	}()
 	return ctx
@@ -109,17 +127,19 @@ func TestExecInterrupt(t *testing.T) {
 	tests := []struct {
 		name    string
 		command string
+		delay   time.Duration
 		want    ExecResult
 	}{
-		{"SIGINT", "touch $R; sleep 30", ExecResult{ExitCode: 130, Signal: 2}},
-		{"SIGKILL when SIGINT is ignored", "trap '' INT; touch $R; sleep 30", ExecResult{ExitCode: 137, Signal: 9}},
-		{"an exit 0 on SIGINT", "trap 'echo bye; exit 0' INT; touch $R; sleep 30", ExecResult{Output: "bye\n"}},
+		// Keep execution in the ready shell so SIGINT cannot race a child startup.
+		{"SIGINT", ": > $R; while :; do :; done", 5 * time.Second, ExecResult{ExitCode: 130, Signal: 2}},
+		{"SIGKILL when SIGINT is ignored", "trap '' INT; : > $R; exec sleep 30", 100 * time.Millisecond, ExecResult{ExitCode: 137, Signal: 9}},
+		{"an exit 0 on SIGINT", "trap 'echo bye; exit 0' INT; : > $R; while :; do :; done", 5 * time.Second, ExecResult{Output: "bye\n"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			ready := filepath.Join(t.TempDir(), "ready")
-			got, err := execLimit(cancelWhenReady(t, ready), "R="+ready+"; "+tt.command, commandLimit, 5*time.Second)
+			got, err := execLimit(cancelWhenReady(t, ready), "R="+ready+"; "+tt.command, commandLimit, tt.delay)
 			if err != nil || got != tt.want {
 				t.Errorf("exec = %+v, %v, want %+v", got, err, tt.want)
 			}

@@ -225,16 +225,36 @@ func TestExecStopsOnEOF(t *testing.T) {
 	c := start(t, t.TempDir(), "")
 	c.call(t, "hello", hello("r1"))
 	ready := filepath.Join(t.TempDir(), "ready")
-	go func() {
-		for {
-			if _, err := os.Stat(ready); err == nil {
-				c.w.Close()
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	done := make(chan bool, 1)
+	defer func() {
+		cancel()
+		if !<-done {
+			t.Error("exec did not become ready")
 		}
 	}()
-	r := c.call(t, "exec", protocol.Exec{Command: "touch " + ready + "; sleep 30"})
+	go func() {
+		seen := false
+		defer func() {
+			c.w.Close()
+			done <- seen
+		}()
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			if _, err := os.Stat(ready); err == nil {
+				seen = true
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+	// Keep execution in the ready shell so SIGINT cannot race a child startup.
+	r := c.call(t, "exec", protocol.Exec{Command: ": > " + ready + "; while :; do :; done"})
 	var res module.ExecResult
 	if err := json.Unmarshal(r.Result, &res); err != nil || r.Error != "" || res.Signal != 2 {
 		t.Errorf("exec = %s, %q, want killed by signal 2", r.Result, r.Error)
