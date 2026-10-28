@@ -76,6 +76,8 @@ table inet winch {
 		iif "lo" accept
 		icmp type echo-request accept
 		icmpv6 type { echo-request, nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert, packet-too-big } accept
+		udp sport 67 udp dport 68 accept
+		udp sport 547 udp dport 546 accept
 		tcp dport { 22, 80, 443 } accept
 		udp dport 51820 accept
 		ip saddr { 10.0.0.0/8, 192.0.2.7 } tcp dport 5432 accept

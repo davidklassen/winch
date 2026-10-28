@@ -341,13 +341,9 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 // systemctl start exits 0 then, and systemd unloads the unit, so the unit
 // state does not show the result.
 func checkConditions(ctx context.Context, unit string) error {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState", "--", unit)
+	u, err := showUnit(ctx, unit)
 	if err != nil {
 		return err
-	}
-	u, err := parseShow(out)
-	if err != nil {
-		return fmt.Errorf("systemctl show %s: %w", unit, err)
 	}
 	if u.up() {
 		return nil
@@ -549,6 +545,19 @@ type unitState struct {
 
 func (u unitState) up() bool {
 	return u.active == "active" || u.active == "activating" || u.active == "reloading" || u.active == "refreshing"
+}
+
+// showUnit returns the load and active state of unit.
+func showUnit(ctx context.Context, unit string) (unitState, error) {
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState", "--", unit)
+	if err != nil {
+		return unitState{}, err
+	}
+	u, err := parseShow(out)
+	if err != nil {
+		return u, fmt.Errorf("systemctl show %s: %w", unit, err)
+	}
+	return u, nil
 }
 
 func parseShow(out string) (unitState, error) {

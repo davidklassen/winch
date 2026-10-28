@@ -21,9 +21,9 @@ type Firewall struct {
 	Allow  []Rule `yaml:"allow" json:"allow,omitempty"`
 	Absent bool   `yaml:"absent" json:"absent,omitempty"`
 	// What the check found to do.
-	data                               []byte
-	writeFile, writeUnit, enable, load bool
-	reload, deleteTable                bool
+	data                                      []byte
+	writeFile, writeUnit, enable, load, start bool
+	stop, reload, deleteTable                 bool
 }
 
 // Rule accepts traffic to its ports from the sources in From, or from every
@@ -39,15 +39,20 @@ const (
 	firewallUnit  = "winch-firewall.service"
 	firewallUnitP = unitDir + "/" + firewallUnit
 	firewallWants = unitDir + "/sysinit.target.wants/" + firewallUnit
+	// firewallList is the listing that nft made of the table after the last
+	// load, so the check finds a rule that someone changed by hand.
+	firewallList = "/var/lib/winch/firewall.list"
 )
 
-// firewallUnitText loads the rules at boot. nftables.service flushes the
-// whole rule set, so the table loads after it.
+// firewallUnitText loads the rules at boot. A start, restart, or reload of
+// nftables.service flushes the whole rule set, so the table loads after each.
 const firewallUnitText = `[Unit]
 Description=winch firewall
 Wants=network-pre.target
 Before=network-pre.target shutdown.target
 After=nftables.service
+PartOf=nftables.service
+ReloadPropagatedFrom=nftables.service
 Conflicts=shutdown.target
 DefaultDependencies=no
 
@@ -55,6 +60,7 @@ DefaultDependencies=no
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/sbin/nft -f ` + firewallFile + `
+ExecReload=/usr/sbin/nft -f ` + firewallFile + `
 
 [Install]
 WantedBy=sysinit.target
@@ -206,6 +212,8 @@ func (f *Firewall) render(id string) []byte {
 		iif "lo" accept
 		icmp type echo-request accept
 		icmpv6 type { echo-request, nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert, packet-too-big } accept
+		udp sport 67 udp dport 68 accept
+		udp sport 547 udp dport 546 accept
 `)
 	for _, r := range f.Allow {
 		proto, ports := r.ports()
@@ -368,12 +376,19 @@ func (f *Firewall) Check(ctx context.Context, st *State, _ func(string)) (Result
 	} else if err != nil {
 		return Result{}, err
 	}
-	_, comment, err := loadedTable(ctx)
+	if f.load, err = tableStale(ctx, id); err != nil {
+		return Result{}, err
+	}
+	if f.load {
+		changes = append(changes, "load the rules")
+	}
+	u, err := showUnit(ctx, firewallUnit)
 	if err != nil {
 		return Result{}, err
 	}
-	if f.load = comment != id; f.load {
-		changes = append(changes, "load the rules")
+	// Only an active unit loads the rules again after nftables.service.
+	if f.start = !u.up(); f.start {
+		changes = append(changes, "start "+firewallUnit)
 	}
 	if changes == nil {
 		return Result{Status: OK}, nil
@@ -385,8 +400,41 @@ func (f *Firewall) Check(ctx context.Context, st *State, _ func(string)) (Result
 	return Result{Status: Change, Action: action, Changes: changes, Guard: true}, nil
 }
 
+// tableStale reports whether the table on the host is missing, holds the
+// rules of another file, or differs from the listing of its last load.
+func tableStale(ctx context.Context, id string) (bool, error) {
+	_, comment, err := loadedTable(ctx)
+	if err != nil || comment != id {
+		return true, err
+	}
+	saved, err := os.ReadFile(firewallList)
+	if errors.Is(err, fs.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	live, err := listTable(ctx)
+	if err != nil {
+		return false, err
+	}
+	return live != string(saved), nil
+}
+
+// listTable returns the listing that nft makes of the table inet winch.
+func listTable(ctx context.Context) (string, error) {
+	return run(ctx, nil, "nft", "list", "table", "inet", "winch")
+}
+
 func (f *Firewall) checkAbsent(ctx context.Context) (Result, error) {
 	var changes []string
+	u, err := showUnit(ctx, firewallUnit)
+	if err != nil {
+		return Result{}, err
+	}
+	if f.stop = u.up(); f.stop {
+		changes = append(changes, "stop "+firewallUnit)
+	}
 	for _, p := range []struct{ path, change string }{
 		{firewallWants, "disable " + firewallUnit},
 		{firewallUnitP, "remove " + firewallUnitP},
@@ -407,7 +455,6 @@ func (f *Firewall) checkAbsent(ctx context.Context) (Result, error) {
 	if f.reload {
 		changes = append(changes, "daemon-reload")
 	}
-	var err error
 	if f.deleteTable, _, err = loadedTable(ctx); err != nil {
 		return Result{}, err
 	}
@@ -449,12 +496,24 @@ func (f *Firewall) Apply(ctx context.Context, _ func(string)) error {
 		}
 	}
 	if f.load {
-		return loadFirewall(ctx)
+		if err := loadFirewall(ctx); err != nil {
+			return err
+		}
+	}
+	if f.start {
+		if _, err := run(ctx, nil, "systemctl", "start", "--", firewallUnit); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func (f *Firewall) applyAbsent(ctx context.Context) error {
+	if f.stop {
+		if _, err := run(ctx, nil, "systemctl", "stop", "--", firewallUnit); err != nil {
+			return err
+		}
+	}
 	for _, p := range []string{firewallWants, firewallUnitP, firewallFile} {
 		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
@@ -471,20 +530,34 @@ func (f *Firewall) applyAbsent(ctx context.Context) error {
 	return nil
 }
 
-// loadFirewall loads the rules of the firewall file, or removes the table
-// when there is no file. Without nft, there is no table.
+// loadFirewall loads the rules of the firewall file and keeps their listing,
+// or removes the table and the listing when there is no file. Without nft,
+// there is no table.
 func loadFirewall(ctx context.Context) error {
 	if _, err := exec.LookPath("nft"); err != nil {
 		return nil
 	}
 	_, err := os.Stat(firewallFile)
-	switch {
-	case err == nil:
-		_, err = run(ctx, nil, "nft", "-f", firewallFile)
-	case errors.Is(err, fs.ErrNotExist):
-		_, err = runInput(ctx, nil, "table inet winch\ndelete table inet winch\n", "nft", "-f", "-")
+	if errors.Is(err, fs.ErrNotExist) {
+		if _, err := runInput(ctx, nil, "table inet winch\ndelete table inet winch\n", "nft", "-f", "-"); err != nil {
+			return err
+		}
+		if err := os.Remove(firewallList); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if _, err := run(ctx, nil, "nft", "-f", firewallFile); err != nil {
+		return err
+	}
+	out, err := listTable(ctx)
+	if err != nil {
+		return err
+	}
+	return writeRoot(firewallList, []byte(out), 0, 0, 0o644)
 }
 
 // loadsFirewall reports whether a restore of saved puts back the firewall

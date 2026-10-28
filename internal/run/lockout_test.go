@@ -260,6 +260,26 @@ func TestTwoFirewalls(t *testing.T) {
 	}
 }
 
+// spec: Modules/firewall (another step manages the firewall file or the unit
+// file)
+func TestFirewallFiles(t *testing.T) {
+	firewall := "      - firewall:\n          allow:\n            - tcp: 22\n"
+	file := "      - file:\n          path: /etc/winch/firewall.nft\n          content: \"\"\n"
+	unit := "      - unit:\n          name: winch-firewall.service\n          content: \"\"\n"
+	for _, tt := range []struct{ name, steps, want string }{
+		{"file after", firewall + file, "file /etc/winch/firewall.nft: the path /etc/winch/firewall.nft is also in base: firewall"},
+		{"file before", file + firewall, "firewall: the path /etc/winch/firewall.nft is also in base: file /etc/winch/firewall.nft"},
+		{"unit", firewall + unit, "the path /etc/systemd/system/winch-firewall.service is also in base: firewall"},
+	} {
+		h := fakehost.New()
+		p := loadWeb1(t, map[string]string{"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.steps})
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		if err := plan.Failed["web1"]; err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: plan error %v, want %q", tt.name, err, tt.want)
+		}
+	}
+}
+
 // spec: Running a pipeline/Plan (two steps that manage the same thing);
 // Modules/certbot
 func TestSameCertificate(t *testing.T) {
