@@ -187,7 +187,7 @@ func TestExamples(t *testing.T) {
 		}
 		t.Run(e.Name(), func(t *testing.T) {
 			r := winch(t, "../../examples/"+e.Name(), fakehost.New(), false, "", "validate")
-			if r.code != exitOK || r.out != "ok\n" {
+			if r.code != exitOK || r.out != "ok\n" || r.err != "" {
 				t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 			}
 		})

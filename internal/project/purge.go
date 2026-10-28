@@ -42,7 +42,7 @@ func purgeWarnings(invs []*Inventory, pipelines, selected []*Pipeline) []*yamlx.
 							}
 						}
 						var paths []string
-						if slices.Contains(selected, pl) && (step.then != nil || len(step.Notify) > 0) {
+						if slices.Contains(selected, pl) && step.then != nil {
 							switch args.(type) {
 							case *module.File, *module.Dir, *module.Link, *module.Line:
 								paths = []string{args.Main()}
@@ -75,7 +75,7 @@ func purgeWarnings(invs []*Inventory, pipelines, selected []*Pipeline) []*yamlx.
 						key := warning{source.pos, dir}
 						if p != "" && path.Dir(p) == dir && !seen[key] {
 							seen[key] = true
-							out = append(out, yamlx.Errorf(source.pos, "purge of %s may remove files made by then or a handler; add keep", dir))
+							out = append(out, yamlx.Errorf(source.pos, "purge of %s may remove files that then makes; add keep", dir))
 						}
 					}
 				}
@@ -86,7 +86,7 @@ func purgeWarnings(invs []*Inventory, pipelines, selected []*Pipeline) []*yamlx.
 }
 
 func hasKeep(st Step, d *module.Dir) bool {
-	if len(d.KeepPatterns) != 0 {
+	if d.KeepPatterns != nil {
 		return true
 	}
 	if st.args != nil {

@@ -14,11 +14,11 @@ func TestLoadPurgeWarning(t *testing.T) {
 		want                                bool
 	}{
 		{"then", "purge: true", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", true},
-		{"notify", "purge: true", "/etc/maps/virtual", "x", "notify: app.rebuild", true},
+		{"notify", "purge: true", "/etc/maps/virtual", "x", "notify: app.rebuild", false},
 		{"computed content", "purge: true", "/etc/maps/virtual", "!tpl '{{ .host.name }}'", "then: postmap /etc/maps/virtual", true},
 		{"kept", "purge: true\n          keep: ['*.db']", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", false},
 		{"computed keep", "purge: true\n          keep: !expr '[\"*.db\"]'", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", false},
-		{"empty keep", "purge: true\n          keep: []", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", true},
+		{"empty keep", "purge: true\n          keep: []", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", false},
 		{"no purge", "purge: false", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", false},
 		{"prefix only", "purge: true", "/etc/maps-old/virtual", "x", "then: postmap /etc/maps-old/virtual", false},
 		{"no command", "purge: true", "/etc/maps/virtual", "x", "", false},
@@ -38,7 +38,7 @@ func TestLoadPurgeWarning(t *testing.T) {
 			}
 			for name, warnings := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": ws} {
 				if tt.want {
-					if len(warnings) != 1 || !strings.Contains(warnings[0].Error(), "purge of /etc/maps may remove files made by then or a handler; add keep") {
+					if len(warnings) != 1 || !strings.Contains(warnings[0].Error(), "purge of /etc/maps may remove files that then makes; add keep") {
 						t.Errorf("%s warnings = %v, want one purge warning", name, warnings)
 					}
 				} else if len(warnings) != 0 {
@@ -89,33 +89,30 @@ func TestPurgeWarningScope(t *testing.T) {
 	}
 }
 
-// spec: Modules/file, dir, link (then and notify can generate files after removal)
+// spec: Modules/file, dir, link (then can generate files after removal)
 func TestPurgeWarningAbsent(t *testing.T) {
 	for _, module := range []string{"file", "dir", "link", "line"} {
-		for _, command := range []string{"then: touch /etc/maps/stamp", "notify: app.rebuild"} {
-			t.Run(module+command, func(t *testing.T) {
-				extra := ""
-				if module == "line" {
-					extra = "          match: old\n"
-				}
-				dir := writeProject(t, map[string]string{
-					"pipelines/site.yaml":     stage("      - dir:\n          path: /etc/maps\n          purge: true\n      - " + module + ":\n          path: /etc/maps/old\n          absent: true\n" + extra + "        " + command + "\n      - recipe: app\n"),
-					"recipes/app/recipe.yaml": "steps: []\nhandlers:\n  rebuild:\n    - cmd:\n        command: touch /etc/maps/stamp\n",
-				})
-				p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
-				if err != nil {
-					t.Fatal(err)
-				}
-				ws, err := Validate(dir, "", nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for name, warnings := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": ws} {
-					if len(warnings) != 1 || !strings.Contains(warnings[0].Error(), "purge of /etc/maps may remove files") {
-						t.Errorf("%s warnings = %v, want one purge warning", name, warnings)
-					}
-				}
+		t.Run(module, func(t *testing.T) {
+			extra := ""
+			if module == "line" {
+				extra = "          match: old\n"
+			}
+			dir := writeProject(t, map[string]string{
+				"pipelines/site.yaml": stage("      - dir:\n          path: /etc/maps\n          purge: true\n      - " + module + ":\n          path: /etc/maps/old\n          absent: true\n" + extra + "        then: touch /etc/maps/stamp\n"),
 			})
-		}
+			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws, err := Validate(dir, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, warnings := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": ws} {
+				if len(warnings) != 1 || !strings.Contains(warnings[0].Error(), "purge of /etc/maps may remove files") {
+					t.Errorf("%s warnings = %v, want one purge warning", name, warnings)
+				}
+			}
+		})
 	}
 }

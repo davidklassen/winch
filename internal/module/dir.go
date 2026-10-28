@@ -42,9 +42,18 @@ func (d *Dir) Validate() error {
 		return err
 	}
 	if d.Absent {
-		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"recurse", d.Recurse}, arg{"replace", d.Replace}, arg{"purge", d.Purge}, arg{"keep", len(d.KeepPatterns) > 0})
+		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"recurse", d.Recurse}, arg{"replace", d.Replace}, arg{"purge", d.Purge}, arg{"keep", d.KeepPatterns != nil})
+	}
+	if d.KeepPatterns != nil && !d.Purge {
+		return &yamlx.FieldError{Field: "keep", Msg: "keep needs purge: true"}
 	}
 	for _, pattern := range d.KeepPatterns {
+		if pattern == "" {
+			return &yamlx.FieldError{Field: "keep", Msg: "a pattern must not be empty"}
+		}
+		if strings.Contains(pattern, "/") {
+			return &yamlx.FieldError{Field: "keep", Msg: fmt.Sprintf("pattern %q has a /; keep matches names in the directory", pattern)}
+		}
 		if _, err := path.Match(pattern, ""); err != nil {
 			return &yamlx.FieldError{Field: "keep", Msg: fmt.Sprintf("invalid glob pattern %q: %s", pattern, err)}
 		}

@@ -32,14 +32,8 @@ func TestDemo(t *testing.T) {
 	vms := []*vmtest.VM{lab.StartVM(t, "demo"), lab.StartVM(t, "demo2")}
 	dir := "../../examples/demo"
 	env := []string{"WINCH_AGE_KEY=age.key", "HOME=" + t.TempDir()}
-	warnings := []string{
-		"recipes/ssh/recipe.yaml:8:5: warning: purge of /etc/ssh/sshd_config.d may remove files made by then or a handler; add keep",
-		"recipes/dovecot/recipe.yaml:45:5: warning: purge of /etc/dovecot/conf.d may remove files made by then or a handler; add keep",
-		"recipes/dovecot/recipe.yaml:51:5: warning: purge of /etc/dovecot/conf.d may remove files made by then or a handler; add keep",
-		"recipes/fail2ban/recipe.yaml:4:5: warning: purge of /etc/fail2ban/jail.d may remove files made by then or a handler; add keep",
-	}
 
-	r := lab.WinchEnvWarnings(t, dir, env, warnings, "apply", "site", "--yes")
+	r := lab.WinchEnv(t, dir, env, "apply", "site", "--yes")
 	if r.Code != 0 {
 		t.Fatalf("apply: exit %d", r.Code)
 	}
@@ -56,23 +50,23 @@ func TestDemo(t *testing.T) {
 		checkDemo(t, vm, vms[1-i].Name)
 	}
 
-	r = lab.WinchEnvWarnings(t, dir, env, warnings, "plan", "site")
+	r = lab.WinchEnv(t, dir, env, "plan", "site")
 	if r.Code != 0 || !unchanged(r.Stdout, 2) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 
 	// Drift: stock restores nginx.conf, and purge removes an unknown page.
 	vms[0].MustRun(t, "echo edited >> /etc/nginx/nginx.conf && chmod 600 /etc/nginx/nginx.conf && touch /var/www/example.com/old.html")
-	r = lab.WinchEnvWarnings(t, dir, env, warnings, "plan", "site", "--hosts", "demo")
+	r = lab.WinchEnv(t, dir, env, "plan", "site", "--hosts", "demo")
 	for _, want := range []string{"file /etc/nginx/nginx.conf\n          content of nginx-common ", "          mode 0600 → 0644\n", "dir /var/www/example.com\n          remove file /var/www/example.com/old.html\n"} {
 		if !strings.Contains(r.Stdout, want) {
 			t.Errorf("plan after drift: no %q in %q", want, r.Stdout)
 		}
 	}
-	if r := lab.WinchEnvWarnings(t, dir, env, warnings, "apply", "site", "--hosts", "demo", "--yes"); r.Code != 0 {
+	if r := lab.WinchEnv(t, dir, env, "apply", "site", "--hosts", "demo", "--yes"); r.Code != 0 {
 		t.Fatalf("apply after drift: exit %d, stderr %q", r.Code, r.Stderr)
 	}
-	r = lab.WinchEnvWarnings(t, dir, env, warnings, "plan", "site", "--hosts", "demo")
+	r = lab.WinchEnv(t, dir, env, "plan", "site", "--hosts", "demo")
 	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("plan after the repair: exit %d, stdout %q", r.Code, r.Stdout)
 	}
@@ -83,7 +77,7 @@ func TestDemo(t *testing.T) {
 		t.Fatal(err)
 	}
 	rotatePassword(t, copyDir, "n3w-demo-pass")
-	r = lab.WinchEnvWarnings(t, copyDir, env, warnings, "plan", "site")
+	r = lab.WinchEnv(t, copyDir, env, "plan", "site")
 	if r.Code != 0 || !strings.Contains(r.Stdout, "-demo:{PLAIN}(secret)\n") || !strings.Contains(r.Stdout, "+demo:{PLAIN}(secret) (secret value changed)\n") {
 		t.Errorf("plan after a new password: exit %d, stdout %q", r.Code, r.Stdout)
 	}
