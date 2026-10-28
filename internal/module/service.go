@@ -113,7 +113,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		return Result{}, fmt.Errorf("%s is an alias of %s; use %s", s.Name, u.id, strings.TrimSuffix(u.id, ".service"))
 	}
 	var files [][]byte
-	if fresh || u.file == "linked" || u.file == "indirect" {
+	if fresh || s.Enabled != nil && *s.Enabled && (u.file == "linked" || u.file == "indirect") {
 		if files, err = s.files(u, fresh); err != nil {
 			return Result{}, err
 		}
@@ -216,17 +216,55 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 			s.todo = append(s.todo, "stop")
 		}
 	}
+	var missingFiles []string
+	if s.Running != nil && !*s.Running && !fresh {
+		missingFiles, err = s.missingFiles(ctx, u)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	if len(s.todo) == 0 {
-		return Result{Status: OK, StartedBy: startedBy}, nil
+		return Result{Status: OK, StartedBy: startedBy, MissingUnitFiles: missingFiles}, nil
 	}
 	var changes []string
 	for _, c := range s.todo {
 		changes = append(changes, cmp.Or(planLabels[c], c))
 	}
-	if missing {
+	if missing && (s.Running == nil || *s.Running) {
 		changes = append([]string{u.id + " does not exist yet"}, changes...)
 	}
-	return Result{Status: Change, Action: Modify, Changes: changes, StartedBy: startedBy}, nil
+	return Result{Status: Change, Action: Modify, Changes: changes, StartedBy: startedBy, MissingUnitFiles: missingFiles}, nil
+}
+
+func (s *Service) missingFiles(ctx context.Context, u unitState) ([]string, error) {
+	var paths []string
+	switch {
+	case u.fragment != "":
+		paths = []string{u.fragment}
+	case u.load == "not-found":
+		out, err := run(ctx, nil, "systemctl", "show", "--property=UnitPath", "--value")
+		if err != nil {
+			return nil, err
+		}
+		unit, file := s.Unit(), s.UnitFile()
+		for _, dir := range strings.Fields(out) {
+			paths = append(paths, filepath.Join(dir, unit))
+			if file != unit {
+				paths = append(paths, filepath.Join(dir, file))
+			}
+		}
+	}
+	for _, p := range paths {
+		_, err := os.Stat(p)
+		switch {
+		case err == nil:
+			return nil, nil
+		case errors.Is(err, fs.ErrNotExist):
+		default:
+			return nil, fmt.Errorf("stat the unit file: %w", err)
+		}
+	}
+	return paths, nil
 }
 
 // activeOrEnabled returns the units that are active or enabled.
@@ -510,7 +548,7 @@ type unitState struct {
 }
 
 func (u unitState) up() bool {
-	return u.active == "active" || u.active == "activating" || u.active == "reloading"
+	return u.active == "active" || u.active == "activating" || u.active == "reloading" || u.active == "refreshing"
 }
 
 func parseShow(out string) (unitState, error) {

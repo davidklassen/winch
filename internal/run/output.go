@@ -51,6 +51,7 @@ func (p *Plan) hostKinds() map[string]string {
 // Write prints the changes per host, hosts with the same changes together,
 // then the summary and the plan hash. Failures go to errOut.
 func (p *Plan) Write(out, errOut *color.Writer) {
+	p.WriteNotes(errOut)
 	bodies := map[string]*color.Text{}
 	kinds := p.hostKinds()
 	for _, sp := range p.Stages {
@@ -137,6 +138,19 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 	change, unchanged, unknown, failed := p.Counts()
 	fmt.Fprintf(out, "%s: %d to change, %d unchanged, %d unknown%s\nplan %s\n",
 		hosts(len(p.Hosts)), change, unchanged, unknown, failures(failed), p.Hash())
+}
+
+func (p *Plan) WriteNotes(out *color.Writer) {
+	for _, stage := range p.Stages {
+		for _, host := range stage.Hosts {
+			for _, step := range host.Steps {
+				if len(step.Result.MissingUnitFiles) > 0 && p.Failed[host.Host.Name] == nil {
+					s := module.Service{Name: step.Step.ShownMain()}
+					fmt.Fprintf(out, "%s: %s: unit file not found\n", host.Host.Name, secret.Printable(s.Unit()))
+				}
+			}
+		}
+	}
 }
 
 var markStyles = map[string]color.Style{"+": color.Green, "-": color.Red, "~": color.Yellow, "!": color.Cyan, "*": color.Cyan}

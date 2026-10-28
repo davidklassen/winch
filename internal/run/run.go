@@ -316,6 +316,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			plan.Hosts = append(plan.Hosts, h)
 		}
 	}
+	plan.suppressMissingUnitFiles()
 	plan.hash = sumBytes(plan.HashInput())[:16]
 	return plan
 }

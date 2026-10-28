@@ -48,7 +48,10 @@ type Result struct {
 	OldReason string   `json:"old_reason,omitempty"`
 	Link      string   `json:"link,omitempty"`
 	StartedBy []string `json:"started_by,omitempty"`
-	Deferred  bool     `json:"deferred,omitempty"`
+	// MissingUnitFiles are the paths of a missing service unit file. A
+	// selected removal of any of these paths suppresses the plan's note.
+	MissingUnitFiles []string `json:"missing_unit_files,omitempty"`
+	Deferred         bool     `json:"deferred,omitempty"`
 	// Quiet marks a change that only writes a record of the helper, such as
 	// the record of a download: it notifies no handler and runs no then.
 	Quiet bool `json:"quiet,omitempty"`

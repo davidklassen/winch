@@ -101,6 +101,7 @@ func (o *output) plan(pl *run.Plan) {
 		pl.Write(o.env.stdout, o.env.stderr)
 		return
 	}
+	pl.WriteNotes(o.env.stderr)
 	pl.WriteJSON(o.ev)
 }
 
