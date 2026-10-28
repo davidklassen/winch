@@ -1,12 +1,21 @@
 package module
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/davidklassen/winch/internal/yamlx"
 )
 
 // spec: Modules/download
@@ -76,5 +85,52 @@ func TestFetchStall(t *testing.T) {
 				t.Errorf("fetch error = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// spec: Modules/download
+func TestFetchHTTP(t *testing.T) {
+	var agent string
+	data := []byte("\x1f\x8b archive bytes")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agent = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Write(data) //nolint:errcheck // the client sees a failed write
+	}))
+	defer srv.Close()
+	var buf bytes.Buffer
+	sum, err := fetch(t.Context(), srv.URL+"/app.tar.gz", &buf, stallLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := sha256.Sum256(data); sum != hex.EncodeToString(want[:]) || !bytes.Equal(buf.Bytes(), data) {
+		t.Errorf("fetch saved %q with the SHA-256 %s, want the bytes as sent", buf.Bytes(), sum)
+	}
+	if !strings.HasPrefix(agent, "winch/") {
+		t.Errorf("User-Agent = %q, want winch/<version>", agent)
+	}
+}
+
+// spec: Modules/download
+func TestDownloadShortBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.Write([]byte("short")) //nolint:errcheck // the client sees a failed write
+	}))
+	defer srv.Close()
+	p := filepath.Join(t.TempDir(), "tool")
+	if err := os.WriteFile(p, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := &Download{URL: srv.URL, SHA256: strings.Repeat("0", 64), Path: p,
+		Owner: yamlx.NameOrID(strconv.Itoa(os.Getuid())), Group: yamlx.NameOrID(strconv.Itoa(os.Getgid()))}
+	if err := d.Apply(t.Context(), func(string) {}); err == nil || !strings.Contains(err.Error(), "unexpected EOF") {
+		t.Errorf("apply = %v, want an unexpected EOF", err)
+	}
+	if b, err := os.ReadFile(p); err != nil || string(b) != "old\n" {
+		t.Errorf("file = %q, %v; want the old file", b, err)
+	}
+	if entries, err := os.ReadDir(filepath.Dir(p)); err != nil || len(entries) != 1 {
+		t.Errorf("directory = %v, %v; want only the old file", entries, err)
 	}
 }

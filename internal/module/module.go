@@ -49,6 +49,9 @@ type Result struct {
 	Link      string   `json:"link,omitempty"`
 	StartedBy []string `json:"started_by,omitempty"`
 	Deferred  bool     `json:"deferred,omitempty"`
+	// Quiet marks a change that only writes a record of the helper, such as
+	// the record of a download: it notifies no handler and runs no then.
+	Quiet bool `json:"quiet,omitempty"`
 	// Guard is set on a change that can lock out the login user: apply
 	// checks the access after it, as for confirm_access.
 	Guard bool `json:"guard,omitempty"`

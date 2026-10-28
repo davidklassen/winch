@@ -53,12 +53,15 @@ func (c *client) call(t *testing.T, method string, params any) protocol.Response
 	p, _ := json.Marshal(params)
 	req, _ := json.Marshal(protocol.Request{ID: c.id, Method: method, Params: p})
 	go c.w.Write(append(req, '\n')) //nolint:errcheck // a failed write shows as a missing response
-	if !c.r.Scan() {
-		t.Fatalf("no response: %v", c.r.Err())
-	}
 	var resp protocol.Response
-	if err := json.Unmarshal(c.r.Bytes(), &resp); err != nil {
-		t.Fatalf("bad response %q: %v", c.r.Bytes(), err)
+	for resp.ID == 0 || resp.Note != "" {
+		if !c.r.Scan() {
+			t.Fatalf("no response: %v", c.r.Err())
+		}
+		resp = protocol.Response{}
+		if err := json.Unmarshal(c.r.Bytes(), &resp); err != nil {
+			t.Fatalf("bad response %q: %v", c.r.Bytes(), err)
+		}
 	}
 	if resp.ID != c.id {
 		t.Fatalf("response id %d, want %d", resp.ID, c.id)
@@ -711,5 +714,31 @@ func TestForget(t *testing.T) {
 	}
 	if lines, err := downloads.read(); err != nil || !slices.Equal(lines, []string{"b /opt/b.tar.gz"}) {
 		t.Errorf("records = %q, %v; want only the record of /opt/b.tar.gz", lines, err)
+	}
+}
+
+// spec: Modules/download; Handlers
+func TestDownloadRecordRecordsNothing(t *testing.T) {
+	c := start(t, t.TempDir(), "")
+	h := hello("r1")
+	h.Project = "acme"
+	c.call(t, "hello", h)
+	p := filepath.Join(t.TempDir(), "tool")
+	write(t, p, "tool\n")
+	if err := os.Chmod(p, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(module.Download{URL: "http://127.0.0.1:1/tool", SHA256: "67948dd9afd6afe5043b0029d5aa7cf0f8b2824baf16f4f097d40d830edb686d", Path: p,
+		Owner: yamlx.NameOrID(strconv.Itoa(os.Getuid())), Group: yamlx.NameOrID(strconv.Itoa(os.Getgid()))})
+	r := c.call(t, "apply", protocol.Step{Module: "download", Args: args, Notify: []string{"app.reload"}, Then: &protocol.Then{Recipe: "app", Step: 1}})
+	var res protocol.StepResult
+	if err := json.Unmarshal(r.Result, &res); err != nil || r.Error != "" || !res.Quiet || !slices.Equal(res.Changes, []string{"record the download"}) {
+		t.Fatalf("apply = %s %q, want a quiet change that records the download", r.Result, r.Error)
+	}
+	if p := pendingAll(t, c); len(p.Handlers) != 0 || len(p.Then) != 0 {
+		t.Errorf("records after a download record: %+v", p)
+	}
+	if r := c.call(t, "check", protocol.Step{Module: "download", Args: args}); !strings.Contains(string(r.Result), `"status":"ok"`) {
+		t.Errorf("check after apply = %s %q, want ok", r.Result, r.Error)
 	}
 }

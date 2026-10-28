@@ -281,6 +281,9 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			return out, err
 		}
 	}
+	if res.Quiet {
+		s.Notify, s.Then = nil, nil
+	}
 	notified, err := handlers.add(s.Notify)
 	if err != nil {
 		return out, err

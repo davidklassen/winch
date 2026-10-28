@@ -13,6 +13,7 @@ import (
 	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
@@ -765,5 +766,46 @@ func TestInsertedStepKeepsPendingThen(t *testing.T) {
 	}
 	if got := h.ThenOf("web1"); len(got) != 1 {
 		t.Errorf("then records = %v, want one", got)
+	}
+}
+
+// spec: Modules/download; Handlers; Steps
+func TestQuietChangeNotifiesNothing(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: tools\n    hosts: all\n    steps:\n      - recipe: tool\n",
+		"recipes/tool/recipe.yaml": `steps:
+  - download:
+      url: https://example.com/tool
+      sha256: ` + strings.Repeat("a", 64) + `
+      path: /opt/tool
+    then: tool --setup
+    notify: restart
+handlers:
+  restart:
+    - service:
+        name: tool
+        restarted: true
+`,
+	}
+	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	h.SetResult("web1", "/opt/tool", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"record the download"}, Quiet: true})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if s := out.String(); !strings.Contains(s, "record the download") || strings.Contains(s, "handler") || strings.Contains(s, "then:") {
+		t.Errorf("plan:\n%s\nwant the record line without a handler or a then", s)
+	}
+	ok, got := applyAll(t, p, h)
+	if !ok {
+		t.Fatalf("apply failed:\n%s", got)
+	}
+	if len(h.Log["web1"]) != 0 || len(h.PendingOf("web1")) != 0 || len(h.ThenOf("web1")) != 0 {
+		t.Errorf("apply ran %q, pending %q, then records %v; want nothing", h.Log["web1"], h.PendingOf("web1"), h.ThenOf("web1"))
 	}
 }

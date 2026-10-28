@@ -436,6 +436,11 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		return c.checkAnswer(d), nil
 	}
 	if d, ok := m.(*module.Download); ok {
+		c.hosts.mu.Lock()
+		defer c.hosts.mu.Unlock()
+		if res, ok := c.hosts.results[c.host+" "+d.Path]; ok {
+			return res, nil
+		}
 		return module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + d.URL}}, nil
 	}
 	if _, ok := m.(*module.Link); ok {
@@ -646,6 +651,9 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 	if f, ok := m.(*module.File); ok && c.hosts.fails(c.hosts.failApply, c.host, f.Path) {
 		return module.Result{}, fmt.Errorf("write %s: read-only file system", f.Path)
 	}
+	if res.Quiet {
+		notify, then = nil, nil
+	}
 	c.hosts.mu.Lock()
 	for _, n := range notify {
 		if !slices.Contains(c.hosts.pending[c.host], n) {
@@ -703,7 +711,7 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 		return res, nil
 	}
 	switch m := m.(type) {
-	case *module.Reboot, *module.Hostname, *module.Timezone, *module.Certbot:
+	case *module.Reboot, *module.Hostname, *module.Timezone, *module.Certbot, *module.Download:
 		return res, nil
 	case *module.User:
 		c.hosts.SetUser(c.host, m.Name)

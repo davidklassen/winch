@@ -362,12 +362,12 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 		ev := stepEvent(a.host, stage, p)
 		ev.Handler, ev.Step, ev.Module = handler, label(p.Step), p.Step.Module
 		l := ev.label()
-		c, err := a.step(ctx, ev, l, p, guard(stage, p))
-		changed = changed || c
+		res, err := a.step(ctx, ev, l, p, guard(stage, p))
+		changed = changed || res.Status == module.Change
 		if err != nil {
 			return changed, err
 		}
-		if c {
+		if res.Status == module.Change && !res.Quiet {
 			changedLabel = l
 		}
 		if !p.Last {
@@ -480,10 +480,10 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 	return g
 }
 
-// step applies one element of a step with the label l. It reports a change.
-// After a step that started the rollback timer, it checks the access. After a
-// changed reboot step, it reboots the host.
-func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned, g protocol.Guard) (bool, error) {
+// step applies one element of a step with the label l. A step that runs a
+// command returns a change. After a step that started the rollback timer, it
+// checks the access. After a changed reboot step, it reboots the host.
+func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned, g protocol.Guard) (module.Result, error) {
 	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, g)
 	if err == nil && res.Timer > 0 {
 		err = a.confirm(ctx, res.Timer)
@@ -494,7 +494,7 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	if err != nil {
 		ev.Status, ev.Error = "failed", err.Error()
 		a.rep.Step(ev)
-		return false, fmt.Errorf("%s: failed: %s: %w", ev.scope(), l, err)
+		return module.Result{}, fmt.Errorf("%s: failed: %s: %w", ev.scope(), l, err)
 	}
 	// A step that runs a command counts as changed.
 	if res.Status == module.Unknown {
@@ -503,11 +503,10 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	ev.Status, ev.Action = string(res.Status), string(res.Action)
 	ev.Link = secret.Printable(res.Link)
 	a.rep.Step(ev)
-	if res.Status != module.Change {
-		return false, nil
+	if res.Status == module.Change && !res.Quiet {
+		for _, n := range p.Notify {
+			a.notified[n] = true
+		}
 	}
-	for _, n := range p.Notify {
-		a.notified[n] = true
-	}
-	return true, nil
+	return res, nil
 }

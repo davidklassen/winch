@@ -22,6 +22,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 	"unicode"
@@ -129,15 +130,18 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 		return Result{}, err
 	}
 	res := Result{Status: OK}
-	if why != "" {
+	switch {
+	case why != "":
 		res = Result{Status: Change, Action: Modify, Changes: d.unpackLine([]string{"download " + d.URL + " (" + why + ")"})}
+	case d.Recorded == "":
+		res = Result{Status: Change, Action: Modify, Changes: []string{"record the download"}, Quiet: true}
 	}
 	changes, err := attrChanges(fi, owner, group, mode)
 	if err != nil {
 		return Result{}, err
 	}
 	if len(changes) > 0 {
-		res.Status, res.Action = Change, Modify
+		res.Status, res.Action, res.Quiet = Change, Modify, false
 		res.Changes = append(res.Changes, changes...)
 		if why == "" {
 			res.Changes = d.unpackLine(res.Changes)
@@ -151,14 +155,16 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 	return res, nil
 }
 
+const noRecord = "no record of an earlier download"
+
 // why returns the reason to download again, or "" when the file name in dir
-// is the recorded download of the step's checksum and the unpack directory
-// exists.
+// has the step's checksum, and for unpack, is the recorded download and the
+// unpack directory exists.
 func (d *Download) why(dir *os.Root, name string, fi fs.FileInfo) (string, error) {
 	switch {
-	case d.Recorded == "":
-		return "no record of an earlier download", nil
-	case d.Recorded != d.SHA256:
+	case d.Recorded == "" && d.Unpack != "":
+		return noRecord, nil
+	case d.Recorded != "" && d.Recorded != d.SHA256:
 		return "new sha256", nil
 	}
 	r, err := openSame(dir, name, fi)
@@ -171,6 +177,9 @@ func (d *Download) why(dir *os.Root, name string, fi fs.FileInfo) (string, error
 		return "", err
 	}
 	if sum != d.SHA256 {
+		if d.Recorded == "" {
+			return noRecord, nil
+		}
 		return "the file changed on the host", nil
 	}
 	if d.Unpack == "" {
@@ -309,6 +318,17 @@ func fetch(ctx context.Context, url string, w io.Writer, stall time.Duration) (s
 // caBundle is the file of the package ca-certificates.
 const caBundle = "/etc/ssl/certs/ca-certificates.crt"
 
+// userAgent names winch to the server: some servers refuse the User-Agent
+// of Go.
+var userAgent = "winch/" + mainVersion()
+
+func mainVersion() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		return bi.Main.Version
+	}
+	return ""
+}
+
 type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
@@ -318,6 +338,7 @@ func fetchBody(ctx context.Context, url string, w io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("User-Agent", userAgent)
 	// Go reads the system's CA certificates once per process. A step can add
 	// a CA certificate after an earlier download, so each download reads
 	// them again.

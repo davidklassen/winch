@@ -702,6 +702,48 @@ func TestLoadSkippedNameWarning(t *testing.T) {
 	}
 }
 
+// spec: Modules/download
+func TestLoadTempDownloadWarning(t *testing.T) {
+	step := func(p string) string {
+		return "download:\n          url: https://example.com/a\n          sha256: " + strings.Repeat("a", 64) + "\n          path: " + p
+	}
+	want := func(d string) string {
+		return "pipelines/site.yaml:8:17: path: the host removes files in " + d + ", so the step downloads again; use a path such as /opt or /var/lib"
+	}
+	for _, tt := range []struct{ name, step, want string }{
+		{"tmp", step("/tmp/a"), want("/tmp")},
+		{"var tmp", step("/var/tmp/a/b"), want("/var/tmp")},
+		{"run", step("/run/a"), want("/run")},
+		{"dev shm", step("/dev/shm/a"), want("/dev/shm")},
+		{"opt", step("/opt/a"), ""},
+		{"prefix only", step("/tmpfiles/a"), ""},
+		{"file in tmp", "file:\n          path: /tmp/a\n          content: x", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeProject(t, map[string]string{
+				"pipelines/site.yaml": stage("      - " + tt.step + "\n"),
+			})
+			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			warnings, err := Validate(dir, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for what, ws := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": warnings} {
+				var got string
+				if len(ws) > 0 {
+					got = ws[0].Error()
+				}
+				if len(ws) > 1 || got != tt.want {
+					t.Errorf("%s warnings = %v, want %q", what, ws, tt.want)
+				}
+			}
+		})
+	}
+}
+
 // armoredKey returns an armored OpenPGP key whose primary key expires at
 // expires, and its fingerprint. Its signature is not valid.
 func armoredKey(expires time.Time) (string, string) {
