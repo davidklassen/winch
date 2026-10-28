@@ -18,10 +18,11 @@ import (
 )
 
 type Line struct {
-	Path   string `yaml:"path,required" json:"path"`
-	Line   string `yaml:"line" json:"line,omitempty"`
-	Match  string `yaml:"match,required" json:"match"`
-	Absent bool   `yaml:"absent" json:"absent,omitempty"`
+	Path       string  `yaml:"path,required" json:"path"`
+	Line       string  `yaml:"line" json:"line,omitempty"`
+	Match      string  `yaml:"match,required" json:"match"`
+	Validation *string `yaml:"validate" json:"validate,omitempty"`
+	Absent     bool    `yaml:"absent" json:"absent,omitempty"`
 }
 
 func (l *Line) Main() string { return l.Path }
@@ -36,6 +37,12 @@ func (l *Line) Validate() error {
 	re, err := regexp.Compile(l.Match)
 	if err != nil {
 		return &yamlx.FieldError{Field: "match", Msg: err.Error()}
+	}
+	if re.MatchString("") {
+		return &yamlx.FieldError{Field: "match", Msg: "matches an empty line"}
+	}
+	if err := checkCommand("validate", l.Validation); err != nil {
+		return err
 	}
 	switch {
 	case l.Absent:
@@ -114,7 +121,7 @@ func (l *Line) Apply(ctx context.Context, _ func(string)) error {
 	}
 	st := fi.Sys().(*syscall.Stat_t)
 	return writeFile(dir, name, bytes.NewReader(out), st.Uid, st.Gid, uint32(st.Mode)&0o7777, func(tmp string) error {
-		return dir.Rename(tmp, name)
+		return put(ctx, dir, missing, dir, tmp, name, l.Validation)
 	})
 }
 

@@ -422,7 +422,61 @@ handlers:
           path: /etc/redis/redis.conf
           line: port 6381
           match: "^port "
-`), "", `s: line /etc/redis/redis.conf: the match "^port " in /etc/redis/redis.conf is also in s: line /etc/redis/redis.conf, with other arguments`},
+`), "", `s: line /etc/redis/redis.conf: the match "^port " finds the line of s: line /etc/redis/redis.conf; the two steps change it on every run`},
+		{"a match that finds the line of an earlier step", steps(`      - line:
+          path: /etc/ssh/sshd_config
+          line: Port 22
+          match: "^Port "
+      - line:
+          path: /etc/ssh/sshd_config
+          line: Port 2222
+          match: "^#?Port "
+`), "", `s: line /etc/ssh/sshd_config: the match "^#?Port " finds the line of s: line /etc/ssh/sshd_config; the two steps change it on every run`},
+		{"a line that the match of an earlier step finds", steps(`      - line:
+          path: /etc/ssh/sshd_config
+          line: Port 22
+          match: "^Port"
+      - line:
+          path: /etc/ssh/sshd_config
+          line: Port 2222
+          match: "^Port 2222"
+`), "", `s: line /etc/ssh/sshd_config: the match "^Port" of s: line /etc/ssh/sshd_config finds the line of this step; the two steps change it on every run`},
+		{"an absent line that removes the line of an earlier step", steps(`      - line:
+          path: /etc/ssh/sshd_config
+          line: PermitRootLogin no
+          match: "^PermitRootLogin "
+      - line:
+          path: /etc/ssh/sshd_config
+          match: "^PermitRootLogin"
+          absent: true
+`), "", `s: line /etc/ssh/sshd_config: the match "^PermitRootLogin" finds the line of s: line /etc/ssh/sshd_config; the two steps change it on every run`},
+		{"a line that an earlier absent step removes", steps(`      - line:
+          path: /etc/ssh/sshd_config
+          match: "^PermitRootLogin"
+          absent: true
+      - line:
+          path: /etc/ssh/sshd_config
+          line: PermitRootLogin no
+          match: "^PermitRootLogin "
+`), "", `s: line /etc/ssh/sshd_config: the match "^PermitRootLogin" of s: line /etc/ssh/sshd_config finds the line of this step; the two steps change it on every run`},
+		{"a line and an absent step with other matches", steps(`      - line:
+          path: /etc/ssh/sshd_config
+          line: Port 2222
+          match: "^#?Port "
+      - line:
+          path: /etc/ssh/sshd_config
+          match: "^#PermitRootLogin"
+          absent: true
+`), "", ""},
+		{"two equal lines", steps(`      - line:
+          path: /etc/a
+          line: port 1
+          match: "^port "
+      - line:
+          path: /etc/a
+          line: port 1
+          match: "^port "
+`), "", ""},
 		{"the same match on two paths", steps(`      - line:
           path: /etc/a
           line: port 1

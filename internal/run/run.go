@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -187,6 +188,8 @@ type hostRun struct {
 	// managed are the paths, packages, units, users, and groups of the
 	// checked steps, with the first step and its arguments.
 	managed map[string]managed
+	// lines are the checked line steps, by path.
+	lines map[string][]lineStep
 	// written returns the paths that the project writes on the host, for dir
 	// steps with purge. It is set at the first contact.
 	written func() ([]string, error)
@@ -196,6 +199,12 @@ type managed struct {
 	where  string
 	module string
 	args   module.Module
+}
+
+type lineStep struct {
+	where string
+	line  *module.Line
+	re    *regexp.Regexp
 }
 
 type startedBy struct {
@@ -253,7 +262,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}, units: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}, units: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -548,7 +557,7 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		if err := add("the path "+m.Path, &module.Line{Path: m.Path}); err != nil {
 			return err
 		}
-		return add(fmt.Sprintf("the match %q in %s", m.Match, m.Path), m)
+		return hr.overlap(m, where)
 	case *module.User:
 		return add("the user "+m.Name, m)
 	case *module.Group:
@@ -560,6 +569,30 @@ func (hr *hostRun) same(st project.Step, where string) error {
 	case *module.Certbot:
 		return add("the certificate "+m.Name, m)
 	}
+	return nil
+}
+
+// overlap fails a line step when its match finds the line of an earlier line
+// step on the path, or the earlier step's match finds its line, and the lines
+// differ. The error leaves out the lines: a line can hold a secret.
+func (hr *hostRun) overlap(l *module.Line, where string) error {
+	re, err := regexp.Compile(l.Match)
+	if err != nil {
+		return fmt.Errorf("%s: %w", where, err)
+	}
+	for _, e := range hr.lines[l.Path] {
+		el := e.line
+		if el.Line == l.Line {
+			continue
+		}
+		if !el.Absent && re.MatchString(el.Line) {
+			return fmt.Errorf("%s: the match %q finds the line of %s; the two steps change it on every run", where, l.Match, e.where)
+		}
+		if !l.Absent && e.re.MatchString(l.Line) {
+			return fmt.Errorf("%s: the match %q of %s finds the line of this step; the two steps change it on every run", where, el.Match, e.where)
+		}
+	}
+	hr.lines[l.Path] = append(hr.lines[l.Path], lineStep{where, l, re})
 	return nil
 }
 

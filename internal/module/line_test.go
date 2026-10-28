@@ -22,6 +22,11 @@ func TestLineValidate(t *testing.T) {
 		{"carriage return", "path: /etc/a\nline: \"a\\r\"\nmatch: ^a\n", `t.yaml:2:7: line: must be one line`},
 		{"line that match does not find", "path: /etc/a\nline: port 1\nmatch: ^Port \n", `t.yaml:2:7: line: match does not find it, so each run would add it again`},
 		{"tab", "path: /etc/a\nline: \"a\\tb\"\nmatch: ^a\n", ""},
+		{"match that finds an empty line", "path: /etc/a\nmatch: \".*\"\nabsent: true\n", `t.yaml:2:8: match: matches an empty line`},
+		{"match of an empty line", "path: /etc/a\nmatch: ^$\nabsent: true\n", `t.yaml:2:8: match: matches an empty line`},
+		{"validate", "path: /etc/ssh/sshd_config\nline: PermitRootLogin no\nmatch: ^PermitRootLogin \nvalidate: sshd -t\n", ""},
+		{"validate with absent", "path: /etc/ssh/sshd_config\nmatch: ^PermitRootLogin \nabsent: true\nvalidate: sshd -t\n", ""},
+		{"empty validate", "path: /etc/a\nline: a\nmatch: ^a\nvalidate: \"\"\n", `t.yaml:4:11: validate: must not be empty`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Line{}, tt.yaml, tt.want) })
