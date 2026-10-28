@@ -233,6 +233,26 @@ func TestRollbackReloads(t *testing.T) {
 	}
 }
 
+// spec: Modules/firewall (a failed check restores the old rules)
+func TestRollbackLoadsFirewall(t *testing.T) {
+	tests := []struct {
+		saved []Saved
+		want  bool
+	}{
+		{[]Saved{{Path: "/etc/winch/firewall.nft"}}, true},
+		{[]Saved{{Path: "/etc/winch", Missing: true}}, true},
+		{[]Saved{{Path: "/etc/winch", Dir: &Attrs{Mode: 0o755}}}, false},
+		{[]Saved{{Path: "/etc/systemd/system/winch-firewall.service"}}, false},
+		{[]Saved{{Path: "/etc/winch/other"}}, false},
+		{[]Saved{{Path: "/etc/nftables.conf"}}, false},
+	}
+	for _, tt := range tests {
+		if got := loadsFirewall(tt.saved); got != tt.want {
+			t.Errorf("loadsFirewall(%v) = %v, want %v", tt.saved, got, tt.want)
+		}
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (the timer runs the step again;
 // a start is undone)
 func TestServiceUndo(t *testing.T) {
@@ -338,6 +358,8 @@ func TestTouches(t *testing.T) {
 		{&Unit{Name: "app.service"}, []Touch{{"/etc/systemd/system/app.service", true}}},
 		{&Certbot{Name: "mail"}, []Touch{{"/etc/letsencrypt/renewal/mail.conf", true}, {"/etc/letsencrypt/live/mail", true}, {"/etc/letsencrypt/archive/mail", true}}},
 		{&Service{Name: "ssh", Running: &no}, nil},
+		{&Firewall{}, []Touch{{"/etc/winch/firewall.nft", true}, {"/etc/systemd/system/winch-firewall.service", true}, {"/etc/systemd/system/sysinit.target.wants/winch-firewall.service", true}}},
+		{&Firewall{Absent: true}, []Touch{{"/etc/winch/firewall.nft", true}, {"/etc/systemd/system/winch-firewall.service", true}, {"/etc/systemd/system/sysinit.target.wants/winch-firewall.service", true}}},
 	}
 	for _, tt := range tests {
 		if got := Touches(tt.m); !slices.Equal(got, tt.want) {

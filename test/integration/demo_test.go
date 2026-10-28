@@ -108,7 +108,7 @@ func checkDemo(t *testing.T, vm *vmtest.VM, peer string) {
 	if out := vm.MustRun(t, "curl -s -u demo:"+demoPassword+" http://localhost/private"); !strings.Contains(out, "<h1>Private</h1>") {
 		t.Errorf("/private with the password = %q", out)
 	}
-	if out := vm.MustRun(t, "hostname; nft list ruleset | grep -c 'tcp dport { 22, 80 } accept'; ls /etc/ssh/sshd_config.d"); out != vm.Name+"\n1\nlocal.conf\n" {
+	if out := vm.MustRun(t, "hostname; nft list table inet winch | grep -c 'tcp dport { 22, 80 } accept'; ls /etc/ssh/sshd_config.d"); out != vm.Name+"\n1\nlocal.conf\n" {
 		t.Errorf("hostname, firewall rule, sshd drop-ins: %q", out)
 	}
 	if out := vm.MustRun(t, "systemctl is-active dkimpy-milter"); out != "active\n" {

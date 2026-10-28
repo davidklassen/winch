@@ -3,6 +3,7 @@ package run_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -238,6 +239,23 @@ func TestSameHostnameAndTimezone(t *testing.T) {
 		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 		if err := plan.Failed["web1"]; err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: plan error %v, want %q", tt.module, err, tt.want)
+		}
+	}
+}
+
+// spec: Modules/firewall (a host has at most one firewall step in a run)
+func TestTwoFirewalls(t *testing.T) {
+	step := "      - name: %s\n        firewall:\n          allow:\n            - tcp: 22\n"
+	for _, tt := range []struct{ name, pipeline string }{
+		{"one stage", "stages:\n  - name: base\n    hosts: all\n    steps:\n" + fmt.Sprintf(step, "Open SSH") + fmt.Sprintf(step, "Open SSH again")},
+		{"two stages", "stages:\n  - name: base\n    hosts: all\n    steps:\n" + fmt.Sprintf(step, "Open SSH") + "  - name: web\n    hosts: all\n    steps:\n" + fmt.Sprintf(step, "Open SSH again")},
+	} {
+		h := fakehost.New()
+		p := loadWeb1(t, map[string]string{"pipelines/site.yaml": tt.pipeline})
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		err := plan.Failed["web1"]
+		if err == nil || !strings.Contains(err.Error(), ": Open SSH again: firewall: the firewall is also in ") || !strings.Contains(err.Error(), ": Open SSH: firewall; a host has one firewall step") {
+			t.Errorf("%s: plan error %v", tt.name, err)
 		}
 	}
 }

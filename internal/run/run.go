@@ -603,6 +603,11 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		return add("the time zone", m)
 	case *module.Certbot:
 		return add("the certificate "+m.Name, m)
+	case *module.Firewall:
+		if other, ok := hr.managed["the firewall"]; ok {
+			return fmt.Errorf("%s: the firewall is also in %s; a host has one firewall step", where, other.where)
+		}
+		hr.managed["the firewall"] = managed{where, st.Module, m}
 	}
 	return nil
 }

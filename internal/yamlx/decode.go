@@ -36,9 +36,13 @@ func DecodeLazy(n *Node, v any) error {
 var (
 	nodeType     = reflect.TypeFor[*Node]()
 	posType      = reflect.TypeFor[Pos]()
-	stringsType  = reflect.TypeFor[Strings]()
 	nameOrIDType = reflect.TypeFor[NameOrID]()
 	idType       = reflect.TypeFor[ID]()
+	// oneOrList are the slice types that also decode from one element.
+	oneOrList = map[reflect.Type]string{
+		reflect.TypeFor[Strings](): "a string or a list of strings",
+		reflect.TypeFor[Ints]():    "an integer or a list of integers",
+	}
 )
 
 type decoder struct {
@@ -68,7 +72,7 @@ func (d *decoder) value(n *Node, v reflect.Value, name string) {
 		d.errorf(n.Pos, name, "%s is not allowed here", n.Tag)
 		return
 	}
-	if v.Type() == stringsType {
+	if what, ok := oneOrList[v.Type()]; ok {
 		switch n.Kind {
 		case List:
 			d.slice(n, v, name)
@@ -76,7 +80,7 @@ func (d *decoder) value(n *Node, v reflect.Value, name string) {
 			v.Set(reflect.MakeSlice(v.Type(), 1, 1))
 			d.value(n, v.Index(0), name)
 		default:
-			d.errorf(n.Pos, name, "expected a string or a list of strings, got %s", Describe(n))
+			d.errorf(n.Pos, name, "expected %s, got %s", what, Describe(n))
 		}
 		return
 	}
@@ -255,6 +259,9 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 
 // Strings decodes from one string or a list of strings.
 type Strings []string
+
+// Ints decodes from one integer or a list of integers.
+type Ints []int
 
 // NameOrID decodes from a string, or from an integer that is not negative.
 // The integer gives its decimal digits. An integer from a file must be written

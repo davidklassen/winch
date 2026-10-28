@@ -71,6 +71,8 @@ func Touches(m Module) []Touch {
 		return []Touch{{hostnameFile, true}}
 	case *Timezone:
 		return []Touch{{localtime, true}, {timezoneFile, true}}
+	case *Firewall:
+		return []Touch{{firewallFile, true}, {firewallUnitP, true}, {firewallWants, true}}
 	}
 	return nil
 }
@@ -258,8 +260,9 @@ func addTree(tw *tar.Writer, dir *os.Root, name, rel string, fi fs.FileInfo) err
 	return fmt.Errorf("%s is %s; the rollback keeps only files, directories, and symbolic links", path.Join(dir.Name(), name), kind(fi))
 }
 
-// Restore puts back the saved paths in reverse order, and runs systemctl
-// daemon-reload when it put back a path in /etc/systemd. It restores every
+// Restore puts back the saved paths in reverse order, runs systemctl
+// daemon-reload when it put back a path in /etc/systemd, and loads the
+// firewall again when it put back its file. It restores every
 // path it can and returns the errors.
 func Restore(ctx context.Context, saved []Saved) error {
 	var errs []error
@@ -270,6 +273,11 @@ func Restore(ctx context.Context, saved []Saved) error {
 	}
 	if reloads(saved) {
 		if _, err := run(ctx, nil, "systemctl", "daemon-reload"); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if loadsFirewall(saved) {
+		if err := loadFirewall(ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}

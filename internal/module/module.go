@@ -109,6 +109,7 @@ var modules = map[string]func() Module{
 	"dir":      func() Module { return new(Dir) },
 	"download": func() Module { return new(Download) },
 	"file":     func() Module { return new(File) },
+	"firewall": func() Module { return new(Firewall) },
 	"group":    func() Module { return new(Group) },
 	"hostname": func() Module { return new(Hostname) },
 	"line":     func() Module { return new(Line) },

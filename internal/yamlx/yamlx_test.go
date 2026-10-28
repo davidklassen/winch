@@ -158,6 +158,41 @@ func TestStrings(t *testing.T) {
 	}
 }
 
+// spec: Modules/firewall (one port or a list of ports)
+func TestInts(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"one", "ports: 22\n", `[22]`},
+		{"list", "ports: [22, 80]\n", `[22 80]`},
+		{"string", "ports: ssh\n", `t.yaml:1:8: ports: expected an integer, got the string "ssh"`},
+		{"map", "ports: {a: b}\n", `t.yaml:1:8: ports: expected an integer or a list of integers, got a map`},
+		{"string in list", "ports: [22, ssh]\n", `t.yaml:1:13: ports: expected an integer, got the string "ssh"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := Parse("t.yaml", []byte(tt.yaml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var d struct {
+				Ports Ints `yaml:"ports"`
+			}
+			got := ""
+			if err := Decode(n, &d); err != nil {
+				got = err.Error()
+			} else {
+				got = fmt.Sprint([]int(d.Ports))
+			}
+			if got != tt.want {
+				t.Errorf("got  %s\nwant %s", got, tt.want)
+			}
+		})
+	}
+}
+
 // spec: Templates and expressions; YAML
 func TestTags(t *testing.T) {
 	tests := []struct {

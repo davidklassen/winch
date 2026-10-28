@@ -44,6 +44,8 @@ func TestWrites(t *testing.T) {
 		{"hostname", &Hostname{Name: "mail"}, []string{"/etc/hostname"}},
 		{"timezone", &Timezone{Name: "Etc/UTC"}, []string{"/etc/localtime", "/etc/timezone"}},
 		{"certbot", &Certbot{Name: "example.com"}, []string{"/etc/letsencrypt/renewal/example.com.conf", "/etc/letsencrypt/live/example.com", "/etc/letsencrypt/archive/example.com"}},
+		{"firewall", &Firewall{}, []string{"/etc/winch/firewall.nft", "/etc/systemd/system/winch-firewall.service", "/etc/systemd/system/sysinit.target.wants/winch-firewall.service"}},
+		{"firewall absent", &Firewall{Absent: true}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
