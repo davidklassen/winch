@@ -89,7 +89,9 @@ func TestDownloadModule(t *testing.T) {
 		{name: "../evil", typ: tar.TypeReg, mode: 0o644, body: "x\n"},
 	})
 	urlLate := lab.Serve(t, "download/late.tar.gz", late)
-	unpacked := "curl -sfo /tmp/w/app.tar.gz " + urlTgz + " && mkdir -p /var/lib/winch/downloads && echo '" + sha(tgz) + " /tmp/w/app.tar.gz' > " + record
+	fetched := "curl -sfo /tmp/w/app.tar.gz " + urlTgz + " && mkdir -p /var/lib/winch/downloads"
+	unpackRecord := sha(tgz) + " /tmp/w/app.tar.gz\t/tmp/w/opt"
+	unpacked := fetched + " && echo '" + unpackRecord + "' > " + record
 	extracted := unpacked + " && mkdir /tmp/w/opt && tar -C /tmp/w/opt -xzf /tmp/w/app.tar.gz"
 	evil := tarGz(t, []entry{{name: "../evil", typ: tar.TypeReg, mode: 0o644, body: "x\n"}})
 	urlEvil := lab.Serve(t, "download/evil.tar.gz", evil)
@@ -212,7 +214,7 @@ func TestDownloadModule(t *testing.T) {
 			Name:  "a wrong file without a record downloads again",
 			Setup: "echo changed > /tmp/w/f",
 			Args:  &module.Download{URL: url1, SHA256: sha(v1), Path: "/tmp/w/f"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url1 + " (the file changed on the host)"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url1 + " (the sha256 differs)"}},
 			After: `[ "$(cat /tmp/w/f)" = "version 1" ] && [ ! -e ` + record + ` ]`,
 		},
 		{
@@ -226,7 +228,7 @@ func TestDownloadModule(t *testing.T) {
 			Name:      "a new checksum downloads again",
 			Setup:     "echo 'version 1' > /tmp/w/f && " + recordV1 + " && echo '" + sha(v1) + " /tmp/w/other' >> " + record,
 			Args:      &module.Download{URL: url2, SHA256: sha(v2), Path: "/tmp/w/f"},
-			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url2 + " (the file changed on the host)"}},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url2 + " (the sha256 differs)"}},
 			Unchanged: `[ "$(cat /tmp/w/f)" = "version 1" ]`,
 			After:     `[ "$(cat /tmp/w/f)" = "version 2" ] && [ "$(cat ` + record + `)" = "$(printf '%s\n' '` + sha(v1) + ` /tmp/w/f' '` + sha(v1) + ` /tmp/w/other')" ]`,
 		},
@@ -234,14 +236,14 @@ func TestDownloadModule(t *testing.T) {
 			Name:  "a file that changed on the host downloads again",
 			Setup: "echo changed > /tmp/w/f && " + recordV1,
 			Args:  &module.Download{URL: url1, SHA256: sha(v1), Path: "/tmp/w/f"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url1 + " (the file changed on the host)"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url1 + " (the sha256 differs)"}},
 			After: `[ "$(cat /tmp/w/f)" = "version 1" ]`,
 		},
 		{
 			Name:         "a wrong checksum fails and keeps the old file",
 			Setup:        "echo 'version 1' > /tmp/w/f && " + recordV1,
 			Args:         &module.Download{URL: url2, SHA256: sha([]byte("other")), Path: "/tmp/w/f"},
-			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url2 + " (the file changed on the host)"}},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url2 + " (the sha256 differs)"}},
 			WantApplyErr: "download " + url2 + ": the SHA-256 is " + sha(v2) + ", not " + sha([]byte("other")),
 			After:        `[ "$(cat /tmp/w/f)" = "version 1" ] && [ "$(ls -A /tmp/w)" = f ] && grep -qx '` + sha(v1) + ` /tmp/w/f' ` + record,
 			FixArgs:      &module.Download{URL: url2, SHA256: sha(v2), Path: "/tmp/w/f"},
@@ -280,7 +282,7 @@ func TestDownloadModule(t *testing.T) {
 			Unchanged: `[ ! -e /tmp/w/opt ]`,
 			After: `[ "$(stat -c '%U %G %a' /tmp/w/app.tar.gz /tmp/w/opt /tmp/w/opt/app /tmp/w/opt/app/bin /tmp/w/opt/app/bin/tool /tmp/w/opt/app/README)" = "$(printf '%s\n' 'admin root 644' 'admin root 755' 'admin root 755' 'admin root 755' 'admin root 755' 'admin root 644')" ]` +
 				` && [ "$(/tmp/w/opt/app/latest)" = tool ] && [ "$(readlink /tmp/w/opt/app/latest)" = bin/tool ] && [ "$(stat -c '%U' /tmp/w/opt/app/latest)" = admin ]` +
-				` && [ /tmp/w/opt/app/hard -ef /tmp/w/opt/app/README ] && grep -qx '` + sha(tgz) + ` /tmp/w/app.tar.gz' ` + record,
+				` && [ /tmp/w/opt/app/hard -ef /tmp/w/opt/app/README ] && grep -qx '` + unpackRecord + `' ` + record,
 		},
 		{
 			Name:  "unpack over an older tree",
@@ -336,12 +338,26 @@ func TestDownloadModule(t *testing.T) {
 			After: `[ "$(stat -c '%U' /tmp/w/app.tar.gz /tmp/w/opt/app/bin/tool)" = "$(printf '%s\n' admin admin)" ]`,
 		},
 		{
+			Name:  "an old record without the unpack directory unpacks again",
+			Setup: fetched + " && echo '" + sha(tgz) + " /tmp/w/app.tar.gz' > " + record + " && mkdir /tmp/w/opt",
+			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Path: "/tmp/w/app.tar.gz", Unpack: "/tmp/w/opt"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", "unpack into /tmp/w/opt"}},
+			After: `[ "$(/tmp/w/opt/app/latest)" = tool ] && grep -qx '` + unpackRecord + `' ` + record,
+		},
+		{
+			Name:  "a new unpack directory that exists unpacks again",
+			Setup: extracted + " && mkdir /tmp/w/opt2 && echo '" + sha(v1) + " /tmp/w/other.tar.gz\t/tmp/w/opt' >> " + record + " && echo '" + sha(tgz) + " /tmp/w/app.tar.gz' >> " + record,
+			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Path: "/tmp/w/app.tar.gz", Unpack: "/tmp/w/opt2"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", "unpack into /tmp/w/opt2"}},
+			After: `[ "$(/tmp/w/opt2/app/latest)" = tool ] && [ "$(cat ` + record + `)" = "$(printf '%s\n' '` + sha(v1) + " /tmp/w/other.tar.gz\t/tmp/w/opt" + `' '` + sha(tgz) + " /tmp/w/app.tar.gz\t/tmp/w/opt2" + `')" ]`,
+		},
+		{
 			Name:      "a new checksum unpacks the new archive",
 			Setup:     extracted,
 			Args:      &module.Download{URL: urlTgz2, SHA256: sha(tgz2), Path: "/tmp/w/app.tar.gz", Unpack: "/tmp/w/opt"},
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz2 + " (new sha256)", "unpack into /tmp/w/opt"}},
 			Unchanged: `[ "$(/tmp/w/opt/app/bin/tool)" = tool ]`,
-			After:     `[ "$(/tmp/w/opt/app/bin/tool)" = tool2 ] && grep -qx '` + sha(tgz2) + ` /tmp/w/app.tar.gz' ` + record,
+			After:     `[ "$(/tmp/w/opt/app/bin/tool)" = tool2 ] && grep -qx '` + sha(tgz2) + " /tmp/w/app.tar.gz\t/tmp/w/opt" + `' ` + record,
 		},
 		{
 			Name:         "a wrong checksum unpacks nothing",

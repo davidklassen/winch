@@ -13,7 +13,7 @@ import (
 
 // records is a file of records of a project, one per line: the pending
 // handlers as <recipe>.<handler>, the pending then records as JSON, or the
-// checksums of downloads as <sha256> <path>.
+// checksums of unpacks as <sha256> <path><tab><unpack directory>.
 type records struct {
 	dir     string
 	project string
@@ -129,36 +129,35 @@ func syncDir(dir *os.Root) error {
 	return d.Sync()
 }
 
-// recorded returns the checksum that the download records hold for path p,
-// or "".
-func recorded(downloads records, p string) (string, error) {
+// recorded returns the value that the records hold for key, or "".
+func recorded(downloads records, key string) (string, error) {
 	lines, err := downloads.read()
 	if err != nil {
 		return "", err
 	}
 	for _, l := range lines {
-		if sum, lp, _ := strings.Cut(l, " "); lp == p {
+		if sum, lp, _ := strings.Cut(l, " "); lp == key {
 			return sum, nil
 		}
 	}
 	return "", nil
 }
 
-// record replaces the download record of path p.
-func record(downloads records, sum, p string) error {
+// record replaces the record of key.
+func record(downloads records, sum, key string) error {
 	lines, err := downloads.read()
 	if err != nil {
 		return err
 	}
 	lines = slices.DeleteFunc(lines, func(l string) bool {
 		_, lp, _ := strings.Cut(l, " ")
-		return l == "" || lp == p
+		return l == "" || lp == key
 	})
-	return downloads.write(append(lines, sum+" "+p))
+	return downloads.write(append(lines, sum+" "+key))
 }
 
-// forget removes the download record of path p.
-func forget(downloads records, p string) error {
+// forget removes the record of key.
+func forget(downloads records, key string) error {
 	lines, err := downloads.read()
 	if err != nil {
 		return err
@@ -166,7 +165,25 @@ func forget(downloads records, p string) error {
 	n := len(lines)
 	lines = slices.DeleteFunc(lines, func(l string) bool {
 		_, lp, _ := strings.Cut(l, " ")
-		return lp == p
+		return lp == key
+	})
+	if len(lines) == n {
+		return nil
+	}
+	return downloads.write(lines)
+}
+
+// forgetArchive removes the unpack records of the archive p, for every unpack
+// directory.
+func forgetArchive(downloads records, p string) error {
+	lines, err := downloads.read()
+	if err != nil {
+		return err
+	}
+	n := len(lines)
+	lines = slices.DeleteFunc(lines, func(l string) bool {
+		_, key, _ := strings.Cut(l, " ")
+		return key == p || strings.HasPrefix(key, p+"\t")
 	})
 	if len(lines) == n {
 		return nil

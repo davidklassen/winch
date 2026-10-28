@@ -39,7 +39,8 @@ type Download struct {
 	Group  yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
 	Mode   string         `yaml:"mode" json:"mode,omitempty"`
 
-	// Recorded is the checksum at the last successful unpack of Path, or "".
+	// Recorded is the checksum at the last successful unpack of Path into
+	// Unpack, or "".
 	Recorded string `json:"-"`
 }
 
@@ -172,11 +173,14 @@ func (d *Download) why(dir *os.Root, name string, fi fs.FileInfo) (string, error
 	if err != nil {
 		return "", err
 	}
+	if d.Unpack == "" {
+		if sum != d.SHA256 {
+			return "the sha256 differs", nil
+		}
+		return "", nil
+	}
 	if sum != d.SHA256 {
 		return "the file changed on the host", nil
-	}
-	if d.Unpack == "" {
-		return "", nil
 	}
 	exists, err := unpackDirExists(d.Unpack)
 	if err != nil || exists {

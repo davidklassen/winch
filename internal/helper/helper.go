@@ -252,9 +252,10 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		return protocol.StepResult{}, fmt.Errorf("decode %s arguments: %w", s.Module, err)
 	}
 	d, isDownload := m.(*module.Download)
-	unpack := isDownload && d.Unpack != ""
-	if unpack {
-		sum, err := recorded(downloads, d.Path)
+	var unpackKey string
+	if isDownload && d.Unpack != "" {
+		unpackKey = d.Path + "\t" + d.Unpack
+		sum, err := recorded(downloads, unpackKey)
 		if err != nil {
 			return protocol.StepResult{}, err
 		}
@@ -296,8 +297,8 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	out.Old, out.OldReason = nil, ""
 	// A failed unpack can leave the archive and the unpack directory as the
 	// check wants them, so only the record shows that the unpack is not done.
-	if unpack {
-		if err := forget(downloads, d.Path); err != nil {
+	if unpackKey != "" {
+		if err := forgetArchive(downloads, d.Path); err != nil {
 			return out, err
 		}
 	}
@@ -350,8 +351,8 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		out.Timer = time.Until(deadline)
 		rb.running = &guarded{handlers: notified, thens: thenLines}
 	}
-	if unpack {
-		return out, record(downloads, d.SHA256, d.Path)
+	if unpackKey != "" {
+		return out, record(downloads, d.SHA256, unpackKey)
 	}
 	return out, nil
 }
