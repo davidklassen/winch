@@ -1,6 +1,8 @@
 package integration
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/module"
@@ -126,7 +128,6 @@ md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.con
 			WantApplyErr: "a hook failed:\nHook 'deploy-hook' reported error code 3\nHook 'deploy-hook' ran with error output:\n oops",
 			After:        "test -e /etc/letsencrypt/renewal/a.example.com.conf",
 			Fix:          "touch /root/hook-ok",
-			SkipRecovery: "issue 156",
 		},
 		{
 			Name:         "a failing pre_hook fails the step",
@@ -174,5 +175,154 @@ md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.con
 			}},
 			After: "grep -qx 'authenticator = webroot' /etc/letsencrypt/renewal/a.example.com.conf",
 		},
+	})
+}
+
+// spec: Modules/certbot
+func TestCertbotPendingHooks(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "pending-hooks")
+	vm.MustRun(t, pebbleSetup)
+	for _, hook := range []string{"deploy_hook", "post_hook"} {
+		t.Run(hook, func(t *testing.T) {
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+				"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",
+				"pipelines/site.yaml": fmt.Sprintf(`stages:
+  - name: test
+    hosts: all
+    steps:
+      - certbot:
+          name: %s
+          domains: [a.example.com]
+          email: admin@example.com
+          %s: |
+            if [ ! -e /root/%s-failed ]; then
+              touch /root/%s-failed
+              echo "Hook 'post-hook' reported error code 9" >&2
+              exit 3
+            fi
+            printf '%%s\n' "$RENEWED_LINEAGE $RENEWED_DOMAINS" >> /root/%s-runs
+`, hook, hook, hook, hook, hook),
+			})
+			r := lab.Winch(t, dir, "apply", "site", "--yes")
+			if r.Code != 1 || !strings.Contains(r.Stderr, "reported error code 3") {
+				t.Fatalf("first apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+			}
+			vm.MustRun(t, "test -e /etc/letsencrypt/renewal/"+hook+".conf && sha256sum /etc/letsencrypt/live/"+hook+"/cert.pem > /root/cert.sum")
+			r = lab.Winch(t, dir, "plan", "site", "--exit-code")
+			if r.Code != 2 || !strings.Contains(r.Stdout, "pending "+hook) {
+				t.Fatalf("plan after failure: exit %d, want pending %s\n%s%s", r.Code, hook, r.Stdout, r.Stderr)
+			}
+			if hook == "deploy_hook" && strings.Contains(r.Stdout, "pending post_hook") {
+				t.Errorf("hook stderr became a pending post_hook:\n%s", r.Stdout)
+			}
+			r = lab.Winch(t, dir, "apply", "site", "--yes")
+			if r.Code != 0 {
+				t.Fatalf("retry apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+			}
+			vm.MustRun(t, "sha256sum -c /root/cert.sum")
+			want := " \n"
+			if hook == "deploy_hook" {
+				want = "/etc/letsencrypt/live/" + hook + " a.example.com\n"
+			}
+			if got := vm.MustRun(t, "cat /root/"+hook+"-runs"); got != want {
+				t.Errorf("retried hook output = %q, want %q", got, want)
+			}
+			r = lab.Winch(t, dir, "plan", "site", "--exit-code")
+			if r.Code != 0 || !unchanged(r.Stdout, 1) {
+				t.Errorf("third plan: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+			}
+		})
+	}
+
+	t.Run("partial recovery", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+			"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",
+			"pipelines/site.yaml": `stages:
+  - name: test
+    hosts: all
+    steps:
+      - certbot:
+          name: both
+          domains: [a.example.com]
+          email: admin@example.com
+          deploy_hook: |
+            test -e /root/both-ready
+            echo deploy >> /root/both-deploy
+          post_hook: |
+            if [ ! -e /root/both-post-failed ]; then
+              touch /root/both-post-failed
+              exit 3
+            fi
+            echo post >> /root/both-post
+`,
+		})
+		r := lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "Hook 'deploy-hook' reported") || !strings.Contains(r.Stderr, "Hook 'post-hook' reported") {
+			t.Fatalf("first apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		vm.MustRun(t, "sha256sum /etc/letsencrypt/live/both/cert.pem > /root/both.sum")
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "deploy_hook") {
+			t.Fatalf("failed retry: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		r = lab.Winch(t, dir, "plan", "site", "--exit-code")
+		if r.Code != 2 || !strings.Contains(r.Stdout, "pending deploy_hook") || strings.Contains(r.Stdout, "pending post_hook") {
+			t.Errorf("partial recovery plan: exit %d, want only deploy pending\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if got := vm.MustRun(t, "cat /root/both-post 2>/dev/null; true"); got != "post\n" {
+			t.Errorf("post after failed deploy retry = %q, want one successful post", got)
+		}
+		vm.MustRun(t, "touch /root/both-ready")
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 {
+			t.Fatalf("final retry: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		vm.MustRun(t, "sha256sum -c /root/both.sum")
+		if got := vm.MustRun(t, "cat /root/both-post /root/both-deploy"); got != "post\ndeploy\n" {
+			t.Errorf("successful hooks = %q, want one run of each", got)
+		}
+		r = lab.Winch(t, dir, "plan", "site", "--exit-code")
+		if r.Code != 0 || !unchanged(r.Stdout, 1) {
+			t.Errorf("final plan: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+
+	t.Run("record failure prevents issue", func(t *testing.T) {
+		vm.MustRun(t, "mkdir -p /var/lib/winch/certbot-hooks && mount -t tmpfs none /var/lib/winch/certbot-hooks && mount -o remount,ro /var/lib/winch/certbot-hooks")
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: hooks\ninventory: inventories/test.yaml\n",
+			"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",
+			"pipelines/site.yaml": `stages:
+  - name: test
+    hosts: all
+    steps:
+      - certbot:
+          name: record-failure
+          domains: [a.example.com]
+          email: admin@example.com
+          deploy_hook: |
+            test -e /root/record-ready
+            echo deployed > /root/record-deployed
+`,
+		})
+		r := lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "read-only file system") {
+			t.Fatalf("apply without record storage: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if got := vm.MustRun(t, "test ! -e /etc/letsencrypt/renewal/record-failure.conf && echo absent; true"); got != "absent\n" {
+			t.Errorf("certificate was issued before recovery could be recorded")
+		}
+		vm.MustRun(t, "mount -o remount,rw /var/lib/winch/certbot-hooks && touch /root/record-ready")
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 {
+			t.Fatalf("apply with record storage: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if got := vm.MustRun(t, "cat /root/record-deployed 2>/dev/null; true"); got != "deployed\n" {
+			t.Errorf("deploy after storage recovery = %q", got)
+		}
+		vm.MustRun(t, "umount /var/lib/winch/certbot-hooks")
 	})
 }

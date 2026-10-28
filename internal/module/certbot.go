@@ -30,6 +30,10 @@ type Certbot struct {
 	PostHook      *string       `yaml:"post_hook" json:"post_hook,omitempty"`
 	DeployHook    *string       `yaml:"deploy_hook" json:"deploy_hook,omitempty"`
 	ReuseKey      bool          `yaml:"reuse_key" json:"reuse_key,omitempty"`
+
+	// PendingHooks are the failed hooks recorded by the helper.
+	PendingHooks []string `yaml:"-" json:"-"`
+	issue        bool
 }
 
 func (c *Certbot) Main() string { return c.Name }
@@ -272,6 +276,10 @@ func (c *Certbot) check(dir string) (Result, error) {
 		return Result{}, fmt.Errorf("certificate %s: %s exists, but its certificate does not; certbot would make a new certificate %s-0001 on each run; remove the rest with certbot delete --cert-name %s", c.Name, renewalPath(dir, c.Name), c.Name, c.Name)
 	}
 	changes := c.changes(cur)
+	c.issue = changes != nil
+	for _, hook := range c.PendingHooks {
+		changes = append(changes, "pending "+hook)
+	}
 	switch {
 	case changes == nil:
 		return Result{Status: OK}, nil
@@ -326,16 +334,62 @@ func unwrappedCertbotHook(hook string) string {
 	return command
 }
 
+func (c *Certbot) PrepareHooks() {
+	if c.issue && c.DeployHook != nil && !slices.Contains(c.PendingHooks, "deploy_hook") {
+		c.PendingHooks = append(c.PendingHooks, "deploy_hook")
+	}
+	if c.issue && c.PostHook != nil && !slices.Contains(c.PendingHooks, "post_hook") {
+		c.PendingHooks = append(c.PendingHooks, "post_hook")
+	}
+	slices.Sort(c.PendingHooks)
+}
+
 func (c *Certbot) Apply(ctx context.Context, _ func(string)) error {
 	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
 	defer cancel()
+	if !c.issue {
+		var errs []error
+		for _, hook := range slices.Clone(c.PendingHooks) {
+			command := c.DeployHook
+			var env []string
+			if hook == "post_hook" {
+				command = c.PostHook
+			} else {
+				env = []string{"RENEWED_LINEAGE=" + path.Join(letsencrypt, "live", c.Name), "RENEWED_DOMAINS=" + strings.Join(c.Domains, " ")}
+			}
+			if command != nil {
+				if _, err := run(ctx, env, "sh", "-ec", *command); err != nil {
+					errs = append(errs, fmt.Errorf("%s: %w", hook, err))
+					continue
+				}
+			}
+			c.PendingHooks = slices.DeleteFunc(c.PendingHooks, func(h string) bool { return h == hook })
+		}
+		return errors.Join(errs...)
+	}
 	cmd := exec.CommandContext(ctx, "certbot", c.args()...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
-	if err := wait(ctx, cmd, KillDelay); err != nil {
-		return failure("certbot certonly", err, out.String())
+	err := wait(ctx, cmd, KillDelay)
+	output := out.String()
+	var failedHooks []string
+	for line := range strings.Lines(output) {
+		if hook := failedCertbotHook(line); hook != "" {
+			failedHooks = append(failedHooks, strings.ReplaceAll(hook, "-", "_"))
+		}
 	}
-	return hookFailure(out.String())
+	for _, hook := range []string{"deploy_hook", "post_hook"} {
+		failed := slices.Contains(failedHooks, hook)
+		if failed && !slices.Contains(c.PendingHooks, hook) {
+			c.PendingHooks = append(c.PendingHooks, hook)
+		} else if !failed && err == nil {
+			c.PendingHooks = slices.DeleteFunc(c.PendingHooks, func(h string) bool { return h == hook })
+		}
+	}
+	if err != nil {
+		return failure("certbot certonly", err, output)
+	}
+	return hookFailure(output)
 }
 
 // hookFailure returns an error with certbot's lines about the hooks that
@@ -348,7 +402,7 @@ func hookFailure(out string) error {
 		switch {
 		case strings.HasPrefix(line, "Hook '"):
 			inHook = true
-			failed = failed || strings.Contains(line, "' reported error code ")
+			failed = failed || failedCertbotHook(line) != ""
 		case !inHook || !strings.HasPrefix(line, " "):
 			inHook = false
 			continue
@@ -359,4 +413,16 @@ func hookFailure(out string) error {
 		return nil
 	}
 	return errors.New("a hook failed:\n" + strings.Join(lines[max(0, len(lines)-10):], "\n"))
+}
+
+func failedCertbotHook(line string) string {
+	hook, ok := strings.CutPrefix(line, "Hook '")
+	if !ok {
+		return ""
+	}
+	hook, _, ok = strings.Cut(hook, "' reported error code ")
+	if !ok {
+		return ""
+	}
+	return hook
 }

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -47,7 +48,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			lock.Close()
 		}
 	}()
-	var handlers, thens, downloads records
+	var handlers, thens, downloads, certbotHooks records
 	var rb *rollbacks
 	var loginUser *module.Login
 	for {
@@ -73,6 +74,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			handlers = records{dir: filepath.Join(dir, "handlers"), project: project, what: "pending handlers"}
 			thens = records{dir: filepath.Join(dir, "then"), project: project, what: "pending then records"}
 			downloads = records{dir: filepath.Join(dir, "downloads"), project: project, what: "download records"}
+			certbotHooks = records{dir: filepath.Join(dir, "certbot-hooks"), project: project, what: "pending certbot hooks"}
 			rb = &rollbacks{dir: filepath.Join(dir, "rollback"), project: project, self: self}
 			if err == nil {
 				loginUser, err = module.LookupLogin(login.LoginUID)
@@ -109,9 +111,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "health":
 			err = runHealth(ctx, req.Params)
 		case req.Method == "check":
-			result, err = step(ctx, req.Params, false, login, loginUser, handlers, thens, downloads, rb, note)
+			result, err = step(ctx, req.Params, false, login, loginUser, handlers, thens, downloads, certbotHooks, rb, note)
 		case req.Method == "apply":
-			result, err = step(ctx, req.Params, true, login, loginUser, handlers, thens, downloads, rb, note)
+			result, err = step(ctx, req.Params, true, login, loginUser, handlers, thens, downloads, certbotHooks, rb, note)
 		case req.Method == "confirm":
 			err = rb.confirm()
 		case req.Method == "rollback":
@@ -236,7 +238,7 @@ func deleteOld(bin, self string) error {
 // notifies and its then, and makes the changes the check found, or runs a
 // deferred step. When the changes fail, it removes the records that it added.
 // After a download, it records the checksum of the path.
-func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, loginUser *module.Login, handlers, thens, downloads records, rb *rollbacks, note func(string)) (protocol.StepResult, error) {
+func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, loginUser *module.Login, handlers, thens, downloads, certbotHooks records, rb *rollbacks, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
@@ -257,6 +259,16 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		}
 		d.Recorded = sum
 	}
+	c, isCertbot := m.(*module.Certbot)
+	if isCertbot {
+		hooks, err := recorded(certbotHooks, c.Name)
+		if err != nil {
+			return protocol.StepResult{}, err
+		}
+		if hooks != "" {
+			c.PendingHooks = strings.Split(hooks, ",")
+		}
+	}
 	res, err := m.Check(ctx, &s.State, note)
 	if err == nil && res.Status == module.Change {
 		if line := module.Guard(module.Touches(m), loginUser); line != "" {
@@ -271,6 +283,14 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	// A deferred step changes nothing, so it notifies nothing.
 	if res.Status == module.OK {
 		return out, m.Apply(ctx, note)
+	}
+	if isCertbot {
+		c.PrepareHooks()
+		if len(c.PendingHooks) > 0 {
+			if err := record(certbotHooks, strings.Join(c.PendingHooks, ","), c.Name); err != nil {
+				return out, err
+			}
+		}
 	}
 	// The plan has shown the diff already.
 	out.Old, out.OldReason = nil, ""
@@ -309,7 +329,17 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 		}
 	}
-	if err := m.Apply(ctx, note); err != nil {
+	err = m.Apply(ctx, note)
+	if isCertbot {
+		var recordErr error
+		if len(c.PendingHooks) == 0 {
+			recordErr = forget(certbotHooks, c.Name)
+		} else {
+			recordErr = record(certbotHooks, strings.Join(c.PendingHooks, ","), c.Name)
+		}
+		err = errors.Join(err, recordErr)
+	}
+	if err != nil {
 		if guard {
 			if rerr := rb.rollback(ctx); rerr != nil {
 				err = fmt.Errorf("%w; the rollback failed: %w", err, rerr)

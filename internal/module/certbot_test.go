@@ -425,3 +425,29 @@ func TestCertbotMatchingLiteralWrapper(t *testing.T) {
 		t.Errorf("matching literal hook: changes %q", got)
 	}
 }
+
+// spec: Modules/certbot
+func TestCertbotPendingHookOrder(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "hooks")
+	t.Setenv("WINCH_HOOK_LOG", log)
+	c := &Certbot{
+		Name: "order", PendingHooks: []string{"post_hook"}, issue: true,
+		DeployHook: new(`echo deploy >> "$WINCH_HOOK_LOG"`),
+		PostHook:   new(`echo post >> "$WINCH_HOOK_LOG"`),
+	}
+	c.PrepareHooks()
+	if want := []string{"deploy_hook", "post_hook"}; !slices.Equal(c.PendingHooks, want) {
+		t.Errorf("pending before issue = %v, want %v", c.PendingHooks, want)
+	}
+	c.issue = false
+	if err := c.Apply(t.Context(), func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "deploy\npost\n" {
+		t.Errorf("retry order = %q, want deploy then post", got)
+	}
+}

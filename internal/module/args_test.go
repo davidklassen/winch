@@ -10,6 +10,7 @@ import (
 // controllerOnly are the fields that the controller turns into other fields
 // before it sends a step, and the fields that the helper sets.
 var controllerOnly = map[string][]string{
+	"certbot":  {"PendingHooks"},
 	"dir":      {"ModePos"},
 	"download": {"Recorded"},
 	"file":     {"Content", "Template", "TemplatePos", "Source", "SourcePos"},
