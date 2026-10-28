@@ -116,6 +116,12 @@ md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.con
 			After: `[ "$(cat /root/deployed)" = "$(printf 'one\ntwo')" ]`,
 		},
 		{
+			Name:  "a hook of several lines with quotes",
+			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: new("test \"$X\" = '' && echo 'one' >> /root/deployed\necho '\"\"\"' >> /root/deployed\necho \"'''\" >> /root/deployed")},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook test \"$X\" = '' && echo 'one' >> /root/deployed ..."}},
+			After: `[ "$(cat /root/deployed)" = "$(printf "one\n\"\"\"\n'''")" ] && { certbot renew --dry-run --cert-name a.example.com >/root/renew.log 2>&1 || { cat /root/renew.log; exit 1; }; }`,
+		},
+		{
 			Name:    "a renewal file without its certificate",
 			Setup:   issue("--cert-name a.example.com -d a.example.com") + "rm -r /etc/letsencrypt/live/a.example.com",
 			Args:    &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com"},

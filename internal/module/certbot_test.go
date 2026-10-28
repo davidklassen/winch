@@ -343,7 +343,7 @@ func TestHookFailure(t *testing.T) {
 // spec: Modules/certbot (compare hooks as the step gives them)
 func TestCertbotWrappedHooks(t *testing.T) {
 	for _, key := range []string{"pre_hook", "post_hook", "deploy_hook"} {
-		for _, saved := range []string{"echo 'hello'\ntrue", "sh -ec 'echo '\\''hello'\\''\ntrue'"} {
+		for _, saved := range []string{"echo 'hello'\ntrue", "sh -ec 'echo '\"'\"'hello'\"'\"'\ntrue'"} {
 			t.Run(key+"/"+saved, func(t *testing.T) {
 				command := "echo 'hello'\ntrue"
 				c := &Certbot{Name: "example.com", Domains: []string{"example.com"}, Email: "a@example.com"}
@@ -449,5 +449,59 @@ func TestCertbotPendingHookOrder(t *testing.T) {
 	}
 	if string(got) != "deploy\npost\n" {
 		t.Errorf("retry order = %q, want deploy then post", got)
+	}
+}
+
+// spec: Modules/certbot (hooks round-trip through the renewal file)
+func TestCertbotHookRoundTrip(t *testing.T) {
+	// Each line is what configobj writes for the wrapped command.
+	for _, tt := range []struct{ command, line string }{
+		{"test \"$X\" = '' || systemctl reload nginx", "renew_hook = '''sh -ec 'test '\\\"'$X'\\\"' = '\"'\"''\"'\"' || systemctl reload nginx''''\n"},
+		{"test $X = '' || true", "renew_hook = '''sh -ec 'test $X = '\"'\"''\"'\"' || true''''\n"},
+		{"echo '''", "renew_hook = '''sh -ec 'echo '\"'\"''\"'\"''\"'\"'''''\n"},
+		{"echo one\ntest \"$X\" = '' || echo 'two'\necho three", "renew_hook = '''sh -ec 'echo one\ntest '\\\"'$X'\\\"' = '\"'\"''\"'\"' || echo '\"'\"'two'\"'\"'\necho three''''\n"},
+		{"x\ny = ''  # c\nz", "renew_hook = '''sh -ec 'x\ny = '\"'\"''\"'\"'  # c\nz''''\n"},
+		{"echo \"x\"", "renew_hook = '''sh -ec 'echo '\\\"'x'\\\"'''''\n"},
+		{"python3 -c \"\"\"\nprint(1)\"\"\"\necho ''", "renew_hook = '''sh -ec 'python3 -c '\\\"''\\\"''\\\"'\nprint(1)'\\\"''\\\"''\\\"'\necho '\"'\"''\"'\"'''''\n"},
+	} {
+		t.Run(tt.command, func(t *testing.T) {
+			got, err := parseConfobj([]byte(tt.line))
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := got[""]["renew_hook"]
+			if len(v) != 1 || v[0] != certbotHook(tt.command) {
+				t.Fatalf("read %q, wrote %q", v, certbotHook(tt.command))
+			}
+			if c := unwrappedCertbotHook(v[0]); c != tt.command {
+				t.Errorf("unwrapped %q, want %q", c, tt.command)
+			}
+		})
+	}
+}
+
+// spec: Modules/certbot (the check reads the renewal file)
+func TestParseConfobjTripleQuotes(t *testing.T) {
+	// configobj reads each line to this value.
+	for _, tt := range []struct{ line, want string }{
+		{"h = '''sh -ec 'test \"$X\" = '\\'''\\'' || systemctl reload nginx''''", "sh -ec 'test \"$X\" = '\\'''\\'' || systemctl reload nginx'"},
+		{"h = '''sh -ec 'a\nb = '\\'''\\''''''", "sh -ec 'a\nb = '\\'''\\'''"},
+		{"h = \"\"\"sh -ec 'echo \"\"\"'\"\"\"", "sh -ec 'echo \"\"\"'"},
+		{"h = '''a'''' # x '''", "a'"},
+		{"h = '''a\nb''''  # x", "a\nb'"},
+	} {
+		got, err := parseConfobj([]byte(tt.line))
+		if err != nil {
+			t.Errorf("parseConfobj(%q): %v", tt.line, err)
+			continue
+		}
+		if v := got[""]["h"]; len(v) != 1 || v[0] != tt.want {
+			t.Errorf("parseConfobj(%q) = %q, want %q", tt.line, v, tt.want)
+		}
+	}
+	for _, line := range []string{"h = '''a''' b'''x", "h = '''a\nb''' c\nd'''"} {
+		if _, err := parseConfobj([]byte(line)); err == nil {
+			t.Errorf("parseConfobj(%q): no error", line)
+		}
 	}
 }

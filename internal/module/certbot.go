@@ -313,8 +313,15 @@ func (c *Certbot) args() []string {
 	return append(args, "--force-renewal")
 }
 
+// The quoting puts neither ”' nor """ in the hook: configobj ends a value
+// of several lines at the first line with its triple quotes.
+var (
+	hookQuote   = strings.NewReplacer(`'`, `'"'"'`, `"`, `'\"'`)
+	hookUnquote = strings.NewReplacer(`'"'"'`, `'`, `'\"'`, `"`)
+)
+
 func certbotHook(command string) string {
-	return "sh -ec '" + strings.ReplaceAll(command, "'", `'\''`) + "'"
+	return "sh -ec '" + hookQuote.Replace(command) + "'"
 }
 
 func unwrappedCertbotHook(hook string) string {
@@ -326,7 +333,7 @@ func unwrappedCertbotHook(hook string) string {
 	if !ok {
 		return hook
 	}
-	command = strings.ReplaceAll(command, `'\''`, "'")
+	command = hookUnquote.Replace(command)
 	if command == "" || certbotHook(command) != hook {
 		return hook
 	}

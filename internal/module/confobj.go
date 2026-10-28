@@ -43,29 +43,46 @@ func parseConfobj(data []byte) (map[string]map[string][]string, error) {
 		var v []string
 		var err error
 		if q := rest[:min(3, len(rest))]; q == `'''` || q == `"""` {
-			// The value ends at the closing quotes, on this line or a later one.
-			body := rest[3:]
-			for !strings.Contains(body, q) && i+1 < len(lines) {
+			body, ok := closeTriple(rest[3:], q)
+			if !strings.Contains(rest[3:], q) {
+				// The value ends on the first later line with the quotes.
+				body = rest[3:]
+				for i+1 < len(lines) && !strings.Contains(lines[i+1], q) {
+					i++
+					body += "\n" + lines[i]
+				}
+				if i+1 == len(lines) {
+					return nil, fmt.Errorf("line %d: %s is not closed", n, q)
+				}
 				i++
-				body += "\n" + lines[i]
+				var last string
+				last, ok = closeTriple(lines[i], q)
+				body += "\n" + last
 			}
-			end := strings.Index(body, q)
-			if end < 0 {
-				return nil, fmt.Errorf("line %d: %s is not closed", n, q)
-			}
-			for end+3 < len(body) && body[end+3] == q[0] {
-				end++
-			}
-			if after := strings.TrimSpace(body[end+3:]); after != "" && after[0] != '#' {
+			if !ok {
 				return nil, fmt.Errorf("line %d: text after the closing %s", n, q)
 			}
-			v = []string{body[:end]}
+			v = []string{body}
 		} else if v, err = parseConfItems(rest); err != nil {
 			return nil, fmt.Errorf("line %d: %w", n, err)
 		}
 		out[section][key] = v
 	}
 	return out, nil
+}
+
+// closeTriple returns the text of s before the first closing quotes q that
+// only white space or a comment follows, as configobj reads it.
+func closeTriple(s, q string) (string, bool) {
+	for end := 0; end+len(q) <= len(s); end++ {
+		if !strings.HasPrefix(s[end:], q) {
+			continue
+		}
+		if after := strings.TrimSpace(s[end+len(q):]); after == "" || after[0] == '#' {
+			return s[:end], true
+		}
+	}
+	return "", false
 }
 
 // parseConfItems reads a value of one line: one item, or items with commas.
