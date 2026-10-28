@@ -163,3 +163,112 @@ func TestWriteSecretInWinchYAML(t *testing.T) {
 		t.Errorf("token = %q", got)
 	}
 }
+
+// topLevel is the example of the spec. A step reads domain: a value that
+// nothing reads is a load error.
+const topLevel = `name: simple
+hosts:
+  web1.example.com: {}
+groups:
+  all:
+    vars:
+      domain: example.com
+steps:
+  - pkg:
+      name: nginx
+    when: !expr 'vars.domain != ""'
+    notify: reload
+handlers:
+  reload:
+    - service:
+        name: nginx
+        reloaded: true
+`
+
+// spec: Project layout
+func TestTopLevel(t *testing.T) {
+	only := map[string]string{"winch.yaml": topLevel, "inventories/test.yaml": "", "pipelines/site.yaml": ""}
+	t.Run("the spec example", func(t *testing.T) {
+		p, err := Load(t.Context(), writeProject(t, only), "", "", nil, Keys{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := describe(p); !strings.HasPrefix(got, "project simple, inventory winch.yaml\nhost web1.example.com address=web1.example.com user=\npipeline simple\nstage simple hosts=all targets=web1.example.com\n") {
+			t.Errorf("describe:\n%s", got)
+		}
+		if h := p.Inventory.Hosts[0]; h.Vars["domain"] != "example.com" {
+			t.Errorf("vars: %v", h.Vars)
+		}
+		s := p.Pipeline.Stages[0]
+		if len(s.Handlers) != 1 || s.Handlers[0].Name != "reload" || s.Handlers[0].Stage != "simple" {
+			t.Errorf("handlers: %+v", s.Handlers)
+		}
+	})
+	t.Run("--inventory and --stages take the project name", func(t *testing.T) {
+		p, err := Load(t.Context(), writeProject(t, only), "simple", "", nil, Keys{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Select(Selection{Stages: "simple"}); err != nil {
+			t.Error(err)
+		}
+	})
+	t.Run("the pipeline is not one of the others", func(t *testing.T) {
+		p, err := Load(t.Context(), writeProject(t, only), "", "", nil, Keys{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(p.others) != 0 {
+			t.Errorf("others: %d", len(p.others))
+		}
+	})
+	t.Run("parallelism and health", func(t *testing.T) {
+		files := map[string]string{"winch.yaml": topLevel + "parallelism: 2\nhealth:\n  command: \"true\"\n", "inventories/test.yaml": "", "pipelines/site.yaml": ""}
+		p, err := Load(t.Context(), writeProject(t, files), "", "", nil, Keys{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s := p.Pipeline.Stages[0]; s.Parallelism != 2 || s.Health == nil || s.Health.Command != "true" {
+			t.Errorf("stage: parallelism %d, health %+v", s.Parallelism, s.Health)
+		}
+	})
+	t.Run("a mix gives one error", func(t *testing.T) {
+		_, err := Load(t.Context(), writeProject(t, map[string]string{"winch.yaml": topLevel}), "", "", nil, Keys{})
+		want := "winch.yaml:2:1: hosts: the hosts at the top of winch.yaml and inventories/test.yaml are two inventories; keep one of the two\n" +
+			"winch.yaml:8:1: steps: the steps at the top of winch.yaml and pipelines/site.yaml are two pipelines; keep one of the two"
+		if err == nil || err.Error() != want {
+			t.Errorf("err = %v, want %q", err, want)
+		}
+	})
+	tests := []struct {
+		name     string
+		files    map[string]string
+		pipeline string
+		want     string
+	}{
+		{name: "a pipeline name", files: only, pipeline: "site",
+			want: `pipeline "site": the steps at the top of winch.yaml are the only pipeline; leave out the pipeline name`},
+		{name: "hosts and an inventory file", files: map[string]string{"winch.yaml": topLevel, "pipelines/site.yaml": ""},
+			want: "winch.yaml:2:1: hosts: the hosts at the top of winch.yaml and inventories/test.yaml are two inventories; keep one of the two"},
+		{name: "groups and an inventory key", files: map[string]string{"winch.yaml": strings.Replace(topLevel, "hosts:\n  web1.example.com: {}\n", "inventories:\n  prod:\n    hosts:\n      web1.example.com: {}\n", 1), "inventories/test.yaml": "", "pipelines/site.yaml": ""},
+			want: "winch.yaml:6:1: groups: the groups at the top of winch.yaml and inventories.prod of winch.yaml are two inventories; keep one of the two"},
+		{name: "steps and a pipeline file", files: map[string]string{"winch.yaml": topLevel, "inventories/test.yaml": ""},
+			want: "winch.yaml:8:1: steps: the steps at the top of winch.yaml and pipelines/site.yaml are two pipelines; keep one of the two"},
+		{name: "handlers and a pipeline key", files: map[string]string{"winch.yaml": strings.Replace(topLevel, "steps:\n  - pkg:\n      name: nginx\n    when: !expr 'vars.domain != \"\"'\n    notify: reload\n", "pipelines:\n  other:\n    steps: []\n", 1), "inventories/test.yaml": "", "pipelines/site.yaml": ""},
+			want: "winch.yaml:11:1: handlers: the handlers at the top of winch.yaml and pipelines.other of winch.yaml are two pipelines; keep one of the two"},
+		{name: "handlers without steps", files: map[string]string{"winch.yaml": strings.Replace(topLevel, "steps:\n  - pkg:\n      name: nginx\n    when: !expr 'vars.domain != \"\"'\n    notify: reload\n", "", 1), "inventories/test.yaml": "", "pipelines/site.yaml": ""},
+			want: "winch.yaml:8:1: a pipeline needs steps or stages"},
+		{name: "no pipeline name", files: map[string]string{"winch.yaml": "name: acme\ninventory: test\n"},
+			want: "name a pipeline: site; only steps at the top of winch.yaml run without a name"},
+		{name: "no pipeline", files: map[string]string{"winch.yaml": "name: acme\nhosts:\n  web1: {}\n", "inventories/test.yaml": "", "pipelines/site.yaml": ""},
+			want: "no pipeline: add steps to winch.yaml, or a file to pipelines/"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(t.Context(), writeProject(t, tt.files), "", tt.pipeline, nil, Keys{})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}

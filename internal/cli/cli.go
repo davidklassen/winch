@@ -155,7 +155,9 @@ const planHelp = `Examples:
 Show the changes that apply would make, and the plan hash. Change
 nothing.
 
-Usage: winch plan <pipeline> [flags]
+Usage: winch plan [<pipeline>] [flags]
+
+Leave out the pipeline name when the steps are at the top of winch.yaml.
 
 Flags:
   --inventory <name>            The inventory for this run.
@@ -182,7 +184,9 @@ const applyHelp = `Examples:
 
 Show the changes, ask, then make them.
 
-Usage: winch apply <pipeline> [flags]
+Usage: winch apply [<pipeline>] [flags]
+
+Leave out the pipeline name when the steps are at the top of winch.yaml.
 
 winch asks only when stdin and stderr are terminals. Without a terminal,
 and without --yes or --check, apply prints the plan and exits with code
@@ -447,12 +451,16 @@ func (env Env) identity() (secret.Identity, error) {
 }
 
 func (o *output) load(ctx context.Context, f *flags, cmd string, args []string) (*project.Project, bool) {
-	if len(args) != 1 {
-		o.fail(fmt.Errorf("winch: %s needs one pipeline", cmd))
+	if len(args) > 1 {
+		o.fail(fmt.Errorf("winch: %s takes one pipeline", cmd))
 		return nil, false
 	}
+	var name string
+	if len(args) == 1 {
+		name = args[0]
+	}
 	return o.loadWith(f, cmd, func(keys project.Keys) (*project.Project, error) {
-		return project.Load(ctx, o.env.Dir, f.inventory, args[0], f.set, keys)
+		return project.Load(ctx, o.env.Dir, f.inventory, name, f.set, keys)
 	})
 }
 

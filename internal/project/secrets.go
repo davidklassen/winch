@@ -2,6 +2,7 @@ package project
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -579,9 +580,7 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	if read := l.readNames(); !read[name] {
 		return "", errors.Join(errors.New(unknownVariable(name, read)), lErr, plErr)
 	}
-	if inventory == "" {
-		inventory = cfg.Inventory
-	}
+	inventory = cmp.Or(inventory, cfg.Inventory, l.layout.top())
 	if inventory == "" {
 		return "", errors.New("no inventory: use --inventory, or set inventory in winch.yaml")
 	}
@@ -594,7 +593,9 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	var prefix []string
 	if inv.node != nil {
 		file = "winch.yaml"
-		prefix = []string{"inventories", inv.name}
+		if !inv.top {
+			prefix = []string{"inventories", inv.name}
+		}
 	}
 	path, err := filepath.EvalSymlinks(projectPath(dir, file))
 	if errors.Is(err, fs.ErrNotExist) {

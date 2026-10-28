@@ -56,6 +56,14 @@ type Config struct {
 	Inventories  *yamlx.Node `yaml:"inventories"`
 	Pipelines    *yamlx.Node `yaml:"pipelines"`
 	Recipes      *yamlx.Node `yaml:"recipes"`
+	// The top-level inventory and pipeline. readLayout takes them from root.
+	Hosts       *yamlx.Node `yaml:"hosts"`
+	Groups      *yamlx.Node `yaml:"groups"`
+	Steps       *yamlx.Node `yaml:"steps"`
+	Handlers    *yamlx.Node `yaml:"handlers"`
+	Parallelism *yamlx.Node `yaml:"parallelism"`
+	Health      *yamlx.Node `yaml:"health"`
+	root        *yamlx.Node
 }
 
 var projectNameRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
@@ -172,7 +180,7 @@ type nameAt struct {
 // inventory is the one named inventory, or the default from winch.yaml. set
 // holds the --set flags.
 func Load(ctx context.Context, dir, inventory, pipeline string, set []string, keys Keys) (*Project, error) {
-	return load(ctx, dir, inventory, set, keys, pipeline, func(l *loader) (*Pipeline, error) { return l.loadPipeline(pipeline) })
+	return load(ctx, dir, inventory, set, keys, true, func(l *loader) (*Pipeline, error) { return l.loadPipeline(pipeline) })
 }
 
 // Command is a winch run or winch exec on the command line: a host pattern,
@@ -188,12 +196,13 @@ type Command struct {
 // Its one stage run holds the step of c on the hosts of its pattern; without a
 // module, the stage has no steps.
 func LoadCommand(ctx context.Context, dir, inventory string, keys Keys, c Command) (*Project, error) {
-	return load(ctx, dir, inventory, nil, keys, "", func(l *loader) (*Pipeline, error) { return l.commandPipeline(c) })
+	return load(ctx, dir, inventory, nil, keys, false, func(l *loader) (*Pipeline, error) { return l.commandPipeline(c) })
 }
 
 // load loads the project with the pipeline that pipeline returns, and every
-// pipeline other than the one named skip.
-func load(ctx context.Context, dir, inventory string, set []string, keys Keys, skip string, pipeline func(*loader) (*Pipeline, error)) (*Project, error) {
+// other pipeline. With own, that pipeline is one of the project and not one
+// of the others.
+func load(ctx context.Context, dir, inventory string, set []string, keys Keys, own bool, pipeline func(*loader) (*Pipeline, error)) (*Project, error) {
 	cfg, cfgErr := loadConfig(dir)
 	if cfg == nil {
 		return nil, cfgErr
@@ -211,6 +220,10 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, s
 	// The other pipelines count only for dir purge; their warnings show in
 	// winch validate.
 	n := len(l.warnings)
+	skip := ""
+	if own {
+		skip = pl.Name
+	}
 	others, othersErr := l.otherPipelines(skip)
 	l.warnings = l.warnings[:n]
 	for _, o := range others {
@@ -396,12 +409,13 @@ func newLoader(dir string, cfg *Config) (*loader, error) {
 	return l, errors.Join(errs...)
 }
 
-// loadInventories loads the inventory flag, or the default from winch.yaml.
-// Without both, it loads every inventory when all is true. It returns the
+// loadInventories loads the inventory flag, the default from winch.yaml, or
+// the inventory at the top of winch.yaml.
+// Without any of them, it loads every inventory when all is true. It returns the
 // inventories that loaded.
 func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setValue) ([]*Inventory, error) {
-	if flag != "" || cfg.Inventory != "" {
-		p, err := l.layout.inventory(cmp.Or(flag, cfg.Inventory))
+	if name := cmp.Or(flag, cfg.Inventory, l.layout.top()); name != "" {
+		p, err := l.layout.inventory(name)
 		if err != nil && flag == "" {
 			err = yamlx.Errorf(cfg.InventoryPos, "%s", err)
 		}
@@ -613,7 +627,7 @@ func loadConfig(dir string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	var cfg Config
+	cfg := Config{root: n}
 	return &cfg, yamlx.Decode(n, &cfg)
 }
 
@@ -670,6 +684,18 @@ func (h *healthFile) Validate() error {
 }
 
 func (l *loader) loadPipeline(name string) (*Pipeline, error) {
+	if pls := l.layout.pipelines; len(pls) > 0 && pls[0].top {
+		if name != "" {
+			return nil, fmt.Errorf("pipeline %q: the steps at the top of winch.yaml are the only pipeline; leave out the pipeline name", name)
+		}
+		return l.decodePipeline(pls[0])
+	}
+	if len(l.layout.pipelines) == 0 {
+		return nil, errors.New("no pipeline: add steps to winch.yaml, or a file to pipelines/")
+	}
+	if name == "" {
+		return nil, fmt.Errorf("name a pipeline: %s; only steps at the top of winch.yaml run without a name", strings.Join(partNames(l.layout.pipelines), ", "))
+	}
 	i := slices.IndexFunc(l.layout.pipelines, func(p part) bool { return p.name == name })
 	if i < 0 {
 		yml := "pipelines/" + name + ".yml"

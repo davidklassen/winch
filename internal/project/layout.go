@@ -23,10 +23,15 @@ type part struct {
 	// for a file.
 	node *yamlx.Node
 	pos  yamlx.Pos
+	// top is true for the inventory or the pipeline at the top of winch.yaml.
+	top bool
 }
 
 // label names the part in messages.
 func (p part) label(kind string) string {
+	if p.top {
+		return "winch.yaml"
+	}
 	if p.node != nil {
 		return kind + "." + p.name + " of winch.yaml"
 	}
@@ -66,8 +71,36 @@ func readLayout(dir string, cfg *Config) (layout, error) {
 	errs = append(errs,
 		addKeys(&ly.inventories, cfg.Inventories, "inventories", "inventory"),
 		addKeys(&ly.pipelines, cfg.Pipelines, "pipelines", "pipeline"),
-		addKeys(&ly.recipes, cfg.Recipes, "recipes", "recipe"))
+		addKeys(&ly.recipes, cfg.Recipes, "recipes", "recipe"),
+		addTop(&ly.inventories, cfg, "inventories", "hosts", "groups"),
+		addTop(&ly.pipelines, cfg, "pipelines", "steps", "handlers", "parallelism", "health"))
 	return ly, errors.Join(errs...)
+}
+
+// addTop makes the keys of winch.yaml in keys the only part, with the name of
+// the project. Another part is an error; the top part replaces it, so the
+// load reports no error that follows from it.
+func addTop(parts *[]part, cfg *Config, kind string, keys ...string) error {
+	if cfg.root == nil {
+		return nil
+	}
+	n := &yamlx.Node{Kind: yamlx.Map}
+	for _, p := range cfg.root.Pairs {
+		if slices.Contains(keys, p.Key) {
+			n.Pairs = append(n.Pairs, p)
+		}
+	}
+	if len(n.Pairs) == 0 {
+		return nil
+	}
+	first := n.Pairs[0]
+	n.Pos = first.KeyPos
+	var err error
+	if len(*parts) > 0 {
+		err = yamlx.Errorf(first.KeyPos, "%s: the %s at the top of winch.yaml and %s are two %s; keep one of the two", first.Key, first.Key, (*parts)[0].label(kind), kind)
+	}
+	*parts = []part{{name: cfg.Name, node: n, pos: first.KeyPos, top: true}}
+	return err
 }
 
 // addKeys adds the keys of n, the field key of winch.yaml, to parts.
@@ -99,6 +132,14 @@ func partNames(parts []part) []string {
 		out = append(out, p.name)
 	}
 	return out
+}
+
+// top returns the name of the inventory at the top of winch.yaml, or "".
+func (ly layout) top() string {
+	if len(ly.inventories) > 0 && ly.inventories[0].top {
+		return ly.inventories[0].name
+	}
+	return ""
 }
 
 // inventory returns the inventory name.

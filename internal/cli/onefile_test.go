@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -112,5 +113,63 @@ func TestOneFileSecretGenerate(t *testing.T) {
 	r := winch(t, vmtest.WriteProject(t, map[string]string{"winch.yaml": cfg}), fakehost.New(), false, "", "secret", "generate", "vars.pw", "--inventory", "prod")
 	if r.code != exitOK || r.out != "wrote vars.pw into the vars of the group all in inventories.prod of winch.yaml\n" {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+}
+
+// spec: Project layout; CLI
+func TestTopLevel(t *testing.T) {
+	dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": `name: simple
+hosts:
+  web1.example.com: {}
+groups:
+  all:
+    vars:
+      domain: example.com
+steps:
+  - file:
+      path: /etc/motd
+      content: !tpl "{{ .vars.domain }}\n"
+    notify: reload
+handlers:
+  reload:
+    - service:
+        name: nginx
+        reloaded: true
+`})
+	r := winch(t, dir, fakehost.New(), false, "", "plan")
+	if r.code != exitOK || !strings.Contains(r.out, "web1.example.com") || !strings.Contains(r.out, "/etc/motd") {
+		t.Errorf("plan: exit %d\n%s%s", r.code, r.out, r.err)
+	}
+	r = winch(t, dir, fakehost.New(), false, "", "apply")
+	if r.code != exitConfirm || !strings.HasSuffix(r.out, "To apply, run: winch apply --check "+planHash(t, r.out)+"\n") {
+		t.Errorf("apply: exit %d\n%s%s", r.code, r.out, r.err)
+	}
+	r = winch(t, dir, fakehost.New(), false, "", "apply", "site")
+	if want := `pipeline "site": the steps at the top of winch.yaml are the only pipeline; leave out the pipeline name`; r.code != exitInvalid || !strings.Contains(r.err, want) {
+		t.Errorf("apply site: exit %d, stderr %q", r.code, r.err)
+	}
+	if r := winch(t, dir, fakehost.New(), false, "", "validate"); r.code != exitOK {
+		t.Errorf("validate: exit %d, stderr %q", r.code, r.err)
+	}
+}
+
+// spec: Variables/Secrets (winch secret generate); Project layout
+func TestTopLevelSecretGenerate(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := "name: simple\nrecipients:\n  - " + id.Recipient().String() + "\nhosts:\n  web1:\nsteps:\n  - file:\n      path: /etc/pw\n      content: !tpl \"{{ .vars.pw }}\\n\"\n"
+	dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": cfg})
+	r := winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw")
+	if r.code != exitOK || r.out != "wrote vars.pw into the vars of the group all in winch.yaml\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	r = winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw", "--host", "web1")
+	if r.code != exitOK || r.out != "wrote vars.pw into the vars of host \"web1\" in winch.yaml\n" {
+		t.Errorf("--host: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	if got := readFile(t, filepath.Join(dir, "winch.yaml")); !strings.Contains(got, "\nhosts:\n  web1:\n    vars:\n      pw: !secret ") || !strings.Contains(got, "\ngroups:\n  all:\n    vars:\n      pw: !secret ") {
+		t.Errorf("winch.yaml:\n%s", got)
 	}
 }

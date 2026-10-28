@@ -79,8 +79,8 @@ func TestInvalid(t *testing.T) {
 		{"no command", nil, "Commands:"},
 		{"unknown command", []string{"aply", "site"}, `unknown command "aply"; did you mean "apply"?`},
 		{"unknown flag", []string{"plan", "site", "--nope"}, "flag provided but not defined: -nope"},
-		{"no pipeline", []string{"plan"}, "plan needs one pipeline"},
-		{"two pipelines", []string{"apply", "site", "other"}, "apply needs one pipeline"},
+		{"no pipeline", []string{"plan"}, "name a pipeline: site; only steps at the top of winch.yaml run without a name"},
+		{"two pipelines", []string{"apply", "site", "other"}, "apply takes one pipeline"},
 		{"unknown pipeline", []string{"plan", "sit"}, `unknown pipeline "sit"; did you mean "site"?`},
 		{"validate with argument", []string{"validate", "site"}, "validate takes no arguments"},
 	}

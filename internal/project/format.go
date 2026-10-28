@@ -60,7 +60,7 @@ func Format(dir string) ([]string, error) {
 	if cfg, err := loadConfig(dir); cfg == nil {
 		return nil, err
 	}
-	format("winch.yaml", []string{"pipelines.*.steps", "pipelines.*.handlers.*", "pipelines.*.stages.*.steps", "pipelines.*.stages.*.handlers.*", "recipes.*.steps", "recipes.*.handlers.*"})
+	format("winch.yaml", []string{"steps", "handlers.*", "pipelines.*.steps", "pipelines.*.handlers.*", "pipelines.*.stages.*.steps", "pipelines.*.stages.*.handlers.*", "recipes.*.steps", "recipes.*.handlers.*"})
 	invs, err := list(dir, "inventories")
 	if err != nil {
 		return nil, err

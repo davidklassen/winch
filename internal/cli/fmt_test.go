@@ -281,3 +281,42 @@ func TestExamplesFormatted(t *testing.T) {
 		})
 	}
 }
+
+// spec: CLI (winch fmt); Project layout
+func TestFmtTopLevel(t *testing.T) {
+	dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": `name: simple
+hosts:
+    web1: {}
+steps:
+-   notify: reload
+    pkg:
+        name: nginx
+handlers:
+    reload:
+    -   service:
+            name: nginx
+            reloaded: true
+        name: Reload
+`})
+	r := winch(t, dir, fakehost.New(), false, "", "fmt")
+	if r.code != exitOK || r.out != "winch.yaml\n" {
+		t.Fatalf("fmt: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	want := `name: simple
+hosts:
+  web1: {}
+steps:
+  - pkg:
+      name: nginx
+    notify: reload
+handlers:
+  reload:
+    - name: Reload
+      service:
+        name: nginx
+        reloaded: true
+`
+	if got := readFile(t, filepath.Join(dir, "winch.yaml")); got != want {
+		t.Errorf("winch.yaml:\n%s\nwant\n%s", got, want)
+	}
+}
