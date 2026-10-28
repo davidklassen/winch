@@ -190,6 +190,8 @@ type hostRun struct {
 	managed map[string]managed
 	// lines are the checked line steps, by path.
 	lines map[string][]lineStep
+	// pkgs are the checked pkg steps.
+	pkgs []pkgStep
 	// written returns the paths that the project writes on the host, for dir
 	// steps with purge. It is set at the first contact.
 	written func() ([]string, error)
@@ -205,6 +207,16 @@ type lineStep struct {
 	where string
 	line  *module.Line
 	re    *regexp.Regexp
+}
+
+// pkgStep is a checked pkg step. others are the other packages that it
+// installs or upgrades, or that it removes. installs are the packages that it
+// installs in this run.
+type pkgStep struct {
+	where    string
+	pkg      *module.Pkg
+	others   []string
+	installs []string
 }
 
 type startedBy struct {
@@ -370,6 +382,9 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 		hr.trackRemoved(p.Step.Args)
 		hr.trackUnitFile(p.Step.Args, steps[i].Result)
 		if err := hr.order(p.Step.Args, steps[i].Result, where); err != nil {
+			return nil, err
+		}
+		if err := hr.packages(p.Step.Args, steps[i].Result, where); err != nil {
 			return nil, err
 		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
@@ -593,6 +608,47 @@ func (hr *hostRun) overlap(l *module.Line, where string) error {
 		}
 	}
 	hr.lines[l.Path] = append(hr.lines[l.Path], lineStep{where, l, re})
+	return nil
+}
+
+// packages fails a pkg step that undoes another pkg step of the host: a
+// removal takes a package that the other step installs, or an install pulls a
+// package that the other step removes. It fails a debconf step whose package
+// an earlier step installs in this run: the install read the old answer.
+func (hr *hostRun) packages(m module.Module, res module.Result, where string) error {
+	switch m := m.(type) {
+	case *module.Debconf:
+		for _, s := range hr.pkgs {
+			if slices.Contains(s.installs, m.Package) {
+				return fmt.Errorf("%s: %s installs %s before this step sets the answer; move this step before it", where, s.where, m.Package)
+			}
+		}
+	case *module.Pkg:
+		cur := pkgStep{where: where, pkg: m}
+		cur.installs, cur.others = module.PkgPlan(res.Changes)
+		self := cur
+		self.where = "this step"
+		for _, e := range hr.pkgs {
+			if e.pkg.Absent == m.Absent {
+				continue
+			}
+			gone, kept := e, self
+			if m.Absent {
+				gone, kept = self, e
+			}
+			for _, n := range gone.others {
+				if slices.Contains(kept.pkg.Name, n) {
+					return fmt.Errorf("%s: %s also removes %s, which %s installs; the two steps undo each other on every run", where, gone.where, n, kept.where)
+				}
+			}
+			for _, n := range kept.others {
+				if slices.Contains(gone.pkg.Name, n) {
+					return fmt.Errorf("%s: %s also installs %s, which %s removes; the two steps undo each other on every run", where, kept.where, n, gone.where)
+				}
+			}
+		}
+		hr.pkgs = append(hr.pkgs, cur)
+	}
 	return nil
 }
 

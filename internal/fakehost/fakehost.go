@@ -29,6 +29,7 @@ type Hosts struct {
 	noDirs     map[string]map[string]bool
 	pkgs       map[string]map[string]bool
 	pkgFiles   map[string]map[string]string
+	pkgDeps    map[string][]string
 	failCheck  map[string]bool
 	failApply  map[string]bool
 	Applies    int
@@ -92,6 +93,7 @@ func New() *Hosts {
 		noDirs:       map[string]map[string]bool{},
 		pkgs:         map[string]map[string]bool{},
 		pkgFiles:     map[string]map[string]string{},
+		pkgDeps:      map[string][]string{},
 		failCheck:    map[string]bool{},
 		failApply:    map[string]bool{},
 		Refreshes:    map[string]int{},
@@ -256,6 +258,25 @@ func (h *Hosts) SetPkgFile(pkg, path, content string) {
 		h.pkgFiles[pkg] = map[string]string{}
 	}
 	h.pkgFiles[pkg][path] = content
+}
+
+// SetPkg installs packages on a host.
+func (h *Hosts) SetPkg(host string, names ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.pkgs[host] == nil {
+		h.pkgs[host] = map[string]bool{}
+	}
+	for _, n := range names {
+		h.pkgs[host][n] = true
+	}
+}
+
+// SetPkgDeps makes the package pkg depend on deps.
+func (h *Hosts) SetPkgDeps(pkg string, deps ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.pkgDeps[pkg] = deps
 }
 
 // SetFacts sets the facts of a host. A host without them is Debian 13 on amd64.
@@ -512,15 +533,44 @@ func (c *Conn) checkDir(d *module.Dir) module.Result {
 		Changes: append(c.missingParents(d.Path), "owner root, group "+group+", mode "+mode)}
 }
 
-// checkPkg installs only. The first install with a state that is not fresh
-// refreshes the index.
+// checkPkg plans the packages that SetPkgDeps makes the step's packages
+// depend on, or depend on them. The first install with a state that is not
+// fresh refreshes the index.
 func (c *Conn) checkPkg(p *module.Pkg, st *module.State) module.Result {
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
-	var missing []string
+	installed := c.hosts.pkgs[c.host]
+	if p.Absent {
+		var todo, others []string
+		for _, n := range p.Name {
+			if installed[n] {
+				todo = append(todo, n)
+			}
+		}
+		if len(todo) == 0 {
+			return module.Result{Status: module.OK}
+		}
+		for n := range installed {
+			if !slices.Contains(todo, n) && slices.ContainsFunc(c.hosts.pkgDeps[n], func(d string) bool { return slices.Contains(todo, d) }) {
+				others = append(others, n)
+			}
+		}
+		changes := []string{"remove " + strings.Join(todo, ", ")}
+		if len(others) > 0 {
+			slices.Sort(others)
+			changes = append(changes, "also remove "+strings.Join(others, ", "))
+		}
+		return module.Result{Status: module.Change, Action: module.Remove, Changes: changes}
+	}
+	var missing, others []string
 	for _, n := range p.Name {
-		if !c.hosts.pkgs[c.host][n] {
+		if !installed[n] {
 			missing = append(missing, n)
+			for _, d := range c.hosts.pkgDeps[n] {
+				if !installed[d] && !slices.Contains(p.Name, d) && !slices.Contains(others, d) {
+					others = append(others, d)
+				}
+			}
 		}
 	}
 	if len(missing) == 0 {
@@ -532,6 +582,9 @@ func (c *Conn) checkPkg(p *module.Pkg, st *module.State) module.Result {
 		st.IndexFresh = true
 	}
 	changes = append(changes, "install "+strings.Join(missing, ", "))
+	if len(others) > 0 {
+		changes = append(changes, "also install "+strings.Join(others, ", "))
+	}
 	return module.Result{Status: module.Change, Action: module.Create, Changes: changes}
 }
 
@@ -632,6 +685,10 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 			c.hosts.files[c.host] = map[string]string{}
 		}
 		for _, n := range p.Name {
+			if p.Absent {
+				delete(c.hosts.pkgs[c.host], n)
+				continue
+			}
 			c.hosts.pkgs[c.host][n] = true
 			for path, content := range c.hosts.pkgFiles[n] {
 				c.hosts.files[c.host][path] = content

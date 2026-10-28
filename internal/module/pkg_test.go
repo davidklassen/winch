@@ -151,3 +151,24 @@ func TestParseShowpkgKnown(t *testing.T) {
 		t.Errorf("known = %v, want %v", known, want)
 	}
 }
+
+func TestPkgPlan(t *testing.T) {
+	tests := []struct {
+		name             string
+		changes          []string
+		installs, others []string
+	}{
+		{"an install", []string{"refresh the package index", "install a, b (without recommended packages)", "configure c", "also install d", "also upgrade e, f", "mark g as manually installed"}, []string{"a", "b", "c", "d"}, []string{"d", "e", "f"}},
+		{"an install after the refresh", []string{"install a", "other packages: known after the refresh"}, []string{"a"}, nil},
+		{"a removal", []string{"remove a", "also remove b, c"}, nil, []string{"b", "c"}},
+		{"a purge", []string{"purge a", "also purge b"}, nil, []string{"b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			installs, others := PkgPlan(tt.changes)
+			if !slices.Equal(installs, tt.installs) || !slices.Equal(others, tt.others) {
+				t.Errorf("PkgPlan = %q, %q, want %q, %q", installs, others, tt.installs, tt.others)
+			}
+		})
+	}
+}

@@ -100,6 +100,65 @@ func steps(s string) string {
 }
 
 var orderCases = []orderCase{
+	{"an install that pulls a package that a later step removes", steps(`      - pkg:
+          name: mailutils
+      - pkg:
+          name: postfix
+          absent: true
+`), func(h *fakehost.Hosts) { h.SetPkgDeps("mailutils", "postfix") }, "s: pkg postfix: s: pkg mailutils also installs postfix, which this step removes; the two steps undo each other on every run"},
+	{"an install that pulls a package that an earlier step removes", steps(`      - pkg:
+          name: postfix
+          absent: true
+      - pkg:
+          name: mailutils
+`), func(h *fakehost.Hosts) { h.SetPkgDeps("mailutils", "postfix") }, "s: pkg mailutils: this step also installs postfix, which s: pkg postfix removes; the two steps undo each other on every run"},
+	{"a removal that takes a package that an earlier step installs", steps(`      - pkg:
+          name: mailutils
+      - pkg:
+          name: postfix
+          absent: true
+`), func(h *fakehost.Hosts) {
+		h.SetPkgDeps("mailutils", "postfix")
+		h.SetPkg("web1", "mailutils", "postfix")
+	}, "s: pkg postfix: this step also removes mailutils, which s: pkg mailutils installs; the two steps undo each other on every run"},
+	{"a removal that takes a package that a later step installs", steps(`      - pkg:
+          name: postfix
+          absent: true
+      - pkg:
+          name: mailutils
+`), func(h *fakehost.Hosts) {
+		h.SetPkgDeps("mailutils", "postfix")
+		h.SetPkg("web1", "mailutils", "postfix")
+	}, "s: pkg mailutils: s: pkg postfix also removes mailutils, which this step installs; the two steps undo each other on every run"},
+	{"an install and a removal of unrelated packages", steps(`      - pkg:
+          name: mailutils
+      - pkg:
+          name: exim4
+          absent: true
+`), func(h *fakehost.Hosts) {
+		h.SetPkgDeps("mailutils", "postfix")
+		h.SetPkg("web1", "mailutils", "postfix")
+	}, ""},
+	{"a debconf answer after the install of a dependency", steps(`      - pkg:
+          name: mailutils
+      - debconf:
+          package: postfix
+          question: postfix/main_mailer_type
+          type: select
+          value: Local only
+`), func(h *fakehost.Hosts) { h.SetPkgDeps("mailutils", "postfix") }, "s: debconf postfix/main_mailer_type: s: pkg mailutils installs postfix before this step sets the answer; move this step before it"},
+	{"a debconf answer after the removal of its package", steps(`      - pkg:
+          name: postfix
+          absent: true
+      - debconf:
+          package: postfix
+          question: postfix/main_mailer_type
+          type: select
+          value: Local only
+`), func(h *fakehost.Hosts) {
+		h.SetPkgDeps("mailutils", "postfix")
+		h.SetPkg("web1", "mailutils", "postfix")
+	}, ""},
 	{"a user before the group it uses", steps(`      - user:
           name: bob
           group: staff
@@ -502,6 +561,45 @@ handlers:
           path: /etc/a
           content: "port 1\n"
 `), "", "s: file /etc/a: the path /etc/a is also in s: line /etc/a, with other arguments"},
+		{"a debconf answer after the install of its package", steps(`      - pkg:
+          name: [curl, postfix]
+      - debconf:
+          package: postfix
+          question: postfix/main_mailer_type
+          type: select
+          value: Local only
+`), "", "s: debconf postfix/main_mailer_type: s: pkg curl, postfix installs postfix before this step sets the answer; move this step before it"},
+		{"a debconf answer in a later stage", `stages:
+  - name: s
+    hosts: all
+    steps:
+      - pkg:
+          name: postfix
+  - name: t
+    hosts: all
+    steps:
+      - debconf:
+          package: postfix
+          question: postfix/main_mailer_type
+          type: select
+          value: Local only
+`, "", "t: debconf postfix/main_mailer_type: s: pkg postfix installs postfix before this step sets the answer; move this step before it"},
+		{"a debconf answer before the install of its package", steps(`      - debconf:
+          package: postfix
+          question: postfix/main_mailer_type
+          type: select
+          value: Local only
+      - pkg:
+          name: postfix
+`), "", ""},
+		{"a debconf answer after the install of another package", steps(`      - pkg:
+          name: curl
+      - debconf:
+          package: postfix
+          question: postfix/main_mailer_type
+          type: select
+          value: Local only
+`), "", ""},
 		{"equal steps", steps(`      - file:
           path: /etc/a
           content: "a\n"

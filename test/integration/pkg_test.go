@@ -528,3 +528,55 @@ func TestPkgConfiguresAfterAFix(t *testing.T) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 }
+
+// spec: Running a pipeline/Plan; Modules/pkg; Modules/debconf
+func TestPkgPlanRules(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "pkgplan")
+	const (
+		deps   = "      - pkg:\n          name: winch-up-deps\n"
+		gone   = "      - pkg:\n          name: winch-up-new\n          absent: true\n"
+		reconf = "      - pkg:\n          name: winch-reconf\n"
+		answer = "      - debconf:\n          package: winch-reconf\n          question: winch-reconf/enabled\n          type: boolean\n          value: \"true\"\n"
+		undo   = "; the two steps undo each other on every run"
+	)
+	pipeline := func(steps string) string {
+		return "stages:\n  - name: s\n    hosts: all\n    steps:\n" + steps
+	}
+	// winch-up-deps depends on winch-up-new.
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":             "name: pkgplan\ninventory: inventories/test.yaml\n",
+		"inventories/test.yaml":  "hosts:\n  pkgplan: {}\n",
+		"pipelines/install.yaml": pipeline(deps + gone),
+		"pipelines/remove.yaml":  pipeline(gone + deps),
+		"pipelines/late.yaml":    pipeline(reconf + answer),
+		"pipelines/early.yaml":   pipeline(answer + reconf),
+	})
+	fails := func(name, pipeline, want string) {
+		t.Helper()
+		r := lab.Winch(t, dir, "plan", pipeline)
+		if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
+			t.Errorf("%s: exit %d, want the error %q:\n%s%s", name, r.Code, want, r.Stdout, r.Stderr)
+		}
+	}
+
+	// A fresh VM has no index, but the plan knows the packages that a step
+	// names.
+	fails("a debconf answer after the install", "late", "s: debconf winch-reconf/enabled: s: pkg winch-reconf installs winch-reconf before this step sets the answer; move this step before it")
+	if r := lab.Winch(t, dir, "apply", "early", "--yes"); r.Code != 0 {
+		t.Fatalf("a debconf answer before the install: exit %d, stderr %q", r.Code, r.Stderr)
+	}
+	if out := vm.MustRun(t, "cat /etc/winch-reconf"); out != "true\n" {
+		t.Errorf("after the answer before the install: %q", out)
+	}
+	if r := lab.Winch(t, dir, "plan", "late"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("a debconf answer after an installed package: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+
+	vm.MustRun(t, "apt-get update -q >/dev/null")
+	fails("an install that pulls a removed package", "install", "s: pkg winch-up-new: s: pkg winch-up-deps also installs winch-up-new, which this step removes"+undo)
+	fails("a removed package that an install pulls", "remove", "s: pkg winch-up-deps: this step also installs winch-up-new, which s: pkg winch-up-new removes"+undo)
+	vm.MustRun(t, "DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-up-deps >/dev/null")
+	fails("a removal that takes an installed package", "install", "s: pkg winch-up-new: this step also removes winch-up-deps, which s: pkg winch-up-deps installs"+undo)
+	fails("an installed package that a removal takes", "remove", "s: pkg winch-up-deps: s: pkg winch-up-new also removes winch-up-deps, which this step installs"+undo)
+}

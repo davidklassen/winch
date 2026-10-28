@@ -154,7 +154,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 			return Result{Status: Change, Action: Remove, Changes: changes}, nil
 		}
 		if p.Recommends != nil && !*p.Recommends {
-			changes[0] += " (without recommended packages)"
+			changes[0] += noRecommends
 		}
 		p.refresh = !st.IndexFresh
 		st.IndexFresh = true
@@ -180,6 +180,34 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 		changes = append(changes, "mark "+strings.Join(p.auto, ", ")+" as manually installed")
 	}
 	return Result{Status: Change, Action: action, Changes: changes}, nil
+}
+
+const noRecommends = " (without recommended packages)"
+
+// PkgPlan reads the plan lines of a pkg change. installs are the packages
+// that the step installs or configures in this run, also as dependencies. A
+// configure runs the package's scripts. others are the
+// other packages that apt installs, upgrades, or removes with the step's
+// packages.
+func PkgPlan(changes []string) (installs, others []string) {
+	for _, c := range changes {
+		verb, list, _ := strings.Cut(strings.TrimSuffix(c, noRecommends), " ")
+		also := verb == "also"
+		if also {
+			verb, list, _ = strings.Cut(list, " ")
+		}
+		names := strings.Split(list, ", ")
+		switch {
+		case also && verb == "install":
+			installs = append(installs, names...)
+			others = append(others, names...)
+		case also && (verb == "upgrade" || verb == "remove" || verb == "purge"):
+			others = append(others, names...)
+		case verb == "install" || verb == "configure":
+			installs = append(installs, names...)
+		}
+	}
+	return installs, others
 }
 
 // showpkg reads the package index for names. providers holds the sorted
