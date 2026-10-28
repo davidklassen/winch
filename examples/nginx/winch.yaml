@@ -1,0 +1,84 @@
+# A web server in one file: a firewall, nginx, and a Let's Encrypt
+# certificate. Run winch in this directory:
+#
+#   winch plan
+#   winch apply
+name: simple
+
+hosts:
+  web1.example.com: {}
+groups:
+  all:
+    user: admin
+    vars:
+      domain: example.com
+      certbot_email: webmaster@example.com
+
+steps:
+  - name: Install the firewall, nginx, and certbot
+    pkg:
+      name: [nftables, nginx, certbot, python3-certbot-nginx]
+
+  # A rule set that locks winch out is rolled back.
+  - name: Allow SSH, HTTP, and HTTPS; drop the rest
+    firewall:
+      allow:
+        - tcp: [22, 80, 443]
+
+  - name: Only our site (removes Debian's default)
+    dir:
+      path: /etc/nginx/sites-enabled
+      purge: true
+    notify: reload_nginx
+  - name: Run nginx
+    service:
+      name: nginx
+      enabled: true
+      running: true
+
+  # Before the site's config, which names the certificate files.
+  - name: Get the TLS certificate
+    certbot:
+      name: !expr vars.domain
+      domains: !expr '[vars.domain, "www." + vars.domain]'
+      email: !expr vars.certbot_email
+      deploy_hook: systemctl reload nginx
+
+  - name: Write the home page
+    file:
+      path: !tpl /var/www/{{ .vars.domain }}/index.html
+      content: !tpl |
+        <!doctype html>
+        <title>{{ .vars.domain }}</title>
+        <p>Hello from {{ .host.name }}.</p>
+  - name: Serve the site over HTTPS
+    file:
+      path: !tpl /etc/nginx/sites-enabled/{{ .vars.domain }}
+      validate: nginx -t
+      content: !tpl |
+        server {
+        	listen 80;
+        	listen [::]:80;
+        	server_name {{ .vars.domain }} www.{{ .vars.domain }};
+        	return 301 https://$host$request_uri;
+        }
+
+        server {
+        	listen 443 ssl;
+        	listen [::]:443 ssl;
+        	server_name {{ .vars.domain }} www.{{ .vars.domain }};
+
+        	ssl_certificate /etc/letsencrypt/live/{{ .vars.domain }}/fullchain.pem;
+        	ssl_certificate_key /etc/letsencrypt/live/{{ .vars.domain }}/privkey.pem;
+        	ssl_protocols TLSv1.2 TLSv1.3;
+
+        	root /var/www/{{ .vars.domain }};
+        }
+    notify: reload_nginx
+
+handlers:
+  reload_nginx:
+    - name: Reload nginx
+      service:
+        name: nginx
+        reloaded: true

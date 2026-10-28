@@ -1,0 +1,62 @@
+# A web server in one file: a firewall and Caddy.
+# Run winch in this directory:
+#
+#   winch plan
+#   winch apply
+name: caddy
+
+hosts:
+  web1.example.com: {}
+groups:
+  all:
+    user: admin
+    vars:
+      domain: example.com
+      acme_email: webmaster@example.com # For Let's Encrypt notifications
+
+steps:
+  - name: Install the firewall and Caddy
+    pkg:
+      name: [nftables, caddy]
+
+  - name: Allow SSH, HTTP, and HTTPS; drop the rest
+    firewall:
+      allow:
+        - tcp: [22, 80, 443]
+        - udp: 443 # For HTTP/3
+
+  - name: Write the home page
+    file:
+      path: !tpl /var/www/{{ .vars.domain }}/index.html
+      content: !tpl |
+        <!doctype html>
+        <title>{{ .vars.domain }}</title>
+        <p>Hello from {{ .host.name }}.</p>
+
+  - name: Serve the site over HTTPS
+    file:
+      path: /etc/caddy/Caddyfile
+      validate: caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      content: !tpl |
+        {
+        	email {{ .vars.acme_email }}
+        }
+
+        {{ .vars.domain }}, www.{{ .vars.domain }} {
+        	root * /var/www/{{ .vars.domain }}
+        	file_server
+        }
+    notify: reload_caddy
+
+  - name: Run Caddy
+    service:
+      name: caddy
+      enabled: true
+      running: true
+
+handlers:
+  reload_caddy:
+    - name: Reload Caddy
+      service:
+        name: caddy
+        reloaded: true
