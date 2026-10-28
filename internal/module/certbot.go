@@ -313,8 +313,8 @@ func (c *Certbot) args() []string {
 	return append(args, "--force-renewal")
 }
 
-// The quoting puts neither ”' nor """ in the hook: configobj ends a value
-// of several lines at the first line with its triple quotes.
+// The quoting keeps triple quotes out of the hook: configobj ends a value of
+// several lines at the first line with its triple quotes.
 var (
 	hookQuote   = strings.NewReplacer(`'`, `'"'"'`, `"`, `'\"'`)
 	hookUnquote = strings.NewReplacer(`'"'"'`, `'`, `'\"'`, `"`)
