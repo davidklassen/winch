@@ -83,7 +83,7 @@ func TestMany(t *testing.T) {
 	}
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml": "name: many\ninventory: test\nrecipients: [" + id.Recipient().String() + "]\n" +
-			"vars:\n  web_text: one\n  token:\n",
+			"vars:\n  web_text: one\n",
 		"inventories/test.yaml": "hosts:\n  many-a:\n    vars:\n      token: !secret " + sealed[0] + "\n  many-b:\n    vars:\n      token: !secret " + sealed[1] + "\n" +
 			"groups:\n  web:\n    hosts: [many-a, many-b]\n",
 		"pipelines/site.yaml": manyPipeline,
@@ -98,10 +98,7 @@ handlers:
         name: ssh
         reloaded: true
 `,
-		"recipes/peers/recipe.yaml": `vars:
-  peers_list:
-  peers_token:
-steps:
+		"recipes/peers/recipe.yaml": `steps:
   - file:
       path: /etc/peers
       template: peers.tmpl

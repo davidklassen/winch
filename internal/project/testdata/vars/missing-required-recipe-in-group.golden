@@ -1,1 +1,0 @@
-pipelines/site.yaml:9:9: recipe other: variable "other_x" is required and has no value on monitor.acme.com

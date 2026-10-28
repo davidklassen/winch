@@ -1,1 +1,1 @@
-recipes/web/recipe.yaml:2:13: a default reads vars only by name, such as vars.nginx_port
+recipes/web/recipe.yaml:2:13: a read of vars names the variable, such as vars.nginx_port

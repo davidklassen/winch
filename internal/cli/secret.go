@@ -61,7 +61,8 @@ the group all in the inventory. The file keeps its comments and layout.
 
 Usage: winch secret generate vars.<name> [flags]
 
-The variable must be declared, and must not be in those vars yet.
+Something in the project must read the variable, and it must not be in
+those vars yet.
 
 Flags:
   --inventory <name>            The inventory to write.

@@ -74,11 +74,10 @@ type names struct {
 	sub  map[string]*names
 }
 
-func (sc scope) names() *names {
-	vars := &names{noun: "variable", sub: map[string]*names{}}
-	for n := range sc.vars {
-		vars.sub[n] = nil
-	}
+// templateNames are the names that a template can read. The level of vars
+// takes any name.
+var templateNames = func() *names {
+	vars := &names{noun: "variable"}
 	fact := map[string]*names{}
 	for _, n := range osFields {
 		fact[n] = nil
@@ -95,7 +94,7 @@ func (sc scope) names() *names {
 		"host":  {noun: "host field", sub: host},
 		"item":  nil,
 	}}
-}
+}()
 
 // nameCheck checks the names of each field that reads the data. at gives the
 // position of an offset in the text.
@@ -114,7 +113,7 @@ type nameCheck struct {
 // where $ is the data.
 func (c *nameCheck) check(t *template.Template, main string) {
 	c.t = t
-	c.top = c.sc.names()
+	c.top = templateNames
 	for _, d := range t.Templates() {
 		c.main = d.Name() == main
 		c.walk(d.Root, c.main)
@@ -156,6 +155,7 @@ func (c *nameCheck) walk(n tparse.Node, top bool) {
 		}
 	case *tparse.ChainNode:
 		c.walk(n.Node, top)
+		c.peers(n.Field, int(n.Pos))
 	case *tparse.IfNode:
 		c.walk(n.Pipe, top)
 		c.walk(n.List, top)
@@ -176,15 +176,18 @@ func (c *nameCheck) walk(n tparse.Node, top bool) {
 		}
 		if top {
 			c.field(n.Ident, dot, dot)
+		} else {
+			c.peers(n.Ident, dot)
 		}
 	case *tparse.VariableNode:
 		// The position of $.a is the position of .a.
-		if c.main && n.Ident[0] == "$" {
-			if len(n.Ident) > 1 {
-				c.field(n.Ident[1:], int(n.Pos), int(n.Pos)-1)
-			} else {
-				c.notByName(int(n.Pos))
-			}
+		switch {
+		case c.main && n.Ident[0] == "$" && len(n.Ident) > 1:
+			c.field(n.Ident[1:], int(n.Pos), int(n.Pos)-1)
+		case c.main && n.Ident[0] == "$":
+			c.notByName(int(n.Pos))
+		default:
+			c.peers(n.Ident[1:], int(n.Pos))
 		}
 	case *tparse.DotNode:
 		if top {
@@ -194,8 +197,21 @@ func (c *nameCheck) walk(n tparse.Node, top bool) {
 }
 
 func (c *nameCheck) notByName(off int) {
-	if c.sc.byName != "" {
-		c.errs = append(c.errs, yamlx.Errorf(c.at(off), "%s", c.sc.byName))
+	c.errs = append(c.errs, yamlx.Errorf(c.at(off), "%s", notByName))
+}
+
+// log adds a read of the variable name at the offset off.
+func (c *nameCheck) log(name string, off int) {
+	*c.sc.reads = append(*c.sc.reads, varRead{name: name, pos: c.at(off)})
+}
+
+// peers logs the variable after each vars in ident, a field of a value
+// other than the data, such as a host from match().
+func (c *nameCheck) peers(ident []string, off int) {
+	for i := 1; i < len(ident); i++ {
+		if ident[i-1] == "vars" {
+			c.log(ident[i], off)
+		}
 	}
 }
 
@@ -206,13 +222,21 @@ func (c *nameCheck) field(ident []string, dot, first int) {
 		c.item = true
 	}
 	level := c.top
+	vars := c.top.sub["vars"]
 	off := first
 	for i, id := range ident {
 		if level == nil {
+			c.peers(ident[i-1:], dot)
 			return
 		}
 		if i > 0 {
 			off = dot
+		}
+		if level == vars {
+			c.reads = append(c.reads, id)
+			c.log(id, off)
+			c.peers(ident[i:], dot)
+			return
 		}
 		next, ok := level.sub[id]
 		if !ok {
@@ -224,13 +248,10 @@ func (c *nameCheck) field(ident []string, dot, first int) {
 			c.errs = append(c.errs, yamlx.Errorf(c.at(off), "unknown %s %q%s", level.noun, id, yamlx.Suggest(id, opts)))
 			return
 		}
-		if level.noun == "variable" {
-			c.reads = append(c.reads, id)
-		}
 		level = next
 		dot += len(id) + 1
 	}
-	if level == c.top.sub["vars"] || level == c.top.sub["host"] {
+	if level == vars || level == c.top.sub["host"] {
 		c.notByName(first)
 	}
 }

@@ -161,13 +161,13 @@ func TestValidate(t *testing.T) {
 // spec: CLI
 func TestValidateSet(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\nvars:\n  release:\n",
+		"winch.yaml":            "name: acme\n",
 		"inventories/prod.yaml": "hosts:\n  web1: {}\n",
 		"inventories/test.yaml": "hosts:\n  web2: {}\n",
-		"pipelines/site.yaml":   motd,
+		"pipelines/site.yaml":   strings.Replace(motd, `"hello\n"`, "!expr vars.release", 1),
 	})
 	r := winch(t, dir, fakehost.New(), false, "", "validate")
-	if r.code != exitInvalid || !strings.Contains(r.err, `variable "release" is required and has no value on web1`) || !strings.Contains(r.err, "no value on web2") {
+	if r.code != exitInvalid || !strings.Contains(r.err, `pipelines/site.yaml:7:20: unknown variable "release"`) {
 		t.Errorf("without --set: exit %d, stderr %q", r.code, r.err)
 	}
 	r = winch(t, dir, fakehost.New(), false, "", "validate", "--set", "vars.release=1.4.2")

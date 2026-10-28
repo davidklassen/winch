@@ -1,4 +1,4 @@
-recipes/nginx/templates/bad.tmpl:1:12: unknown variable "x"
-recipes/nginx/templates/bad.tmpl:1:41: unknown variable "l"
+recipes/nginx/templates/bad.tmpl:1:7: unknown name "fact"; did you mean "facts"?
+recipes/nginx/templates/bad.tmpl:1:42: unknown host field "nmae"; did you mean "name"?
 recipes/nginx/templates/bad.tmpl:2:4: unknown name "hots"; did you mean "host"?
 recipes/nginx/templates/bad.tmpl:2:23: unknown name "hots"; did you mean "host"?

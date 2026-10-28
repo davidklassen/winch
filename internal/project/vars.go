@@ -15,23 +15,19 @@ import (
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
-// Var is the declaration of a variable, in winch.yaml or in a recipe.
+// Var is the default of a variable, in winch.yaml or in a recipe, or a value
+// in the vars of a recipe step.
 type Var struct {
 	Name string
 	Pos  yamlx.Pos
-	// Recipe is empty for a variable of winch.yaml.
-	Recipe string
-	// node is the default, or nil for a required variable.
 	node *yamlx.Node
-	// computed is the default when it holds tagged values.
+	// computed is the value when it holds tagged values.
 	computed *value
 }
 
-func (v *Var) required() bool { return v.node == nil }
-
 var varNameRe = regexp.MustCompile(`^[a-z0-9_]+$`)
 
-// declare adds the declarations in n, a map of names to defaults. recipe is
+// declare adds the defaults in n, a map of names to defaults. recipe is
 // empty for winch.yaml.
 func (l *loader) declare(n *yamlx.Node, recipe string) []error {
 	if n == nil || n.Kind == yamlx.Null {
@@ -54,32 +50,29 @@ func (l *loader) declare(n *yamlx.Node, recipe string) []error {
 			errs = append(errs, yamlx.Errorf(p.KeyPos, "variable %q is declared twice; it is first declared at %s", p.Key, first.Pos))
 			continue
 		}
-		v := &Var{Name: p.Key, Pos: p.KeyPos, Recipe: recipe}
-		if p.Value.Kind != yamlx.Null {
-			v.node = p.Value
-			errs = append(errs, l.seal(p.Value, "")...)
+		if p.Value.Kind == yamlx.Null {
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "variable %q: a variable without a default has no declaration; remove it", p.Key))
+			continue
 		}
+		errs = append(errs, l.seal(p.Value, "")...)
+		v := &Var{Name: p.Key, Pos: p.KeyPos, node: p.Value}
 		l.vars[p.Key] = v
 		l.decls = append(l.decls, v)
 	}
 	return errs
 }
 
-// compileDefaults compiles the defaults and puts the declarations in the
+// compileDefaults compiles the defaults and puts them in the
 // order in which defaults evaluate. A cycle between defaults is an error.
 func (l *loader) compileDefaults() error {
 	var errs []error
 	sc := scope{
-		vars:    l.vars,
+		reads:   &l.reads,
 		noItem:  "a default cannot use item",
-		byName:  "a default reads vars only by name, such as vars.nginx_port",
 		sealed:  true,
 		noMatch: "a default cannot use match()",
 	}
 	for _, v := range l.decls {
-		if v.node == nil {
-			continue
-		}
 		c, err := compileValue(v.node, sc)
 		errs = append(errs, err)
 		v.computed = c
@@ -109,7 +102,9 @@ func (l *loader) compileDefaults() error {
 		path = append(path, v)
 		if v.computed != nil {
 			for _, name := range v.computed.reads() {
-				visit(l.vars[name])
+				if d := l.vars[name]; d != nil {
+					visit(d)
+				}
 			}
 		}
 		path = path[:len(path)-1]
@@ -123,10 +118,11 @@ func (l *loader) compileDefaults() error {
 	return errors.Join(errs...)
 }
 
-// setValue is a value from --set.
+// setValue is a value from --set. flag is the text of the flag.
 type setValue struct {
 	name  string
 	value any
+	flag  string
 }
 
 func (l *loader) parseSets(set []string) ([]setValue, error) {
@@ -139,18 +135,99 @@ func (l *loader) parseSets(set []string) ([]setValue, error) {
 			errs = append(errs, fmt.Errorf("--set %s: use --set vars.<name>=<value>", s))
 			continue
 		}
-		if _, ok := l.vars[name]; !ok {
-			errs = append(errs, fmt.Errorf("--set %s: %s", s, unknownVariable(name, l.vars)))
-			continue
-		}
 		n, err := parseValue(text, "--set")
 		if err != nil {
 			errs = append(errs, fmt.Errorf("--set %s: %w", s, err))
 			continue
 		}
-		out = append(out, setValue{name: name, value: yamlx.Value(n)})
+		out = append(out, setValue{name: name, value: yamlx.Value(n), flag: s})
 	}
 	return out, errors.Join(errs...)
+}
+
+// checkNames checks that each read names a variable with a default or a
+// value, in some inventory, a recipe step, or sets. It checks that each value
+// of the loaded inventories, of a recipe step, and of sets is for a variable
+// with a default or a read.
+func (l *loader) checkNames(sets []setValue) error {
+	given := l.inventoryNames()
+	for name := range l.vars {
+		given[name] = true
+	}
+	for _, v := range l.given {
+		given[v.name] = true
+	}
+	for _, s := range sets {
+		given[s.name] = true
+	}
+	read := l.readNames()
+	var errs []error
+	for _, r := range l.reads {
+		if !given[r.name] {
+			errs = append(errs, yamlx.Errorf(r.pos, "%s%s", unknownVariable(r.name, given), r.snippet))
+		}
+	}
+	for _, v := range l.given {
+		if msg := unreadValue(v.name, read); msg != "" {
+			errs = append(errs, yamlx.Errorf(v.pos, "%s", msg))
+		}
+	}
+	for _, s := range sets {
+		if msg := unreadValue(s.name, read); msg != "" {
+			errs = append(errs, fmt.Errorf("--set %s: %s", s.flag, msg))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// unreadValue returns the error for a value of the variable name, or "".
+func unreadValue(name string, read map[string]bool) string {
+	switch {
+	case !varNameRe.MatchString(name):
+		return fmt.Sprintf("variable %q: a variable name has only lowercase letters, digits, and _", name)
+	case !read[name]:
+		return unknownVariable(name, read)
+	}
+	return ""
+}
+
+// readNames returns the names of the variables with a default or a read.
+func (l *loader) readNames() map[string]bool {
+	out := map[string]bool{}
+	for name := range l.vars {
+		out[name] = true
+	}
+	for _, r := range l.reads {
+		out[r.name] = true
+	}
+	return out
+}
+
+// inventoryNames returns the names of the variables that the inventories of
+// the project give a value. It skips an inventory that does not parse; a run
+// with it reports the error.
+func (l *loader) inventoryNames() map[string]bool {
+	out := map[string]bool{}
+	for _, p := range l.layout.inventories {
+		n, err := p.parse(l.dir)
+		if err != nil {
+			continue
+		}
+		for _, kind := range []string{"hosts", "groups"} {
+			entries := find(n, []string{kind})
+			if entries == nil || entries.Value.Kind != yamlx.Map {
+				continue
+			}
+			for _, e := range entries.Value.Pairs {
+				if vars := find(e.Value, []string{"vars"}); vars != nil && vars.Value.Kind == yamlx.Map {
+					for _, v := range vars.Value.Pairs {
+						out[v.Key] = true
+					}
+				}
+			}
+		}
+	}
+	return out
 }
 
 // parseValue parses a value of the command line as YAML. what names the flag
@@ -364,7 +441,7 @@ func hostMap(h Host, vars any) map[string]any {
 func peerVars(inv *Inventory, decls []*Var) map[string]map[string]any {
 	defaults := map[string]any{}
 	for _, v := range decls {
-		if v.node != nil && v.computed == nil {
+		if v.computed == nil {
 			defaults[v.Name] = yamlx.Value(v.node)
 		}
 	}
@@ -461,9 +538,10 @@ func (e *Env) render(t *template.Template) (string, error) {
 }
 
 // Start returns the data of host h with facts f: it evaluates the defaults
-// that h uses. It checks the requirements and the required variables of each
-// recipe that runs on h in the pipeline, also in later stages and in stages
-// that the selection leaves out.
+// that h uses, and checks that h has a value for each variable without a
+// default that it reads. It checks the requirements of each recipe that runs
+// on h in the pipeline, also in later stages and in stages that the
+// selection leaves out.
 func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
 	short, _, _ := strings.Cut(h.Name, ".")
 	e := &Env{host: h, short: short, facts: f, secrets: p.secrets, runs: map[string]bool{}, filter: p.filter,
@@ -486,7 +564,7 @@ func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
 				continue
 			}
 			if st.when != nil {
-				if err := p.evalDefaults(e, st.when.reads); err != nil {
+				if err := p.evalDefaults(e, st.when.reads, st.when.pos); err != nil {
 					return nil, err
 				}
 			}
@@ -499,11 +577,6 @@ func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
 			}
 			if err := st.Recipe.Check(f); err != nil {
 				return nil, err
-			}
-			if st.when != nil {
-				if err := st.missing([]Host{h}); err != nil {
-					return nil, err
-				}
 			}
 			e.runs[st.Recipe.Name] = true
 			// A stage that the selection leaves out counts only for the
@@ -531,7 +604,7 @@ func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
 				}
 			}
 			if re != e {
-				if err := p.evalDefaults(e, p.unchanged(re, st)); err != nil {
+				if err := p.evalDefaults(e, p.unchanged(re, st), st.Pos); err != nil {
 					return nil, err
 				}
 			}
@@ -566,7 +639,7 @@ func (p *Project) stepEnv(e *Env, st *Step) (*Env, error) {
 			reads = append(reads, v.computed.reads()...)
 		}
 	}
-	if err := p.evalDefaults(e, reads); err != nil {
+	if err := p.evalDefaults(e, reads, st.Pos); err != nil {
 		return nil, err
 	}
 	se := &Env{host: e.host, short: e.short, facts: e.facts, secrets: e.secrets, runs: e.runs, filter: e.filter,
@@ -613,21 +686,22 @@ func (p *Project) unchanged(se *Env, st *Step) []string {
 // fails reports the error when it evaluates, before it reads anything else.
 func (p *Project) use(e *Env, st Step) error {
 	if st.when != nil {
-		if err := p.evalDefaults(e, st.when.reads); err != nil {
+		if err := p.evalDefaults(e, st.when.reads, st.when.pos); err != nil {
 			return err
 		}
 	}
 	if ok, err := st.Runs(e); !ok || err != nil {
 		return nil
 	}
-	return p.evalDefaults(e, st.reads())
+	return p.evalDefaults(e, st.reads(), st.Pos)
 }
 
 // evalDefaults evaluates the defaults of names and of the variables that
 // those defaults read, unless e has a value for them. It evaluates each
 // default in the three variants. A default that reads a secret variable is
-// secret.
-func (p *Project) evalDefaults(e *Env, names []string) error {
+// secret. A variable without a value and without a default is an error at
+// pos, where something reads names.
+func (p *Project) evalDefaults(e *Env, names []string, pos yamlx.Pos) error {
 	need := map[string]bool{}
 	for _, name := range names {
 		need[name] = true
@@ -642,8 +716,17 @@ func (p *Project) evalDefaults(e *Env, names []string) error {
 			need[name] = true
 		}
 	}
+	var missing []string
+	for name := range need {
+		if _, ok := e.vars[0][name]; !ok && p.defaults[name] == nil {
+			missing = append(missing, name)
+		}
+	}
+	if missing != nil {
+		return yamlx.Errorf(pos, "variable %q has no value on host %s", slices.Min(missing), e.host.Name)
+	}
 	for _, v := range p.vars {
-		if _, ok := e.vars[0][v.Name]; ok || !need[v.Name] || v.required() {
+		if _, ok := e.vars[0][v.Name]; ok || !need[v.Name] {
 			continue
 		}
 		vals, isSecret, err := p.evalValue(e, v)
@@ -717,25 +800,4 @@ func (p *Project) evalValue(e *Env, v *Var) ([3]any, bool, error) {
 		e.learn(secret.Parts(vals[0], vals[1], vals[2]))
 	}
 	return vals, isSecret, nil
-}
-
-// missing returns an error for each required variable of the recipe of st
-// that has no value on one of hosts.
-func (st Step) missing(hosts []Host) error {
-	var errs []error
-	for _, v := range st.Recipe.Vars {
-		if !v.required() || st.sets(v.Name) {
-			continue
-		}
-		var without []string
-		for _, h := range hosts {
-			if _, ok := h.Vars[v.Name]; !ok {
-				without = append(without, h.Name)
-			}
-		}
-		if without != nil {
-			errs = append(errs, yamlx.Errorf(st.Pos, "recipe %s: variable %q is required and has no value on %s", st.Recipe.Name, v.Name, strings.Join(without, ", ")))
-		}
-	}
-	return errors.Join(errs...)
 }

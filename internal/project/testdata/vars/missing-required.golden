@@ -1,1 +1,0 @@
-winch.yaml:4:3: variable "domain" is required and has no value on mail.acme.com, monitor.acme.com

@@ -1,0 +1,4 @@
+recipes/web/recipe.yaml:4:13: unknown variable "domain"
+ | vars.mail_server ? vars.domain : host.name
+ | ........................^
+pipelines/site.yaml:19:19: unknown variable "domain"

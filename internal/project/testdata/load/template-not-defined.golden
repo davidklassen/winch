@@ -1,1 +1,1 @@
-recipes/nginx/templates/bad.tmpl:2:40: template "rwo" is not defined in this template; did you mean "row"?
+recipes/nginx/templates/bad.tmpl:2:44: template "rwo" is not defined in this template; did you mean "row"?

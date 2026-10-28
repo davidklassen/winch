@@ -1,0 +1,1 @@
+recipes/web/recipe.yaml:3:3: variable "web_cert": a variable without a default has no declaration; remove it

@@ -107,7 +107,8 @@ func TestOneFileSecretGenerate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := strings.Replace(oneFile, "name: demo\n", "name: demo\nrecipients:\n  - "+id.Recipient().String()+"\nvars:\n  pw:\n", 1)
+	cfg := strings.Replace(oneFile, "name: demo\n", "name: demo\nrecipients:\n  - "+id.Recipient().String()+"\n", 1)
+	cfg = strings.Replace(cfg, "--port {{ .vars.app_port }}", "--port {{ .vars.app_port }} --password {{ .vars.pw }}", 1)
 	r := winch(t, vmtest.WriteProject(t, map[string]string{"winch.yaml": cfg}), fakehost.New(), false, "", "secret", "generate", "vars.pw", "--inventory", "prod")
 	if r.code != exitOK || r.out != "wrote vars.pw into the vars of the group all in inventories.prod of winch.yaml\n" {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)

@@ -1,6 +1,3 @@
-vars:
-  dkimpy_milter_key:
-
 steps:
   - pkg:
       name: dkimpy-milter

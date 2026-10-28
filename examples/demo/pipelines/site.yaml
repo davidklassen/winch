@@ -29,6 +29,7 @@ stages:
       # recipe then writes the file as the project declares it.
       - recipe: monit
         vars:
+          # The other nodes, checked from outside.
           monit_peers: !expr 'filter(match("all"), .name != host.name)'
       - recipe: postfix
       - recipe: unattended_upgrades

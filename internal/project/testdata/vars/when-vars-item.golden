@@ -1,6 +1,6 @@
 recipes/web/recipe.yaml:15:11: when runs before loop; it cannot use item
  | vars[item] != ""
  | .....^
-recipes/web/recipe.yaml:15:11: a when reads vars only by name, such as vars.nginx_port
+recipes/web/recipe.yaml:15:11: a read of vars names the variable, such as vars.nginx_port
  | vars[item] != ""
  | ^

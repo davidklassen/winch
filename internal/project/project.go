@@ -33,8 +33,10 @@ type Project struct {
 	others    []*Pipeline
 	othersErr error
 	Warnings  []*yamlx.Error
-	// vars are the declarations in the order in which defaults evaluate.
-	vars []*Var
+	// vars are the defaults in the order in which they evaluate, and defaults
+	// the same by name.
+	vars     []*Var
+	defaults map[string]*Var
 	// filter learns the secret values that the evaluation derives.
 	filter *secret.Filter
 	// secrets is true when the inventory or a default holds a !secret.
@@ -202,6 +204,12 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, s
 	for _, o := range others {
 		othersErr = errors.Join(othersErr, resolve(invs[0], o, map[*Recipe]bool{}))
 	}
+	// A pipeline that fails to load logs no reads; winch validate reports it.
+	if othersErr == nil {
+		if err := l.checkNames(sets); err != nil {
+			return nil, err
+		}
+	}
 	if err := l.unsealAll(ctx, keys); err != nil {
 		return nil, err
 	}
@@ -215,7 +223,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, s
 	for _, v := range sets {
 		setNames[v.name] = true
 	}
-	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, others: others, othersErr: othersErr, Warnings: warnings, vars: l.order, filter: keys.Filter, secrets: len(l.sealed) > 0,
+	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, others: others, othersErr: othersErr, Warnings: warnings, vars: l.order, defaults: l.vars, filter: keys.Filter, secrets: len(l.sealed) > 0,
 		set: setNames, peers: peerVars(invs[0], l.decls)}, nil
 }
 
@@ -308,6 +316,9 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
+	if err := l.checkNames(sets); err != nil {
+		return nil, err
+	}
 	warnings, err := scanProject(dir)
 	if err != nil {
 		return nil, err
@@ -345,11 +356,15 @@ func ymlFiles(dir string) ([]*yamlx.Error, error) {
 type loader struct {
 	dir    string
 	layout layout
-	// vars are the declarations by name, decls in file order, and order in
-	// the order in which defaults evaluate.
+	// vars are the defaults by name, decls in file order, and order in the
+	// order in which they evaluate.
 	vars  map[string]*Var
 	decls []*Var
 	order []*Var
+	// reads are the reads that name a variable, and given the variable
+	// values of the loaded inventories and of recipe steps.
+	reads []varRead
+	given []varRead
 	files map[string]*recipeFile
 	// recipes holds nil for a recipe that failed to load.
 	recipes map[string]*Recipe
@@ -358,7 +373,7 @@ type loader struct {
 	warnings []*yamlx.Error
 }
 
-// newLoader declares the variables of winch.yaml and of every recipe, then
+// newLoader adds the defaults of winch.yaml and of every recipe, then
 // loads the recipes.
 func newLoader(dir string, cfg *Config) (*loader, error) {
 	l := &loader{dir: dir, vars: map[string]*Var{}, files: map[string]*recipeFile{}, recipes: map[string]*Recipe{}}
@@ -406,8 +421,7 @@ func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setVa
 }
 
 // resolve sets the targets of every stage from the inventory. It checks that
-// a recipe runs at most once per host, and that a recipe step without when
-// has the required variables of its recipe. It checks the match() patterns of
+// a recipe runs at most once per host. It checks the match() patterns of
 // each recipe that checked does not hold yet, and adds the recipe to checked.
 func resolve(inv *Inventory, pl *Pipeline, checked map[*Recipe]bool) error {
 	var errs []error
@@ -433,9 +447,6 @@ func resolve(inv *Inventory, pl *Pipeline, checked map[*Recipe]bool) error {
 						errs = append(errs, hs.checkMatches(inv))
 					}
 				}
-			}
-			if st.when == nil {
-				errs = append(errs, st.missing(s.Targets))
 			}
 			for _, h := range s.Targets {
 				key := [2]string{h.Name, st.Recipe.Name}
@@ -750,8 +761,8 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 	st := Step{Pos: n.Pos, in: r}
 	isRecipe := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "recipe" })
 	hasLoop := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "loop" })
-	sc := scope{vars: l.vars}
-	thenScope := scope{vars: l.vars, noItem: thenInLoop}
+	sc := scope{reads: &l.reads}
+	thenScope := scope{reads: &l.reads, noItem: thenInLoop}
 	if !hasLoop {
 		sc.noItem = itemOutsideLoop
 		thenScope.noItem = itemOutsideLoop
@@ -1016,9 +1027,6 @@ func (l *loader) secretFileWarnings(invs []*Inventory, pls []*Pipeline) []*yamlx
 	}
 	vars := slices.Clone(l.decls)
 	for _, v := range l.decls {
-		if v.node == nil {
-			continue
-		}
 		walkTags(v.node, func(t *yamlx.Node) {
 			if t.Tag == "!secret" {
 				secret[v.Name] = true
@@ -1046,8 +1054,8 @@ func (l *loader) secretFileWarnings(invs []*Inventory, pls []*Pipeline) []*yamlx
 	return out
 }
 
-// stepVars loads the vars of a recipe step: declared variables and their
-// values, which can be computed.
+// stepVars loads the vars of a recipe step: variables and their values, which
+// can be computed.
 func (l *loader) stepVars(n *yamlx.Node) ([]*Var, error) {
 	if n.Kind != yamlx.Map {
 		return nil, yamlx.Errorf(n.Pos, "vars: expected a map, got %s", yamlx.Describe(n))
@@ -1055,11 +1063,8 @@ func (l *loader) stepVars(n *yamlx.Node) ([]*Var, error) {
 	var out []*Var
 	var errs []error
 	for _, p := range n.Pairs {
-		switch {
-		case l.vars[p.Key] == nil:
-			errs = append(errs, yamlx.Errorf(p.KeyPos, "%s", unknownVariable(p.Key, l.vars)))
-			continue
-		case p.Value.Kind == yamlx.Null:
+		l.given = append(l.given, varRead{name: p.Key, pos: p.KeyPos})
+		if p.Value.Kind == yamlx.Null {
 			errs = append(errs, yamlx.Errorf(p.Value.Pos, "variable %q: null is not a value", p.Key))
 			continue
 		}
@@ -1067,7 +1072,7 @@ func (l *loader) stepVars(n *yamlx.Node) ([]*Var, error) {
 			errs = append(errs, yamlx.Errorf(t.Pos, "variable %q: a recipe step gives no !secret values; put the secret in the inventory", p.Key))
 			continue
 		}
-		c, err := compileValue(p.Value, scope{vars: l.vars, noItem: itemOutsideLoop})
+		c, err := compileValue(p.Value, scope{reads: &l.reads, noItem: itemOutsideLoop})
 		errs = append(errs, err)
 		out = append(out, &Var{Name: p.Key, Pos: p.KeyPos, node: p.Value, computed: c})
 	}
@@ -1203,18 +1208,14 @@ func (l *loader) compileWhen(n *yamlx.Node) (*computed, error) {
 	if n.Tag != "!expr" {
 		return nil, yamlx.Errorf(n.Pos, "when: use an expression with the !expr tag, such as when: !expr vars.mail_server")
 	}
-	return compile(n, scope{
-		vars:   l.vars,
-		noItem: "when runs before loop; it cannot use item",
-		byName: "a when reads vars only by name, such as vars.nginx_port",
-	})
+	return compile(n, scope{reads: &l.reads, noItem: "when runs before loop; it cannot use item"})
 }
 
 func (l *loader) compileLoop(n *yamlx.Node) (*value, error) {
 	if n.Tag != "!expr" && n.Kind != yamlx.List {
 		return nil, yamlx.Errorf(n.Pos, "loop: use a list, or an expression with the !expr tag, such as loop: !expr vars.sites")
 	}
-	v, err := compileValue(n, scope{vars: l.vars, noItem: "loop cannot use item"})
+	v, err := compileValue(n, scope{reads: &l.reads, noItem: "loop cannot use item"})
 	if v == nil && err == nil {
 		v = &value{node: n}
 	}

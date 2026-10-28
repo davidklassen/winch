@@ -39,12 +39,11 @@ type matchCall struct {
 
 // scope is what an expression or a template can read.
 type scope struct {
-	vars map[string]*Var
+	// reads logs each read that names a variable, also of a host from
+	// match().
+	reads *[]varRead
 	// noItem is the reason that item is not defined, or "" when it is.
 	noItem string
-	// byName is the error for a read of vars other than by name, or "" when
-	// such a read is allowed.
-	byName string
 	// sealed is true where a !secret value is allowed: in a default.
 	sealed bool
 	// noMatch is the reason that match() is not allowed, or "" when it is.
@@ -55,6 +54,16 @@ type scope struct {
 }
 
 const itemOutsideLoop = "item is defined only in a step with loop"
+
+const notByName = "a read of vars names the variable, such as vars.nginx_port"
+
+// varRead is a read of a variable by name, or a value of a variable. snippet
+// shows the read in an expression.
+type varRead struct {
+	name    string
+	pos     yamlx.Pos
+	snippet string
+}
 
 type exprEnv struct {
 	Vars  map[string]any              `expr:"vars"`
@@ -165,6 +174,10 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 	check := &exprCheck{sc: sc, src: prog.Source(), named: map[ast.Node]bool{}}
 	ast.Walk(new(prog.Node()), check)
 	check.checkByName()
+	for _, r := range check.names {
+		r.pos = n.Pos
+		*sc.reads = append(*sc.reads, r)
+	}
 	if len(check.errs) > 0 {
 		var errs []error
 		for _, msg := range check.errs {
@@ -177,12 +190,15 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 }
 
 // exprCheck finds the variables that an expression reads by name, and
-// reports $env, undeclared variables, an item that is not defined, and a
-// read of vars other than by name where the scope forbids it.
+// reports $env, an item that is not defined, and a read of vars other than
+// by name.
 type exprCheck struct {
-	sc      scope
-	src     file.Source
+	sc  scope
+	src file.Source
+	// reads are the variables of the host that it reads, and names every
+	// read that names a variable.
 	reads   []string
+	names   []varRead
 	matches []matchCall
 	errs    []string
 	// named are the nodes that a member access with a constant name reads.
@@ -231,28 +247,41 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		if ok {
 			c.named[n.Node] = true
 		}
-		if !ok || !isVars(n.Node) {
+		if !ok {
 			return
 		}
-		if _, ok := c.sc.vars[name.Value]; !ok {
-			c.fail(n, unknownVariable(name.Value, c.sc.vars))
-			return
+		if isVars(n.Node) {
+			c.reads = append(c.reads, name.Value)
 		}
-		c.reads = append(c.reads, name.Value)
+		if m, peer := unpatched(n.Node).(*ast.MemberNode); isVars(n.Node) || peer && isName(m.Property, "vars") {
+			c.names = append(c.names, varRead{name: name.Value, snippet: c.snippet(n)})
+		}
 	}
 }
 
-// checkByName reports each read of vars other than by name, when the scope
-// forbids it.
+// checkByName reports each read of vars other than by name.
 func (c *exprCheck) checkByName() {
-	if c.sc.byName == "" {
-		return
-	}
 	for _, n := range c.whole {
 		if !c.named[n] {
-			c.fail(n, c.sc.byName)
+			c.fail(n, notByName)
 		}
 	}
+}
+
+// unpatched returns n without the call of readFunc that readCheck adds.
+func unpatched(n ast.Node) ast.Node {
+	if c, ok := n.(*ast.CallNode); ok {
+		if id, ok := c.Callee.(*ast.IdentifierNode); ok && id.Value == readFunc {
+			return c.Arguments[0]
+		}
+	}
+	return n
+}
+
+// isName reports whether n is the constant name.
+func isName(n ast.Node, name string) bool {
+	s, ok := n.(*ast.StringNode)
+	return ok && s.Value == name
 }
 
 // isVars reports whether n is vars or host.vars.
@@ -265,12 +294,11 @@ func isVars(n ast.Node) bool {
 		return false
 	}
 	id, ok := m.Node.(*ast.IdentifierNode)
-	prop, ok2 := m.Property.(*ast.StringNode)
-	return ok && ok2 && id.Value == "host" && prop.Value == "vars"
+	return ok && id.Value == "host" && isName(m.Property, "vars")
 }
 
-func unknownVariable(name string, vars map[string]*Var) string {
-	return fmt.Sprintf("unknown variable %q%s", name, yamlx.Suggest(name, slices.Sorted(maps.Keys(vars))))
+func unknownVariable(name string, known map[string]bool) string {
+	return fmt.Sprintf("unknown variable %q%s", name, yamlx.Suggest(name, slices.Sorted(maps.Keys(known))))
 }
 
 var (
@@ -354,7 +382,7 @@ func compileValue(n *yamlx.Node, sc scope) (*value, error) {
 	walk = func(n *yamlx.Node, name string) {
 		switch {
 		case n.Tag == "!secret" && !sc.sealed:
-			errs = append(errs, yamlx.Errorf(n.Pos, "%s!secret is allowed only in variable values; declare a variable", prefix(name)))
+			errs = append(errs, yamlx.Errorf(n.Pos, "%s!secret is allowed only in variable values; put it in a variable", prefix(name)))
 		case n.Tag == "!secret":
 		case n.Tag != "":
 			c, err := compile(n, sc)

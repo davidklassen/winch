@@ -1,5 +1,4 @@
 vars:
-  rspamd_dkim_key:
   # The source of the packages. The demo uses the lab's signed source.
   rspamd_repo_url: https://rspamd.com/apt-stable
   # The key of the source in files/, from https://rspamd.com/apt-stable/gpg.key.

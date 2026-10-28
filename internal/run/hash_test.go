@@ -21,7 +21,7 @@ import (
 )
 
 var hashFiles = map[string]string{
-	"winch.yaml": "name: acme\ninventory: test\nvars:\n  greeting:\n",
+	"winch.yaml": "name: acme\ninventory: test\n",
 	"inventories/test.yaml": `hosts:
   web1:
     vars:
@@ -235,7 +235,7 @@ func hashSecretProject(t *testing.T, value, pipeline string, recipe string) *pro
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + id.Recipient().String() + "]\nvars:\n  pw:\n",
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + id.Recipient().String() + "]\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + text + "\n",
 		"pipelines/site.yaml":   pipeline,
 	}
@@ -380,6 +380,7 @@ func TestHashStageOrderDisjointHosts(t *testing.T) {
 	plan := func(pipeline string) string {
 		files := maps.Clone(hashFiles)
 		files["pipelines/site.yaml"] = pipeline
+		files["inventories/test.yaml"] = "hosts:\n  web1: {}\n  web2: {}\n"
 		return planHash(t, files, nil).Hash()
 	}
 	if a, b := plan("stages:\n"+migrate+deploy), plan("stages:\n"+deploy+migrate); a == b {

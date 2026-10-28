@@ -248,7 +248,6 @@ groups:
 	"pipelines/site.yaml": stepVarsProject,
 	"recipes/site/recipe.yaml": `vars:
   site_port: 80
-  site_name:
   site_url: !tpl "http://{{ .vars.site_name }}.{{ .vars.domain }}:{{ .vars.site_port }}"
   site_other: !expr 'vars.domain + "/x"'
 steps:
@@ -383,9 +382,7 @@ groups:
         loop: !expr 'match("all & !mon")'
         when: !expr 'len(match("mon")) == 1 and match("mon")[0].vars.mail_server != nil'
 `,
-	"recipes/monit/recipe.yaml": `vars:
-  monit_peers:
-steps:
+	"recipes/monit/recipe.yaml": `steps:
   - file:
       path: /etc/monit/peers
       template: peers.tmpl
@@ -406,7 +403,7 @@ func TestMatch(t *testing.T) {
 		{name: "match"},
 		{name: "match-set", set: []string{"vars.mail_server=true"}},
 		{name: "match-unknown", files: map[string]string{
-			"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(lower(\"MIAL\"))))'\n",
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(lower(\"MIAL\"))))'\n",
 		}},
 	}
 	for _, tt := range tests {
@@ -429,22 +426,22 @@ func TestMatchConstantPattern(t *testing.T) {
 		want  string
 	}{
 		{name: "no host", files: map[string]string{
-			"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mon & !mon\")))'\n",
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mon & !mon\")))'\n",
 		}, want: content + `match("mon & !mon"): the host pattern matches no host in inventories/test.yaml`},
 		{name: "unknown name", files: map[string]string{
-			"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mial\")))'\n",
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mial\")))'\n",
 		}, want: content + `match("mial"): unknown host or group "mial" in inventories/test.yaml`},
 		{name: "recipe step vars", files: map[string]string{
 			"pipelines/site.yaml": "stages:\n  - name: monit\n    hosts: all\n    steps:\n      - recipe: monit\n        vars:\n          monit_peers: !expr 'match(\"web\")'\n",
 		}, want: `pipelines/site.yaml:7:24: match("web"): unknown host or group "web"`},
 		{name: "when of a handler", files: map[string]string{
-			"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps: []\nhandlers:\n  x:\n    - pkg:\n        name: curl\n      when: !expr 'len(match(\"mon & mail.acme.com\")) > 0'\n",
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\nsteps: []\nhandlers:\n  x:\n    - pkg:\n        name: curl\n      when: !expr 'len(match(\"mon & mail.acme.com\")) > 0'\n",
 		}, want: `recipes/monit/recipe.yaml:8:13: match("mon & mail.acme.com"): the host pattern matches no host`},
 		{name: "loop of a stage step", files: map[string]string{
 			"pipelines/site.yaml": "stages:\n  - name: monit\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: x\n        loop: !expr 'match(\"mon & !mon\")'\n",
 		}, want: `pipelines/site.yaml:8:15: match("mon & !mon"): the host pattern matches no host`},
 		{name: "computed pattern", files: map[string]string{
-			"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(host.short + \"x\")))'\n",
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(host.short + \"x\")))'\n",
 		}},
 		{name: "recipe outside the pipeline", files: map[string]string{
 			"recipes/other/recipe.yaml": "steps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mon & !mon\")))'\n",
@@ -470,7 +467,7 @@ func TestMatchConstantPattern(t *testing.T) {
 // spec: Templates and expressions/Data
 func TestMatchConstantPatternOnce(t *testing.T) {
 	dir := writeProject(t, with(matchFiles, map[string]string{
-		"recipes/monit/recipe.yaml": "vars:\n  monit_peers:\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mial\")))'\n",
+		"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mial\")))'\n",
 		"pipelines/other.yaml":      "stages:\n  - name: monit\n    hosts: all\n    steps:\n      - recipe: monit\n        vars:\n          monit_peers: []\n",
 	}))
 	_, err := Validate(dir, "", nil)
@@ -498,7 +495,7 @@ func TestMatchComputedDefault(t *testing.T) {
 		{name: "get", content: `!expr 'string(get(match("mon")[0].vars, "role") == nil)'`, want: computed},
 		{name: "values", content: `!expr 'string(len(filter(values(match("mon")[0].vars), # != "")))'`, want: computed},
 		{name: "toPairs", content: `!expr 'string(len(toPairs(match("mon")[0].vars)))'`, want: computed},
-		{name: "keys", content: `!expr 'join(keys(match("mon")[0].vars), ",")'`, want: `data="mail_server,role"`},
+		{name: "keys", content: `!expr 'join(keys(match("mon")[0].vars), ",")'`, want: `data="mail_server,monit_peers,role"`},
 		{name: "inline template", content: `!tpl "{{ range .vars.monit_peers }}{{ .vars.role }}{{ end }}"`, want: computed},
 		{name: "set value", content: `!expr 'match("mon")[0].vars.role'`, set: []string{"vars.role=x"}, want: `data="x"`},
 		{name: "inventory value", content: `!expr 'match("mail.acme.com")[0].vars.role'`, want: `data="relay"`},
@@ -513,7 +510,7 @@ func TestMatchComputedDefault(t *testing.T) {
 			files := with(matchFiles, map[string]string{
 				"inventories/test.yaml":              "hosts:\n  mail.acme.com:\n    vars:\n      mail_server: true\n      role: relay\n  monitor.acme.com: {}\ngroups:\n  mon:\n    hosts: [monitor.acme.com]\n",
 				"pipelines/site.yaml":                "stages:\n  - name: monit\n    hosts: mail.acme.com\n    steps:\n      - recipe: monit\n        vars:\n          monit_peers: !expr 'match(\"mon\")'\n",
-				"recipes/monit/recipe.yaml":          "vars:\n  monit_peers:\nsteps:\n" + step,
+				"recipes/monit/recipe.yaml":          "vars:\n  monit_peers: []\nsteps:\n" + step,
 				"recipes/monit/templates/peers.tmpl": tt.tmpl,
 			})
 			p, err := Load(t.Context(), writeProject(t, files), "", "site", tt.set, Keys{})
@@ -542,10 +539,7 @@ func TestMatchSecret(t *testing.T) {
           monit_peers: !expr 'filter(match("all"), .name != host.name)'
           monit_token: !expr 'vars.token + "-x"'
 `,
-		"recipes/monit/recipe.yaml": `vars:
-  monit_peers:
-  monit_token:
-steps:
+		"recipes/monit/recipe.yaml": `steps:
   - file:
       path: /etc/monit/peers
       template: peers.tmpl

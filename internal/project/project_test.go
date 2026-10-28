@@ -424,13 +424,13 @@ func TestLoadRecipes(t *testing.T) {
 		}},
 		{name: "template-names-in-branches", files: map[string]string{
 			"recipes/nginx/recipe.yaml": recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
-			"recipes/nginx/templates/bad.tmpl": "{{ if .vars.x }}a{{ end }}{{ range .vars.l }}b{{ end }}\n" +
+			"recipes/nginx/templates/bad.tmpl": "{{ if .fact.os }}a{{ end }}{{ range .host.nmae }}b{{ end }}\n" +
 				"{{ .hots.name.x }} {{ $.hots }}\n" +
-				"{{ define \"row\" }}{{ $.name }}{{ .y }}{{ end }}{{ template \"row\" .host }}\n",
+				"{{ define \"row\" }}{{ $.name }}{{ .y }}{{ end }}{{ template \"row\" .facts.os }}\n",
 		}},
 		{name: "template-not-defined", files: map[string]string{
 			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
-			"recipes/nginx/templates/bad.tmpl": "{{ define \"row\" }}{{ .name }}{{ end }}\n{{ template \"row\" .host }} {{ template \"rwo\" .host }}\n",
+			"recipes/nginx/templates/bad.tmpl": "{{ define \"row\" }}{{ .name }}{{ end }}\n{{ template \"row\" .facts.os }} {{ template \"rwo\" .facts.os }}\n",
 		}},
 		{name: "template-not-defined-inline", files: map[string]string{
 			"pipelines/site.yaml": stage("      - file:\n          path: /a\n          content: !tpl '{{ template \"x\" }}'\n"),
@@ -502,7 +502,7 @@ func TestLoadRecipes(t *testing.T) {
 		}},
 		{name: "template-unknown-name", files: map[string]string{
 			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
-			"recipes/nginx/templates/bad.tmpl": "a\n  {{ .vars.domain }}\n{{ with .host }}{{ .x }}{{ $.hots.name }}{{ end }}\n",
+			"recipes/nginx/templates/bad.tmpl": "a\n  {{ .vars.domain }}\n{{ with .facts.os }}{{ .x }}{{ $.hots.name }}{{ end }}\n",
 		}},
 		{name: "template-in-stage", files: map[string]string{
 			"pipelines/site.yaml": stage("      - file:\n          path: /a\n          template: a.tmpl\n      - file:\n          path: /b\n          source: b\n"),
@@ -820,15 +820,15 @@ func TestRender(t *testing.T) {
 			"web2":          "web2 web2 web2\n",
 		}},
 		{"no trailing newline", "{{ .host.short }}", map[string]string{"web2": "web2"}},
-		{"with and dollar", "{{ with .host }}{{ .short }}-{{ $.host.name }}{{ end }}", map[string]string{"web1.acme.com": "web1-web1.acme.com"}},
-		{"missing key", "a\n b {{ with .host }}{{ .nme }}{{ end }}\n", map[string]string{
-			"web1.acme.com": "error: recipes/r/templates/t.tmpl:2:23: .nme: map has no entry for key \"nme\"",
+		{"with and dollar", "{{ with .facts.os }}{{ .id }}-{{ $.host.name }}{{ end }}", map[string]string{"web1.acme.com": "debian-web1.acme.com"}},
+		{"missing key", "a\n b {{ with .facts.os }}{{ .nme }}{{ end }}\n", map[string]string{
+			"web1.acme.com": "error: recipes/r/templates/t.tmpl:2:27: .nme: map has no entry for key \"nme\"",
 		}},
 		{"source bytes", "", map[string]string{"web2": binary}},
-		{"range over a map", "{{ range $k, $v := .host }}{{ $k }}={{ $v }};{{ end }}", map[string]string{"web2": "address=web2;groups=[all];name=web2;short=web2;vars=map[];"}},
-		{"index", "{{ index .host \"short\" }}", map[string]string{"web2": "web2"}},
-		{"index of a missing key", "{{ index .host \"nme\" }}", map[string]string{
-			"web2": "error: recipes/r/templates/t.tmpl:1:4: index .host \"nme\": error calling index: map has no entry for key \"nme\"",
+		{"range over a map", "{{ range $k, $v := .facts.os }}{{ $k }}={{ $v }};{{ end }}", map[string]string{"web2": "arch=amd64;codename=trixie;id=debian;version=13;"}},
+		{"index", "{{ index .facts.os \"id\" }}", map[string]string{"web2": "debian"}},
+		{"index of a missing key", "{{ index .facts.os \"nme\" }}", map[string]string{
+			"web2": "error: recipes/r/templates/t.tmpl:1:4: index .facts.os \"nme\": error calling index: map has no entry for key \"nme\"",
 		}},
 		{"empty output", "{{ if false }}x{{ end }}", map[string]string{"web2": ""}},
 	}

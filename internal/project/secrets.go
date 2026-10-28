@@ -571,16 +571,13 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ly, err := readLayout(dir, cfg)
-	if err != nil {
-		return "", err
-	}
-	l := &loader{dir: dir, layout: ly, vars: map[string]*Var{}, files: map[string]*recipeFile{}, recipes: map[string]*Recipe{}}
-	if err := errors.Join(append(l.declare(cfg.Vars, ""), l.readRecipes())...); err != nil {
-		return "", err
-	}
-	if l.vars[name] == nil {
-		return "", errors.New(unknownVariable(name, l.vars))
+	// The reads of the parts that load are enough: a broken template in
+	// another recipe does not block a new secret. The load errors show only
+	// when the variable is not found, as they may hide its read.
+	l, lErr := newLoader(dir, cfg)
+	_, plErr := l.otherPipelines("")
+	if read := l.readNames(); !read[name] {
+		return "", errors.Join(errors.New(unknownVariable(name, read)), lErr, plErr)
 	}
 	if inventory == "" {
 		inventory = cfg.Inventory
@@ -588,7 +585,7 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	if inventory == "" {
 		return "", errors.New("no inventory: use --inventory, or set inventory in winch.yaml")
 	}
-	inv, err := ly.inventory(inventory)
+	inv, err := l.layout.inventory(inventory)
 	if err != nil {
 		return "", err
 	}

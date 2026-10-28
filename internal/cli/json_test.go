@@ -81,7 +81,7 @@ func TestJSON(t *testing.T) {
 		}, args: []string{"validate", "--json"}},
 		{name: "plan-warning", dir: func(t *testing.T) string {
 			return vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: test\nvars:\n  token:\n",
+				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: " + fakeSecret(t, "ghp.txt") + "\n",
 				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/token\n          content: !expr vars.token\n",
 			})

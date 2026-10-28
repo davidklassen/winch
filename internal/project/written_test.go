@@ -66,9 +66,7 @@ groups:
           content: b
         when: !expr 'facts.os.version == "12"'
 `,
-	"recipes/app/recipe.yaml": `vars:
-  app_root:
-steps:
+	"recipes/app/recipe.yaml": `steps:
   - file:
       path: !tpl "{{ .vars.app_root }}/conf"
       content: c

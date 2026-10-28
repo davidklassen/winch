@@ -6,8 +6,6 @@ vars:
   website_root: !tpl /var/www/{{ .vars.domain }}
   website_pages: []
   website_private: false
-  # The password of the user demo for the page /private.
-  website_password:
   # The other hosts that serve the site.
   website_peers: []
 

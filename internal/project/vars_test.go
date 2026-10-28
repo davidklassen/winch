@@ -3,6 +3,7 @@ package project
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -22,7 +23,6 @@ var varsProject = map[string]string{
 	"winch.yaml": `name: acme
 inventory: test
 vars:
-  domain:
   mail_server: false
   admins: [root]
   greeting: !tpl "hello {{ .host.short }}"
@@ -134,10 +134,10 @@ func TestLoadVars(t *testing.T) {
 		{name: "undeclared-in-host-vars", files: map[string]string{
 			"winch.yaml": strings.Replace(varsProject["winch.yaml"], ".host.short", ".host.vars.domian", 1),
 		}},
-		{name: "missing-required", files: map[string]string{
+		{name: "read-without-value", files: map[string]string{
 			"inventories/test.yaml": strings.Replace(inv, "    vars:\n      domain: acme.com\n", "", 1),
 		}},
-		{name: "missing-required-recipe", files: map[string]string{
+		{name: "declaration-without-default", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80\n", "web_port: 80\n  web_cert:\n", 1),
 		}},
 		{name: "null-in-inventory", files: map[string]string{
@@ -309,12 +309,6 @@ func TestLoadVars(t *testing.T) {
 		{name: "group-and-host-order", files: map[string]string{
 			"inventories/test.yaml": inv + "  zeta:\n    hosts: [monitor.acme.com, mail.acme.com]\n  alpha:\n    hosts: [mail.acme.com]\n",
 			"pipelines/site.yaml":   "stages:\n  - name: web\n    hosts: zeta\n    steps: []\n",
-		}},
-		{name: "missing-required-recipe-in-group", files: map[string]string{
-			"recipes/web/recipe.yaml":   strings.Replace(web, "web_port: 80\n", "web_port: 80\n  web_cert:\n", 1),
-			"inventories/test.yaml":     strings.Replace(inv, "web_port: 8080", "web_port: 8080\n      web_cert: x", 1),
-			"pipelines/site.yaml":       "stages:\n  - name: web\n    hosts: mail\n    steps:\n      - recipe: web\n  - name: b\n    hosts: monitor.acme.com\n    steps:\n      - recipe: other\n",
-			"recipes/other/recipe.yaml": "vars:\n  other_x:\nsteps: []\n",
 		}},
 		{name: "nested-tag-in-inventory", files: map[string]string{
 			"inventories/test.yaml": strings.Replace(inv, "web_sites: [a, b]", "web_sites: [a, !expr b]", 1),
@@ -810,7 +804,7 @@ func TestStartRecipeWhen(t *testing.T) {
       - recipe: r
         when: !expr vars.on
 `,
-		"recipes/r/recipe.yaml": "require:\n  - !expr 'facts.os.id == \"ubuntu\"'\nvars:\n  r_x:\nsteps: []\n",
+		"recipes/r/recipe.yaml": "require:\n  - !expr 'facts.os.id == \"ubuntu\"'\nsteps: []\n",
 	}
 	p, err := Load(t.Context(), writeProject(t, files), "", "site", nil, Keys{})
 	if err != nil {
@@ -828,13 +822,19 @@ func TestStartRecipeWhen(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
-	files["recipes/r/recipe.yaml"] = "vars:\n  r_x:\nsteps: []\n"
+	files["recipes/r/recipe.yaml"] = "steps:\n  - file:\n      path: /x\n      content: !expr vars.r_x\n"
+	files["inventories/test.yaml"] = "hosts:\n  web1: {}\n  web2:\n    vars:\n      on: true\n  web3:\n    vars:\n      on: true\n      r_x: a\n"
 	p, err = Load(t.Context(), writeProject(t, files), "", "site", nil, Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, i := range []int{0, 2} {
+		if _, err := p.Start(p.Inventory.Hosts[i], debian13); err != nil {
+			t.Errorf("%s: %v", p.Inventory.Hosts[i].Name, err)
+		}
+	}
 	_, err = p.Start(p.Inventory.Hosts[1], debian13)
-	if want := `pipelines/site.yaml:5:9: recipe r: variable "r_x" is required and has no value on web2`; err == nil || err.Error() != want {
+	if want := `recipes/r/recipe.yaml:2:5: variable "r_x" has no value on host web2`; err == nil || err.Error() != want {
 		t.Errorf("web2: got %v, want %s", err, want)
 	}
 }
@@ -852,7 +852,7 @@ func TestStartOnlyRunningDefaults(t *testing.T) {
 		"recipes/web/recipe.yaml":         "vars:\n  web_name: !expr host.name\nsteps:\n  - file:\n      path: !expr '\"/etc/motd-\" + vars.tools_suffix'\n      template: motd.tmpl\n",
 		"recipes/web/templates/motd.tmpl": "{{ .vars.tools_motd }} {{ .vars.site_title }} {{ .vars.web_name }}\n",
 		"recipes/tools/recipe.yaml":       "vars:\n  tools_motd: !tpl \"hi {{ .host.name }}\"\n  tools_path: !expr '\"/etc/\" + host.name'\n  tools_a: !expr 'vars.tools_name + \"!\"'\n  tools_name: !expr host.name\n  tools_on: true\n  tools_list: [a]\n  tools_suffix: x\nsteps: []\n",
-		"recipes/postfix/recipe.yaml":     "vars:\n  postfix_domain:\n  postfix_mailname: !tpl \"mail.{{ .vars.postfix_domain }}\"\nsteps:\n  - file:\n      path: /etc/mailname\n      content: !expr vars.postfix_mailname\n",
+		"recipes/postfix/recipe.yaml":     "vars:\n  postfix_mailname: !tpl \"mail.{{ .vars.postfix_domain }}\"\nsteps:\n  - file:\n      path: /etc/mailname\n      content: !expr vars.postfix_mailname\n",
 	}
 	want := map[string]string{
 		"web1":  `{"site_title":"WEB1!","tools_a":"web1!","tools_list":["a"],"tools_motd":"hi web1","tools_name":"web1","tools_on":true,"tools_path":"/etc/web1","tools_suffix":"x","web_name":"web1"}`,
@@ -1003,6 +1003,134 @@ func TestStartUsedDefaults(t *testing.T) {
 				if err != nil || !slices.Equal(data, want) {
 					t.Errorf("%s: TLS config: got %q, %v; want %q", h.Name, data, err, want)
 				}
+			}
+		})
+	}
+}
+
+var readsProject = map[string]string{
+	"winch.yaml":            "name: acme\ninventory: test\nvars:\n  port: 80\n",
+	"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      domain: a.com\n      key: k1\n  web2: {}\n",
+	"inventories/prod.yaml": "hosts:\n  web9:\n    vars:\n      relay: r.com\n",
+	"pipelines/site.yaml":   "stages:\n  - name: a\n    hosts: web1\n    steps:\n      - recipe: r\n",
+	"recipes/r/recipe.yaml": `steps:
+  - file:
+      path: /etc/domain
+      content: !expr 'vars.domain + ":" + string(vars.port)'
+  - file:
+      path: /etc/relay
+      content: !expr vars.relay
+    when: !expr 'host.name == "web9"'
+  - file:
+      path: /etc/peers
+      content: !expr 'join(map(match("all"), string(.vars.key)), ",")'
+`,
+}
+
+// spec: Variables
+func TestReadsDeclare(t *testing.T) {
+	r := readsProject["recipes/r/recipe.yaml"]
+	inv := readsProject["inventories/test.yaml"]
+	tests := []struct {
+		name  string
+		files map[string]string
+		set   []string
+		want  string
+	}{
+		{name: "reads without declarations"},
+		{name: "an unread inventory value", files: map[string]string{
+			"inventories/test.yaml": inv + "groups:\n  all:\n    vars:\n      domian: b.com\n",
+		}, want: `inventories/test.yaml:10:7: unknown variable "domian"; did you mean "domain"?`},
+		{name: "a misspelled read", files: map[string]string{
+			"recipes/r/recipe.yaml": strings.Replace(r, "vars.domain +", "vars.domian +", 1),
+		}, want: `recipes/r/recipe.yaml:4:16: unknown variable "domian"; did you mean "domain"?`},
+		{name: "a misspelled read in a template", files: map[string]string{
+			"recipes/r/recipe.yaml":      r + "  - file:\n      path: /etc/t\n      template: t.tmpl\n",
+			"recipes/r/templates/t.tmpl": "x {{ .vars.domian }}\n",
+		}, want: `recipes/r/templates/t.tmpl:1:11: unknown variable "domian"; did you mean "domain"?`},
+		{name: "an unread value of a recipe step", files: map[string]string{
+			"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: web1\n    steps:\n      - recipe: r\n        vars:\n          domian: x\n",
+		}, want: `pipelines/site.yaml:7:11: unknown variable "domian"; did you mean "domain"?`},
+		{name: "an unread --set value", set: []string{"vars.domian=x"},
+			want: `--set vars.domian=x: unknown variable "domian"; did you mean "domain"?`},
+		{name: "a declaration without a default", files: map[string]string{
+			"winch.yaml": "name: acme\ninventory: test\nvars:\n  port: 80\n  domain:\n",
+		}, want: `winch.yaml:5:3: variable "domain": a variable without a default has no declaration; remove it`},
+		{name: "with .vars in a step", files: map[string]string{
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/w\n      content: !tpl '{{ with .vars }}{{ .domain }}{{ end }}'\n",
+		}, want: `recipes/r/recipe.yaml:14:16: a read of vars names the variable, such as vars.nginx_port`},
+		{name: "vars[item] in a step", files: map[string]string{
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: !expr '\"/etc/\" + vars[item]'\n      content: x\n    loop: [domain]\n",
+		}, want: `recipes/r/recipe.yaml:13:13: a read of vars names the variable, such as vars.nginx_port`},
+		{name: "with .host in a step", files: map[string]string{
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/w\n      content: !tpl '{{ with .host }}{{ .name }}{{ end }}'\n",
+		}, want: `recipes/r/recipe.yaml:14:16: a read of vars names the variable, such as vars.nginx_port`},
+		{name: "reads of peers in a template", files: map[string]string{
+			"inventories/test.yaml":      strings.Replace(inv, "key: k1", "key: k1\n      role: a\n      zone: b\n      rack: c", 1),
+			"recipes/r/recipe.yaml":      r + "  - file:\n      path: /etc/t\n      template: t.tmpl\n",
+			"recipes/r/templates/t.tmpl": "{{ range .vars.peers }}{{ .vars.role }}{{ end }}{{ $p := index .vars.peers 0 }}{{ $p.vars.zone }}{{ (index .vars.peers 0).vars.rack }}\n",
+			"pipelines/site.yaml":        "stages:\n  - name: a\n    hosts: web1\n    steps:\n      - recipe: r\n        vars:\n          peers: !expr match(\"all\")\n",
+		}},
+		{name: "a value name with upper case", files: map[string]string{
+			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      Port: 1", 1),
+			"recipes/r/recipe.yaml": strings.Replace(r, "string(vars.port)", "string(vars.Port)", 1),
+		}, want: `inventories/test.yaml:6:7: variable "Port": a variable name has only lowercase letters, digits, and _`},
+		{name: "a --set name with upper case", set: []string{"vars.Port=1"}, files: map[string]string{
+			"recipes/r/recipe.yaml": strings.Replace(r, "string(vars.port)", "string(vars.Port)", 1),
+		}, want: `--set vars.Port=1: variable "Port": a variable name has only lowercase letters, digits, and _`},
+		{name: "a value read only in a broken pipeline that does not run", files: map[string]string{
+			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      relay2: x", 1),
+			"pipelines/other.yaml":  "bogus: 1\nstages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: !expr vars.relay2\n",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := maps.Clone(readsProject)
+			maps.Copy(files, tt.files)
+			_, err := Load(t.Context(), writeProject(t, files), "", "site", tt.set, Keys{})
+			switch {
+			case tt.want == "" && err != nil:
+				t.Fatalf("load error: %v", err)
+			case tt.want != "" && (err == nil || !strings.HasPrefix(err.Error(), tt.want)):
+				t.Fatalf("got  %v\nwant %s", err, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Variables ("A variable without a default needs a value on each host where a step ... reads it")
+func TestReadsNeedValue(t *testing.T) {
+	tests := []struct {
+		name, pipeline string
+		want           []string
+	}{
+		{"both hosts read", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: r\n",
+			[]string{"web1: <nil>", `web2: recipes/r/recipe.yaml:2:5: variable "domain" has no value on host web2`}},
+		{"one host reads", "stages:\n  - name: a\n    hosts: web1\n    steps:\n      - recipe: r\n",
+			[]string{"web1: <nil>", "web2: <nil>"}},
+		{"when skips the recipe", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: r\n        when: !expr 'host.name == \"web1\"'\n",
+			[]string{"web1: <nil>", "web2: <nil>"}},
+		{"a when reads", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: x\n        when: !expr vars.domain != \"\"\n",
+			[]string{"web1: <nil>", `web2: pipelines/site.yaml:8:15: variable "domain" has no value on host web2`}},
+		{"a default reads", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: !expr vars.url\n",
+			[]string{"web1: <nil>", `web2: pipelines/site.yaml:5:9: variable "domain" has no value on host web2`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := maps.Clone(readsProject)
+			files["winch.yaml"] += "  url: !tpl 'https://{{ .vars.domain }}'\n"
+			files["pipelines/site.yaml"] = tt.pipeline
+			p, err := Load(t.Context(), writeProject(t, files), "", "site", nil, Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, h := range p.Inventory.Hosts {
+				_, err := p.Start(h, debian13)
+				got = append(got, fmt.Sprintf("%s: %v", h.Name, err))
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
 			}
 		})
 	}

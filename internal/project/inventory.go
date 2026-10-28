@@ -71,8 +71,7 @@ func hasPort(s string) bool {
 	return strings.Contains(s, ":") && err != nil
 }
 
-// loadInventory loads the inventory p. Its variables must be declared; the
-// values of set come last.
+// loadInventory loads the inventory p. The values of set come last.
 func (l *loader) loadInventory(p part, set []setValue) (*Inventory, error) {
 	n, err := p.parse(l.dir)
 	if err != nil {
@@ -137,7 +136,6 @@ func (l *loader) loadInventory(p part, set []setValue) (*Inventory, error) {
 		errs = append(errs, verrs...)
 		errs = append(errs, inv.resolve(h, own, set))
 	}
-	errs = append(errs, inv.required(l.decls))
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
@@ -155,15 +153,13 @@ func (l *loader) values(n *yamlx.Node) ([]source, []error) {
 	var out []source
 	var errs []error
 	for _, p := range n.Pairs {
-		switch {
-		case l.vars[p.Key] == nil:
-			errs = append(errs, yamlx.Errorf(p.KeyPos, "%s", unknownVariable(p.Key, l.vars)))
-		case p.Value.Kind == yamlx.Null:
+		l.given = append(l.given, varRead{name: p.Key, pos: p.KeyPos})
+		if p.Value.Kind == yamlx.Null {
 			errs = append(errs, yamlx.Errorf(p.Value.Pos, "variable %q: null is not a value", p.Key))
-		default:
-			errs = append(errs, l.seal(p.Value, fmt.Sprintf("variable %q: an inventory holds no expressions or templates", p.Key))...)
-			out = append(out, source{name: p.Key, value: yamlx.Value(p.Value), pos: p.Value.Pos})
+			continue
 		}
+		errs = append(errs, l.seal(p.Value, fmt.Sprintf("variable %q: an inventory holds no expressions or templates", p.Key))...)
+		out = append(out, source{name: p.Key, value: yamlx.Value(p.Value), pos: p.Value.Pos})
 	}
 	return out, errs
 }
@@ -283,26 +279,5 @@ func (inv *Inventory) resolve(h *Host, own []source, set []setValue) error {
 		h.Vars[s.name] = s.value
 	}
 	h.User = user
-	return errors.Join(errs...)
-}
-
-// required checks that every host has a value for each required variable of
-// winch.yaml.
-func (inv *Inventory) required(vars []*Var) error {
-	var errs []error
-	for _, v := range vars {
-		if v.Recipe != "" || !v.required() {
-			continue
-		}
-		var without []string
-		for _, h := range inv.Hosts {
-			if _, ok := h.Vars[v.Name]; !ok {
-				without = append(without, h.Name)
-			}
-		}
-		if without != nil {
-			errs = append(errs, yamlx.Errorf(v.Pos, "variable %q is required and has no value on %s", v.Name, strings.Join(without, ", ")))
-		}
-	}
 	return errors.Join(errs...)
 }

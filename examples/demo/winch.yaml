@@ -4,7 +4,6 @@ recipients:
   # The public key of age.key.
   - age19a2pz02xj7w726k7vhfvz6fs7zs6dqsxg8xjm3w22a66th5tuals4agwtg
 vars:
-  domain:
   admin_email: !expr '"webmaster@" + vars.domain'
   # Monit alerts go here.
   alert_addresses: !expr '[vars.admin_email]'

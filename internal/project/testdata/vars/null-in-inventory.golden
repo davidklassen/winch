@@ -1,2 +1,1 @@
 inventories/test.yaml:11:14: variable "domain": null is not a value
-winch.yaml:4:3: variable "domain" is required and has no value on mail.acme.com, monitor.acme.com

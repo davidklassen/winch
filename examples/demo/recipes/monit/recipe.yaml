@@ -1,10 +1,5 @@
 # Each node checks itself (inside) and every other node (outside).
 # Alert only; restarts are systemd's job.
-vars:
-  monit_password:
-  # The other nodes, from the pipeline: checked from outside.
-  monit_peers:
-
 steps:
   - pkg:
       name: [monit, python3-dnspython]

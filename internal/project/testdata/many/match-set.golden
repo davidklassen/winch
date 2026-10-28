@@ -1,6 +1,6 @@
 mail.acme.com monit
-  file {"path":"/etc/monit/peers"} data="monitor.acme.com monitor 192.0.2.20 all,mon mail=true\n" at recipes/monit/recipe.yaml:4:5
+  file {"path":"/etc/monit/peers"} data="monitor.acme.com monitor 192.0.2.20 all,mon mail=true\n" at recipes/monit/recipe.yaml:2:5
   file {"path":"/etc/peer-mail"} data="192.0.2.10 all\n" at pipelines/site.yaml:8:9
 monitor.acme.com monit
-  file {"path":"/etc/monit/peers"} data="mail.acme.com mail 192.0.2.10 all mail=true\n" at recipes/monit/recipe.yaml:4:5
+  file {"path":"/etc/monit/peers"} data="mail.acme.com mail 192.0.2.10 all mail=true\n" at recipes/monit/recipe.yaml:2:5
   file {"path":"/etc/peer-mail"} data="192.0.2.10 all\n" at pipelines/site.yaml:8:9

@@ -28,7 +28,6 @@ type Recipe struct {
 	// Dir is relative to the project.
 	Dir     string
 	Require []Require
-	Vars    []*Var
 	Steps   []Step
 	// Handlers are in declared order.
 	Handlers  []*Handler
@@ -82,7 +81,7 @@ var recipeNameRe = regexp.MustCompile(`^[a-z0-9_]+$`)
 // failed to load. That error was reported once.
 var errReported = errors.New("the recipe failed to load")
 
-// readRecipes reads every recipe and declares its variables.
+// readRecipes reads every recipe and adds its defaults.
 func (l *loader) readRecipes() error {
 	var errs []error
 	for _, p := range l.layout.recipes {
@@ -130,11 +129,6 @@ func (l *loader) loadRecipes() error {
 	for _, name := range slices.Sorted(maps.Keys(l.files)) {
 		rf := l.files[name]
 		r := &Recipe{Name: name, Dir: "recipes/" + name, root: filepath.Join(l.dir, "recipes", name), inline: rf.inline}
-		for _, v := range l.decls {
-			if v.Recipe == name {
-				r.Vars = append(r.Vars, v)
-			}
-		}
 		rerrs := []error{l.parseTemplates(r)}
 		for _, rn := range rf.Require {
 			req, err := compileRequire(rn)
@@ -201,7 +195,7 @@ func (l *loader) parseTemplates(r *Recipe) error {
 	}
 	defer root.Close()
 	var errs []error
-	sc := scope{vars: l.vars}
+	sc := scope{reads: &l.reads}
 	err = fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

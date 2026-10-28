@@ -1,2 +1,1 @@
-recipes/nginx/templates/bad.tmpl:2:11: unknown variable "domain"
-recipes/nginx/templates/bad.tmpl:3:28: unknown name "hots"; did you mean "host"?
+recipes/nginx/templates/bad.tmpl:3:32: unknown name "hots"; did you mean "host"?

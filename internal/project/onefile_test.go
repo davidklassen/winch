@@ -133,9 +133,9 @@ func readTestKey(t *testing.T) []byte {
 // spec: Variables/Secrets (winch secret generate); Project layout
 func TestWriteSecretInWinchYAML(t *testing.T) {
 	k := newKey(t)
-	cfg := "name: acme\ninventory: prod\nrecipients:\n  - " + k.id.Recipient().String() + "\nvars:\n  pw:\n  token:\n" +
+	cfg := "name: acme\ninventory: prod\nrecipients:\n  - " + k.id.Recipient().String() + "\n" +
 		"inventories:\n  prod:\n    hosts:\n      web1:\n"
-	dir := writeProject(t, map[string]string{"winch.yaml": cfg, "inventories/test.yaml": "", "pipelines/site.yaml": "stages:\n  - {name: a, hosts: all, steps: []}\n"})
+	dir := writeProject(t, map[string]string{"winch.yaml": cfg, "inventories/test.yaml": "", "pipelines/site.yaml": readsPipeline("pw", "token")})
 	file, err := WriteSecret(dir, "", "", "pw", "hunter2")
 	if err != nil || file != "inventories.prod of winch.yaml" {
 		t.Fatalf("WriteSecret = %q, %v", file, err)

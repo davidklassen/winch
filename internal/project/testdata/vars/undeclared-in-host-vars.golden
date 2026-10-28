@@ -1,1 +1,1 @@
-winch.yaml:7:13: unknown variable "domian"; did you mean "domain"?
+winch.yaml:6:13: unknown variable "domian"; did you mean "domain"?
