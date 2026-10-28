@@ -367,7 +367,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 		if err != nil {
 			return changed, err
 		}
-		if res.Status == module.Change && !res.Quiet {
+		if res.Status == module.Change {
 			changedLabel = l
 		}
 		if !p.Last {
@@ -503,7 +503,7 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	ev.Status, ev.Action = string(res.Status), string(res.Action)
 	ev.Link = secret.Printable(res.Link)
 	a.rep.Step(ev)
-	if res.Status == module.Change && !res.Quiet {
+	if res.Status == module.Change {
 		for _, n := range p.Notify {
 			a.notified[n] = true
 		}

@@ -154,13 +154,26 @@ func TestDownloadModule(t *testing.T) {
 		vm.MustRun(t, `[ "$(/tmp/w/opt/app/bin/tool)" = tool ] && [ "$(stat -c '%U' /tmp/w/opt/app/bin/tool)" = admin ]`)
 	})
 
+	t.Run("temporary unpack warns", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: download-warning\ninventory: inventories/test.yaml\n",
+			"inventories/test.yaml": "hosts:\n  download:\n    address: 127.0.0.1\n",
+			"pipelines/site.yaml":   "stages:\n  - name: tools\n    hosts: all\n    steps:\n      - download:\n          url: " + urlTgz + "\n          sha256: " + sha(tgz) + "\n          path: /opt/app.tar.gz\n          unpack: /tmp/app\n",
+		})
+		warnings := []string{"pipelines/site.yaml:9:19: warning: unpack: the host removes files in /tmp, so the step downloads again; use a path such as /opt or /var/lib"}
+		r := lab.WinchEnvWarnings(t, dir, nil, warnings, "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "unpack into /tmp/app") {
+			t.Fatalf("plan: exit %d\n%s", r.Code, r.Stdout)
+		}
+	})
+
 	vmtest.RunCases(t, vm, "download", reset, []vmtest.Case{
 		{
 			Name:      "download",
 			Args:      &module.Download{URL: url1, SHA256: sha(v1), Path: "/tmp/w/sub/f"},
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /tmp/w/sub (owner root, group root, mode 0755)", "download " + url1, attrs}},
 			Unchanged: `[ ! -e /tmp/w/sub ] && [ ! -e ` + record + ` ]`,
-			After:     `[ "$(cat /tmp/w/sub/f)" = "version 1" ] && [ "$(stat -c '%U %G %a' /tmp/w/sub/f)" = "root root 644" ] && grep -qx '` + sha(v1) + ` /tmp/w/sub/f' ` + record,
+			After:     `[ "$(cat /tmp/w/sub/f)" = "version 1" ] && [ "$(stat -c '%U %G %a' /tmp/w/sub/f)" = "root root 644" ] && [ ! -e ` + record + ` ]`,
 		},
 		{
 			Name:  "ok with the record needs no network",
@@ -169,25 +182,38 @@ func TestDownloadModule(t *testing.T) {
 			Want:  module.Result{Status: module.OK},
 		},
 		{
-			Name:  "a right file without a record gets its record",
-			Setup: "echo 'version 1' > /tmp/w/f && touch -d 2000-01-01 /tmp/w/f",
-			Args:  &module.Download{URL: missing, SHA256: sha(v1), Path: "/tmp/w/f"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"record the download"}, Quiet: true},
-			After: `[ "$(stat -c %Y /tmp/w/f)" = "$(date -d 2000-01-01 +%s)" ] && grep -qx '` + sha(v1) + ` /tmp/w/f' ` + record,
+			Name:  "a right file ignores a different recorded checksum",
+			Setup: "echo 'version 2' > /tmp/w/f && " + recordV1,
+			Args:  &module.Download{URL: missing, SHA256: sha(v2), Path: "/tmp/w/f"},
+			Want:  module.Result{Status: module.OK},
 		},
 		{
-			Name:  "a right file with a new owner gets its record",
+			Name:  "plain downloads do not read or write records",
+			Setup: "echo 'version 1' > /tmp/w/f && mkdir -p " + record,
+			Args:  &module.Download{URL: missing, SHA256: sha(v1), Path: "/tmp/w/f", Owner: "admin"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner root → admin"}},
+			After: `[ "$(stat -c %U /tmp/w/f)" = admin ] && [ -d ` + record + ` ]`,
+		},
+		{
+			Name:  "a right file without a record is ok",
+			Setup: "echo 'version 1' > /tmp/w/f && touch -d 2000-01-01 /tmp/w/f",
+			Args:  &module.Download{URL: missing, SHA256: sha(v1), Path: "/tmp/w/f"},
+			Want:  module.Result{Status: module.OK},
+			After: `[ "$(stat -c %Y /tmp/w/f)" = "$(date -d 2000-01-01 +%s)" ] && [ ! -e ` + record + ` ]`,
+		},
+		{
+			Name:  "a right file with a new owner changes only its owner",
 			Setup: "echo 'version 1' > /tmp/w/f",
 			Args:  &module.Download{URL: missing, SHA256: sha(v1), Path: "/tmp/w/f", Owner: "admin"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"record the download", "owner root → admin"}},
-			After: `[ "$(stat -c %U /tmp/w/f)" = admin ] && grep -qx '` + sha(v1) + ` /tmp/w/f' ` + record,
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner root → admin"}},
+			After: `[ "$(stat -c %U /tmp/w/f)" = admin ] && [ ! -e ` + record + ` ]`,
 		},
 		{
 			Name:  "a wrong file without a record downloads again",
 			Setup: "echo changed > /tmp/w/f",
 			Args:  &module.Download{URL: url1, SHA256: sha(v1), Path: "/tmp/w/f"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url1 + " (no record of an earlier download)"}},
-			After: `[ "$(cat /tmp/w/f)" = "version 1" ] && grep -qx '` + sha(v1) + ` /tmp/w/f' ` + record,
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url1 + " (the file changed on the host)"}},
+			After: `[ "$(cat /tmp/w/f)" = "version 1" ] && [ ! -e ` + record + ` ]`,
 		},
 		{
 			Name:  "a right archive without a record downloads again",
@@ -200,9 +226,9 @@ func TestDownloadModule(t *testing.T) {
 			Name:      "a new checksum downloads again",
 			Setup:     "echo 'version 1' > /tmp/w/f && " + recordV1 + " && echo '" + sha(v1) + " /tmp/w/other' >> " + record,
 			Args:      &module.Download{URL: url2, SHA256: sha(v2), Path: "/tmp/w/f"},
-			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url2 + " (new sha256)"}},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url2 + " (the file changed on the host)"}},
 			Unchanged: `[ "$(cat /tmp/w/f)" = "version 1" ]`,
-			After:     `[ "$(cat /tmp/w/f)" = "version 2" ] && [ "$(cat ` + record + `)" = "$(printf '%s\n' '` + sha(v1) + ` /tmp/w/other' '` + sha(v2) + ` /tmp/w/f')" ]`,
+			After:     `[ "$(cat /tmp/w/f)" = "version 2" ] && [ "$(cat ` + record + `)" = "$(printf '%s\n' '` + sha(v1) + ` /tmp/w/f' '` + sha(v1) + ` /tmp/w/other')" ]`,
 		},
 		{
 			Name:  "a file that changed on the host downloads again",
@@ -215,7 +241,7 @@ func TestDownloadModule(t *testing.T) {
 			Name:         "a wrong checksum fails and keeps the old file",
 			Setup:        "echo 'version 1' > /tmp/w/f && " + recordV1,
 			Args:         &module.Download{URL: url2, SHA256: sha([]byte("other")), Path: "/tmp/w/f"},
-			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url2 + " (new sha256)"}},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url2 + " (the file changed on the host)"}},
 			WantApplyErr: "download " + url2 + ": the SHA-256 is " + sha(v2) + ", not " + sha([]byte("other")),
 			After:        `[ "$(cat /tmp/w/f)" = "version 1" ] && [ "$(ls -A /tmp/w)" = f ] && grep -qx '` + sha(v1) + ` /tmp/w/f' ` + record,
 			FixArgs:      &module.Download{URL: url2, SHA256: sha(v2), Path: "/tmp/w/f"},
@@ -387,8 +413,8 @@ func TestDownloadRun(t *testing.T) {
 	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
 		t.Fatalf("apply: exit %d", r.Code)
 	}
-	if out := vm.MustRun(t, "/opt/tools/tool && cat /var/lib/winch/downloads/acme"); out != "tool\n"+sha(tool)+" /opt/tools/tool\n" {
-		t.Errorf("tool output and record = %q", out)
+	if out := vm.MustRun(t, "/opt/tools/tool && test ! -e /var/lib/winch/downloads/acme"); out != "tool\n" {
+		t.Errorf("tool output = %q", out)
 	}
 	r = lab.Winch(t, dir, "plan", "site")
 	if r.Code != 0 || !unchanged(r.Stdout, 1) {

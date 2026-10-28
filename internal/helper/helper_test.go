@@ -738,7 +738,7 @@ func TestForget(t *testing.T) {
 }
 
 // spec: Modules/download; Handlers
-func TestDownloadRecordRecordsNothing(t *testing.T) {
+func TestDownloadOKRecordsNothing(t *testing.T) {
 	c := start(t, t.TempDir(), "")
 	h := hello("r1")
 	h.Project = "acme"
@@ -752,11 +752,11 @@ func TestDownloadRecordRecordsNothing(t *testing.T) {
 		Owner: yamlx.NameOrID(strconv.Itoa(os.Getuid())), Group: yamlx.NameOrID(strconv.Itoa(os.Getgid()))})
 	r := c.call(t, "apply", protocol.Step{Module: "download", Args: args, Notify: []string{"app.reload"}, Then: &protocol.Then{Recipe: "app", Step: 1}})
 	var res protocol.StepResult
-	if err := json.Unmarshal(r.Result, &res); err != nil || r.Error != "" || !res.Quiet || !slices.Equal(res.Changes, []string{"record the download"}) {
-		t.Fatalf("apply = %s %q, want a quiet change that records the download", r.Result, r.Error)
+	if err := json.Unmarshal(r.Result, &res); err != nil || r.Error != "" || res.Status != module.OK || len(res.Changes) != 0 {
+		t.Fatalf("apply = %s %q, want ok without a record", r.Result, r.Error)
 	}
 	if p := pendingAll(t, c); len(p.Handlers) != 0 || len(p.Then) != 0 {
-		t.Errorf("records after a download record: %+v", p)
+		t.Errorf("records after an unchanged download: %+v", p)
 	}
 	if r := c.call(t, "check", protocol.Step{Module: "download", Args: args}); !strings.Contains(string(r.Result), `"status":"ok"`) {
 		t.Errorf("check after apply = %s %q, want ok", r.Result, r.Error)

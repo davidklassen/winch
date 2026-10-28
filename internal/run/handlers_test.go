@@ -770,7 +770,7 @@ func TestInsertedStepKeepsPendingThen(t *testing.T) {
 }
 
 // spec: Modules/download; Handlers; Steps
-func TestQuietChangeNotifiesNothing(t *testing.T) {
+func TestDownloadOKNotifiesNothing(t *testing.T) {
 	files := map[string]string{
 		"winch.yaml":            "name: acme\ninventory: inventories/test.yaml\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
@@ -794,12 +794,12 @@ handlers:
 		t.Fatal(err)
 	}
 	h := fakehost.New()
-	h.SetResult("web1", "/opt/tool", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"record the download"}, Quiet: true})
+	h.SetResult("web1", "/opt/tool", module.Result{Status: module.OK})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
-	if s := out.String(); !strings.Contains(s, "record the download") || strings.Contains(s, "handler") || strings.Contains(s, "then:") {
-		t.Errorf("plan:\n%s\nwant the record line without a handler or a then", s)
+	if s := out.String(); strings.Contains(s, "handler") || strings.Contains(s, "then:") {
+		t.Errorf("plan:\n%s\nwant no handler or then", s)
 	}
 	ok, got := applyAll(t, p, h)
 	if !ok {

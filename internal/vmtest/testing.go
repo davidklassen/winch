@@ -355,7 +355,7 @@ func equal(got, want module.Result) bool {
 	if (got.Old == nil) != (want.Old == nil) || got.Old != nil && *got.Old != *want.Old {
 		return false
 	}
-	return got.Status == want.Status && got.Action == want.Action && got.OldReason == want.OldReason && got.Link == want.Link && slices.Equal(got.Changes, want.Changes) && slices.Equal(got.StartedBy, want.StartedBy) && got.Deferred == want.Deferred && got.Quiet == want.Quiet
+	return got.Status == want.Status && got.Action == want.Action && got.OldReason == want.OldReason && got.Link == want.Link && slices.Equal(got.Changes, want.Changes) && slices.Equal(got.StartedBy, want.StartedBy) && got.Deferred == want.Deferred
 }
 
 func show(r module.Result) string {
@@ -363,5 +363,5 @@ func show(r module.Result) string {
 	if r.Old != nil {
 		old = *r.Old
 	}
-	return string(r.Status) + " " + string(r.Action) + " " + strings.Join(r.Changes, "; ") + " old=" + old + " old reason=" + r.OldReason + " link=" + r.Link + " started by=" + strings.Join(r.StartedBy, " ") + " deferred=" + strconv.FormatBool(r.Deferred) + " quiet=" + strconv.FormatBool(r.Quiet)
+	return string(r.Status) + " " + string(r.Action) + " " + strings.Join(r.Changes, "; ") + " old=" + old + " old reason=" + r.OldReason + " link=" + r.Link + " started by=" + strings.Join(r.StartedBy, " ") + " deferred=" + strconv.FormatBool(r.Deferred)
 }

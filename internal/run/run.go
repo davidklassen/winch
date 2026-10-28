@@ -402,7 +402,7 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 				}
 			}
 		}
-		if steps[i].Result.Status != module.OK && !steps[i].Result.Quiet {
+		if steps[i].Result.Status != module.OK {
 			changed = true
 			for _, n := range p.Notify {
 				hr.notified[n] = true

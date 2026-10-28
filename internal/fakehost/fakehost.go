@@ -651,9 +651,6 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 	if f, ok := m.(*module.File); ok && c.hosts.fails(c.hosts.failApply, c.host, f.Path) {
 		return module.Result{}, fmt.Errorf("write %s: read-only file system", f.Path)
 	}
-	if res.Quiet {
-		notify, then = nil, nil
-	}
 	c.hosts.mu.Lock()
 	for _, n := range notify {
 		if !slices.Contains(c.hosts.pending[c.host], n) {

@@ -39,8 +39,7 @@ type Download struct {
 	Group  yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
 	Mode   string         `yaml:"mode" json:"mode,omitempty"`
 
-	// Recorded is the checksum that the helper recorded at the last download
-	// of Path, or "".
+	// Recorded is the checksum at the last successful unpack of Path, or "".
 	Recorded string `json:"-"`
 }
 
@@ -130,18 +129,15 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 		return Result{}, err
 	}
 	res := Result{Status: OK}
-	switch {
-	case why != "":
+	if why != "" {
 		res = Result{Status: Change, Action: Modify, Changes: d.unpackLine([]string{"download " + d.URL + " (" + why + ")"})}
-	case d.Recorded == "":
-		res = Result{Status: Change, Action: Modify, Changes: []string{"record the download"}, Quiet: true}
 	}
 	changes, err := attrChanges(fi, owner, group, mode)
 	if err != nil {
 		return Result{}, err
 	}
 	if len(changes) > 0 {
-		res.Status, res.Action, res.Quiet = Change, Modify, false
+		res.Status, res.Action = Change, Modify
 		res.Changes = append(res.Changes, changes...)
 		if why == "" {
 			res.Changes = d.unpackLine(res.Changes)
@@ -155,17 +151,17 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 	return res, nil
 }
 
-const noRecord = "no record of an earlier download"
-
 // why returns the reason to download again, or "" when the file name in dir
 // has the step's checksum, and for unpack, is the recorded download and the
 // unpack directory exists.
 func (d *Download) why(dir *os.Root, name string, fi fs.FileInfo) (string, error) {
-	switch {
-	case d.Recorded == "" && d.Unpack != "":
-		return noRecord, nil
-	case d.Recorded != "" && d.Recorded != d.SHA256:
-		return "new sha256", nil
+	if d.Unpack != "" {
+		if d.Recorded == "" {
+			return "no record of an earlier download", nil
+		}
+		if d.Recorded != d.SHA256 {
+			return "new sha256", nil
+		}
 	}
 	r, err := openSame(dir, name, fi)
 	if err != nil {
@@ -177,9 +173,6 @@ func (d *Download) why(dir *os.Root, name string, fi fs.FileInfo) (string, error
 		return "", err
 	}
 	if sum != d.SHA256 {
-		if d.Recorded == "" {
-			return noRecord, nil
-		}
 		return "the file changed on the host", nil
 	}
 	if d.Unpack == "" {

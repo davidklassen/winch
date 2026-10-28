@@ -236,11 +236,12 @@ func TestRunTimer(t *testing.T) {
 // run)
 func TestHelloFailsWhileATimerRuns(t *testing.T) {
 	dir := t.TempDir()
-	data, _ := json.Marshal(job{Deadline: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)})
+	deadline := time.Now().Add(time.Hour).UTC()
+	data, _ := json.Marshal(job{Deadline: deadline})
 	write(t, filepath.Join(dir, "rollback", "timer.json"), string(data))
 	c := start(t, dir, "")
 	r := c.call(t, "hello", hello("r1"))
-	if want := "a rollback timer of an earlier run runs until 2026-10-28T12:00:00Z; run winch again after it ends"; r.Error != want {
+	if want := "a rollback timer of an earlier run runs until " + deadline.Format(time.RFC3339) + "; run winch again after it ends"; r.Error != want {
 		t.Errorf("hello: %q, want %q", r.Error, want)
 	}
 	if r := c.call(t, "facts", nil); r.Error != "the first request must be hello" {

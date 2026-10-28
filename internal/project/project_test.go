@@ -710,11 +710,25 @@ func TestLoadTempDownloadWarning(t *testing.T) {
 	want := func(d string) string {
 		return "pipelines/site.yaml:8:17: path: the host removes files in " + d + ", so the step downloads again; use a path such as /opt or /var/lib"
 	}
+	unpackWant := func(d string) string {
+		return "pipelines/site.yaml:9:19: unpack: the host removes files in " + d + ", so the step downloads again; use a path such as /opt or /var/lib"
+	}
 	for _, tt := range []struct{ name, step, want string }{
 		{"tmp", step("/tmp/a"), want("/tmp")},
 		{"var tmp", step("/var/tmp/a/b"), want("/var/tmp")},
 		{"run", step("/run/a"), want("/run")},
 		{"dev shm", step("/dev/shm/a"), want("/dev/shm")},
+		{"unpack root /tmp", step("/opt/a.tgz") + "\n          unpack: /tmp", unpackWant("/tmp")},
+		{"unpack root /var/tmp", step("/opt/a.tgz") + "\n          unpack: /var/tmp", unpackWant("/var/tmp")},
+		{"unpack root /run", step("/opt/a.tgz") + "\n          unpack: /run", unpackWant("/run")},
+		{"unpack root /dev/shm", step("/opt/a.tgz") + "\n          unpack: /dev/shm", unpackWant("/dev/shm")},
+		{"unpack tmp", step("/opt/a.tgz") + "\n          unpack: /tmp/a", unpackWant("/tmp")},
+		{"unpack var tmp", step("/opt/a.tgz") + "\n          unpack: /var/tmp/a", unpackWant("/var/tmp")},
+		{"unpack run", step("/opt/a.tgz") + "\n          unpack: /run/a", unpackWant("/run")},
+		{"unpack dev shm", step("/opt/a.tgz") + "\n          unpack: /dev/shm/a", unpackWant("/dev/shm")},
+		{"both temporary", step("/tmp/a.tgz") + "\n          unpack: /run/a", want("/tmp") + "\n" + unpackWant("/run")},
+		{"unpack opt", step("/opt/a.tgz") + "\n          unpack: /opt/a", ""},
+		{"unpack prefix only", step("/opt/a.tgz") + "\n          unpack: /tmpfiles/a", ""},
 		{"opt", step("/opt/a"), ""},
 		{"prefix only", step("/tmpfiles/a"), ""},
 		{"file in tmp", "file:\n          path: /tmp/a\n          content: x", ""},
@@ -732,11 +746,11 @@ func TestLoadTempDownloadWarning(t *testing.T) {
 				t.Fatal(err)
 			}
 			for what, ws := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": warnings} {
-				var got string
-				if len(ws) > 0 {
-					got = ws[0].Error()
+				var lines []string
+				for _, w := range ws {
+					lines = append(lines, w.Error())
 				}
-				if len(ws) > 1 || got != tt.want {
+				if got := strings.Join(lines, "\n"); got != tt.want {
 					t.Errorf("%s warnings = %v, want %q", what, ws, tt.want)
 				}
 			}
