@@ -290,6 +290,28 @@ func TestFailOnWarnings(t *testing.T) {
 	}
 }
 
+func TestExpectedWarnings(t *testing.T) {
+	const warning = "recipes/app/recipe.yaml:4:5: warning: purge may remove generated files"
+	for _, tt := range []struct {
+		name, stderr string
+		want         []string
+		fail         bool
+	}{
+		{"expected", warning + "\n", []string{warning}, false},
+		{"missing", "", []string{warning}, true},
+		{"extra", warning + "\nrecipes/app/recipe.yaml:6:5: warning: other\n", []string{warning}, true},
+		{"different", "recipes/app/recipe.yaml:6:5: warning: other\n", []string{warning}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var got errLog
+			failOnWarnings(&got, []string{"plan", "site"}, Result{Stderr: tt.stderr}, tt.want...)
+			if (len(got) > 0) != tt.fail {
+				t.Errorf("failures = %v, want failed=%v", got, tt.fail)
+			}
+		})
+	}
+}
+
 // spec: roadmap: Testing/VMs
 func TestWaitBoot(t *testing.T) {
 	// cloud-init gives its errors only with --long, and the output must not

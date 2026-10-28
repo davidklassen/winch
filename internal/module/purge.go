@@ -44,7 +44,7 @@ func (d *Dir) removals(dir *os.Root) ([]removal, error) {
 		if err != nil {
 			return nil, err
 		}
-		if keeps(d.Path, n, fi.Mode()&fs.ModeSymlink != 0, d.Keep, owned) {
+		if d.keeps(n, fi.Mode()&fs.ModeSymlink != 0, owned) {
 			continue
 		}
 		p := path.Join(d.Path, n)
@@ -57,6 +57,15 @@ func (d *Dir) removals(dir *os.Root) ([]removal, error) {
 		out = append(out, removal{n, line})
 	}
 	return out, nil
+}
+
+func (d *Dir) keeps(name string, link bool, owned map[string]string) bool {
+	for _, pattern := range d.KeepPatterns {
+		if match, _ := path.Match(pattern, name); match {
+			return true
+		}
+	}
+	return keeps(d.Path, name, link, d.Keep, owned)
 }
 
 // purge removes the entries of dir that removals returns.

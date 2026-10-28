@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -92,6 +93,33 @@ func TestPurgeKeeps(t *testing.T) {
 			}
 			if got := keeps(tt.dir, tt.entry, tt.link, tt.keep, owned); got != tt.want {
 				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Modules/file, dir, link (keep globs match entry names)
+func TestPurgeKeepPatterns(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		patterns []string
+		want     bool
+	}{
+		{"virtual.db", []string{"*.db"}, true},
+		{"virtual.db.bak", []string{"*.db"}, false},
+		{".hidden.db", []string{"*.db"}, true},
+		{"virtual.db", []string{"*.log", "*.db"}, true},
+		{"map1.db", []string{"map[0-9].?b"}, true},
+		{"mapx.db", []string{"map[0-9].?b"}, false},
+		{"map*.db", []string{`map\*.db`}, true},
+		{"virtual.db", []string{"/etc/maps/*.db"}, false},
+	} {
+		t.Run(tt.name+strings.Join(tt.patterns, ","), func(t *testing.T) {
+			d := &Dir{Path: "/etc/maps", KeepPatterns: tt.patterns}
+			for _, link := range []bool{false, true} {
+				if got := d.keeps(tt.name, link, nil); got != tt.want {
+					t.Errorf("keeps(%q, link=%v) = %v, want %v", tt.name, link, got, tt.want)
+				}
 			}
 		})
 	}

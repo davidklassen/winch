@@ -207,6 +207,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, f
 		return nil, err
 	}
 	warnings = slices.Concat(warnings, l.warnings, l.secretFileWarnings(invs, []*Pipeline{pl}))
+	warnings = append(warnings, purgeWarnings(invs, append([]*Pipeline{pl}, others...), []*Pipeline{pl})...)
 	setNames := map[string]bool{}
 	for _, v := range sets {
 		setNames[v.name] = true
@@ -317,7 +318,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 		return nil, err
 	}
 	yml, err := ymlFiles(dir)
-	return slices.Concat(warnings, l.warnings, l.secretFileWarnings(invs, pls), stale, yml), err
+	return slices.Concat(warnings, l.warnings, l.secretFileWarnings(invs, pls), purgeWarnings(invs, pls, pls), stale, yml), err
 }
 
 // ymlFiles returns a warning for each .yml file in pipelines/ and in a recipe

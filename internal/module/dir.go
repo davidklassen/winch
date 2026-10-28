@@ -17,15 +17,16 @@ import (
 )
 
 type Dir struct {
-	Path    string         `yaml:"path,required" json:"path"`
-	Owner   yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
-	Group   yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
-	Mode    string         `yaml:"mode" json:"mode,omitempty"`
-	ModePos yamlx.Pos      `json:"-"`
-	Recurse bool           `yaml:"recurse" json:"recurse,omitempty"`
-	Absent  bool           `yaml:"absent" json:"absent,omitempty"`
-	Replace bool           `yaml:"replace" json:"replace,omitempty"`
-	Purge   bool           `yaml:"purge" json:"purge,omitempty"`
+	Path         string         `yaml:"path,required" json:"path"`
+	Owner        yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
+	Group        yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
+	Mode         string         `yaml:"mode" json:"mode,omitempty"`
+	ModePos      yamlx.Pos      `json:"-"`
+	Recurse      bool           `yaml:"recurse" json:"recurse,omitempty"`
+	Absent       bool           `yaml:"absent" json:"absent,omitempty"`
+	Replace      bool           `yaml:"replace" json:"replace,omitempty"`
+	Purge        bool           `yaml:"purge" json:"purge,omitempty"`
+	KeepPatterns []string       `yaml:"keep" json:"keep_patterns,omitempty"`
 	// Keep are the paths below Path that steps for the host write. The
 	// controller sets them.
 	Keep []string `json:"keep,omitempty"`
@@ -41,7 +42,12 @@ func (d *Dir) Validate() error {
 		return err
 	}
 	if d.Absent {
-		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"recurse", d.Recurse}, arg{"replace", d.Replace}, arg{"purge", d.Purge})
+		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"recurse", d.Recurse}, arg{"replace", d.Replace}, arg{"purge", d.Purge}, arg{"keep", len(d.KeepPatterns) > 0})
+	}
+	for _, pattern := range d.KeepPatterns {
+		if _, err := path.Match(pattern, ""); err != nil {
+			return &yamlx.FieldError{Field: "keep", Msg: fmt.Sprintf("invalid glob pattern %q: %s", pattern, err)}
+		}
 	}
 	if err := checkOwner("owner", d.Owner); err != nil {
 		return err

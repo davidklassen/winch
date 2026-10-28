@@ -90,16 +90,26 @@ func (l *Lab) Winch(t *testing.T, dir string, args ...string) Result {
 // environment.
 func (l *Lab) WinchEnv(t *testing.T, dir string, env []string, args ...string) Result {
 	t.Helper()
+	return l.WinchEnvWarnings(t, dir, env, nil, args...)
+}
+
+func (l *Lab) WinchEnvWarnings(t *testing.T, dir string, env, warnings []string, args ...string) Result {
+	t.Helper()
 	bin := os.Getenv("WINCH_BIN")
 	if bin == "" {
 		t.Fatal("WINCH_BIN is not set; run make test-integration")
 	}
-	return l.WinchBin(t, bin, dir, env, args...)
+	return l.winchBin(t, bin, dir, env, warnings, args...)
 }
 
 // WinchBin runs the winch binary bin in dir, with env added to the
 // environment.
 func (l *Lab) WinchBin(t *testing.T, bin, dir string, env []string, args ...string) Result {
+	t.Helper()
+	return l.winchBin(t, bin, dir, env, nil, args...)
+}
+
+func (l *Lab) winchBin(t *testing.T, bin, dir string, env, warnings []string, args ...string) Result {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), bin, args...)
 	cmd.Dir = dir
@@ -114,12 +124,19 @@ func (l *Lab) WinchBin(t *testing.T, bin, dir string, env []string, args ...stri
 		t.Fatal(err)
 	}
 	t.Logf("winch %s: exit %d\nstdout:\n%s\nstderr:\n%s%s", strings.Join(args, " "), r.Code, r.Stdout, r.Stderr, l.hint(r.Stdout+r.Stderr))
-	failOnWarnings(t, args, r)
+	failOnWarnings(t, args, r, warnings...)
 	return r
 }
 
-func failOnWarnings(t interface{ Errorf(string, ...any) }, args []string, r Result) {
-	for _, w := range warnings(r.Stdout, r.Stderr) {
+func failOnWarnings(t interface{ Errorf(string, ...any) }, args []string, r Result, want ...string) {
+	got := warnings(r.Stdout, r.Stderr)
+	if len(want) > 0 {
+		if !slices.Equal(got, want) {
+			t.Errorf("winch %s: warnings = %q, want %q", strings.Join(args, " "), got, want)
+		}
+		return
+	}
+	for _, w := range got {
 		t.Errorf("winch %s: unexpected warning: %s", strings.Join(args, " "), w)
 	}
 }
