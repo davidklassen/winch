@@ -71,7 +71,7 @@ func TestDirValidate(t *testing.T) {
 		{"not octal", "path: /x\nmode: \"0855\"\n", `t.yaml:2:7: mode: must be an octal mode such as "0755"`},
 		{"mode and absent", "path: /x\nmode: \"0755\"\nabsent: true\n", `t.yaml:2:7: mode: absent: true takes no mode`},
 		{"owner and absent", "path: /x\nowner: root\nabsent: true\n", `t.yaml:2:8: owner: absent: true takes no owner`},
-		{"names with digits", "path: /x\nowner: user1\ngroup: \"2g\"\n", ""},
+		{"names with digits", "path: /x\nowner: user1\ngroup: \"g2\"\n", ""},
 		{"numeric IDs", "path: /x\nowner: 999\ngroup: 999\n", ""},
 		{"quoted numeric IDs", "path: /x\nowner: \"999\"\ngroup: \"50\"\n", ""},
 		{"owner ID too large", "path: /x\nowner: \"4294967296\"\n", `t.yaml:2:8: owner: an ID must be below 4294967295`},

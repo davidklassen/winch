@@ -46,7 +46,7 @@ func TestDownloadValidate(t *testing.T) {
 		{"unpack and mode", "url: https://example.com/a\n" + sum + "path: /opt/a.zip\nunpack: /opt/a\nmode: \"0755\"\n", `t.yaml:5:7: mode: unpack takes the modes of the archive, without write permission for group and others; it takes no mode`},
 		{"unpack into the path", "url: https://example.com/a\n" + sum + "path: /opt/a.zip\nunpack: /opt/a.zip\n", `t.yaml:4:9: unpack: must differ from path`},
 		{"bad mode", "url: https://example.com/a\n" + sum + "path: /x\nmode: \"0855\"\n", `t.yaml:4:7: mode: must be an octal mode such as "0755"`},
-		{"bad owner", "url: https://example.com/a\n" + sum + "path: /x\nowner: \"a:b\"\n", `t.yaml:4:8: owner: "a:b" is not a name; a name has no ":", "/", or white space, and does not start with "-"`},
+		{"bad owner", "url: https://example.com/a\n" + sum + "path: /x\nowner: \"a:b\"\n", `t.yaml:4:8: owner: "a:b" is not a user name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Download{}, tt.yaml, tt.want) })

@@ -865,3 +865,46 @@ systemctl reload ssh`)
 		t.Errorf("ssh as wtdev: %v: %q", err, out)
 	}
 }
+
+// spec: Modules/user and group
+func TestUserLoginPassword(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "login-password")
+	reset := `usermod -p '*' admin
+userdel wtalice 2>/dev/null || true
+printf 'UsePAM no\n' > /etc/ssh/sshd_config.d/wt.conf
+systemctl reload ssh`
+	vmtest.RunCases(t, vm, "user", reset, []vmtest.Case{
+		{
+			Name:      "a locked login password with UsePAM no",
+			Args:      &module.User{Name: "admin", Password: "!"},
+			WantErr:   `with UsePAM no, sshd refuses the login of admin: its password is locked with "!"`,
+			Unchanged: `[ "$(getent shadow admin | cut -d: -f2)" = '*' ]`,
+		},
+		{
+			Name:      "a locked login hash with UsePAM no",
+			Args:      &module.User{Name: "admin", Password: "!" + hash1},
+			WantErr:   `with UsePAM no, sshd refuses the login of admin: its password is locked with "!"`,
+			Unchanged: `[ "$(getent shadow admin | cut -d: -f2)" = '*' ]`,
+		},
+		{
+			Name: "a star password permits key login with UsePAM no",
+			Args: &module.User{Name: "admin", Password: "*"},
+			Want: module.Result{Status: module.OK},
+		},
+		{
+			Name:  "another user's password may be locked",
+			Setup: `useradd -M -d /nonexistent wtalice && usermod -p '*' wtalice`,
+			Args:  &module.User{Name: "wtalice", Password: "!"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"change password"}},
+			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '!' ]`,
+		},
+		{
+			Name:  "a locked login password with UsePAM yes",
+			Setup: `printf 'UsePAM yes\n' > /etc/ssh/sshd_config.d/wt.conf && systemctl reload ssh`,
+			Args:  &module.User{Name: "admin", Password: "!"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"change password"}},
+			After: `[ "$(getent shadow admin | cut -d: -f2)" = '!' ]`,
+		},
+	})
+}

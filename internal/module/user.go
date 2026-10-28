@@ -172,7 +172,13 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 		}
 		res, home, group, err = u.checkNew(a)
 	}
-	if err != nil || u.AuthorizedKeys == nil {
+	if err != nil {
+		return res, err
+	}
+	if u.AuthorizedKeys == nil {
+		if exists && cur.uid == st.LoginUID && strings.HasPrefix(u.Password, "!") {
+			err = u.checkSSHD(ctx, st.SSHConnection, a, cur, exists, home, group)
+		}
 		return res, err
 	}
 	switch home {
@@ -181,7 +187,7 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 	case "/":
 		return Result{}, fmt.Errorf("the home of %s is /; authorized_keys needs another home; set home", u.Name)
 	}
-	if err := u.sshdUsesKeys(ctx, st.SSHConnection, a, cur, exists, home, group); err != nil {
+	if err := u.checkSSHD(ctx, st.SSHConnection, a, cur, exists, home, group); err != nil {
 		return Result{}, err
 	}
 	lines, err := u.keyLines(home, group)
@@ -565,10 +571,8 @@ func homeState(home string) ([]string, fs.FileInfo, error) {
 	return nil, fi, err
 }
 
-// sshdUsesKeys fails when sshd, as configured before the run, would not use
-// the keys of the user in home after the step. group is the user's primary
-// group after the step.
-func (u *User) sshdUsesKeys(ctx context.Context, sshConnection string, a accounts, cur passwdEntry, exists bool, home, group string) error {
+// group is the user's primary group after the step.
+func (u *User) checkSSHD(ctx context.Context, sshConnection string, a accounts, cur passwdEntry, exists bool, home, group string) error {
 	if _, err := os.Stat("/usr/sbin/sshd"); err != nil {
 		return nil
 	}
@@ -585,15 +589,17 @@ func (u *User) sshdUsesKeys(ctx context.Context, sshConnection string, a account
 		key, value, _ := strings.Cut(strings.TrimSpace(line), " ")
 		conf[key] = value
 	}
-	files := strings.Fields(conf["authorizedkeysfile"])
-	if !slices.ContainsFunc(files, func(f string) bool {
-		return f == ".ssh/authorized_keys" || f == "%h/.ssh/authorized_keys" || f == "~/.ssh/authorized_keys"
-	}) {
-		return fmt.Errorf("sshd reads the keys of %s from %s (AuthorizedKeysFile), not from ~/.ssh/authorized_keys", u.Name, conf["authorizedkeysfile"])
-	}
-	if conf["strictmodes"] == "yes" {
-		if err := u.safeHome(a, cur, exists, home, group); err != nil {
-			return err
+	if u.AuthorizedKeys != nil {
+		files := strings.Fields(conf["authorizedkeysfile"])
+		if !slices.ContainsFunc(files, func(f string) bool {
+			return f == ".ssh/authorized_keys" || f == "%h/.ssh/authorized_keys" || f == "~/.ssh/authorized_keys"
+		}) {
+			return fmt.Errorf("sshd reads the keys of %s from %s (AuthorizedKeysFile), not from ~/.ssh/authorized_keys", u.Name, conf["authorizedkeysfile"])
+		}
+		if conf["strictmodes"] == "yes" {
+			if err := u.safeHome(a, cur, exists, home, group); err != nil {
+				return err
+			}
 		}
 	}
 	if conf["usepam"] == "no" {

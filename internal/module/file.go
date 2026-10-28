@@ -108,17 +108,18 @@ func checkCommand(field string, c *string) error {
 
 var numberRe = regexp.MustCompile(`^[0-9]+$`)
 
-// checkOwner checks an owner or a group: the characters of a name, and the
-// range of a value of only digits. chown takes the ID 4294967295 as "no
-// change".
 func checkOwner(field string, v yamlx.NameOrID) error {
-	if strings.ContainsAny(string(v), ":/") || strings.ContainsFunc(string(v), unicode.IsSpace) || strings.HasPrefix(string(v), "-") {
-		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf(`%q is not a name; a name has no ":", "/", or white space, and does not start with "-"`, v)}
-	}
-	if !numberRe.MatchString(string(v)) {
+	if v == "" {
 		return nil
 	}
-	return checkID(field, yamlx.ID(v))
+	if numberRe.MatchString(string(v)) {
+		return checkID(field, yamlx.ID(v))
+	}
+	what := "user"
+	if field == "group" {
+		what = "group"
+	}
+	return checkAccountName(field, what, string(v))
 }
 
 var modeRe = regexp.MustCompile(`^[0-7]{3,4}$`)

@@ -56,7 +56,7 @@ func TestFileValidate(t *testing.T) {
 		{"mode and absent", "path: /x\nmode: \"0644\"\nabsent: true\n", `t.yaml:2:7: mode: absent: true takes no mode`},
 		{"owner and absent", "path: /x\nowner: root\nabsent: true\n", `t.yaml:2:8: owner: absent: true takes no owner`},
 		{"group and absent", "path: /x\ngroup: root\nabsent: true\n", `t.yaml:2:8: group: absent: true takes no group`},
-		{"names with digits", "path: /x\ncontent: hi\nowner: user1\ngroup: \"2g\"\n", ""},
+		{"names with digits", "path: /x\ncontent: hi\nowner: user1\ngroup: \"g2\"\n", ""},
 		{"numeric IDs", "path: /x\ncontent: hi\nowner: 999\ngroup: 999\n", ""},
 		{"quoted numeric IDs", "path: /x\ncontent: hi\nowner: \"999\"\ngroup: \"50\"\n", ""},
 		{"owner ID too large", "path: /x\ncontent: hi\nowner: 4294967295\n", `t.yaml:3:8: owner: an ID must be below 4294967295`},
