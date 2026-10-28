@@ -48,9 +48,14 @@ pipelines:
         -   name: x
             hosts: all
             steps:
-            -   notify: other.done
+            -   notify: [other.done, x]
                 pkg:
                     name: curl
+            handlers:
+                x:
+                -   cmd:
+                        command: "true"
+                    name: X
 `,
 		"inventories/hosts.yaml": "hosts:\n    web1: {}\n    web2:\n        vars:\n            motd_text: hi\n",
 		"pipelines/site.yaml": `stages:
@@ -59,6 +64,15 @@ pipelines:
     steps:
     -   recipe: motd
         name: The motd
+    -   notify: reload
+        file:
+            path: /etc/issue
+            content: hi
+    handlers:
+        reload:
+        -   cmd:
+                command: "true"
+            name: Reload
 `,
 		"recipes/motd/recipe.yaml": `vars:
     motd_text: hello
@@ -104,7 +118,12 @@ pipelines:
         steps:
           - pkg:
               name: curl
-            notify: other.done
+            notify: [other.done, x]
+        handlers:
+          x:
+            - name: X
+              cmd:
+                command: "true"
 `,
 		"inventories/hosts.yaml": "hosts:\n  web1: {}\n  web2:\n    vars:\n      motd_text: hi\n",
 		"pipelines/site.yaml": `stages:
@@ -113,6 +132,15 @@ pipelines:
     steps:
       - name: The motd
         recipe: motd
+      - file:
+          path: /etc/issue
+          content: hi
+        notify: reload
+    handlers:
+      reload:
+        - name: Reload
+          cmd:
+            command: "true"
 `,
 		"recipes/motd/recipe.yaml": `vars:
   motd_text: hello

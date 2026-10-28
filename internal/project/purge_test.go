@@ -116,3 +116,19 @@ func TestPurgeWarningAbsent(t *testing.T) {
 		})
 	}
 }
+
+// spec: Modules/file, dir, link (purge and generated files load warning);
+// Pipelines (handlers of a stage)
+func TestLoadPurgeWarningOfAStageHandler(t *testing.T) {
+	dir := writeProject(t, map[string]string{
+		"pipelines/site.yaml": stage("      - dir:\n          path: /etc/maps\n          purge: true\n") +
+			"    handlers:\n      rebuild:\n        - file:\n            path: /etc/maps/virtual\n            content: x\n          then: postmap /etc/maps/virtual\n",
+	})
+	p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0].Error(), "purge of /etc/maps may remove files that then makes; add keep") {
+		t.Errorf("warnings = %v, want one purge warning", p.Warnings)
+	}
+}

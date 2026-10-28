@@ -1,0 +1,26 @@
+stage web
+  handler web.reload at pipelines/site.yaml:12:7
+    service {"name":"nginx","reloaded":true} at pipelines/site.yaml:13:11
+  handler web.motd at pipelines/site.yaml:17:7
+    cmd {"command":"update-motd"} at pipelines/site.yaml:18:11
+  recipe nginx at pipelines/site.yaml:5:9
+    pkg {"name":["nginx"]} at recipes/nginx/recipe.yaml:2:5
+    file {"path":"/etc/nginx/nginx.conf","validate":"nginx -t"} data="events {}\n" at recipes/nginx/recipe.yaml:4:5
+      notify nginx.reload
+      notify nginx.restart
+    handler nginx.restart at recipes/nginx/recipe.yaml:10:3
+      service {"name":"nginx","restarted":true} at recipes/nginx/recipe.yaml:11:7
+    handler nginx.reload at recipes/nginx/recipe.yaml:15:3
+      service {"name":"nginx","reloaded":true} name="Reload" at recipes/nginx/recipe.yaml:16:7
+  recipe site at pipelines/site.yaml:6:9
+    file null at recipes/site/recipe.yaml:4:5
+      notify nginx.reload
+    link null at recipes/site/recipe.yaml:10:5
+      notify nginx.reload
+  file {"path":"/etc/motd"} data="hi" at pipelines/site.yaml:7:9
+    notify web.reload
+    notify nginx.reload
+    notify web.motd
+stage db
+  recipe db at pipelines/site.yaml:23:9
+    file {"path":"/etc/db.conf"} data="hi" at recipes/db/recipe.yaml:2:5

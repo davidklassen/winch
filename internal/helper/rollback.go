@@ -62,10 +62,16 @@ func (r *rollbacks) job() string { return filepath.Join(r.dir, "timer.json") }
 func (r *rollbacks) scope(g protocol.Guard) string {
 	name := "recipe-" + g.Recipe
 	if g.Recipe == "" {
-		sum := sha256.Sum256([]byte(g.Stage))
-		name = "stage-" + hex.EncodeToString(sum[:8])
+		name = stageStore(g.Pipeline + "\t" + g.Stage)
 	}
 	return filepath.Join(r.dir, r.project, name)
+}
+
+// stageStore is the directory name of the store of a stage, from
+// <pipeline>\t<stage>.
+func stageStore(stage string) string {
+	sum := sha256.Sum256([]byte(stage))
+	return "stage-" + hex.EncodeToString(sum[:8])
 }
 
 // idle fails while a rollback timer runs or puts back files. A job that is
@@ -223,8 +229,8 @@ func fire(ctx context.Context, path string) (bool, error) {
 	return true, errors.Join(runJob(ctx, fired), os.Remove(fired))
 }
 
-// clear removes the stores of the project, except those of recipes with a
-// pending handler. The caller checks that no timer runs.
+// clear removes the stores of the project, except those of recipes and
+// stages with a pending handler. The caller checks that no timer runs.
 func (r *rollbacks) clear(handlers records) error {
 	// A damaged file of pending handlers fails the pending request; until
 	// then the stores stay.
@@ -240,9 +246,17 @@ func (r *rollbacks) clear(handlers records) error {
 	if err != nil {
 		return err
 	}
+	keep := map[string]bool{}
+	for _, h := range pending {
+		// A handler of a stage is <pipeline>\t<stage>\t<handler>.
+		if i := strings.LastIndex(h, "\t"); i >= 0 {
+			keep[stageStore(h[:i])] = true
+		} else if recipe, _, ok := strings.Cut(h, "."); ok {
+			keep["recipe-"+recipe] = true
+		}
+	}
 	for _, e := range entries {
-		recipe, ok := strings.CutPrefix(e.Name(), "recipe-")
-		if ok && slices.ContainsFunc(pending, func(h string) bool { return strings.HasPrefix(h, recipe+".") }) {
+		if keep[e.Name()] {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {

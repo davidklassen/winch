@@ -1,1 +1,1 @@
-pipelines/site.yaml:10:17: notify: a step in a stage names a handler as <recipe>.<handler>, such as nginx.reload
+pipelines/site.yaml:10:17: notify: stage web has no handler "reload"

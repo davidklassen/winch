@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -442,18 +441,19 @@ func (a *hostApply) reboot(ctx context.Context, r *module.Reboot) (string, error
 // handler runs the steps of a slot's handler when it was notified, and then
 // removes its record on the host.
 func (a *hostApply) handler(ctx context.Context, stage *project.Stage, s *Slot) (bool, error) {
-	name := s.Handler.FullName()
-	if !a.notified[name] {
+	h := s.Handler
+	record := h.Record()
+	if !a.notified[record] {
 		return false, nil
 	}
-	changed, err := a.steps(ctx, stage, name, s.Steps)
+	changed, err := a.steps(ctx, stage, h.FullName(), s.Steps)
 	if err != nil {
 		return changed, err
 	}
-	if err := a.conn.Handled(context.WithoutCancel(ctx), name); err != nil {
-		return changed, fmt.Errorf("%s: failed: handler %s: %w", s.Handler.Recipe.Name, name, err)
+	if err := a.conn.Handled(context.WithoutCancel(ctx), record); err != nil {
+		return changed, fmt.Errorf("%s: failed: handler %s: %w", h.Owner(), h.FullName(), err)
 	}
-	delete(a.notified, name)
+	delete(a.notified, record)
 	return changed, nil
 }
 
@@ -467,13 +467,13 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 	if p.In != nil {
 		g.Recipe, g.Save = p.In.Recipe.Name, p.In.Recipe.ConfirmsAccess()
 	} else {
-		g.Stage, g.Save = stage.Name, stage.ConfirmsAccess()
+		g.Pipeline, g.Stage, g.Save = stage.Pipeline, stage.Name, stage.ConfirmsAccess()
 	}
 	if g.Save {
 		return g
 	}
 	for _, h := range p.Step.Notify {
-		if slices.ContainsFunc(h.Steps, func(st project.Step) bool { return st.ConfirmAccess }) {
+		if h.Recipe != nil && h.ConfirmsAccess() {
 			return protocol.Guard{Recipe: h.Recipe.Name, Save: true}
 		}
 	}

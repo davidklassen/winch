@@ -446,6 +446,9 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 		{"stage step", "content: x", map[string]string{
 			"pipelines/site.yaml": stage("      - recipe: r\n      - file:\n          path: /a\n          content: !expr vars.pw\n"),
 		}, "pipelines/site.yaml:6:9: " + msg},
+		{"stage handler", "content: x", map[string]string{
+			"pipelines/site.yaml": stage("      - recipe: r\n") + "    handlers:\n      h:\n        - file:\n            path: /a\n            content: !expr vars.pw\n",
+		}, "pipelines/site.yaml:8:11: " + msg},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			k := newKey(t)

@@ -94,9 +94,9 @@ func TestConfirmAccess(t *testing.T) {
 	want := map[string]protocol.Guard{
 		"web1 /etc/ssh/sshd_config.d/local.conf": {Recipe: "ssh", Save: true},
 		"web1 ssh":                               {Recipe: "ssh", Save: true, Confirm: true},
-		"web1 /etc/motd":                         {Stage: "base"},
-		"web1 /etc/nftables.conf":                {Stage: "firewall", Save: true},
-		"web1 nftables":                          {Stage: "firewall", Save: true, Confirm: true},
+		"web1 /etc/motd":                         {Pipeline: "site", Stage: "base"},
+		"web1 /etc/nftables.conf":                {Pipeline: "site", Stage: "firewall", Save: true},
+		"web1 nftables":                          {Pipeline: "site", Stage: "firewall", Save: true, Confirm: true},
 	}
 	for k, g := range want {
 		if h.Guards[k] != g {
@@ -140,7 +140,7 @@ func TestGuardedResult(t *testing.T) {
 	if want := []string{"access", "confirm"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
-	if g := h.Guards["web1 mail"]; g != (protocol.Guard{Stage: "base"}) {
+	if g := h.Guards["web1 mail"]; g != (protocol.Guard{Pipeline: "site", Stage: "base"}) {
 		t.Errorf("guard %+v: the step has no confirm_access", g)
 	}
 }

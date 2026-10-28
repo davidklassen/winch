@@ -324,6 +324,38 @@ func TestStoresAfterTheSession(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection; Handlers (a pending handler
+// of a stage keeps the store of that stage of that pipeline)
+func TestStageStoreOfAPendingHandler(t *testing.T) {
+	l := startLockout(t)
+	g := protocol.Guard{Pipeline: "site", Stage: "web", Save: true}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"site\tweb\treload"}}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	g.Pipeline = "deploy"
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: g}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	l.c.w.Close()
+	if err := <-l.c.done; err != nil {
+		t.Fatal(err)
+	}
+	c := start(t, l.dir, "")
+	h := hello("r2")
+	h.Project = "acme"
+	if r := c.call(t, "hello", h); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	entries, _ := os.ReadDir(filepath.Join(l.dir, "rollback", "acme"))
+	if len(entries) != 1 {
+		t.Fatalf("stores at the next hello: %v, want one", entries)
+	}
+	all, err := readIndex(filepath.Join(l.dir, "rollback", "acme", entries[0].Name()))
+	if err != nil || len(all) != 1 || all[0].Path != l.a {
+		t.Errorf("the kept store holds %+v, %v; want the old state of %s", all, err, l.a)
+	}
+}
+
 // spec: Remote execution/Helper (a second session fails on the lock and
 // changes nothing)
 func TestLockedHelloKeepsTheStores(t *testing.T) {

@@ -552,6 +552,13 @@ func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
 		if !slices.ContainsFunc(s.Targets, func(t Host) bool { return t.Name == h.Name }) {
 			continue
 		}
+		if !s.Skipped {
+			for _, hs := range s.handlerSteps() {
+				if err := p.use(e, hs); err != nil {
+					return nil, err
+				}
+			}
+		}
 		for j := range s.Steps {
 			st := &s.Steps[j]
 			if st.Recipe == nil && s.Skipped {

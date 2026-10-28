@@ -37,24 +37,47 @@ type Recipe struct {
 	inline bool
 }
 
+// Handler is a handler of a recipe, or of a stage with Recipe nil.
 type Handler struct {
-	Name   string
-	Recipe *Recipe
-	Steps  []Step
-	Pos    yamlx.Pos
+	Name     string
+	Recipe   *Recipe
+	Pipeline string
+	Stage    string
+	Steps    []Step
+	Pos      yamlx.Pos
 }
 
 // ConfirmsAccess reports whether a step or a handler step of the recipe has
 // confirm_access.
 func (r *Recipe) ConfirmsAccess() bool {
-	confirms := func(st Step) bool { return st.ConfirmAccess }
-	return slices.ContainsFunc(r.Steps, confirms) || slices.ContainsFunc(r.Handlers, func(h *Handler) bool {
-		return slices.ContainsFunc(h.Steps, confirms)
-	})
+	return slices.ContainsFunc(r.Steps, confirms) || slices.ContainsFunc(r.Handlers, (*Handler).ConfirmsAccess)
 }
 
-// FullName is <recipe>.<handler>.
-func (h *Handler) FullName() string { return h.Recipe.Name + "." + h.Name }
+// ConfirmsAccess reports whether a step of the handler has confirm_access.
+func (h *Handler) ConfirmsAccess() bool { return slices.ContainsFunc(h.Steps, confirms) }
+
+func confirms(st Step) bool { return st.ConfirmAccess }
+
+// Owner is the name of the recipe or the stage of the handler.
+func (h *Handler) Owner() string {
+	if h.Recipe == nil {
+		return h.Stage
+	}
+	return h.Recipe.Name
+}
+
+// FullName is <recipe>.<handler>, or <stage>.<handler>.
+func (h *Handler) FullName() string { return h.Owner() + "." + h.Name }
+
+// Record names the handler in the pending handlers on a host. A handler of a
+// stage is <pipeline>\t<stage>\t<handler>: neither a stage name nor a handler
+// name holds a tab.
+func (h *Handler) Record() string {
+	if h.Recipe == nil {
+		return h.Pipeline + "\t" + h.Stage + "\t" + h.Name
+	}
+	return h.FullName()
+}
 
 // Require is one requirement of a recipe: an expression on facts.
 type Require struct {
@@ -140,7 +163,9 @@ func (l *loader) loadRecipes() error {
 			rerrs = append(rerrs, err)
 			r.Steps = append(r.Steps, st)
 		}
-		rerrs = append(rerrs, l.loadHandlers(rf.Handlers, r))
+		var err error
+		r.Handlers, err = l.loadHandlers(rf.Handlers, r)
+		rerrs = append(rerrs, err)
 		if err := errors.Join(rerrs...); err != nil {
 			errs = append(errs, err)
 			continue
@@ -150,15 +175,16 @@ func (l *loader) loadRecipes() error {
 	return errors.Join(errs...)
 }
 
-// loadHandlers loads the handlers of r from n, a map of names to lists of
-// steps.
-func (l *loader) loadHandlers(n *yamlx.Node, r *Recipe) error {
+// loadHandlers loads the handlers of r, or of a stage when r is nil, from n,
+// a map of names to lists of steps.
+func (l *loader) loadHandlers(n *yamlx.Node, r *Recipe) ([]*Handler, error) {
 	if n == nil || n.Kind == yamlx.Null {
-		return nil
+		return nil, nil
 	}
 	if n.Kind != yamlx.Map {
-		return yamlx.Errorf(n.Pos, "handlers: expected a map, got %s", yamlx.Describe(n))
+		return nil, yamlx.Errorf(n.Pos, "handlers: expected a map, got %s", yamlx.Describe(n))
 	}
+	var out []*Handler
 	var errs []error
 	for _, p := range n.Pairs {
 		switch {
@@ -178,9 +204,9 @@ func (l *loader) loadHandlers(n *yamlx.Node, r *Recipe) error {
 			errs = append(errs, err)
 			h.Steps = append(h.Steps, st)
 		}
-		r.Handlers = append(r.Handlers, h)
+		out = append(out, h)
 	}
-	return errors.Join(errs...)
+	return out, errors.Join(errs...)
 }
 
 // parseTemplates parses every file in the templates directory of r.

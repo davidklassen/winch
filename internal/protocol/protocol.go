@@ -74,8 +74,9 @@ type Step struct {
 // keeps the old state of what a step changes in the rollback store of its
 // recipe, or of its stage for a module step of a stage.
 type Guard struct {
-	Recipe string `json:"recipe,omitempty"`
-	Stage  string `json:"stage,omitempty"`
+	Recipe   string `json:"recipe,omitempty"`
+	Pipeline string `json:"pipeline,omitempty"`
+	Stage    string `json:"stage,omitempty"`
 	// Save keeps the old state in the store: the recipe or the stage has a
 	// step with confirm_access.
 	Save bool `json:"save,omitempty"`

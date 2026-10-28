@@ -345,14 +345,14 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 			hr.thens[t] = true
 		}
 	}
-	steps, err := evaluate(p.Pipeline.Name, stage, hr)
+	steps, err := evaluate(stage, hr)
 	if err != nil {
 		return nil, err
 	}
 	changed := false
 	for i, p := range steps {
 		if s := p.Handler; s != nil {
-			name := s.Handler.FullName()
+			name := s.Handler.Record()
 			s.Runs = hr.notified[name]
 			delete(hr.notified, name)
 			if s.Runs {
@@ -759,8 +759,9 @@ func (hr *hostRun) dropCreatedParents(m module.Module, res *module.Result) {
 // evaluate returns the module steps of a stage for one host, with recipe
 // steps, when, and loop applied. A slot for each handler of a recipe follows
 // the recipe's steps. A handler of a recipe that ran before a step of the
-// stage notifies it gets a slot at the end of the stage.
-func evaluate(pipeline string, stage *project.Stage, hr *hostRun) ([]Planned, error) {
+// stage notifies it gets a slot at the end of the stage. The slots of the
+// stage's own handlers come last.
+func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 	var out []Planned
 	late := map[*project.Handler]bool{}
 	add := func(env *project.Env, st project.Step, in *project.Step, addr string, place protocol.Then) error {
@@ -774,11 +775,11 @@ func evaluate(pipeline string, stage *project.Stage, hr *hostRun) ([]Planned, er
 		var notify []string
 		for _, h := range st.Notify {
 			// A recipe that does not run on the host never runs its handler.
-			if !hr.env.Runs(h.Recipe.Name) {
+			if h.Recipe != nil && !hr.env.Runs(h.Recipe.Name) {
 				continue
 			}
-			notify = append(notify, h.FullName())
-			if slices.ContainsFunc(hr.ran, func(r *project.Step) bool { return r.Recipe == h.Recipe }) {
+			notify = append(notify, h.Record())
+			if h.Recipe != nil && slices.ContainsFunc(hr.ran, func(r *project.Step) bool { return r.Recipe == h.Recipe }) {
 				late[h] = true
 			}
 		}
@@ -791,7 +792,7 @@ func evaluate(pipeline string, stage *project.Stage, hr *hostRun) ([]Planned, er
 	for i := range stage.Steps {
 		st := &stage.Steps[i]
 		if st.Recipe == nil {
-			if err := add(hr.env, *st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1), protocol.Then{Pipeline: pipeline, Stage: stage.Name, Step: i + 1}); err != nil {
+			if err := add(hr.env, *st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1), protocol.Then{Pipeline: stage.Pipeline, Stage: stage.Name, Step: i + 1}); err != nil {
 				return nil, err
 			}
 			continue
@@ -830,6 +831,13 @@ func evaluate(pipeline string, stage *project.Stage, hr *hostRun) ([]Planned, er
 			out = append(out, Planned{In: r, Handler: slot, Address: h.FullName()})
 		}
 	}
+	for _, h := range stage.Handlers {
+		slot, err := handlerSlot(h, hr.env, nil, hr)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Planned{Handler: slot, Address: h.FullName()})
+	}
 	return out, nil
 }
 
@@ -865,9 +873,14 @@ func address(addr string, st project.Step, i int) string {
 	return addr
 }
 
-// handlerSlot evaluates the steps of a handler for a host.
+// handlerSlot evaluates the steps of a handler for a host. in is the recipe
+// step of a handler of a recipe, or nil for a handler of a stage.
 func handlerSlot(h *project.Handler, env *project.Env, in *project.Step, hr *hostRun) (*Slot, error) {
 	slot := &Slot{Handler: h}
+	place := protocol.Then{Pipeline: h.Pipeline, Stage: h.Stage, Handler: h.Name}
+	if h.Recipe != nil {
+		place.Recipe = h.Recipe.Name
+	}
 	for j, hs := range h.Steps {
 		steps, err := hs.Eval(env)
 		if err != nil {
@@ -877,7 +890,8 @@ func handlerSlot(h *project.Handler, env *project.Env, in *project.Step, hr *hos
 			return nil, err
 		}
 		addr := fmt.Sprintf("%s#%d", h.FullName(), j+1)
-		then := thenRecord(steps, protocol.Then{Recipe: in.Recipe.Name, Handler: h.Name, Step: j + 1})
+		place.Step = j + 1
+		then := thenRecord(steps, place)
 		for i, s := range steps {
 			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1, Then: then, Address: address(addr, hs, i)})
 		}

@@ -1,0 +1,12 @@
+stdout:
+web1: web: + file /etc/app/a.conf
+web1: web: + file /etc/app/b.conf
+web1: web: + file /etc/app/c.conf
+web1: web: ~ handler web.restart: service app
+web1: web: ~ handler web.reload: service app
+web1: web: * health: healthy
+web1: other: + file /etc/other.conf
+web1: other: ~ handler other.reload: cmd other-reload
+
+1 host: 1 changed, 0 unchanged
+stderr:

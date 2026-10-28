@@ -277,3 +277,132 @@ func TestHandlers(t *testing.T) {
 		}
 	})
 }
+
+const stageHandlerPipeline = `stages:
+  - name: firewall
+    hosts: all
+    steps:
+      - pkg:
+          name: nftables
+      - file:
+          path: /etc/nftables.conf
+          content: !tpl |
+            #!/usr/sbin/nft -f
+
+            flush ruleset
+
+            table inet filter {
+            	chain input {
+            		type filter hook input priority filter; policy drop;
+
+            		ct state established,related accept
+            		ct state invalid drop
+            		iif lo accept
+            		tcp dport { {{ join .vars.fw_ports ", " }} } accept
+            	}
+            }
+          mode: "0755"
+          validate: nft -c -f /etc/nftables.conf
+        notify: reload
+      - service:
+          name: nftables
+          enabled: true
+          running: true
+      - file:
+          path: /etc/winch-motd
+          content: !tpl "{{ .vars.fw_motd }}\n"
+        notify: motd
+      - name: Fails on request
+        cmd:
+          command: exit 3
+        when: !expr vars.fw_break
+    handlers:
+      reload:
+        - service:
+            name: nftables
+            reloaded: true
+          confirm_access: true
+      motd:
+        - cmd:
+            command: echo x >> /root/motd-runs
+`
+
+// spec: Pipelines; Handlers; Running a pipeline/Lockout protection
+func TestStageHandlers(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "stage-handlers")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: sdemo\ninventory: test\nvars:\n  fw_ports: [22]\n  fw_motd: one\n  fw_break: false\n",
+		"inventories/test.yaml": "hosts:\n  stage-handlers: {}\n",
+		"pipelines/site.yaml":   stageHandlerPipeline,
+	})
+	const records = "cat /var/lib/winch/handlers/sdemo 2>/dev/null; true"
+
+	t.Run("a handler with confirm_access reloads nftables", func(t *testing.T) {
+		r := lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "stage-handlers: firewall: ~ handler firewall.reload: service nftables") {
+			t.Fatalf("apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if out := vm.MustRun(t, "nft list ruleset"); !strings.Contains(out, "tcp dport 22 accept") {
+			t.Fatalf("the ruleset is not in place:\n%s", out)
+		}
+		if out := vm.MustRun(t, records); out != "" {
+			t.Errorf("pending handlers = %q, want none", out)
+		}
+		if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+			t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+		}
+	})
+
+	t.Run("a rule that drops SSH rolls back the file of the stage", func(t *testing.T) {
+		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.fw_ports=[80]")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "stage-handlers: firewall: failed: handler firewall.reload: service nftables: no new SSH connection works: ") ||
+			!strings.HasSuffix(r.Stderr, "; the old files are back\n") {
+			t.Fatalf("apply: exit %d\n%s", r.Code, r.Stderr)
+		}
+		if out := vm.MustRun(t, "cat /etc/nftables.conf"); !strings.Contains(out, "tcp dport { 22 } accept") {
+			t.Errorf("the old /etc/nftables.conf is not back:\n%s", out)
+		}
+		if out := vm.MustRun(t, "nft list ruleset"); !strings.Contains(out, "tcp dport 22 accept") {
+			t.Errorf("the old ruleset is not back:\n%s", out)
+		}
+		// The file step notified reload, so the next run reloads again.
+		if out := vm.MustRun(t, records); out != "site\tfirewall\treload\n" {
+			t.Errorf("pending handlers = %q, want the reload handler of stage firewall", out)
+		}
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "stage-handlers: firewall: ~ handler firewall.reload: service nftables") {
+			t.Fatalf("apply after the rollback: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if out := vm.MustRun(t, records); out != "" {
+			t.Errorf("pending handlers = %q, want none", out)
+		}
+	})
+
+	t.Run("a stopped run leaves the handler pending", func(t *testing.T) {
+		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.fw_motd=two", "--set", "vars.fw_break=true")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "Fails on request") {
+			t.Fatalf("apply: exit %d, want the failed step\n%s", r.Code, r.Stderr)
+		}
+		if out := vm.MustRun(t, records); out != "site\tfirewall\tmotd\n" {
+			t.Errorf("pending handlers = %q, want the motd handler of stage firewall", out)
+		}
+		if out := vm.MustRun(t, "cat /root/motd-runs 2>/dev/null; true"); out != "x\n" {
+			t.Errorf("the motd handler ran %q, want once from the first run", out)
+		}
+		r = lab.Winch(t, dir, "plan", "site", "--set", "vars.fw_motd=two")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "! handler firewall.motd") || strings.Contains(r.Stdout, "file") {
+			t.Fatalf("plan: exit %d, want only the pending handler\n%s", r.Code, r.Stdout)
+		}
+		r = lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.fw_motd=two")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "stage-handlers: firewall: ~ handler firewall.motd: cmd echo x >> /root/motd-runs") {
+			t.Fatalf("apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if out := vm.MustRun(t, "cat /root/motd-runs"); out != "x\nx\n" {
+			t.Errorf("the motd handler ran %q, want twice", out)
+		}
+		if out := vm.MustRun(t, records); out != "" {
+			t.Errorf("pending handlers = %q, want none", out)
+		}
+	})
+}

@@ -86,6 +86,12 @@ func describeHandlers(p *Project) string {
 	seen := map[string]bool{}
 	for _, s := range p.Pipeline.Stages {
 		fmt.Fprintf(&b, "stage %s\n", s.Name)
+		for _, h := range s.Handlers {
+			fmt.Fprintf(&b, "  handler %s at %s\n", h.FullName(), h.Pos)
+			for _, hs := range h.Steps {
+				describeStep(&b, "    ", hs)
+			}
+		}
 		for _, st := range s.Steps {
 			describeStep(&b, "  ", st)
 			describeNotify(&b, "    ", st)
@@ -108,6 +114,18 @@ func describeHandlers(p *Project) string {
 	return b.String()
 }
 
+// stageHandlers are handlers of a stage.
+const stageHandlers = `    handlers:
+      reload:
+        - service:
+            name: nginx
+            reloaded: true
+          confirm_access: true
+      motd:
+        - cmd:
+            command: update-motd
+`
+
 func describeNotify(b *strings.Builder, indent string, st Step) {
 	for _, h := range st.Notify {
 		fmt.Fprintf(b, "%snotify %s\n", indent, h.FullName())
@@ -123,6 +141,7 @@ func TestLoadHandlers(t *testing.T) {
 	nginx := handlersProject["recipes/nginx/recipe.yaml"]
 	site := handlersProject["recipes/site/recipe.yaml"]
 	pl := handlersProject["pipelines/site.yaml"]
+	webHandlers := strings.Replace(pl, "  - name: db\n", stageHandlers+"  - name: db\n", 1)
 	tests := []struct {
 		name  string
 		files map[string]string
@@ -139,6 +158,30 @@ func TestLoadHandlers(t *testing.T) {
 		}},
 		{name: "stage-local-name", files: map[string]string{
 			"pipelines/site.yaml": strings.Replace(pl, "notify: nginx.reload", "notify: reload", 1),
+		}},
+		{name: "stage-handler", files: map[string]string{
+			"pipelines/site.yaml": strings.Replace(webHandlers, "notify: nginx.reload", "notify: [reload, nginx.reload, motd]", 1),
+		}},
+		{name: "unknown-stage-handler", files: map[string]string{
+			"pipelines/site.yaml": strings.Replace(webHandlers, "notify: nginx.reload", "notify: relaod", 1),
+		}},
+		{name: "stage-handler-of-other-stage", files: map[string]string{
+			"pipelines/site.yaml": webHandlers + "      - file:\n          path: /etc/issue\n          content: hi\n        notify: reload\n",
+		}},
+		{name: "stage-handler-step-notify", files: map[string]string{
+			"pipelines/site.yaml": strings.Replace(webHandlers, "command: update-motd\n", "command: update-motd\n          notify: reload\n", 1),
+		}},
+		{name: "stage-handler-recipe-step", files: map[string]string{
+			"pipelines/site.yaml": pl + "    handlers:\n      reload:\n        - recipe: db\n",
+		}},
+		{name: "stage-handler-template", files: map[string]string{
+			"pipelines/site.yaml": pl + "    handlers:\n      reload:\n        - file:\n            path: /etc/x\n            template: x.tmpl\n",
+		}},
+		{name: "stage-handler-match", files: map[string]string{
+			"pipelines/site.yaml": pl + "    handlers:\n      reload:\n        - cmd:\n            command: !expr 'match(\"nosuch\")[0].name'\n",
+		}},
+		{name: "stage-handlers-not-map", files: map[string]string{
+			"pipelines/site.yaml": pl + "    handlers: [reload]\n",
 		}},
 		{name: "handler-notify", files: map[string]string{
 			"recipes/nginx/recipe.yaml": strings.Replace(nginx, "then: echo restarted", "notify: reload", 1),

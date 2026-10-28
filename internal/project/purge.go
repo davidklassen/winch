@@ -25,7 +25,7 @@ func purgeWarnings(invs []*Inventory, pipelines, selected []*Pipeline) []*yamlx.
 		for _, pl := range pipelines {
 			for _, stage := range pl.Stages {
 				hosts, _ := inv.Match(stage.Hosts)
-				for _, st := range stage.Steps {
+				for _, st := range append(slices.Clone(stage.Steps), stage.handlerSteps()...) {
 					steps := []Step{st}
 					if st.Recipe != nil {
 						steps = slices.Clone(st.Recipe.Steps)

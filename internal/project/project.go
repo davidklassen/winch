@@ -79,6 +79,7 @@ type Pipeline struct {
 
 type Stage struct {
 	Name     string
+	Pipeline string
 	Hosts    string
 	HostsPos yamlx.Pos
 	Steps    []Step
@@ -86,14 +87,25 @@ type Stage struct {
 	Targets     []Host
 	Parallelism int
 	Health      *Health
+	// Handlers are in declared order.
+	Handlers []*Handler
 	// Skipped is true for a stage that the selection leaves out.
 	Skipped bool
 }
 
-// ConfirmsAccess reports whether a module step of the stage has
-// confirm_access.
+// ConfirmsAccess reports whether a module step or a handler step of the
+// stage has confirm_access.
 func (s *Stage) ConfirmsAccess() bool {
-	return slices.ContainsFunc(s.Steps, func(st Step) bool { return st.ConfirmAccess })
+	return slices.ContainsFunc(s.Steps, confirms) || slices.ContainsFunc(s.Handlers, (*Handler).ConfirmsAccess)
+}
+
+// handlerSteps returns the steps of the handlers of the stage.
+func (s *Stage) handlerSteps() []Step {
+	var out []Step
+	for _, h := range s.Handlers {
+		out = append(out, h.Steps...)
+	}
+	return out
 }
 
 // Health is the health gate of a stage. Stable and Timeout are seconds.
@@ -231,7 +243,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, s
 // argument, as a position without a line.
 func (l *loader) commandPipeline(c Command) (*Pipeline, error) {
 	where := yamlx.Pos{File: "winch " + c.Name}
-	s := Stage{Name: "run", Hosts: c.Pattern, HostsPos: where}
+	s := Stage{Name: "run", Pipeline: "run", Hosts: c.Pattern, HostsPos: where}
 	if c.Module == "" {
 		return &Pipeline{Name: "run", Stages: []Stage{s}}, nil
 	}
@@ -432,6 +444,9 @@ func resolve(inv *Inventory, pl *Pipeline, checked map[*Recipe]bool) error {
 		if s.Targets, err = inv.Match(s.Hosts); err != nil {
 			errs = append(errs, yamlx.Errorf(s.HostsPos, "%s", err))
 		}
+		for _, hs := range s.handlerSteps() {
+			errs = append(errs, hs.checkMatches(inv))
+		}
 		for _, st := range s.Steps {
 			errs = append(errs, st.checkMatches(inv))
 			if st.Recipe == nil {
@@ -537,7 +552,7 @@ func notifyStage(st Step, s Stage, runs map[*Recipe]map[string]bool, pipeline st
 	var errs []error
 	for _, n := range st.notifyNames {
 		r := n.handler.Recipe
-		if r == st.in {
+		if r == nil || r == st.in {
 			continue
 		}
 		onStageHost := slices.ContainsFunc(s.Targets, func(t Host) bool { return runs[r][t.Name] })
@@ -614,6 +629,7 @@ type stageFile struct {
 	ParallelismPos yamlx.Pos
 	Health         *healthFile   `yaml:"health"`
 	Steps          []*yamlx.Node `yaml:"steps,required"`
+	Handlers       *yamlx.Node   `yaml:"handlers"`
 	Pos            yamlx.Pos
 }
 
@@ -695,7 +711,7 @@ func (l *loader) decodePipeline(p part) (*Pipeline, error) {
 		}
 		seen[sf.Name] = true
 		errs = append(errs, printableName("stage", sf.Name, sf.Pos))
-		s := Stage{Name: sf.Name, Hosts: sf.Hosts, HostsPos: sf.HostsPos}
+		s := Stage{Name: sf.Name, Pipeline: pl.Name, Hosts: sf.Hosts, HostsPos: sf.HostsPos}
 		if sf.Parallelism != nil {
 			if *sf.Parallelism < 1 {
 				errs = append(errs, yamlx.Errorf(sf.ParallelismPos, "parallelism: must be 1 or more"))
@@ -708,10 +724,16 @@ func (l *loader) decodePipeline(p part) (*Pipeline, error) {
 				s.Health.Timeout = *h.Timeout
 			}
 		}
+		hs, err := l.loadHandlers(sf.Handlers, nil)
+		errs = append(errs, err)
+		for _, h := range hs {
+			h.Pipeline, h.Stage = s.Pipeline, s.Name
+		}
+		s.Handlers = hs
 		for _, sn := range sf.Steps {
 			st, err := l.loadStep(sn, nil, plainStep)
 			if err == nil {
-				err = l.resolveNotify(&st)
+				err = l.resolveNotify(&st, &s)
 			}
 			switch {
 			case errors.Is(err, errReported):
@@ -787,6 +809,9 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 			continue
 		case p.Key == "recipe" && r != nil:
 			errs = append(errs, yamlx.Errorf(p.KeyPos, "a recipe cannot run another recipe; recipe steps belong in stages"))
+			continue
+		case p.Key == "recipe" && kind == handlerStep:
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "a handler step cannot run a recipe"))
 			continue
 		case p.Key == "recipe":
 			errs = append(errs, yamlx.Decode(p.Value, &recipe))
@@ -1015,6 +1040,7 @@ func (l *loader) secretFileWarnings(invs []*Inventory, pls []*Pipeline) []*yamlx
 	for _, pl := range pls {
 		for _, s := range pl.Stages {
 			steps = append(steps, s.Steps...)
+			steps = append(steps, s.handlerSteps()...)
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(l.recipes)) {
@@ -1156,29 +1182,29 @@ func (l *loader) resolveRecipeNotify() error {
 			continue
 		}
 		for i := range r.Steps {
-			errs = append(errs, l.resolveNotify(&r.Steps[i]))
+			errs = append(errs, l.resolveNotify(&r.Steps[i], nil))
 		}
 	}
 	return errors.Join(errs...)
 }
 
 // resolveNotify finds the handlers that st names: <handler> of its own
-// recipe, or <recipe>.<handler>.
-func (l *loader) resolveNotify(st *Step) error {
+// recipe, or of stage for a step of a stage, or <recipe>.<handler>.
+func (l *loader) resolveNotify(st *Step, stage *Stage) error {
 	var errs []error
 	for j := range st.notifyNames {
 		n := &st.notifyNames[j]
 		recipe, handler, cross := strings.Cut(n.name, ".")
-		r := st.in
+		var handlers []*Handler
+		var owner string
 		switch {
-		case !cross && r == nil:
-			errs = append(errs, yamlx.Errorf(n.pos, "notify: a step in a stage names a handler as <recipe>.<handler>, such as nginx.reload"))
-			continue
+		case !cross && st.in == nil:
+			handler, handlers, owner = recipe, stage.Handlers, "stage "+stage.Name
 		case !cross:
-			handler = recipe
+			handler, handlers, owner = recipe, st.in.Handlers, "recipe "+st.in.Name
 		default:
-			var ok bool
-			if r, ok = l.recipes[recipe]; !ok {
+			r, ok := l.recipes[recipe]
+			if !ok {
 				errs = append(errs, yamlx.Errorf(n.pos, "notify: unknown recipe %q%s", recipe, yamlx.Suggest(recipe, slices.Sorted(maps.Keys(l.recipes)))))
 				continue
 			}
@@ -1186,17 +1212,18 @@ func (l *loader) resolveNotify(st *Step) error {
 				// Its load error is reported.
 				continue
 			}
+			handlers, owner = r.Handlers, "recipe "+r.Name
 		}
-		i := slices.IndexFunc(r.Handlers, func(h *Handler) bool { return h.Name == handler })
+		i := slices.IndexFunc(handlers, func(h *Handler) bool { return h.Name == handler })
 		if i < 0 {
 			var names []string
-			for _, h := range r.Handlers {
+			for _, h := range handlers {
 				names = append(names, h.Name)
 			}
-			errs = append(errs, yamlx.Errorf(n.pos, "notify: recipe %s has no handler %q%s", r.Name, handler, yamlx.Suggest(handler, names)))
+			errs = append(errs, yamlx.Errorf(n.pos, "notify: %s has no handler %q%s", owner, handler, yamlx.Suggest(handler, names)))
 			continue
 		}
-		n.handler = r.Handlers[i]
+		n.handler = handlers[i]
 		if !slices.Contains(st.Notify, n.handler) {
 			st.Notify = append(st.Notify, n.handler)
 		}
@@ -1522,6 +1549,11 @@ func (p *Project) Written(h Host, f facts.Facts) ([]string, error) {
 		for _, s := range all.Stages {
 			if !slices.ContainsFunc(s.Targets, func(t Host) bool { return t.Name == h.Name }) {
 				continue
+			}
+			for _, hs := range s.handlerSteps() {
+				if err := add(e, hs); err != nil {
+					return nil, err
+				}
 			}
 			for i := range s.Steps {
 				st := &s.Steps[i]

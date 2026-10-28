@@ -46,6 +46,11 @@ groups:
       - file:
           path: /etc/x/db
           content: d
+    handlers:
+      reload:
+        - file:
+            path: /etc/x/db-handler
+            content: h
   - name: late
     hosts: web
     steps:
@@ -91,7 +96,7 @@ func TestWritten(t *testing.T) {
 		want string
 	}{
 		{"web1", "/etc/x/a /etc/x/done /etc/x/handler /etc/x/l1 /etc/x/l2 /home/deploy /opt/a /opt/a.tgz /srv/app/conf"},
-		{"db1", "/etc/x/a /etc/x/db /etc/x/done /etc/x/handler /etc/x/l1 /etc/x/l2 /srv/app/conf"},
+		{"db1", "/etc/x/a /etc/x/db /etc/x/db-handler /etc/x/done /etc/x/handler /etc/x/l1 /etc/x/l2 /srv/app/conf"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {

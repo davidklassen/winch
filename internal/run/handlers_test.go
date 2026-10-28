@@ -809,3 +809,203 @@ handlers:
 		t.Errorf("apply ran %q, pending %q, then records %v; want nothing", h.Log["web1"], h.PendingOf("web1"), h.ThenOf("web1"))
 	}
 }
+
+var stageHandlerFiles = map[string]string{
+	"winch.yaml":            "name: acme\ninventory: test\n",
+	"inventories/test.yaml": "hosts:\n  web1: {}\n",
+	"pipelines/site.yaml": `stages:
+  - name: web
+    hosts: all
+    health:
+      command: healthy
+    steps:
+      - file:
+          path: /etc/app/a.conf
+          content: "a\n"
+        notify: [reload, restart]
+      - file:
+          path: /etc/app/b.conf
+          content: "b\n"
+        notify: reload
+      - file:
+          path: /etc/app/c.conf
+          content: "c\n"
+    handlers:
+      restart:
+        - service:
+            name: app
+            restarted: true
+      reload:
+        - service:
+            name: app
+            reloaded: true
+          confirm_access: true
+          then: app-check
+  - name: other
+    hosts: all
+    steps:
+      - file:
+          path: /etc/other.conf
+          content: "o\n"
+        notify: reload
+    handlers:
+      reload:
+        - cmd:
+            command: other-reload
+`,
+}
+
+// spec: Pipelines; Handlers; Running a pipeline/Health gates; Running a
+// pipeline/Lockout protection
+func TestStageHandlers(t *testing.T) {
+	p := loadFiles(t, stageHandlerFiles)
+	h := fakehost.New()
+	// A record of a stage of another pipeline stays.
+	h.SetPending("web1", "deploy\tweb\treload")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	for _, want := range []string{"  web\n", "    ! handler web.restart\n    ! handler web.reload\n    * health: healthy\n", "  other\n", "    ! handler other.reload\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("plan does not show %q:\n%s", want, out.String())
+		}
+	}
+	out.Reset()
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+		t.Fatal(errOut.String())
+	}
+	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-stage-handlers.golden"), output(&out, &errOut))
+	// Two changed steps notify reload: it runs once, in declared order.
+	if want := []string{"app restart", "app reload", "access", "confirm", "command app-check", "cmd other-reload"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+	}
+	// The last apply of the service app is the reload.
+	reload := -1
+	for i, e := range h.Trace {
+		if e == "apply web1 app" {
+			reload = i
+		}
+	}
+	health := slices.IndexFunc(h.Trace, func(s string) bool { return strings.HasPrefix(s, "health web1 healthy ") })
+	if reload < 0 || health < reload {
+		t.Errorf("trace %q: the health gate runs before the handler", h.Trace)
+	}
+	if got, want := h.PendingOf("web1"), []string{"deploy\tweb\treload"}; !slices.Equal(got, want) {
+		t.Errorf("pending = %q, want %q", got, want)
+	}
+	guards := map[string]protocol.Guard{
+		"web1 /etc/app/a.conf": {Pipeline: "site", Stage: "web", Save: true},
+		"web1 app":             {Pipeline: "site", Stage: "web", Save: true, Confirm: true},
+		"web1 /etc/other.conf": {Pipeline: "site", Stage: "other"},
+		"web1 other-reload":    {Pipeline: "site", Stage: "other"},
+	}
+	for k, g := range guards {
+		if h.Guards[k] != g {
+			t.Errorf("guard of %s = %+v, want %+v", k, h.Guards[k], g)
+		}
+	}
+	if plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{}); plan.HasChanges() {
+		t.Error("a second plan has changes")
+	}
+}
+
+// spec: Handlers; Running a pipeline/Failures
+func TestStageHandlerStaysPending(t *testing.T) {
+	p := loadFiles(t, stageHandlerFiles)
+	h := fakehost.New()
+	for _, f := range []string{"a", "b", "c"} {
+		h.SetFile("web1", "/etc/app/"+f+".conf", f+"\n")
+	}
+	h.FailCommand("web1", "other-reload")
+	if ok, got := applyAll(t, p, h); ok {
+		t.Fatalf("apply succeeded with a failing handler:\n%s", got)
+	}
+	if got, want := h.PendingOf("web1"), []string{"site\tother\treload"}; !slices.Equal(got, want) {
+		t.Fatalf("pending = %q, want %q", got, want)
+	}
+
+	h.Fix("web1 other-reload")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if want := "web1\n  other\n    ! handler other.reload\n\n"; !strings.HasPrefix(out.String(), want) {
+		t.Errorf("plan:\n%s\nwant it to start with\n%s", out.String(), want)
+	}
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+		t.Fatal(errOut.String())
+	}
+	if want := []string{"cmd other-reload", "cmd other-reload"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+	}
+	if got := h.PendingOf("web1"); len(got) != 0 {
+		t.Errorf("pending after the second run = %q", got)
+	}
+}
+
+var stageHandlerVarFiles = map[string]string{
+	"winch.yaml":            "name: acme\ninventory: test\nvars:\n  svc: !expr 'upper(host.name)'\n",
+	"inventories/test.yaml": "hosts:\n  web1: {}\n",
+	"pipelines/site.yaml": `stages:
+  - name: web
+    hosts: all
+    steps:
+      - file:
+          path: /etc/a
+          content: "a\n"
+        notify: reload
+    handlers:
+      reload:
+        - cmd:
+            command: !expr '"reload " + vars.svc'
+          then: reindex
+  - name: db
+    hosts: all
+    steps:
+      - file:
+          path: /etc/b
+          content: "b\n"
+`,
+}
+
+// spec: Pipelines; Handlers; Steps (the place of a then)
+func TestStageHandlerStep(t *testing.T) {
+	p := loadFiles(t, stageHandlerVarFiles)
+	h := fakehost.New()
+	h.FailCommand("web1", "reindex")
+	if ok, got := applyAll(t, p, h); ok {
+		t.Fatalf("apply succeeded with a failing then:\n%s", got)
+	}
+	if want := []string{"cmd reload WEB1", "command reindex"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+	}
+	th := h.ThenOf("web1")
+	if len(th) != 1 || th[0].Pipeline != "site" || th[0].Stage != "web" || th[0].Handler != "reload" || th[0].Step != 1 || th[0].Recipe != "" {
+		t.Errorf("then records = %+v, want one of step 1 of handler reload of stage web of pipeline site", th)
+	}
+}
+
+// spec: Handlers (a pending handler of a stage that --stages leaves out
+// stays recorded and does not show in the plan)
+func TestStageHandlerOfASkippedStage(t *testing.T) {
+	p := loadFiles(t, stageHandlerVarFiles)
+	if err := p.Select(project.Selection{Stages: "db"}); err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	h.SetPending("web1", "site\tweb\treload")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if strings.Contains(out.String(), "handler") {
+		t.Errorf("plan shows the handler of a skipped stage:\n%s", out.String())
+	}
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+		t.Fatal(errOut.String())
+	}
+	if want := []string{"site\tweb\treload"}; !slices.Equal(h.PendingOf("web1"), want) {
+		t.Errorf("pending = %q, want %q", h.PendingOf("web1"), want)
+	}
+	if len(h.Log["web1"]) != 0 {
+		t.Errorf("web1 ran %q, want nothing", h.Log["web1"])
+	}
+}
