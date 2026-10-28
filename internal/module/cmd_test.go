@@ -21,6 +21,9 @@ func TestCmdValidate(t *testing.T) {
 		{"unclean creates", "command: x\ncreates: /usr/local/bin/\n", `t.yaml:2:10: creates: must be a clean path, such as "/usr/local/bin"`},
 		{"creates with dots", "command: x\ncreates: /srv/../etc\n", `t.yaml:2:10: creates: ".." is not allowed; write the path without it`},
 		{"creates with a control character", "command: x\ncreates: \"/srv/a\\tb\"\n", `t.yaml:2:10: creates: has a control character`},
+		{"creates with *", "command: x\ncreates: /opt/app/*.jar\n", `t.yaml:2:10: creates: names one path; "*" is not allowed`},
+		{"creates with ?", "command: x\ncreates: /opt/app?\n", `t.yaml:2:10: creates: names one path; "?" is not allowed`},
+		{"creates with [", "command: x\ncreates: /opt/app[12]\n", `t.yaml:2:10: creates: names one path; "[" is not allowed`},
 		{"relative dir", "command: x\ndir: srv/app\n", `t.yaml:2:6: dir: must be an absolute path`},
 		{"bad user", "command: x\nuser: Deploy\n", `t.yaml:2:7: user: "Deploy" is not a user name; a name has lower-case letters, digits, "_", and "-", and starts with a letter or "_"`},
 		{"numeric user", "command: x\nuser: \"1000\"\n", `t.yaml:2:7: user: "1000" is not a user name; a name has lower-case letters, digits, "_", and "-", and starts with a letter or "_"`},
@@ -119,6 +122,14 @@ func TestCmdApply(t *testing.T) {
 	if want := "dir " + missing + ": no such file or directory"; err == nil || err.Error() != want {
 		t.Errorf("a missing dir: %v, want %q", err, want)
 	}
+	err = (&Cmd{Command: "true", Creates: missing}).Apply(t.Context(), func(string) {})
+	if want := "the command did not create " + missing; err == nil || err.Error() != want {
+		t.Errorf("creates is missing after the command: %v, want %q", err, want)
+	}
+	if err := (&Cmd{Command: "touch " + missing, Creates: missing}).Apply(t.Context(), func(string) {}); err != nil {
+		t.Errorf("a command that creates creates: %v", err)
+	}
+	os.Remove(missing)
 	err = (&Cmd{Command: "true", Dir: out}).Apply(t.Context(), func(string) {})
 	if want := "dir " + out + ": not a directory"; err == nil || err.Error() != want {
 		t.Errorf("a dir that is a file: %v, want %q", err, want)

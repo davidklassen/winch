@@ -168,8 +168,9 @@ type hostRun struct {
 	// conn is the session with the host, open across its stages.
 	conn Conn
 	dest protocol.Destination
-	// needs are the users and groups, as "user <name>" or "group <name>",
-	// that changed steps need, with the first such step.
+	// needs are the users, groups, and directories, as "user <name>",
+	// "group <name>", or "dir <path>", that steps that run need, with the
+	// first such step.
 	needs map[string]string
 	// units are the units that service steps name.
 	units map[string]bool
@@ -395,19 +396,34 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 	return steps, nil
 }
 
-// order fails a user or group step that creates a user or a group that an
-// earlier changed step needs as its owner, group, or one of its groups: that
-// step fails in apply. Otherwise it records what the step at where needs.
+// order fails a step that creates a user, a group, or a directory that an
+// earlier step that runs needs: as its owner, group, one of its groups, or the
+// user or directory of a cmd. That earlier step fails in apply. Otherwise it
+// records what the step at where needs.
 func (hr *hostRun) order(m module.Module, res module.Result, where string) error {
-	if res.Status != module.Change {
+	if res.Status == module.OK {
 		return nil
 	}
 	var needs, created []string
+	for n := range hr.needs {
+		if d, ok := strings.CutPrefix(n, "dir "); ok && slices.Contains(res.Changes, module.ParentChange(d)) {
+			created = append(created, n)
+		}
+	}
+	slices.Sort(created)
 	switch m := m.(type) {
+	case *module.Cmd:
+		needs = []string{"user " + m.User}
+		if !hr.dirs[m.Dir] {
+			needs = append(needs, "dir "+m.Dir)
+		}
 	case *module.File:
 		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
 	case *module.Dir:
 		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
+		if res.Action == module.Create {
+			created = append(created, "dir "+m.Path)
+		}
 	case *module.Download:
 		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
 	case *module.User:
@@ -418,7 +434,7 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 			}
 		}
 		if res.Action == module.Create {
-			created = []string{"user " + m.Name}
+			created = append(created, "user "+m.Name)
 		}
 		// useradd -U creates the group.
 		if slices.Contains(res.Changes, "group "+m.Name+" (new)") {
@@ -426,7 +442,7 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 		}
 	case *module.Group:
 		if res.Action == module.Create {
-			created = []string{"group " + m.Name}
+			created = append(created, "group "+m.Name)
 		}
 	}
 	for _, c := range created {
@@ -441,6 +457,28 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 		}
 		if _, ok := hr.needs[n]; !ok {
 			hr.needs[n] = where
+		}
+	}
+	// Directories that exist after the step, which dropCreatedParents does
+	// not see.
+	var made []string
+	switch m := m.(type) {
+	case *module.Cmd:
+		if m.Creates != "" {
+			made = []string{path.Dir(m.Creates)}
+		}
+	case *module.User:
+		if w := m.Writes(); w != nil {
+			made = w[:1]
+		}
+	case *module.Download:
+		if m.Unpack != "" {
+			made = []string{m.Unpack}
+		}
+	}
+	for _, d := range made {
+		for ; d != "/"; d = path.Dir(d) {
+			hr.dirs[d] = true
 		}
 	}
 	return nil

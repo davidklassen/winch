@@ -31,6 +31,14 @@ func TestCmdModule(t *testing.T) {
 			After:     "test -e /root/made",
 		},
 		{
+			Name:         "a command that does not make creates",
+			Args:         &module.Cmd{Command: "touch /root/made", Creates: "/root/out"},
+			Want:         module.Result{Status: module.Change, Action: module.Create},
+			WantApplyErr: "the command did not create /root/out",
+			After:        "test -e /root/made",
+			FixArgs:      &module.Cmd{Command: "touch /root/fixed", Creates: "/root/fixed"},
+		},
+		{
 			Name:  "creates exists",
 			Setup: "touch /root/made",
 			Args:  &module.Cmd{Command: "echo ran > /root/out", Creates: "/root/made"},

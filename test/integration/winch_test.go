@@ -137,6 +137,39 @@ func TestWinch(t *testing.T) {
 		}
 	})
 
+	t.Run("the plan fails a cmd as a user that a later step creates", func(t *testing.T) {
+		write := func(steps string) string {
+			return vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: demo\ninventory: inventories/test.yaml\n",
+				"inventories/test.yaml": "hosts:\n  winch:\n    address: 127.0.0.1\n",
+				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n" + steps,
+			})
+		}
+		r := lab.Winch(t, write(`      - cmd:
+          command: make install
+          user: winch-order
+      - user:
+          name: winch-order
+`), "plan", "site")
+		want := "base: user winch-order: an earlier step needs it: base: cmd make install; move this step before it"
+		if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
+			t.Errorf("plan: exit %d, want the error %q:\n%s%s", r.Code, want, r.Stdout, r.Stderr)
+		}
+		r = lab.Winch(t, write(`      - user:
+          name: winch-order
+      - cmd:
+          command: "true"
+          user: winch-order
+          dir: /home/winch-order
+      - file:
+          path: /home/winch-order/.env
+          content: ""
+`), "plan", "site")
+		if r.Code != 0 {
+			t.Errorf("plan in the home of an earlier user: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+
 	t.Run("plan and apply name a followed link", func(t *testing.T) {
 		vm.MustRun(t, "rm -rf /srv/linked && mkdir -p /srv/linked/t && chmod 700 /srv/linked/t && ln -s t /srv/linked/l")
 		dir := vmtest.WriteProject(t, map[string]string{

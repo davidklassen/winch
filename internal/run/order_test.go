@@ -132,6 +132,85 @@ var orderCases = []orderCase{
       - user:
           name: alice
 `), func(h *fakehost.Hosts) { h.SetGroup("web1", "alice") }, ""},
+	{"a cmd as a user that a later step creates", steps(`      - cmd:
+          command: make install
+          user: deploy
+      - user:
+          name: deploy
+`), nil, "s: user deploy: an earlier step needs it: s: cmd make install; move this step before it"},
+	{"a cmd as an existing user", steps(`      - cmd:
+          command: make install
+          user: deploy
+      - user:
+          name: deploy
+`), func(h *fakehost.Hosts) { h.SetUser("web1", "deploy") }, ""},
+	{"a cmd with creates that exists, as a new user", steps(`      - cmd:
+          command: make install
+          creates: /srv/made
+          user: deploy
+      - user:
+          name: deploy
+`), func(h *fakehost.Hosts) { h.SetFile("web1", "/srv/made", "") }, ""},
+	{"a cmd in a dir that a later step creates", steps(`      - cmd:
+          command: make install
+          dir: /srv/app
+      - dir:
+          path: /srv/app
+`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, "s: dir /srv/app: an earlier step needs it: s: cmd make install; move this step before it"},
+	{"a cmd in a dir that a later step creates as a parent", steps(`      - cmd:
+          command: make install
+          dir: /srv/app
+      - file:
+          path: /srv/app/config
+          content: ""
+`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, "s: file /srv/app/config: an earlier step needs it: s: cmd make install; move this step before it"},
+	{"a cmd in a dir that an earlier step creates", steps(`      - dir:
+          path: /srv/app
+      - cmd:
+          command: make install
+          dir: /srv/app
+      - file:
+          path: /srv/app/config
+          content: ""
+`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, ""},
+	{"a cmd in a dir that an earlier cmd creates", steps(`      - cmd:
+          command: git clone x /srv/app
+          creates: /srv/app/.git
+      - cmd:
+          command: make install
+          dir: /srv/app
+      - file:
+          path: /srv/app/config
+          content: ""
+`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, ""},
+	{"a cmd in the home of an earlier user", steps(`      - user:
+          name: deploy
+      - cmd:
+          command: make install
+          user: deploy
+          dir: /home/deploy
+      - file:
+          path: /home/deploy/.env
+          content: ""
+`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/home/deploy") }, ""},
+	{"a cmd in the unpack dir of an earlier download", steps(`      - download:
+          url: https://example.com/app.tar.gz
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          path: /opt/app.tar.gz
+          unpack: /opt/app
+      - cmd:
+          command: ./install
+          dir: /opt/app
+      - file:
+          path: /opt/app/config
+          content: ""
+`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/opt/app") }, ""},
+	{"a cmd in a dir that exists", steps(`      - cmd:
+          command: make install
+          dir: /srv/app
+      - dir:
+          path: /srv/app
+`), nil, ""},
 	{"two repo steps for one source", steps(`      - repo:
           name: a
           url: http://x.example/apt
