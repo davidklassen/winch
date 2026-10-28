@@ -11,6 +11,6 @@ stdout:
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"change"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web2","status":"change"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web3","status":"unreachable","error":"ssh: connect to host unreachable: Connection refused"}
-{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","message":"winch: the plan hash is 83cfa429debabff5, not 0badc0de0badc0de; nothing changed"}
-{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":3,"change":2,"unchanged":0,"unknown":0,"failed":1},"hash":"83cfa429debabff5","exit_code":4}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","message":"winch: the plan hash is f129578a8ecf501a, not 0badc0de0badc0de; nothing changed"}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":3,"change":2,"unchanged":0,"unknown":0,"failed":1},"hash":"f129578a8ecf501a","exit_code":4}
 stderr:

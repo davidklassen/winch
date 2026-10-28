@@ -70,8 +70,9 @@ type Session struct {
 	progress *color.Writer
 	// cfg and ctx are those of Open: a check of the access and a reboot
 	// open more connections.
-	cfg Config
-	ctx context.Context
+	cfg  Config
+	ctx  context.Context
+	dest protocol.Destination
 
 	waitOnce sync.Once
 	waitErr  error
@@ -142,21 +143,51 @@ func command(script string) string {
 // ssh once more after RetryDelay. It does not retry another failure, so a
 // retry never counts as a second failed login.
 func Open(ctx context.Context, cfg Config) (*Session, error) {
-	s, retry, err := dial(ctx, cfg)
-	if !retry {
-		return s, err
-	}
-	select {
-	case <-ctx.Done():
+	hostName, port, err := resolve(ctx, cfg)
+	if err != nil {
 		return nil, err
-	case <-time.After(cfg.retryDelay()):
 	}
-	s, _, err = dial(ctx, cfg)
-	return s, err
+	s, retry, err := dial(ctx, cfg)
+	if retry {
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(cfg.retryDelay()):
+		}
+		s, _, err = dial(ctx, cfg)
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.dest.HostName, s.dest.Port = hostName, port
+	return s, nil
 }
 
-// argv returns the arguments of ssh for the host of cfg and the command.
-func argv(cfg Config, command string) []string {
+// resolve returns the host name and the port that ssh connects to for the
+// host of cfg.
+func resolve(ctx context.Context, cfg Config) (hostName, port string, err error) {
+	out, err := exec.CommandContext(ctx, "ssh", append([]string{"-G"}, argv(cfg)...)...).Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
+			err = errors.New(strings.TrimSpace(string(exit.Stderr)))
+		}
+		return "", "", fmt.Errorf("read the SSH config: %w", err)
+	}
+	for line := range strings.Lines(string(out)) {
+		key, value, _ := strings.Cut(strings.TrimSpace(line), " ")
+		switch key {
+		case "hostname":
+			hostName = value
+		case "port":
+			port = value
+		}
+	}
+	return hostName, port, nil
+}
+
+// argv returns the arguments of ssh for the host of cfg, up to the target.
+func argv(cfg Config) []string {
 	args := []string{"-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
 		"-o", "RemoteCommand=none", "-o", "PermitLocalCommand=no",
 		"-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
@@ -174,7 +205,7 @@ func argv(cfg Config, command string) []string {
 	if cfg.User != "" {
 		args = append(args, "-l", cfg.User)
 	}
-	return append(args, "--", cfg.Host, command)
+	return append(args, "--", cfg.Host)
 }
 
 // dial reports whether the host closed the connection before the handshake.
@@ -183,7 +214,7 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	if dir == "" {
 		dir = StateDir
 	}
-	args := argv(cfg, command(Script(cfg.Binaries, dir)))
+	args := append(argv(cfg), command(Script(cfg.Binaries, dir)))
 	// ssh keeps an ignored SIGINT ignored, so a Ctrl-C in the terminal reaches
 	// only winch. ssh stays in the terminal's process group and can still ask
 	// for a host key or a passphrase.
@@ -290,7 +321,12 @@ func (s *Session) start(cfg Config, line string) error {
 	} else if line != "have" {
 		return fmt.Errorf("the login shell printed %q before winch started; remove it from the shell startup files, such as ~/.bashrc", line)
 	}
-	return s.call("hello", cfg.Hello, nil)
+	var w protocol.Welcome
+	if err := s.call("hello", cfg.Hello, &w); err != nil {
+		return err
+	}
+	s.dest.User, s.dest.UID = w.Login, w.LoginUID
+	return nil
 }
 
 // fail ends the session after err. The error output of ssh, when there is
@@ -400,7 +436,7 @@ const accessCommand = `if [ "$(id -u)" -eq 0 ]; then exit 0; fi; exec sudo -n tr
 func (s *Session) Access(ctx context.Context) error {
 	cfg := s.cfg
 	cfg.fresh = true
-	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, argv(cfg, accessCommand)...)...)
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, append(argv(cfg), accessCommand)...)...)
 	var out limitedBuffer
 	out.max = 4 << 10
 	cmd.Stdout, cmd.Stderr = &out, &out
@@ -528,6 +564,8 @@ func (s *Session) step(method string, m module.Module, step protocol.Step, st *m
 	*st = res.State
 	return res.Result, nil
 }
+
+func (s *Session) Destination() protocol.Destination { return s.dest }
 
 // Close ends the helper and waits for ssh.
 func (s *Session) Close() error {

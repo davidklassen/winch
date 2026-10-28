@@ -8,6 +8,6 @@ web1, web3 (2 hosts)
         +world
 
 3 hosts: 2 to change, 0 unchanged, 0 unknown, 1 failed
-plan f6f709572e7ccbe5
+plan 075f3f7c45ede5b7
 stderr:
 web2: cleanup: file /etc/issue: permission denied

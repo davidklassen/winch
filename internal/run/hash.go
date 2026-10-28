@@ -16,11 +16,10 @@ type hashRun struct {
 }
 
 type hashHost struct {
-	Host    string            `json:"host"`
-	Address string            `json:"address"`
-	User    string            `json:"user,omitempty"`
-	Failed  bool              `json:"failed,omitempty"`
-	Pending *protocol.Pending `json:"pending,omitempty"`
+	Host        string               `json:"host"`
+	Destination protocol.Destination `json:"destination"`
+	Failed      bool                 `json:"failed,omitempty"`
+	Pending     *protocol.Pending    `json:"pending,omitempty"`
 }
 
 type hashStage struct {
@@ -73,7 +72,7 @@ func (p *Plan) HashInput() []byte {
 	}
 	write(hr)
 	for _, h := range p.Hosts {
-		hh := hashHost{Host: h.Name, Address: h.Address, User: h.User, Failed: p.Failed[h.Name] != nil}
+		hh := hashHost{Host: h.Name, Destination: p.Destinations[h.Name], Failed: p.Failed[h.Name] != nil}
 		if pending, ok := p.Pending[h.Name]; ok {
 			hh.Pending = &pending
 		}

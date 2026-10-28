@@ -39,6 +39,23 @@ type Hello struct {
 	Resume bool `json:"resume,omitempty"`
 }
 
+// Welcome is the answer to hello.
+type Welcome struct {
+	// Login is the name of the session's login user. It is empty when the
+	// helper cannot read the name, as for an LDAP account.
+	Login    string `json:"login"`
+	LoginUID uint32 `json:"login_uid"`
+}
+
+// Destination is where a session logs in: the login user that the host
+// reports, and the host name and port that ssh resolves for the host.
+type Destination struct {
+	User     string `json:"user"`
+	UID      uint32 `json:"uid"`
+	HostName string `json:"hostname"`
+	Port     string `json:"port"`
+}
+
 // Step is the params of check and apply.
 type Step struct {
 	Module string          `json:"module"`

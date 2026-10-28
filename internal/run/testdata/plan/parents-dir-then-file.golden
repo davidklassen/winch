@@ -11,5 +11,5 @@ web1, web2 (2 hosts)
         +hello
 
 2 hosts: 2 to change, 0 unchanged, 0 unknown
-plan 55a3abf0f1b10e9a
+plan ccef823ab9495cb7
 stderr:

@@ -9,5 +9,5 @@ web1, web2 (2 hosts)
       ! handler nginx.reload
 
 2 hosts: 2 to change, 0 unchanged, 0 unknown
-plan 992ccff727fb509c
+plan 51b0e84a8cd1ab56
 stderr:

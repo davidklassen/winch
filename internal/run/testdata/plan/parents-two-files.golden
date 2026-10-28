@@ -13,5 +13,5 @@ web1, web2 (2 hosts)
         +about
 
 2 hosts: 2 to change, 0 unchanged, 0 unknown
-plan 22607b8d9853dcc7
+plan fb6dd2efda61b0e2
 stderr:

@@ -23,5 +23,5 @@ stdout:
 {"type":"applied","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:app#1[1]","stage":"base","recipe":"app","step":"Pages: file /srv/b.html","module":"file","status":"change","action":"create"}
 {"type":"applied","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:app.reload#1","stage":"base","recipe":"app","handler":"app.reload","step":"service app","module":"service","status":"change","action":"change"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"apply","host":"web2","status":"changed"}
-{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":3,"change":2,"unchanged":0,"unknown":0,"failed":1},"apply":{"hosts":3,"changed":2,"unchanged":0,"failed":1},"hash":"8bd44213ef970d41","exit_code":4}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":3,"change":2,"unchanged":0,"unknown":0,"failed":1},"apply":{"hosts":3,"changed":2,"unchanged":0,"failed":1},"hash":"eea37cf59da03ebc","exit_code":4}
 stderr:

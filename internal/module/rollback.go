@@ -91,6 +91,8 @@ func LookupLogin(uid uint32) (*Login, error) {
 	return &Login{passwdEntry{name: u.Username, uid: uid, home: u.HomeDir}}, nil
 }
 
+func (l *Login) Name() string { return l.entry.name }
+
 // Guard returns the plan line of a step whose change can lock out the login
 // user: it changes the user's authorized_keys, a directory on its path in
 // the home, or the sudo rules of a login user other than root. It returns ""

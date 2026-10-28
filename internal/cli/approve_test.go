@@ -60,6 +60,15 @@ func TestCheck(t *testing.T) {
 			t.Errorf("exit %d, applies %d", r.code, h.Applies)
 		}
 	})
+	t.Run("a plan for another ssh destination changes nothing", func(t *testing.T) {
+		hash := planHash(t, winch(t, dir, fakehost.New(), false, "", "plan", "site").out)
+		h := fakehost.New()
+		h.SetDestination("web1", protocol.Destination{User: "admin", HostName: "192.0.2.10", Port: "22"})
+		r := winch(t, dir, h, false, "", "apply", "site", "--check", hash)
+		if r.code != exitHash || h.Applies != 0 {
+			t.Errorf("exit %d, applies %d", r.code, h.Applies)
+		}
+	})
 	t.Run("the same plan with a terminal does not ask", func(t *testing.T) {
 		h := fakehost.New()
 		hash := planHash(t, winch(t, dir, h, false, "", "plan", "site").out)

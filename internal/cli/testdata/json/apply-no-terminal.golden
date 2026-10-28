@@ -11,5 +11,5 @@ stdout:
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"change"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web2","status":"change"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web3","status":"unreachable","error":"ssh: connect to host unreachable: Connection refused"}
-{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":3,"change":2,"unchanged":0,"unknown":0,"failed":1},"hash":"83cfa429debabff5","command":"winch apply site --inventory inventories/test.yaml --json --check 83cfa429debabff5","exit_code":4}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":3,"change":2,"unchanged":0,"unknown":0,"failed":1},"hash":"f129578a8ecf501a","command":"winch apply site --inventory inventories/test.yaml --json --check f129578a8ecf501a","exit_code":4}
 stderr:

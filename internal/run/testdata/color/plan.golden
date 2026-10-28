@@ -13,6 +13,6 @@ stdout:
     [36m*[0m health: curl -sf http://localhost/
 
 3 hosts: 2 to change, 0 unchanged, 0 unknown, 1 failed
-plan 227bc7ad8a4521f8
+plan 4baadb4fc62e6dc7
 stderr:
 [31mweb3: nginx: Configure nginx: file /etc/nginx/nginx.conf: permission denied[0m

@@ -78,6 +78,13 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 				loginUser, err = module.LookupLogin(login.LoginUID)
 			}
 			if err == nil {
+				w := protocol.Welcome{LoginUID: login.LoginUID}
+				if loginUser != nil {
+					w.Login = loginUser.Name()
+				}
+				result = w
+			}
+			if err == nil {
 				err = rb.idle(ctx)
 			}
 			if err == nil && !resumed(req.Params) {

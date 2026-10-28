@@ -60,10 +60,12 @@ func run(m *testing.M) int {
 // The tests share them: macOS checks each new executable file on its first
 // run, and that takes up to half a second.
 //
-// ssh sends itself SIGINT when $SSH_INT is set. It writes its arguments to
-// $SSH_ARGS when it is set, prints $SSH_BANNER and the output of
-// $SSH_BANNER_CMD when they are set, and runs its last argument with sh, on
-// this machine. When $SSH_FAIL_ONCE is a missing file, ssh creates it and
+// ssh -G writes its arguments to $SSH_G_ARGS when it is set. It prints
+// $SSH_G, or prints $SSH_G_ERR on stderr and exits with 255 when that is
+// set. ssh sends itself SIGINT when $SSH_INT is set. It
+// writes its arguments to $SSH_ARGS when it is set, prints $SSH_BANNER and
+// the output of $SSH_BANNER_CMD when they are set, and runs its last argument
+// with sh, on this machine. When $SSH_FAIL_ONCE is a missing file, ssh creates it and
 // fails once: it prints $SSH_FAIL_OUT on stdout when it is set, prints
 // $SSH_FAIL_ERR on stderr, and exits with $SSH_FAIL_CODE. A later start
 // creates $SSH_FAIL_ONCE.again. uname prints $FAKE_UNAME, id prints
@@ -74,7 +76,9 @@ func fakeSSH(bin string) error {
 		return err
 	}
 	scripts := map[string]string{
-		"ssh": "#!/bin/sh\n[ -z \"$SSH_INT\" ] || kill -INT $$\n[ -z \"$SSH_FAIL_ONCE\" ] || [ ! -e \"$SSH_FAIL_ONCE\" ] || : > \"$SSH_FAIL_ONCE.again\"\n" +
+		"ssh": "#!/bin/sh\nif [ \"$1\" = -G ]; then\n[ -z \"$SSH_G_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_G_ARGS\"\n" +
+			"[ -z \"$SSH_G_ERR\" ] || { printf '%s\\n' \"$SSH_G_ERR\" >&2; exit 255; }\nprintf '%s\\n' \"$SSH_G\"; exit\nfi\n" +
+			"[ -z \"$SSH_INT\" ] || kill -INT $$\n[ -z \"$SSH_FAIL_ONCE\" ] || [ ! -e \"$SSH_FAIL_ONCE\" ] || : > \"$SSH_FAIL_ONCE.again\"\n" +
 			"if [ -n \"$SSH_FAIL_ONCE\" ] && [ ! -e \"$SSH_FAIL_ONCE\" ]; then : > \"$SSH_FAIL_ONCE\"; [ -z \"$SSH_FAIL_OUT\" ] || printf '%s\\n' \"$SSH_FAIL_OUT\"; printf '%s\\n' \"$SSH_FAIL_ERR\" >&2; exit \"$SSH_FAIL_CODE\"; fi\n" +
 			"[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
 		"uname": "#!/bin/sh\necho \"$FAKE_UNAME\"\n",
@@ -384,6 +388,57 @@ done
 	return helperbin.New(arch, []byte(script))
 }
 
+// spec: Running a pipeline/Plan
+func TestDestination(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	t.Setenv("SSH_G", "user admin\nhostname 192.0.2.10\nport 2222\nconnecttimeout 15")
+	argsFile := filepath.Join(t.TempDir(), "args")
+	t.Setenv("SSH_G_ARGS", argsFile)
+	helper := helperbin.New("arm64", []byte("#!/bin/sh\nread line\necho '{\"id\":1,\"result\":{\"login\":\"deploy\",\"login_uid\":1001}}'\ncat >/dev/null\n"))
+	s, err := Open(context.Background(), Config{
+		Host: "web1", Address: "192.0.2.10", User: "admin", Dir: stateDir,
+		Binaries: []helperbin.Binary{helper},
+		Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if got, want := s.Destination(), (protocol.Destination{User: "deploy", UID: 1001, HostName: "192.0.2.10", Port: "2222"}); got != want {
+		t.Errorf("destination = %+v, want %+v", got, want)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := "\n" + string(data)
+	for _, want := range []string{"\n-G\n", "\n-o\nHostName=192.0.2.10\n", "\n-l\nadmin\n", "\n-o\nConnectTimeout=15\n"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("ssh -G arguments %q have no %q", args, want)
+		}
+	}
+	if !strings.HasSuffix(args, "\n--\nweb1\n") {
+		t.Errorf("ssh -G arguments %q do not end with -- web1", args)
+	}
+}
+
+// spec: Running a pipeline/Plan
+func TestDestinationBadSSHConfig(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	t.Setenv("SSH_G_ERR", "/home/a/.ssh/config line 3: Bad configuration option: hostnme")
+	s, err := Open(context.Background(), Config{
+		Host: "web1", Address: "web1", Dir: stateDir,
+		Binaries: []helperbin.Binary{recordingHelper("arm64")},
+		Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
+	})
+	if s != nil {
+		s.Close()
+	}
+	if want := "read the SSH config: /home/a/.ssh/config line 3: Bad configuration option: hostnme"; err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %s", err, want)
+	}
+}
+
 // spec: Remote execution/Facts
 func TestFacts(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
@@ -518,7 +573,7 @@ func TestNotesGoToProgress(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
 	helper := helperbin.New("arm64", []byte(`#!/bin/sh
 read -r line
-echo '{"id":1}'
+echo '{"id":1,"result":{}}'
 read -r line
 echo '{"id":2,"note":"\\u001b[2Kwaiting for another apt run (pid 42)"}'
 echo '{"id":2,"result":{"status":"ok"}}'

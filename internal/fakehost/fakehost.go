@@ -82,6 +82,8 @@ type Hosts struct {
 	// timer is the time that a started rollback timer has left.
 	timer time.Duration
 	boots map[string]protocol.Boot
+	// dests holds the destinations that SetDestination set.
+	dests map[string]protocol.Destination
 }
 
 func New() *Hosts {
@@ -115,6 +117,7 @@ func New() *Hosts {
 		noAccessOnce: map[string]bool{},
 		timer:        time.Nanosecond,
 		boots:        map[string]protocol.Boot{},
+		dests:        map[string]protocol.Destination{},
 	}
 }
 
@@ -303,7 +306,20 @@ func (h *Hosts) Connect(ctx context.Context, host project.Host) (*Conn, error) {
 	h.Connects[host.Name]++
 	h.Users[host.Name] = host.User
 	h.Trace = append(h.Trace, "connect "+host.Name)
-	return &Conn{hosts: h, host: host.Name}, nil
+	dest, ok := h.dests[host.Name]
+	if !ok {
+		dest = protocol.Destination{User: host.User, HostName: host.Address, Port: "22"}
+	}
+	return &Conn{hosts: h, host: host.Name, dest: dest}, nil
+}
+
+// SetDestination sets the destination that each later session with host
+// reports, as an SSH config would. Without it, a session reports the user
+// and address of the inventory, and port 22.
+func (h *Hosts) SetDestination(host string, d protocol.Destination) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.dests[host] = d
 }
 
 func (h *Hosts) fails(m map[string]bool, host, path string) bool {
@@ -332,7 +348,10 @@ func (h *Hosts) Connector() run.Connect {
 type Conn struct {
 	hosts *Hosts
 	host  string
+	dest  protocol.Destination
 }
+
+func (c *Conn) Destination() protocol.Destination { return c.dest }
 
 func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
 	if c.hosts.OnCheck != nil {

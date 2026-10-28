@@ -27,6 +27,7 @@ import (
 // context that does not end, so a step that runs finishes. Exec gets the
 // context of the run: an interrupt stops its command.
 type Conn interface {
+	Destination() protocol.Destination
 	Facts(ctx context.Context) (facts.Facts, error)
 	Pending(ctx context.Context) (protocol.Pending, error)
 	Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
@@ -71,8 +72,11 @@ type Plan struct {
 	Failed map[string]error
 	// Pending are the records of each host, as the host reported them.
 	Pending map[string]protocol.Pending
-	hash    string
-	opts    Options
+	// Destinations are the destinations of the hosts, as their sessions
+	// reported them.
+	Destinations map[string]protocol.Destination
+	hash         string
+	opts         Options
 }
 
 type StagePlan struct {
@@ -163,6 +167,7 @@ type hostRun struct {
 	pending *protocol.Pending
 	// conn is the session with the host, open across its stages.
 	conn Conn
+	dest protocol.Destination
 	// needs are the users and groups, as "user <name>" or "group <name>",
 	// that changed steps need, with the first such step.
 	needs map[string]string
@@ -211,7 +216,7 @@ func (hr *hostRun) close() error {
 // stage run at the same time. At the first contact with a host, it reads the
 // facts and starts the host's evaluation. A host that fails stops there.
 func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Options) *Plan {
-	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}, opts: opts}
+	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}, Destinations: map[string]protocol.Destination{}, opts: opts}
 	inStages := map[string]bool{}
 	runs := map[string]*hostRun{}
 	open := func(h project.Host) (Conn, error) {
@@ -222,6 +227,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 				return nil, err
 			}
 			hr.conn = c
+			hr.dest = c.Destination()
 		}
 		return hr.conn, nil
 	}
@@ -281,6 +287,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		if hr.pending != nil {
 			plan.Pending[name] = *hr.pending
 		}
+		plan.Destinations[name] = hr.dest
 	}
 	for _, h := range p.Inventory.Hosts {
 		if inStages[h.Name] {

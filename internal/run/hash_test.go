@@ -192,6 +192,15 @@ func TestHashChanges(t *testing.T) {
 		{name: "another project name", files: func(t *testing.T) map[string]string {
 			return edit(t, "winch.yaml", "name: acme", "name: acme2")
 		}},
+		{name: "another login user from the ssh config", setup: func(h *fakehost.Hosts) {
+			h.SetDestination("web1", protocol.Destination{User: "admin", HostName: "web1", Port: "22"})
+		}},
+		{name: "another host name from the ssh config", setup: func(h *fakehost.Hosts) {
+			h.SetDestination("web1", protocol.Destination{HostName: "192.0.2.10", Port: "22"})
+		}},
+		{name: "another port from the ssh config", setup: func(h *fakehost.Hosts) {
+			h.SetDestination("web1", protocol.Destination{HostName: "web1", Port: "2222"})
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

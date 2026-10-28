@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -28,11 +29,17 @@ type client struct {
 
 func start(t *testing.T, dir, self string) *client {
 	t.Helper()
+	return startAs(t, dir, self, 1000)
+}
+
+// startAs starts a helper whose session has the login user with the ID uid.
+func startAs(t *testing.T, dir, self string, uid uint32) *client {
+	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	c := &client{w: inW, r: bufio.NewScanner(outR), done: make(chan error, 1)}
 	go func() {
-		err := Serve(context.Background(), inR, outW, dir, self, module.State{LoginUID: 1000})
+		err := Serve(context.Background(), inR, outW, dir, self, module.State{LoginUID: uid})
 		outW.Close()
 		c.done <- err
 	}()
@@ -101,6 +108,29 @@ func TestLock(t *testing.T) {
 	third := start(t, dir, "")
 	if r := third.call(t, "hello", hello("r3")); r.Error != "" {
 		t.Errorf("hello after release: %s", r.Error)
+	}
+}
+
+// spec: Running a pipeline/Plan
+func TestHelloReportsLogin(t *testing.T) {
+	me, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := startAs(t, t.TempDir(), "", uint32(os.Getuid())).call(t, "hello", hello("r1"))
+	var w protocol.Welcome
+	if err := json.Unmarshal(r.Result, &w); r.Error != "" || err != nil || w.Login != me.Username {
+		t.Errorf("hello = %s, %q; want the login %s", r.Result, r.Error, me.Username)
+	}
+}
+
+// spec: Running a pipeline/Plan
+func TestHelloReportsUnknownLogin(t *testing.T) {
+	const uid = 3999999999
+	r := startAs(t, t.TempDir(), "", uid).call(t, "hello", hello("r1"))
+	var w protocol.Welcome
+	if err := json.Unmarshal(r.Result, &w); r.Error != "" || err != nil || w != (protocol.Welcome{LoginUID: uid}) {
+		t.Errorf("hello = %s, %q; want the login UID %d", r.Result, r.Error, uid)
 	}
 }
 

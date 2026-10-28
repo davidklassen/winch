@@ -61,8 +61,8 @@ echo $n > "$REBOOT_STATE"
 while read -r line; do
   id=$(echo "$line" | sed 's/.*"id":\([0-9]*\).*/\1/')
   case $line in
-  *'"method":"hello"'*'"resume":true'*) echo "{\"id\":$id}" ;;
-  *'"method":"hello"'*) if [ $n -eq 1 ]; then echo "{\"id\":$id}"; else echo "{\"id\":$id,\"error\":\"a reconnect without resume\"}"; fi ;;
+  *'"method":"hello"'*'"resume":true'*) echo "{\"id\":$id,\"result\":{}}" ;;
+  *'"method":"hello"'*) if [ $n -eq 1 ]; then echo "{\"id\":$id,\"result\":{}}"; else echo "{\"id\":$id,\"error\":\"a reconnect without resume\"}"; fi ;;
   *'"method":"reboot"'*) echo "{\"id\":$id,\"result\":\"boot-1\"}" ;;
   *'"method":"booted"'*'"old":"boot-1"'*)
     if [ $n -le 2 ]; then echo "{\"id\":$id,\"result\":{\"same\":true}}"
