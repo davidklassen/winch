@@ -304,6 +304,36 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			Want:  module.Result{Status: module.OK},
 		},
 		{
+			Name:  "add_groups keeps the other groups",
+			Setup: `groupadd wtgrp && useradd -m -U -G adm wtalice`,
+			Args:  &module.User{Name: "wtalice", AddGroups: &[]string{"wtgrp"}},
+			Want:  change("add to group wtgrp"),
+			After: `[ "$(id -nG wtalice)" = "wtalice adm wtgrp" ]`,
+		},
+		{
+			Name:  "create with a shell and add_groups",
+			Setup: `groupadd wtgrp`,
+			Args:  &module.User{Name: "wtalice", Shell: "/bin/bash", AddGroups: &[]string{"wtgrp"}},
+			Want:  create("group wtalice (new)", "home /home/wtalice (owner wtalice, group wtalice, mode 0700, files from /etc/skel)", "shell /bin/bash", "groups wtgrp"),
+			After: `[ "$(id -nG wtalice)" = "wtalice wtgrp" ]`,
+		},
+		{
+			Name:         "add_groups on a missing user",
+			Setup:        `groupadd wtgrp`,
+			Args:         &module.User{Name: "wtalice", AddGroups: &[]string{"wtgrp"}},
+			Want:         change("user does not exist yet", "add to group wtgrp"),
+			WantApplyErr: "user wtalice does not exist",
+			Fix:          "useradd -m -U -G adm wtalice",
+			After:        `! getent passwd wtalice`,
+		},
+		{
+			Name:  "add_groups to the login user",
+			Setup: `groupadd wtgrp && gpasswd -a admin sudo`,
+			Args:  &module.User{Name: "admin", AddGroups: &[]string{"wtgrp"}},
+			Want:  change("changes the groups of the login user admin", "add to group wtgrp"),
+			After: `[ "$(id -nG admin)" = "admin sudo wtgrp" ]`,
+		},
+		{
 			Name:  "add a group to the login user",
 			Setup: `groupadd wtgrp`,
 			Args:  &module.User{Name: "admin", Groups: &[]string{"admin", "wtgrp"}},
@@ -846,6 +876,48 @@ func TestUsers(t *testing.T) {
 	r = lab.Winch(t, dir, "plan", "site")
 	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+}
+
+// spec: Modules/user and group; Running a pipeline/Plan
+func TestUserAddGroupsCombine(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "add-groups")
+	vm.MustRun(t, `groupadd wtgrp && groupadd wtother && useradd -m -U -G adm wtdev`)
+	files := map[string]string{
+		"winch.yaml":                 "name: acme\ninventory: test\n",
+		"inventories/test.yaml":      "hosts:\n  " + vm.Name + ": {}\n",
+		"recipes/docker/recipe.yaml": "steps:\n  - user:\n      name: wtdev\n      add_groups: [wtgrp]\n",
+		"recipes/web/recipe.yaml":    "steps:\n  - user:\n      name: wtdev\n      add_groups: [wtother]\n",
+		"pipelines/site.yaml":        "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: docker\n      - recipe: web\n",
+		"pipelines/create.yaml":      "stages:\n  - name: s\n    hosts: all\n    steps:\n      - user:\n          name: wtnew\n      - user:\n          name: wtnew\n          add_groups: [wtgrp]\n",
+		"pipelines/exact.yaml":       "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: docker\n      - user:\n          name: wtdev\n          groups: [adm]\n",
+	}
+	dir := vmtest.WriteProject(t, files)
+	r := lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "add to group wtgrp") || !strings.Contains(r.Stdout, "add to group wtother") {
+		t.Fatalf("plan: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d: %s", r.Code, r.Stderr)
+	}
+	vm.MustRun(t, `[ "$(id -nG wtdev)" = "wtdev adm wtgrp wtother" ]`)
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+	if r := lab.Winch(t, dir, "apply", "create", "--yes"); r.Code != 0 {
+		t.Fatalf("apply create: exit %d: %s", r.Code, r.Stderr)
+	}
+	vm.MustRun(t, `[ "$(id -nG wtnew)" = "wtnew wtgrp" ] && [ -d /home/wtnew ]`)
+	r = lab.Winch(t, dir, "plan", "create")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan create: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+	r = lab.Winch(t, dir, "plan", "exact")
+	want := "s: user wtdev: the user wtdev is also in docker: user wtdev, with other arguments"
+	if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
+		t.Errorf("plan exact: exit %d, want the error %q:\n%s%s", r.Code, want, r.Stdout, r.Stderr)
 	}
 }
 

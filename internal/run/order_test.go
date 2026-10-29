@@ -190,6 +190,12 @@ var orderCases = []orderCase{
       - group:
           name: docker
 `), nil, "s: group docker: an earlier step needs it: s: user bob; move this step before it"},
+	{"a user before a group in its add_groups", steps(`      - user:
+          name: bob
+          add_groups: [docker]
+      - group:
+          name: docker
+`), nil, "s: group docker: an earlier step needs it: s: user bob; move this step before it"},
 	{"a dir before its owner", steps(`      - dir:
           path: /srv/d
           owner: alice
@@ -458,6 +464,58 @@ handlers:
           name: bob
           shell: /bin/bash
 `, "", "t: user bob: the user bob is also in s: user bob, with other arguments"},
+		{"two add_groups steps for one user", `stages:
+  - name: s
+    hosts: all
+    steps:
+      - user:
+          name: bob
+          add_groups: [docker]
+  - name: t
+    hosts: all
+    steps:
+      - user:
+          name: bob
+          add_groups: [adm]
+`, "", ""},
+		{"a user step and an add_groups step", steps(`      - user:
+          name: bob
+          shell: /bin/bash
+      - user:
+          name: bob
+          add_groups: [docker]
+`), "", ""},
+		{"an add_groups step and a step with add_groups and a shell", steps(`      - user:
+          name: bob
+          add_groups: [docker]
+      - user:
+          name: bob
+          shell: /bin/bash
+          add_groups: [adm]
+`), "", ""},
+		{"an add_groups step and a groups step", steps(`      - user:
+          name: bob
+          add_groups: [docker]
+      - user:
+          name: bob
+          groups: [adm]
+`), "", "s: user bob: the user bob is also in s: user bob, with other arguments"},
+		{"a groups step and an add_groups step", steps(`      - user:
+          name: bob
+          groups: [adm]
+      - user:
+          name: bob
+          add_groups: [docker]
+`), "", "s: user bob: the user bob is also in s: user bob, with other arguments"},
+		{"two user steps with add_groups and other fields", steps(`      - user:
+          name: bob
+          shell: /bin/bash
+          add_groups: [docker]
+      - user:
+          name: bob
+          shell: /bin/bash
+          add_groups: [adm]
+`), "", "s: user bob: the user bob is also in s: user bob, with other arguments"},
 		{"a group", steps(`      - group:
           name: staff
       - group:

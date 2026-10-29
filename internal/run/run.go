@@ -3,6 +3,7 @@ package run
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -472,8 +473,8 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
 	case *module.User:
 		needs = []string{"group " + string(m.Group)}
-		if m.Groups != nil {
-			for _, g := range *m.Groups {
+		if groups := cmp.Or(m.Groups, m.AddGroups); groups != nil {
+			for _, g := range *groups {
 				needs = append(needs, "group "+g)
 			}
 		}
@@ -624,6 +625,21 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		}
 		return hr.overlap(m, where)
 	case *module.User:
+		// Steps that only add groups combine with the other steps for the
+		// user, except with a step that sets the exact groups.
+		addOnly := m.OnlyAddsGroups()
+		if addOnly || m.Groups != nil {
+			key := "the groups of the user " + m.Name
+			e, ok := hr.managed[key]
+			if !ok {
+				hr.managed[key] = managed{where, st.Module, m}
+			} else if (e.args.(*module.User).Groups != nil) != (m.Groups != nil) {
+				return fmt.Errorf("%s: the user %s is also in %s, with other arguments", where, m.Name, e.where)
+			}
+		}
+		if addOnly {
+			return nil
+		}
 		return add("the user "+m.Name, m)
 	case *module.Group:
 		return add("the group "+m.Name, m)
