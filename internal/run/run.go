@@ -625,6 +625,29 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		}
 		return hr.overlap(m, where)
 	case *module.User:
+		a, err := json.Marshal(m)
+		if err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
+		b, err := json.Marshal(&module.User{Name: m.Name, AddGroups: m.AddGroups})
+		if err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
+		// Steps that only add groups combine with the other steps for the
+		// user, except with a step that sets the exact groups.
+		addOnly := m.AddGroups != nil && bytes.Equal(a, b)
+		if addOnly || m.Groups != nil {
+			key := "the groups of the user " + m.Name
+			e, ok := hr.managed[key]
+			if !ok {
+				hr.managed[key] = managed{where, st.Module, m}
+			} else if (e.args.(*module.User).Groups != nil) != (m.Groups != nil) {
+				return fmt.Errorf("%s: the user %s is also in %s, with other arguments", where, m.Name, e.where)
+			}
+		}
+		if addOnly {
+			return nil
+		}
 		return add("the user "+m.Name, m)
 	case *module.Group:
 		return add("the group "+m.Name, m)

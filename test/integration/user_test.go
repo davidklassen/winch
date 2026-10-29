@@ -870,6 +870,39 @@ func TestUsers(t *testing.T) {
 	}
 }
 
+// spec: Modules/user and group; Running a pipeline/Plan
+func TestUserAddGroupsCombine(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "add-groups")
+	vm.MustRun(t, `groupadd wtgrp && groupadd wtother && useradd -m -U -G adm wtdev`)
+	files := map[string]string{
+		"winch.yaml":                 "name: acme\ninventory: test\n",
+		"inventories/test.yaml":      "hosts:\n  " + vm.Name + ": {}\n",
+		"recipes/docker/recipe.yaml": "steps:\n  - user:\n      name: wtdev\n      add_groups: [wtgrp]\n",
+		"recipes/web/recipe.yaml":    "steps:\n  - user:\n      name: wtdev\n      add_groups: [wtother]\n",
+		"pipelines/site.yaml":        "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: docker\n      - recipe: web\n",
+		"pipelines/exact.yaml":       "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: docker\n      - user:\n          name: wtdev\n          groups: [adm]\n",
+	}
+	dir := vmtest.WriteProject(t, files)
+	r := lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "add to group wtgrp") || !strings.Contains(r.Stdout, "add to group wtother") {
+		t.Fatalf("plan: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d: %s", r.Code, r.Stderr)
+	}
+	vm.MustRun(t, `[ "$(id -nG wtdev)" = "wtdev adm wtgrp wtother" ]`)
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+	r = lab.Winch(t, dir, "plan", "exact")
+	want := "s: user wtdev: the user wtdev is also in docker: user wtdev, with other arguments"
+	if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
+		t.Errorf("plan exact: exit %d, want the error %q:\n%s%s", r.Code, want, r.Stdout, r.Stderr)
+	}
+}
+
 // spec: Modules/user and group
 func TestUserKeysLogin(t *testing.T) {
 	t.Parallel()
