@@ -33,18 +33,23 @@ import (
 type Download struct {
 	URL    string         `yaml:"url,required" json:"url"`
 	SHA256 string         `yaml:"sha256,required" json:"sha256"`
-	Path   string         `yaml:"path,required" json:"path"`
+	Path   string         `yaml:"path" json:"path,omitempty"`
 	Unpack string         `yaml:"unpack" json:"unpack,omitempty"`
 	Owner  yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
 	Group  yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
 	Mode   string         `yaml:"mode" json:"mode,omitempty"`
 
-	// Recorded is the checksum at the last successful unpack of Path into
-	// Unpack, or "".
+	// Recorded is the checksum at the last successful unpack into Unpack, or
+	// "".
 	Recorded string `json:"-"`
 }
 
-func (d *Download) Main() string { return d.Path }
+func (d *Download) Main() string {
+	if d.Unpack != "" {
+		return d.Unpack
+	}
+	return d.Path
+}
 
 var sha256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
@@ -60,21 +65,24 @@ func (d *Download) Validate() error {
 	if !sha256Re.MatchString(d.SHA256) {
 		return &yamlx.FieldError{Field: "sha256", Msg: "must be 64 lowercase hexadecimal digits, as sha256sum prints them"}
 	}
-	if err := checkPath(d.Path); err != nil {
-		return err
-	}
-	if d.Unpack != "" {
+	switch {
+	case d.Path != "" && d.Unpack != "":
+		return &yamlx.FieldError{Field: "unpack", Msg: "a download step takes path or unpack, not both"}
+	case d.Path != "":
+		if err := checkPath(d.Path); err != nil {
+			return err
+		}
+	case d.Unpack == "":
+		return &yamlx.FieldError{Msg: "a download step needs path or unpack"}
+	default:
 		if d.Unpack == "/" {
 			return &yamlx.FieldError{Field: "unpack", Msg: "must not be /"}
 		}
 		if err := checkAbs("unpack", d.Unpack); err != nil {
 			return err
 		}
-		if archiveType(d.Path) == "" {
-			return &yamlx.FieldError{Field: "path", Msg: "unpack needs a path that ends in .tar.gz, .tgz, .tar.xz, or .zip"}
-		}
-		if d.Unpack == d.Path {
-			return &yamlx.FieldError{Field: "unpack", Msg: "must differ from path"}
+		if d.archiveType() == "" {
+			return &yamlx.FieldError{Field: "url", Msg: "unpack needs a URL whose path ends in .tar.gz, .tgz, .tar.xz, or .zip"}
 		}
 		if d.Mode != "" {
 			return &yamlx.FieldError{Field: "mode", Msg: "unpack takes the modes of the archive, without write permission for group and others; it takes no mode"}
@@ -89,9 +97,14 @@ func (d *Download) Validate() error {
 	return checkMode(d.Mode, "0755")
 }
 
-func archiveType(p string) string {
+// archiveType returns the archive suffix of the path of the URL, or "".
+func (d *Download) archiveType() string {
+	u, err := url.Parse(d.URL)
+	if err != nil {
+		return ""
+	}
 	for _, t := range archiveTypes {
-		if strings.HasSuffix(p, t) {
+		if strings.HasSuffix(u.Path, t) {
 			return t
 		}
 	}
@@ -104,9 +117,7 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 		return Result{}, err
 	}
 	if d.Unpack != "" {
-		if _, err := unpackDirExists(d.Unpack); err != nil {
-			return Result{}, err
-		}
+		return d.checkUnpack(owner, group)
 	}
 	dir, missing, err := openParent(d.Path)
 	if err != nil {
@@ -120,18 +131,18 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 	}
 	if !exists {
 		changes := append(parentChanges(missing), "download "+d.URL, attrLine(owner, group, mode)+userNote(owner, group))
-		return Result{Status: Change, Action: Create, Changes: d.unpackLine(changes)}, nil
+		return Result{Status: Change, Action: Create, Changes: changes}, nil
 	}
 	if !fi.Mode().IsRegular() {
 		return Result{}, fmt.Errorf("%s is %s, not a file", d.Path, kind(fi))
 	}
-	why, err := d.why(dir, name, fi)
+	same, err := d.same(dir, name, fi)
 	if err != nil {
 		return Result{}, err
 	}
 	res := Result{Status: OK}
-	if why != "" {
-		res = Result{Status: Change, Action: Modify, Changes: d.unpackLine([]string{"download " + d.URL + " (" + why + ")"})}
+	if !same {
+		res = Result{Status: Change, Action: Modify, Changes: []string{"download " + d.URL + " (the sha256 differs)"}}
 	}
 	changes, err := attrChanges(fi, owner, group, mode)
 	if err != nil {
@@ -140,9 +151,6 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 	if len(changes) > 0 {
 		res.Status, res.Action = Change, Modify
 		res.Changes = append(res.Changes, changes...)
-		if why == "" {
-			res.Changes = d.unpackLine(res.Changes)
-		}
 	}
 	if res.Status == Change {
 		if err := noFlags(dir, name, fi, d.Path); err != nil {
@@ -152,63 +160,43 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 	return res, nil
 }
 
-// why returns the reason to download again, or "" when the file name in dir
-// has the step's checksum, and for unpack, is the recorded download and the
-// unpack directory exists.
-func (d *Download) why(dir *os.Root, name string, fi fs.FileInfo) (string, error) {
-	if d.Unpack != "" {
+// checkUnpack compares the recorded checksum with the step's. It reads no
+// archive and no tree.
+func (d *Download) checkUnpack(owner, group string) (Result, error) {
+	parent, missing, err := openParent(d.Unpack)
+	if err != nil {
+		return Result{}, err
+	}
+	defer parent.Close()
+	fi, exists, err := lstat(parent, path.Base(d.Unpack), missing)
+	if err != nil {
+		return Result{}, err
+	}
+	unpack := "unpack into " + d.Unpack + " (owner " + owner + ", group " + group + userNote(owner, group) + ")"
+	switch {
+	case !exists:
+		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), "download "+d.URL, unpack)}, nil
+	case !fi.IsDir():
+		return Result{}, fmt.Errorf("%s is %s, not a directory", d.Unpack, kind(fi))
+	case d.Recorded != d.SHA256:
+		why := "new sha256"
 		if d.Recorded == "" {
-			return "no record of an earlier download", nil
+			why = "no record of an earlier download"
 		}
-		if d.Recorded != d.SHA256 {
-			return "new sha256", nil
-		}
+		return Result{Status: Change, Action: Modify, Changes: []string{"download " + d.URL + " (" + why + ")", unpack}}, nil
 	}
+	return Result{Status: OK}, nil
+}
+
+// same reports whether the file name in dir has the step's checksum.
+func (d *Download) same(dir *os.Root, name string, fi fs.FileInfo) (bool, error) {
 	r, err := openSame(dir, name, fi)
-	if err != nil {
-		return "", err
-	}
-	defer r.Close()
-	sum, err := fileSHA(r)
-	if err != nil {
-		return "", err
-	}
-	if d.Unpack == "" {
-		if sum != d.SHA256 {
-			return "the sha256 differs", nil
-		}
-		return "", nil
-	}
-	if sum != d.SHA256 {
-		return "the file changed on the host", nil
-	}
-	exists, err := unpackDirExists(d.Unpack)
-	if err != nil || exists {
-		return "", err
-	}
-	return d.Unpack + " does not exist", nil
-}
-
-func (d *Download) unpackLine(changes []string) []string {
-	if d.Unpack == "" {
-		return changes
-	}
-	return append(changes, "unpack into "+d.Unpack)
-}
-
-// unpackDirExists reports whether the directory dir exists. It fails when
-// something other than a directory is at dir.
-func unpackDirExists(dir string) (bool, error) {
-	parent, missing, err := openParent(dir)
 	if err != nil {
 		return false, err
 	}
-	defer parent.Close()
-	fi, exists, err := lstat(parent, path.Base(dir), missing)
-	if err != nil || !exists || fi.IsDir() {
-		return exists, err
-	}
-	return false, fmt.Errorf("%s is %s, not a directory", dir, kind(fi))
+	defer r.Close()
+	sum, err := fileSHA(r)
+	return sum == d.SHA256, err
 }
 
 func (d *Download) Apply(ctx context.Context, note func(string)) error {
@@ -219,6 +207,9 @@ func (d *Download) Apply(ctx context.Context, note func(string)) error {
 	uid, gid, err := ids(owner, group)
 	if err != nil {
 		return err
+	}
+	if d.Unpack != "" {
+		return d.applyUnpack(ctx, uid, gid, note)
 	}
 	dir, missing, err := openParent(d.Path)
 	if err != nil {
@@ -231,21 +222,17 @@ func (d *Download) Apply(ctx context.Context, note func(string)) error {
 		return err
 	}
 	if exists && fi.Mode().IsRegular() {
-		why, err := d.why(dir, name, fi)
+		same, err := d.same(dir, name, fi)
 		if err != nil {
 			return err
 		}
-		if why == "" {
+		if same {
 			r, err := openSame(dir, name, fi)
 			if err != nil {
 				return err
 			}
 			defer r.Close()
-			if err := setAttrs(r, uid, gid, mode); err != nil || d.Unpack == "" {
-				return err
-			}
-			note("unpack into " + d.Unpack)
-			return d.unpack(ctx, r, uid, gid)
+			return setAttrs(r, uid, gid, mode)
 		}
 	}
 	sub, err := mkdirs(dir, missing)
@@ -260,13 +247,8 @@ func (d *Download) Apply(ctx context.Context, note func(string)) error {
 	}
 	defer sub.Remove(tmpName)
 	defer tmp.Close()
-	note("download " + d.URL)
-	sum, err := fetch(ctx, d.URL, tmp, stallLimit)
-	if err != nil {
-		return fmt.Errorf("download %s: %w", d.URL, err)
-	}
-	if sum != d.SHA256 {
-		return fmt.Errorf("download %s: the SHA-256 is %s, not %s", d.URL, sum, d.SHA256)
+	if err := d.get(ctx, tmp, note); err != nil {
+		return err
 	}
 	if err := tmp.Chown(int(uid), int(gid)); err != nil {
 		return err
@@ -277,13 +259,71 @@ func (d *Download) Apply(ctx context.Context, note func(string)) error {
 	if err := tmp.Sync(); err != nil {
 		return err
 	}
-	if d.Unpack != "" {
-		note("unpack into " + d.Unpack)
-		if err := d.unpack(ctx, tmp, uid, gid); err != nil {
-			return err
-		}
-	}
 	return sub.Rename(tmpName, name)
+}
+
+// applyUnpack downloads the archive to a temporary file next to the unpack
+// directory, unpacks it, and deletes it. It creates the unpack directory when
+// it is missing. Each entry gets the owner uid and the group gid. It checks
+// every entry before it writes one.
+func (d *Download) applyUnpack(ctx context.Context, uid, gid uint32, note func(string)) error {
+	parent, missing, err := openParent(d.Unpack)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	sub, err := mkdirs(parent, missing)
+	if err != nil {
+		return err
+	}
+	defer sub.Close()
+	tmpName := ".winch-" + rand.Text()
+	tmp, err := sub.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer sub.Remove(tmpName)
+	defer tmp.Close()
+	if err := d.get(ctx, tmp, note); err != nil {
+		return err
+	}
+	note("unpack into " + d.Unpack)
+	typ := d.archiveType()
+	if err := (unpacker{}).read(ctx, tmp, typ); err != nil {
+		return fmt.Errorf("unpack %s: %w", d.URL, err)
+	}
+	name := path.Base(d.Unpack)
+	fi, exists, err := lstat(sub, name, nil)
+	if err != nil {
+		return err
+	}
+	var root *os.Root
+	if exists {
+		root, err = openRoot(sub, name, fi)
+	} else {
+		root, err = mkdir(sub, name, uid, gid, 0o755)
+	}
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if err := (unpacker{root: root, uid: uid, gid: gid}).read(ctx, tmp, typ); err != nil {
+		return fmt.Errorf("unpack %s into %s: %w", d.URL, d.Unpack, err)
+	}
+	return nil
+}
+
+// get writes the body of the URL to w. It fails when the checksum differs.
+func (d *Download) get(ctx context.Context, w io.Writer, note func(string)) error {
+	note("download " + d.URL)
+	sum, err := fetch(ctx, d.URL, w, stallLimit)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", d.URL, err)
+	}
+	if sum != d.SHA256 {
+		return fmt.Errorf("download %s: the SHA-256 is %s, not %s", d.URL, sum, d.SHA256)
+	}
+	return nil
 }
 
 // stallLimit is the time without data after which a download fails.
@@ -363,45 +403,6 @@ func fetchBody(ctx context.Context, url string, w io.Writer) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// unpack unpacks the archive f into the unpack directory, which it creates
-// when it is missing. Each entry gets the owner uid and the group gid. It
-// checks every entry before it writes one.
-func (d *Download) unpack(ctx context.Context, f *os.File, uid, gid uint32) error {
-	typ := archiveType(d.Path)
-	if err := (unpacker{}).read(ctx, f, typ); err != nil {
-		return fmt.Errorf("unpack %s: %w", d.Path, err)
-	}
-	parent, missing, err := openParent(d.Unpack)
-	if err != nil {
-		return err
-	}
-	defer parent.Close()
-	name := path.Base(d.Unpack)
-	fi, exists, err := lstat(parent, name, missing)
-	if err != nil {
-		return err
-	}
-	var root *os.Root
-	if exists {
-		root, err = openRoot(parent, name, fi)
-	} else {
-		var sub *os.Root
-		if sub, err = mkdirs(parent, missing); err != nil {
-			return err
-		}
-		root, err = mkdir(sub, name, uid, gid, 0o755)
-		sub.Close()
-	}
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	if err := (unpacker{root: root, uid: uid, gid: gid}).read(ctx, f, typ); err != nil {
-		return fmt.Errorf("unpack %s into %s: %w", d.Path, d.Unpack, err)
-	}
-	return nil
 }
 
 // unpacker writes the entries of an archive into root. Without a root, it

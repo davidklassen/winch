@@ -1002,7 +1002,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 	}
 	for _, p := range argsNode.Pairs {
 		if p.Key == "path" || p.Key == "unpack" {
-			if w := pathWarning(args, p.Key); w != "" {
+			if w := pathWarning(args); w != "" {
 				l.warnings = append(l.warnings, yamlx.Errorf(p.Value.Pos, "%s: %s", p.Key, w))
 			}
 		}
@@ -1020,7 +1020,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 // pathWarning returns a warning for the path of a step, or "": for a file or
 // a link that cron or sudo skip because its name has a ".", and for a download
 // into a directory that the host empties.
-func pathWarning(m module.Module, field string) string {
+func pathWarning(m module.Module) string {
 	var p string
 	var absent bool
 	switch m := m.(type) {
@@ -1029,10 +1029,7 @@ func pathWarning(m module.Module, field string) string {
 	case *module.Link:
 		p, absent = m.Path, m.Absent
 	case *module.Download:
-		p = m.Path
-		if field == "unpack" {
-			p = m.Unpack
-		}
+		p = m.Main()
 		for _, d := range []string{"/tmp", "/var/tmp", "/run", "/dev/shm"} {
 			if p == d || strings.HasPrefix(p, d+"/") {
 				return "the host removes files in " + d + ", so the step downloads again; use a path such as /opt or /var/lib"

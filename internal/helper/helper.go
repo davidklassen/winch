@@ -252,10 +252,9 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		return protocol.StepResult{}, fmt.Errorf("decode %s arguments: %w", s.Module, err)
 	}
 	d, isDownload := m.(*module.Download)
-	var unpackKey string
-	if isDownload && d.Unpack != "" {
-		unpackKey = d.Path + "\t" + d.Unpack
-		sum, err := recorded(downloads, unpackKey)
+	unpack := isDownload && d.Unpack != ""
+	if unpack {
+		sum, err := recorded(downloads, d.Unpack)
 		if err != nil {
 			return protocol.StepResult{}, err
 		}
@@ -305,10 +304,10 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	// The plan has shown the diff already.
 	out.Old, out.OldReason = nil, ""
-	// A failed unpack can leave the archive and the unpack directory as the
-	// check wants them, so only the record shows that the unpack is not done.
-	if unpackKey != "" {
-		if err := forgetArchive(downloads, d.Path); err != nil {
+	// A failed unpack leaves the unpack directory, so only the record shows
+	// that the unpack is not done.
+	if unpack {
+		if err := forget(downloads, d.Unpack); err != nil {
 			return out, err
 		}
 	}
@@ -364,8 +363,8 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		out.Timer = time.Until(deadline)
 		rb.running = &guarded{handlers: notified, thens: thenLines}
 	}
-	if unpackKey != "" {
-		return out, record(downloads, d.SHA256, unpackKey)
+	if unpack {
+		return out, record(downloads, d.SHA256, d.Unpack)
 	}
 	return out, nil
 }

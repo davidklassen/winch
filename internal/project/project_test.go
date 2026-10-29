@@ -718,25 +718,27 @@ func TestLoadTempDownloadWarning(t *testing.T) {
 	want := func(d string) string {
 		return "pipelines/site.yaml:8:17: path: the host removes files in " + d + ", so the step downloads again; use a path such as /opt or /var/lib"
 	}
+	unpack := func(d string) string {
+		return "download:\n          url: https://example.com/a.tgz\n          sha256: " + strings.Repeat("a", 64) + "\n          unpack: " + d
+	}
 	unpackWant := func(d string) string {
-		return "pipelines/site.yaml:9:19: unpack: the host removes files in " + d + ", so the step downloads again; use a path such as /opt or /var/lib"
+		return "pipelines/site.yaml:8:19: unpack: the host removes files in " + d + ", so the step downloads again; use a path such as /opt or /var/lib"
 	}
 	for _, tt := range []struct{ name, step, want string }{
 		{"tmp", step("/tmp/a"), want("/tmp")},
 		{"var tmp", step("/var/tmp/a/b"), want("/var/tmp")},
 		{"run", step("/run/a"), want("/run")},
 		{"dev shm", step("/dev/shm/a"), want("/dev/shm")},
-		{"unpack root /tmp", step("/opt/a.tgz") + "\n          unpack: /tmp", unpackWant("/tmp")},
-		{"unpack root /var/tmp", step("/opt/a.tgz") + "\n          unpack: /var/tmp", unpackWant("/var/tmp")},
-		{"unpack root /run", step("/opt/a.tgz") + "\n          unpack: /run", unpackWant("/run")},
-		{"unpack root /dev/shm", step("/opt/a.tgz") + "\n          unpack: /dev/shm", unpackWant("/dev/shm")},
-		{"unpack tmp", step("/opt/a.tgz") + "\n          unpack: /tmp/a", unpackWant("/tmp")},
-		{"unpack var tmp", step("/opt/a.tgz") + "\n          unpack: /var/tmp/a", unpackWant("/var/tmp")},
-		{"unpack run", step("/opt/a.tgz") + "\n          unpack: /run/a", unpackWant("/run")},
-		{"unpack dev shm", step("/opt/a.tgz") + "\n          unpack: /dev/shm/a", unpackWant("/dev/shm")},
-		{"both temporary", step("/tmp/a.tgz") + "\n          unpack: /run/a", want("/tmp") + "\n" + unpackWant("/run")},
-		{"unpack opt", step("/opt/a.tgz") + "\n          unpack: /opt/a", ""},
-		{"unpack prefix only", step("/opt/a.tgz") + "\n          unpack: /tmpfiles/a", ""},
+		{"unpack root /tmp", unpack("/tmp"), unpackWant("/tmp")},
+		{"unpack root /var/tmp", unpack("/var/tmp"), unpackWant("/var/tmp")},
+		{"unpack root /run", unpack("/run"), unpackWant("/run")},
+		{"unpack root /dev/shm", unpack("/dev/shm"), unpackWant("/dev/shm")},
+		{"unpack tmp", unpack("/tmp/a"), unpackWant("/tmp")},
+		{"unpack var tmp", unpack("/var/tmp/a"), unpackWant("/var/tmp")},
+		{"unpack run", unpack("/run/a"), unpackWant("/run")},
+		{"unpack dev shm", unpack("/dev/shm/a"), unpackWant("/dev/shm")},
+		{"unpack opt", unpack("/opt/a"), ""},
+		{"unpack prefix only", unpack("/tmpfiles/a"), ""},
 		{"opt", step("/opt/a"), ""},
 		{"prefix only", step("/tmpfiles/a"), ""},
 		{"file in tmp", "file:\n          path: /tmp/a\n          content: x", ""},

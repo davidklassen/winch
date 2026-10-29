@@ -103,7 +103,6 @@ func TestPurgeKeepUnpack(t *testing.T) {
       - download:
           url: https://example.com/app.tgz
           sha256: "0000000000000000000000000000000000000000000000000000000000000000"
-          path: /opt/app.tgz
           unpack: /opt/app
 `,
 	})

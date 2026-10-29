@@ -723,17 +723,17 @@ func TestApplyDeferred(t *testing.T) {
 // spec: Modules/download
 func TestForget(t *testing.T) {
 	downloads := records{dir: t.TempDir(), project: "acme", what: "download records"}
-	if err := downloads.write([]string{"a /opt/a.tar.gz", "b /opt/b.tar.gz"}); err != nil {
+	if err := downloads.write([]string{"a /opt/a", "b /opt/b"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := forget(downloads, "/opt/a.tar.gz"); err != nil {
+	if err := forget(downloads, "/opt/a"); err != nil {
 		t.Fatal(err)
 	}
-	if err := forget(downloads, "/opt/missing.tar.gz"); err != nil {
+	if err := forget(downloads, "/opt/missing"); err != nil {
 		t.Fatal(err)
 	}
-	if lines, err := downloads.read(); err != nil || !slices.Equal(lines, []string{"b /opt/b.tar.gz"}) {
-		t.Errorf("records = %q, %v; want only the record of /opt/b.tar.gz", lines, err)
+	if lines, err := downloads.read(); err != nil || !slices.Equal(lines, []string{"b /opt/b"}) {
+		t.Errorf("records = %q, %v; want only the record of /opt/b", lines, err)
 	}
 }
 

@@ -93,7 +93,6 @@ func TestPurgeUnpack(t *testing.T) {
       - download:
           url: ` + url + `
           sha256: ` + sha(tgz) + `
-          path: /opt/app.tar.gz
           unpack: /opt/app
 `,
 	})

@@ -453,7 +453,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if d, ok := m.(*module.Download); ok {
 		c.hosts.mu.Lock()
 		defer c.hosts.mu.Unlock()
-		if res, ok := c.hosts.result(c.host + " " + d.Path); ok {
+		if res, ok := c.hosts.result(c.host + " " + d.Main()); ok {
 			return res, nil
 		}
 		return module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + d.URL}}, nil

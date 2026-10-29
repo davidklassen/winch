@@ -43,11 +43,10 @@ func Touches(m Module) []Touch {
 		}
 		return out
 	case *Download:
-		out := []Touch{{m.Path, true}}
 		if m.Unpack != "" {
-			out = append(out, Touch{m.Unpack, false})
+			return []Touch{{m.Unpack, false}}
 		}
-		return out
+		return []Touch{{m.Path, true}}
 	case *Dir:
 		if m.Absent {
 			return []Touch{{m.Path, true}}
