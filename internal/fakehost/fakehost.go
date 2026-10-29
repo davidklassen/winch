@@ -791,7 +791,7 @@ func (c *Conn) Rollback(ctx context.Context) error {
 }
 
 // Reboot boots the kernel of SetBoot. The host still needs a reboot when that
-// is not the newest one.
+// is not the newest one, or when packages ask for one.
 func (c *Conn) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error) {
 	c.log("reboot " + wait.String())
 	c.hosts.mu.Lock()
@@ -800,7 +800,7 @@ func (c *Conn) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, e
 		b = protocol.Boot{State: "running"}
 	}
 	if f, ok := c.hosts.facts[c.host]; ok {
-		f.RebootRequired = b.Kernel != b.Newest
+		f.RebootRequired = b.Kernel != b.Newest || len(b.Packages) > 0
 		c.hosts.facts[c.host] = f
 	}
 	c.hosts.mu.Unlock()

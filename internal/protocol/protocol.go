@@ -95,13 +95,15 @@ type Booted struct {
 // Boot is the result of booted. Same is set when the host has not rebooted
 // yet. State is that of systemctl is-system-running; Failed are the failed
 // units of a degraded system. Kernel is the running kernel, and Newest the
-// newest kernel in /boot of its flavor.
+// newest kernel in /boot of its flavor. Packages are those that
+// /run/reboot-required.pkgs lists.
 type Boot struct {
-	Same   bool     `json:"same,omitempty"`
-	State  string   `json:"state,omitempty"`
-	Failed []string `json:"failed,omitempty"`
-	Kernel string   `json:"kernel,omitempty"`
-	Newest string   `json:"newest,omitempty"`
+	Same     bool     `json:"same,omitempty"`
+	State    string   `json:"state,omitempty"`
+	Failed   []string `json:"failed,omitempty"`
+	Kernel   string   `json:"kernel,omitempty"`
+	Newest   string   `json:"newest,omitempty"`
+	Packages []string `json:"packages,omitempty"`
 }
 
 // Then is a record of a then: the place of its step, and its module and main

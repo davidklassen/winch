@@ -445,8 +445,14 @@ func (a *hostApply) reboot(ctx context.Context, r *module.Reboot) (string, error
 	if err != nil {
 		return "", err
 	}
-	if f.RebootRequired {
+	switch {
+	case !f.RebootRequired:
+	case b.Kernel != b.Newest:
 		return "", fmt.Errorf("the host still needs a reboot after the reboot: running kernel %s, newest kernel %s", b.Kernel, b.Newest)
+	case len(b.Packages) > 0:
+		return "", fmt.Errorf("the host still needs a reboot after the reboot: /run/reboot-required lists the packages %s", strings.Join(b.Packages, ", "))
+	default:
+		return "", errors.New("the host still needs a reboot after the reboot: /run/reboot-required exists")
 	}
 	if len(b.Failed) > 0 {
 		return "rebooted; degraded, failed units: " + strings.Join(b.Failed, ", "), nil
