@@ -130,6 +130,10 @@ WantedBy=multi-user.target
 U
 systemctl daemon-reload`
 
+// enableSSH enables ssh.service. Ubuntu enables only ssh.socket, which
+// starts ssh.service.
+const enableSSH = "systemctl enable -q ssh"
+
 const waitCrash = `timeout 10 sh -c 'until systemctl show -P SubState winch-crash | grep -qx auto-restart; do sleep 0.1; done'`
 
 const noexecErr = `winch-noexec.service has the load state "bad-setting"
@@ -165,31 +169,31 @@ func TestServiceModule(t *testing.T) {
 		},
 		{
 			Name: "a new drop-in reloads systemd before the start",
+			// systemd 255 reports no NeedDaemonReload for a new drop-in
+			// directory.
 			Setup: `systemctl enable winch-test
 mkdir /etc/systemd/system/winch-test.service.d
-printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service.d/limits.conf
-systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
+printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service.d/limits.conf`,
 			Args:      &module.Service{Name: "winch-test", Running: new(true)},
 			Want:      change("daemon-reload", "start"),
-			Unchanged: `systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
+			Unchanged: `[ "$(systemctl show -P LimitNOFILE winch-test)" != 12345 ]`,
 			After:     `grep -q '^Max open files  *12345 ' /proc/$(systemctl show -P MainPID winch-test)/limits`,
 		},
 		{
 			Name: "a new drop-in of a running unit reloads systemd",
 			Setup: `systemctl enable --now winch-test
 mkdir /etc/systemd/system/winch-test.service.d
-printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service.d/limits.conf
-systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
+printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service.d/limits.conf`,
 			Args:  &module.Service{Name: "winch-test", Running: new(true)},
 			Want:  change("daemon-reload"),
-			After: `systemctl show -P NeedDaemonReload winch-test | grep -qx no`,
+			After: `systemctl show -P LimitNOFILE winch-test | grep -qx 12345`,
 		},
 		{
 			Name:       "a unit that waits to restart after a crash is not running",
-			Setup:      "systemctl start winch-crash\n" + waitCrash,
+			Setup:      "systemctl start winch-crash\n" + waitCrash + "\nsystemctl show -P InvocationID winch-crash > /tmp/inv",
 			Args:       &module.Service{Name: "winch-crash", Running: new(true)},
 			Want:       change("start"),
-			After:      waitCrash,
+			After:      waitCrash + ` && [ "$(systemctl show -P InvocationID winch-crash)" != "$(cat /tmp/inv)" ]`,
 			NoConverge: true,
 		},
 		{
@@ -407,19 +411,19 @@ systemctl show -P NeedDaemonReload winch-test | grep -qx yes`,
 		},
 		{
 			Name:    "an alias fails and names the unit",
-			Setup:   `systemctl is-enabled -q ssh && test -L /etc/systemd/system/sshd.service`,
+			Setup:   enableSSH + " && test -L /etc/systemd/system/sshd.service",
 			Args:    &module.Service{Name: "sshd", Enabled: new(true)},
 			WantErr: "sshd is an alias of ssh.service; use ssh",
 		},
 		{
 			Name:    "an alias with the .service suffix fails",
-			Setup:   `systemctl is-enabled -q ssh && test -L /etc/systemd/system/sshd.service`,
+			Setup:   enableSSH + " && test -L /etc/systemd/system/sshd.service",
 			Args:    &module.Service{Name: "sshd.service", Running: new(true)},
 			WantErr: "sshd.service is an alias of ssh.service; use ssh",
 		},
 		{
 			Name:  "the unit of an alias is ok",
-			Setup: `systemctl is-enabled -q ssh && systemctl is-active -q ssh`,
+			Setup: enableSSH + " && systemctl is-active -q ssh",
 			Args:  &module.Service{Name: "ssh", Enabled: new(true), Running: new(true)},
 			Want:  module.Result{Status: module.OK},
 		},

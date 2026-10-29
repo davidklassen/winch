@@ -40,9 +40,9 @@ func TestWinch(t *testing.T) {
 	sending := "winch: sending the helper (" + lab.Arch + ")"
 
 	t.Run("apply, then plan shows no changes", func(t *testing.T) {
-		vm.MustRun(t, "mkdir -p /var/lib/winch/bin && touch -d '31 days ago' /var/lib/winch/bin/old")
+		// Ubuntu has no /etc/motd.
+		vm.MustRun(t, "mkdir -p /var/lib/winch/bin && touch -d '31 days ago' /var/lib/winch/bin/old && echo stock > /etc/motd")
 		r := lab.Winch(t, dir, "plan", "site")
-		// Debian ships an /etc/motd.
 		if r.Code != 0 || !strings.Contains(r.Stdout, "~ file /etc/motd") {
 			t.Fatalf("plan: exit %d", r.Code)
 		}
@@ -271,7 +271,7 @@ func TestWinch(t *testing.T) {
 	t.Run("a host without passwordless sudo fails", func(t *testing.T) {
 		dir := project(t, "hosts:\n  winch:\n    address: 127.0.0.1\n    user: nosudo\n")
 		r := lab.Winch(t, dir, "plan", "site")
-		if r.Code != 1 || !strings.Contains(r.Stderr, "the login user needs passwordless sudo: sudo: a password is required") {
+		if r.Code != 1 || !strings.Contains(r.Stderr, "the login user needs passwordless sudo: "+osRelease().sudoDenied) {
 			t.Errorf("plan as nosudo: exit %d\n%s", r.Code, r.Stderr)
 		}
 	})

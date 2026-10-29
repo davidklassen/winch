@@ -1,6 +1,6 @@
-// Package vmtest starts Debian VMs in QEMU for integration tests. A Lab holds
-// the test SSH key and an ssh wrapper that reads the lab's SSH config, so
-// winch and the tests reach each VM by its name. Each VM starts from a
+// Package vmtest starts Debian and Ubuntu VMs in QEMU for integration tests.
+// A Lab holds the test SSH key and an ssh wrapper that reads the lab's SSH
+// config, so winch and the tests reach each VM by its name. Each VM starts from a
 // snapshot of a booted VM, and apt reads a local repository; both are kept in
 // the cache directory.
 package vmtest
@@ -22,6 +22,8 @@ import (
 )
 
 type Config struct {
+	// OS names the image's release, such as debian-13 or ubuntu-24.04.
+	OS    string
 	Image string
 	Arch  string
 	// Cache holds the snapshot and the repository.
@@ -30,17 +32,18 @@ type Config struct {
 	// signed.list, and the test package definitions in packages/ and
 	// signed/.
 	Repo string
-	// Online gives the VMs the internet and Debian's apt sources.
+	// Online gives the VMs the internet and the apt sources of the image.
 	Online bool
 	// Refresh builds the repository again.
 	Refresh bool
 }
 
-// FromEnv returns the configuration in WINCH_VM_IMAGE, WINCH_VM_ARCH,
-// WINCH_VM_CACHE, and WINCH_VM_ONLINE. repo is the directory of the test
-// repository.
+// FromEnv returns the configuration in WINCH_VM_OS, WINCH_VM_IMAGE,
+// WINCH_VM_ARCH, WINCH_VM_CACHE, and WINCH_VM_ONLINE. repo is the directory
+// of the test repository.
 func FromEnv(repo string) (Config, error) {
 	cfg := Config{
+		OS:     os.Getenv("WINCH_VM_OS"),
 		Image:  os.Getenv("WINCH_VM_IMAGE"),
 		Arch:   os.Getenv("WINCH_VM_ARCH"),
 		Cache:  os.Getenv("WINCH_VM_CACHE"),
@@ -49,8 +52,8 @@ func FromEnv(repo string) (Config, error) {
 	if v := os.Getenv("WINCH_VM_ONLINE"); v != "" && v != "1" {
 		return Config{}, fmt.Errorf("ONLINE=%s: use ONLINE=1 or no ONLINE", v)
 	}
-	if cfg.Image == "" || cfg.Arch == "" || cfg.Cache == "" {
-		return Config{}, errors.New("WINCH_VM_IMAGE, WINCH_VM_ARCH, or WINCH_VM_CACHE is not set; run make test-integration")
+	if cfg.OS == "" || cfg.Image == "" || cfg.Arch == "" || cfg.Cache == "" {
+		return Config{}, errors.New("WINCH_VM_OS, WINCH_VM_IMAGE, WINCH_VM_ARCH, or WINCH_VM_CACHE is not set; run make test-integration")
 	}
 	abs, err := filepath.Abs(repo)
 	if err != nil {
@@ -138,9 +141,19 @@ func (l *Lab) Close() {
 	l.http.Close()
 }
 
-// Online reports whether the VMs have the internet and Debian's sources.
+// Online reports whether the VMs have the internet and the image's sources.
 func (l *Lab) Online() bool {
 	return l.cfg.Online
+}
+
+// OS returns the release of the VMs, such as debian-13.
+func (l *Lab) OS() string {
+	return l.cfg.OS
+}
+
+// platform names the snapshot and the repository in the cache.
+func (l *Lab) platform() string {
+	return l.cfg.OS + "-" + l.Arch
 }
 
 // Env returns the environment of this process with the lab's PATH.
@@ -194,7 +207,7 @@ func (l *Lab) Start(ctx context.Context, name string) (*VM, error) {
 	sources := "printf '" + test + "' > /etc/apt/sources.list.d/winch-test.sources"
 	if !l.cfg.Online {
 		debian := strings.ReplaceAll(test, "/test/", "/debian/")
-		sources = "rm /etc/apt/sources.list.d/debian.sources && printf '" + debian + "' > /etc/apt/sources.list.d/winch-debian.sources && " + sources
+		sources = "rm /etc/apt/sources.list.d/*.sources && printf '" + debian + "' > /etc/apt/sources.list.d/winch-debian.sources && " + sources
 	}
 	if _, err := vm.Run(ctx, sources); err != nil {
 		vm.Stop()
@@ -278,7 +291,7 @@ func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, 
 		return nil, err
 	}
 	disk := filepath.Join(vm.dir, "disk.qcow2")
-	if out, err := exec.CommandContext(ctx, "qemu-img", "create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", backing, disk).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "qemu-img", "create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", backing, disk, diskSize).CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("qemu-img: %v: %s", err, out)
 	}
 	sshPort, err := freePort()
@@ -374,6 +387,11 @@ func tail(s string, n int) string {
 	lines := strings.Split(s, "\n")
 	return strings.Join(lines[max(0, len(lines)-n):], "\n")
 }
+
+// diskSize is the size of each VM's disk. cloud-init grows the root file
+// system to it. Ubuntu 26.04's image has too little free space for the test
+// repository.
+const diskSize = "8G"
 
 type ports struct {
 	SSH, QMP, HTTP int

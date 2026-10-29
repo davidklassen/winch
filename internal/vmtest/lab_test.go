@@ -16,12 +16,12 @@ import (
 // spec: roadmap: Testing/VMs
 func TestSnapshotName(t *testing.T) {
 	base := snapshotInputs{Image: "aa", Seed: "seed", QEMU: "QEMU emulator version 10.2.0", Flags: "-smp 2 -m 1024"}
-	name := snapshotName("arm64", base)
-	if name != snapshotName("arm64", base) {
+	name := snapshotName("debian-13-arm64", base)
+	if name != snapshotName("debian-13-arm64", base) {
 		t.Fatal("equal inputs give two names")
 	}
-	if !strings.HasPrefix(name, "snapshot-arm64-") {
-		t.Errorf("name = %q, want the prefix snapshot-arm64-", name)
+	if !strings.HasPrefix(name, "snapshot-debian-13-arm64-") {
+		t.Errorf("name = %q, want the prefix snapshot-debian-13-arm64-", name)
 	}
 	for _, c := range []struct {
 		name string
@@ -38,12 +38,12 @@ func TestSnapshotName(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			in := base
 			c.edit(&in)
-			if got := snapshotName("arm64", in); got == name {
+			if got := snapshotName("debian-13-arm64", in); got == name {
 				t.Errorf("a changed %s keeps the name %s", c.name, name)
 			}
 		})
 	}
-	if snapshotName("amd64", base) == name {
+	if snapshotName("debian-13-amd64", base) == name {
 		t.Error("another architecture keeps the name")
 	}
 }
@@ -66,12 +66,12 @@ func TestRepoName(t *testing.T) {
 		return repoName(arch, snapshot, input)
 	}
 	list := []byte("hello\nnginx\n")
-	base := name(t, "arm64", "snapshot-arm64-1", list, defs())
-	if name(t, "arm64", "snapshot-arm64-1", list, defs()) != base {
+	base := name(t, "debian-13-arm64", "snapshot-debian-13-arm64-1", list, defs())
+	if name(t, "debian-13-arm64", "snapshot-debian-13-arm64-1", list, defs()) != base {
 		t.Fatal("equal inputs give two names")
 	}
-	if !strings.HasPrefix(base, "repo-arm64-") {
-		t.Errorf("name = %q, want the prefix repo-arm64-", base)
+	if !strings.HasPrefix(base, "repo-debian-13-arm64-") {
+		t.Errorf("name = %q, want the prefix repo-debian-13-arm64-", base)
 	}
 	for _, c := range []struct {
 		name     string
@@ -81,8 +81,8 @@ func TestRepoName(t *testing.T) {
 		edit     func(fstest.MapFS)
 	}{
 		{name: "list", list: "hello\nnginx\ncurl\n"},
-		{name: "snapshot", snapshot: "snapshot-arm64-2"},
-		{name: "architecture", arch: "amd64"},
+		{name: "snapshot", snapshot: "snapshot-debian-13-arm64-2"},
+		{name: "architecture", arch: "debian-13-amd64"},
 		{name: "definition content", edit: func(fs fstest.MapFS) {
 			fs["packages/winch-a/DEBIAN/control"] = &fstest.MapFile{Data: []byte("Package: winch-a\nVersion: 2\n")}
 		}},
@@ -101,7 +101,7 @@ func TestRepoName(t *testing.T) {
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			arch, snapshot, l, fs := "arm64", "snapshot-arm64-1", list, defs()
+			arch, snapshot, l, fs := "debian-13-arm64", "snapshot-debian-13-arm64-1", list, defs()
 			if c.arch != "" {
 				arch = c.arch
 			}
@@ -234,6 +234,7 @@ func TestFromEnvOnline(t *testing.T) {
 		{value: "0", wantErr: true},
 	} {
 		t.Run(c.value, func(t *testing.T) {
+			t.Setenv("WINCH_VM_OS", "debian-13")
 			t.Setenv("WINCH_VM_IMAGE", "image")
 			t.Setenv("WINCH_VM_ARCH", "arm64")
 			t.Setenv("WINCH_VM_CACHE", "cache")

@@ -24,21 +24,26 @@ func TestLab(t *testing.T) {
 	})
 
 	t.Run("the apt timers are disabled, and no apt run is active", func(t *testing.T) {
-		timers := "apt-daily.timer apt-daily-upgrade.timer apt-listchanges.timer"
-		services := "apt-daily.service apt-daily-upgrade.service apt-listchanges.service"
-		out := vm.MustRun(t, "systemctl is-enabled "+timers+"; systemctl is-active "+timers+" "+services+"; true")
-		if want := "disabled\ndisabled\ndisabled\n" + strings.Repeat("inactive\n", 6); out != want {
-			t.Errorf("is-enabled of the timers, is-active of the timers and services: %q, want %q", out, want)
+		out := vm.MustRun(t, "systemctl list-unit-files --no-legend 'apt-*.timer' | awk '{print $2}' | sort -u; systemctl list-units --no-legend --state=active,activating 'apt-*'; true")
+		if out != "disabled\n" {
+			t.Errorf("the states of the apt timers, and the active apt units: %q, want %q", out, "disabled\n")
 		}
 	})
 
 	if lab.Online() {
-		t.Run("online, apt reads Debian and the test packages", func(t *testing.T) {
+		t.Run("online, apt reads the image's sources and the test packages", func(t *testing.T) {
 			out := vm.MustRun(t, "apt-get update")
-			for _, want := range []string{"deb.debian.org", "10.0.2.100/test"} {
-				if !strings.Contains(out, want) {
-					t.Errorf("apt-get update does not read %s:\n%s", want, out)
+			if !strings.Contains(out, "10.0.2.100/test") {
+				t.Errorf("apt-get update does not read the test packages:\n%s", out)
+			}
+			image := false
+			for line := range strings.SplitSeq(out, "\n") {
+				if (strings.HasPrefix(line, "Hit:") || strings.HasPrefix(line, "Get:")) && !strings.Contains(line, "10.0.2.100") {
+					image = true
 				}
+			}
+			if !image {
+				t.Errorf("apt-get update does not read the image's sources:\n%s", out)
 			}
 			if strings.Contains(out, "10.0.2.100/debian") {
 				t.Errorf("apt-get update reads the local Debian packages:\n%s", out)

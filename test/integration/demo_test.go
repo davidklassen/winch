@@ -33,6 +33,15 @@ func TestDemo(t *testing.T) {
 	dir := "../../examples/demo"
 	env := []string{"WINCH_AGE_KEY=age.key", "HOME=" + t.TempDir()}
 
+	// The demo's recipes require Debian 13.
+	if osRelease().id != "debian" {
+		r := lab.WinchEnv(t, dir, env, "plan", "site")
+		if r.Code != 1 || !strings.Contains(r.Stderr, `requires facts.os.id == "debian" and facts.os.version == "13"; the host has os.id "`+osRelease().id+`"`) {
+			t.Errorf("plan on %s: exit %d, want 1 and the requirement", lab.OS(), r.Code)
+		}
+		return
+	}
+
 	r := lab.WinchEnv(t, dir, env, "apply", "site", "--yes")
 	if r.Code != 0 {
 		t.Fatalf("apply: exit %d", r.Code)

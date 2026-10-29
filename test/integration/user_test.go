@@ -478,10 +478,10 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 		},
 		{
 			Name:  "a key file that is a link",
-			Setup: `useradd -m -U wtalice && install -d -o wtalice -g wtalice -m 700 /home/wtalice/.ssh && ln -s /etc/motd /home/wtalice/.ssh/authorized_keys && cp /etc/motd /tmp/motd`,
+			Setup: `useradd -m -U wtalice && install -d -o wtalice -g wtalice -m 700 /home/wtalice/.ssh && ln -s /etc/hostname /home/wtalice/.ssh/authorized_keys && cp /etc/hostname /tmp/hostname`,
 			Args:  &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
-			Want:  change("replace the symbolic link /home/wtalice/.ssh/authorized_keys to /etc/motd", "create file /home/wtalice/.ssh/authorized_keys (owner wtalice, group wtalice, mode 0600)", "add key "+keyLine(k1)),
-			After: `cmp /etc/motd /tmp/motd && [ -f /home/wtalice/.ssh/authorized_keys ] && [ ! -L /home/wtalice/.ssh/authorized_keys ]`,
+			Want:  change("replace the symbolic link /home/wtalice/.ssh/authorized_keys to /etc/hostname", "create file /home/wtalice/.ssh/authorized_keys (owner wtalice, group wtalice, mode 0600)", "add key "+keyLine(k1)),
+			After: `cmp /etc/hostname /tmp/hostname && [ -f /home/wtalice/.ssh/authorized_keys ] && [ ! -L /home/wtalice/.ssh/authorized_keys ]`,
 		},
 		{
 			Name:    "a key file that is a directory",

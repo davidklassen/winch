@@ -18,9 +18,14 @@ import (
 	"time"
 )
 
+// Ubuntu has a group admin, so useradd cannot create the user's own group.
+// cloud-init creates a missing group of groups, but not a primary_group.
 const userData = `#cloud-config
 users:
   - name: admin
+    primary_group: admin
+    groups: [admin]
+    no_user_group: true
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
     ssh_authorized_keys: [%[1]q]
@@ -29,8 +34,8 @@ users:
     ssh_authorized_keys: [%[1]q]
 ssh_pwauth: false
 runcmd:
-  - systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-listchanges.timer
-  - systemctl stop apt-daily.service apt-daily-upgrade.service apt-listchanges.service
+  - systemctl disable --now $(systemctl list-unit-files --no-legend 'apt-*.timer' | cut -d' ' -f1)
+  - systemctl stop 'apt-*.service'
 `
 
 const metaData = "instance-id: base\nlocal-hostname: base\n"
@@ -51,8 +56,9 @@ type snapshotInputs struct {
 	Image, Seed, QEMU, Flags string
 }
 
-func snapshotName(arch string, in snapshotInputs) string {
-	return "snapshot-" + arch + "-" + hashParts(in.Image, in.Seed, in.QEMU, in.Flags)
+// snapshotName names the snapshot of a platform, such as debian-13-arm64.
+func snapshotName(platform string, in snapshotInputs) string {
+	return "snapshot-" + platform + "-" + hashParts(in.Image, in.Seed, in.QEMU, in.Flags)
 }
 
 // hashParts hashes each part with its length, so no text can move from one
@@ -87,7 +93,7 @@ func (l *Lab) snapshotInputs(ctx context.Context) (snapshotInputs, error) {
 		Image: hex.EncodeToString(h.Sum(nil)),
 		Seed:  seedUserData() + metaData,
 		QEMU:  strings.SplitN(string(version), "\n", 2)[0],
-		Flags: strings.Join(args, "\n"),
+		Flags: strings.Join(append(args, "disk "+diskSize), "\n"),
 	}, nil
 }
 
@@ -98,7 +104,7 @@ func (l *Lab) ensureSnapshot(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	l.snapshot = snapshotName(l.Arch, in)
+	l.snapshot = snapshotName(l.platform(), in)
 	if err := l.useKey(); err != nil {
 		return err
 	}
@@ -159,7 +165,7 @@ func (l *Lab) buildSnapshot(ctx context.Context, dir string) error {
 		}
 		return err
 	}
-	return removeOthers(l.cfg.Cache, "snapshot-"+l.Arch+"-", dir)
+	return removeOthers(l.cfg.Cache, "snapshot-"+l.platform()+"-", dir)
 }
 
 // save stops the VM, writes its machine state to path with a migration, and

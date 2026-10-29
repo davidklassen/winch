@@ -24,6 +24,8 @@ func TestPkgDiagnostics(t *testing.T) {
 		"pipelines/unknown.yaml":  "stages:\n  - name: packages\n    hosts: all\n    steps:\n      - pkg: {name: [apache, winch-no-such-package]}\n",
 	})
 	t.Run("an empty index gives no unknown name note", func(t *testing.T) {
+		// Ubuntu's image has an index.
+		vm.MustRun(t, "rm -f /var/lib/apt/lists/*_Packages*")
 		r := lab.Winch(t, dir, "plan", "typo")
 		if r.Code != 0 || !unchanged(r.Stdout, 1) || strings.Contains(r.Stdout+r.Stderr, "apt does not know") {
 			t.Errorf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)

@@ -46,6 +46,8 @@ func TestApprove(t *testing.T) {
 		if err := os.WriteFile(pipeline, []byte(edited), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		// Ubuntu has no /etc/motd.
+		vm.MustRun(t, "echo stock > /etc/motd")
 		before := vm.MustRun(t, "cat /etc/motd")
 		r = lab.Winch(t, dir, "apply", "site", "--check", hash)
 		if r.Code != 6 || !strings.Contains(r.Stderr, "not "+hash+"; nothing changed") {

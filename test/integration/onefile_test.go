@@ -39,7 +39,7 @@ recipes:
       - repo:
           name: winch-signed
           url: ` + signedURL + `
-          suite: trixie
+          suite: ` + osRelease().codename + `
           components: [main]
           key_content: |
             ` + key + `

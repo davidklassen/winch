@@ -29,8 +29,9 @@ type Service struct {
 	NewFile []byte `json:"new_file,omitempty"`
 
 	// Check sets these for Apply: the systemctl commands, in order.
-	todo  []string
-	links []string
+	todo    []string
+	links   []string
+	crashed bool
 }
 
 func (s *Service) Main() string { return s.Name }
@@ -99,6 +100,11 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	u, err := parseShow(out)
 	if err != nil {
 		return Result{}, fmt.Errorf("systemctl show %s: %w", s.Name, err)
+	}
+	if !u.reload && u.load == "loaded" {
+		if u.reload, err = unloadedDropIn(unitDir, u.id, u.dropIns); err != nil {
+			return Result{}, fmt.Errorf("read the drop-ins: %w", err)
+		}
 	}
 	fresh, err := s.fresh(u)
 	if err != nil {
@@ -205,12 +211,12 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		up := u.up()
 		// A unit that waits to restart is down, but systemd starts it again
 		// unless a stop cancels the restart.
-		crashed := strings.HasPrefix(u.sub, "auto-restart")
+		s.crashed = strings.HasPrefix(u.sub, "auto-restart")
 		// A unit whose stop job timed out is still stopping; a stop waits
 		// for it.
 		stopping := u.active == "deactivating"
 		switch {
-		case *s.Running && (!up || crashed):
+		case *s.Running && (!up || s.crashed):
 			s.todo = append(s.todo, "start")
 		case !*s.Running && (up || stopping):
 			s.todo = append(s.todo, "stop")
@@ -318,6 +324,11 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 			c = "daemon-reload"
 		}
 		args := []string{c}
+		// systemd 255 runs the start of a unit that waits to restart only
+		// when its restart timer ends.
+		if c == "start" && s.crashed {
+			args[0] = "restart"
+		}
 		if c != "daemon-reload" {
 			args = append(args, "--", s.Name)
 		}
@@ -603,4 +614,30 @@ func parseShow(out string) (unitState, error) {
 		}
 	}
 	return u, nil
+}
+
+// unloadedDropIn reports whether dir holds a drop-in of the unit id that
+// systemd has not loaded. systemd 255 does not report a new drop-in
+// directory in NeedDaemonReload. A drop-in of the same name from systemctl
+// set-property hides the one in dir, and systemd skips a masked drop-in and
+// a directory.
+func unloadedDropIn(dir, id, loaded string) (bool, error) {
+	paths, err := filepath.Glob(filepath.Join(dir, id+".d", "*.conf"))
+	if err != nil {
+		return false, err
+	}
+	have := strings.Fields(loaded)
+	var hidden []string
+	for _, l := range have {
+		if strings.Contains(l, "/systemd/system.control/") {
+			hidden = append(hidden, filepath.Base(l))
+		}
+	}
+	for _, p := range paths {
+		if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() || slices.Contains(have, p) || slices.Contains(hidden, filepath.Base(p)) {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
 }

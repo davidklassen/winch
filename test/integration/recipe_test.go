@@ -33,6 +33,7 @@ func TestRecipes(t *testing.T) {
 		blob[i] = byte(i)
 	}
 	sum := sha256.Sum256(blob)
+	rel := osRelease()
 	web := `  - name: web
     hosts: recipes
     steps:
@@ -45,10 +46,10 @@ func TestRecipes(t *testing.T) {
 		"pipelines/site.yaml": "stages:\n" + web + `  - name: other
     hosts: recipes-other
     steps:
-      - recipe: ubuntu_only
+      - recipe: alpine_only
 `,
 		"recipes/nginx/recipe.yaml": `require:
-  - !expr 'facts.os.id == "debian" and facts.os.version == "13" and facts.os.codename == "trixie"'
+  - !expr 'facts.os.id == "` + rel.id + `" and facts.os.version == "` + rel.version + `" and facts.os.codename == "` + rel.codename + `"'
   - !expr 'facts.os.arch == "` + lab.Arch + `"'
 steps:
   - name: Site
@@ -74,11 +75,11 @@ steps:
 		"recipes/nginx/files/demo.conf":           "server {\n    listen 8080;\n    root /var/www/demo;\n}\n",
 		"recipes/nginx/files/blob/blob.bin":       string(blob),
 		"recipes/nginx/templates/index.html.tmpl": "Hello from {{ .host.name }} ({{ .host.short }}).\n",
-		"recipes/ubuntu_only/recipe.yaml": `require:
-  - !expr 'facts.os.id == "ubuntu"'
+		"recipes/alpine_only/recipe.yaml": `require:
+  - !expr 'facts.os.id == "alpine"'
 steps:
   - file:
-      path: /etc/ubuntu
+      path: /etc/alpine
       content: "x\n"
 `,
 	})
@@ -87,7 +88,7 @@ steps:
 	if r.Code != 1 || !strings.Contains(r.Stdout, "recipes\n  web\n    nginx\n      + Site: file /etc/nginx/sites-available/demo\n") {
 		t.Fatalf("plan: exit %d, want 1 and the steps under the stage and the recipe", r.Code)
 	}
-	if !strings.Contains(r.Stderr, `recipes-other: recipes/ubuntu_only/recipe.yaml:2:5: recipe ubuntu_only requires facts.os.id == "ubuntu"; the host has os.id "debian"`) {
+	if !strings.Contains(r.Stderr, `recipes-other: recipes/alpine_only/recipe.yaml:2:5: recipe alpine_only requires facts.os.id == "alpine"; the host has os.id "`+rel.id+`"`) {
 		t.Errorf("plan: no requirement failure for host recipes-other")
 	}
 
@@ -95,7 +96,7 @@ steps:
 	if r.Code != 1 || !strings.Contains(r.Stdout, "recipes: nginx: + Site: file /etc/nginx/sites-available/demo") {
 		t.Fatalf("apply: exit %d, want 1 with the steps of host recipes", r.Code)
 	}
-	if out, err := vm.Run(t.Context(), "test -e /etc/ubuntu"); err == nil {
+	if out, err := vm.Run(t.Context(), "test -e /etc/alpine"); err == nil {
 		t.Errorf("the host that failed its requirement changed: %s", out)
 	}
 	if out := vm.MustRun(t, "curl -s http://localhost:8080/"); out != "Hello from recipes (recipes).\n" {

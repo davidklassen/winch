@@ -1,10 +1,14 @@
 ARCH ?= arm64
+OS ?= debian-13
 PARALLEL ?= 4
 N ?= 1
 ONLINE ?=
 CACHE := $(HOME)/.cache/winch
-IMAGE := $(CACHE)/debian-13-genericcloud-$(ARCH).qcow2
-VMENV := WINCH_BIN=$(CURDIR)/bin/winch WINCH_VM_IMAGE=$(IMAGE) WINCH_VM_ARCH=$(ARCH) WINCH_VM_CACHE=$(CACHE) WINCH_VM_ONLINE=$(ONLINE)
+IMAGE := $(CACHE)/$(OS)-$(ARCH).qcow2
+IMAGE_URL.debian-13 := https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-$(ARCH).qcow2
+IMAGE_URL.ubuntu-24.04 := https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-$(ARCH).img
+IMAGE_URL.ubuntu-26.04 := https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-$(ARCH).img
+VMENV := WINCH_BIN=$(CURDIR)/bin/winch WINCH_VM_OS=$(OS) WINCH_VM_IMAGE=$(IMAGE) WINCH_VM_ARCH=$(ARCH) WINCH_VM_CACHE=$(CACHE) WINCH_VM_ONLINE=$(ONLINE)
 
 .PHONY: build helpers tidy lint test test-integration test-repo vm-image vm
 
@@ -35,7 +39,8 @@ vm-image: $(IMAGE)
 
 $(IMAGE):
 	mkdir -p $(dir $@)
-	curl -fL -o $@.part https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-$(ARCH).qcow2
+	$(if $(IMAGE_URL.$(OS)),,$(error OS=$(OS): use debian-13, ubuntu-24.04, or ubuntu-26.04))
+	curl -fL -o $@.part $(IMAGE_URL.$(OS))
 	mv $@.part $@
 
 vm: build vm-image

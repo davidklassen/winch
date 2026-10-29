@@ -27,7 +27,10 @@ cat > /etc/pebble/config.json <<'EOF'
  "certificate": "/usr/local/share/ca-certificates/pebble.crt", "privateKey": "/etc/pebble/key.pem",
  "httpPort": 80, "tlsPort": 443, "ocspResponderURL": "", "externalAccountBindingRequired": false}}
 EOF
-systemd-run --unit pebble-dns pebble-challtestsrv -defaultIPv6 "" -dns01 127.0.0.1:8053 -http01 "" -https01 "" -tlsalpn01 "" -doh "" -management 127.0.0.1:8055
+# The Pebble of Ubuntu 24.04 has no DNS over HTTPS.
+doh=
+if pebble-challtestsrv -h 2>&1 | grep -q '^  -doh '; then doh=-doh=; fi
+systemd-run --unit pebble-dns pebble-challtestsrv -defaultIPv6 "" -dns01 127.0.0.1:8053 -http01 "" -https01 "" -tlsalpn01 "" $doh -management 127.0.0.1:8055
 systemd-run --unit pebble -E PEBBLE_VA_NOSLEEP=1 -E PEBBLE_WFE_NONCEREJECT=0 -E PEBBLE_AUTHZREUSE=0 pebble -config /etc/pebble/config.json -dnsserver 127.0.0.1:8053
 echo 'server = https://localhost:14000/dir' >> /etc/letsencrypt/cli.ini
 for i in $(seq 100); do curl -sf -o /dev/null https://localhost:14000/dir && exit 0; sleep 0.1; done
@@ -119,7 +122,7 @@ md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.con
 			Name:  "a hook of several lines with quotes",
 			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: new("test \"$X\" = '' && echo 'one' >> /root/deployed\necho '\"\"\"' >> /root/deployed\necho \"'''\" >> /root/deployed")},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook test \"$X\" = '' && echo 'one' >> /root/deployed ..."}},
-			After: `[ "$(cat /root/deployed)" = "$(printf "one\n\"\"\"\n'''")" ] && { certbot renew --dry-run --cert-name a.example.com >/root/renew.log 2>&1 || { cat /root/renew.log; exit 1; }; }`,
+			After: `[ "$(cat /root/deployed)" = "$(printf "one\n\"\"\"\n'''")" ] && { certbot renew --dry-run --no-random-sleep-on-renew --cert-name a.example.com >/root/renew.log 2>&1 || { cat /root/renew.log; exit 1; }; }`,
 		},
 		{
 			Name:    "a renewal file without its certificate",

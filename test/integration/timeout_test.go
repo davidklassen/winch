@@ -150,7 +150,10 @@ func TestMaxStartupsRetry(t *testing.T) {
 	// Failed polls during the boot can add a penalty that drops new
 	// connections too. A reload returns before sshd reads the config, and a
 	// connection to the old sshd does not count as a startup of the new one.
-	vm.MustRun(t, "printf 'MaxStartups 1\\nPerSourcePenalties no\\n' > /etc/ssh/sshd_config.d/startups.conf && systemctl restart ssh")
+	// The sshd of Ubuntu 24.04 has no penalties. The sshd of Ubuntu 26.04
+	// exits when a connection comes while all of MaxStartups 1 is in use; a
+	// full limit of 2 keeps it running and drops the second startup.
+	vm.MustRun(t, "{ echo 'MaxStartups 1:100:2'; if sshd -T | grep -q '^persourcepenalties '; then echo 'PerSourcePenalties no'; fi; } > /etc/ssh/sshd_config.d/startups.conf && systemctl restart ssh")
 	data, err := os.ReadFile(filepath.Join(lab.Dir, "hosts", vm.Name+".conf"))
 	if err != nil {
 		t.Fatal(err)

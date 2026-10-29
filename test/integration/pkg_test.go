@@ -31,6 +31,7 @@ func TestPkgModule(t *testing.T) {
 	)
 	refresh := "refresh the package index"
 	later := "other packages: known after the refresh"
+	librecode := osRelease().librecode
 	// startSlow returns while the postinst of winch-slow runs. The [w] keeps
 	// pgrep from matching this shell.
 	startSlow := "touch /root/slow && (dpkg -i /root/winch-slow.deb >/dev/null 2>&1 &) && " +
@@ -55,7 +56,7 @@ func TestPkgModule(t *testing.T) {
 	// fragileV1 installs version 1 of winch-fragile while the index has version 2.
 	const fragileV1 = "touch /etc/winch-fragile.ok && dpkg -i /root/winch-fragile.deb >/dev/null && " + localOnly + " && apt-cache policy winch-fragile | grep -q 'Candidate: 2'"
 	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /var/lib/apt/lists/10.0.2.100_test_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --purge winch-mta-c:armhf >/dev/null 2>&1; dpkg --remove-architecture armhf 2>/dev/null; " +
-		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-uses-fragile winch-fragile winch-conflict hello sl figlet tree fortune-mod fortunes-min librecode3 at >/dev/null 2>&1; true"
+		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-uses-fragile winch-fragile winch-conflict hello sl figlet tree fortune-mod fortunes-min " + librecode + " at >/dev/null 2>&1; true"
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
 		{
 			Name: "the first install of a run refreshes the index",
@@ -179,22 +180,22 @@ func TestPkgModule(t *testing.T) {
 		},
 		{
 			Name:      "a package that came in as a dependency is marked as manually installed",
-			Setup:     install + " fortune-mod && apt-mark showauto librecode3 | grep -q librecode3",
-			Args:      &module.Pkg{Name: []string{"librecode3"}},
-			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"mark librecode3 as manually installed"}},
-			Unchanged: "apt-mark showauto librecode3 | grep -q librecode3",
+			Setup:     install + " fortune-mod && apt-mark showauto " + librecode + " | grep -q " + librecode,
+			Args:      &module.Pkg{Name: []string{librecode}},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"mark " + librecode + " as manually installed"}},
+			Unchanged: "apt-mark showauto " + librecode + " | grep -q " + librecode,
 			// A dry run of autoremove keeps the other automatic packages of the VM.
-			After: "DEBIAN_FRONTEND=noninteractive apt-get purge -y -q fortune-mod && ! apt-get -s autoremove | grep -q '^Remv librecode3 '",
+			After: "DEBIAN_FRONTEND=noninteractive apt-get purge -y -q fortune-mod && ! apt-get -s autoremove | grep -q '^Remv " + librecode + " '",
 		},
 		{
 			Name:      "a list installs a missing package and marks a dependency",
 			State:     module.State{IndexFresh: true},
 			Setup:     install + " fortune-mod",
-			Args:      &module.Pkg{Name: []string{"hello", "librecode3"}},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install hello", "mark librecode3 as manually installed"}},
+			Args:      &module.Pkg{Name: []string{"hello", librecode}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install hello", "mark " + librecode + " as manually installed"}},
 			WantState: module.State{IndexFresh: true},
-			Unchanged: "apt-mark showauto librecode3 | grep -q librecode3",
-			After:     "apt-mark showmanual hello librecode3 | grep -c . | grep -qx 2",
+			Unchanged: "apt-mark showauto " + librecode + " | grep -q " + librecode,
+			After:     "apt-mark showmanual hello " + librecode + " | grep -c . | grep -qx 2",
 		},
 		{
 			Name:      "a list installs the missing packages in one apt call",
@@ -210,7 +211,7 @@ func TestPkgModule(t *testing.T) {
 			Name:      "recommends false",
 			State:     module.State{IndexFresh: true},
 			Args:      &module.Pkg{Name: []string{"fortune-mod"}, Recommends: new(false)},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod (without recommended packages)", "also install librecode3"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod (without recommended packages)", "also install " + librecode}},
 			WantState: module.State{IndexFresh: true},
 			After:     `dpkg -s fortune-mod >/dev/null && ! dpkg -s fortunes-min >/dev/null 2>&1`,
 		},
@@ -218,7 +219,7 @@ func TestPkgModule(t *testing.T) {
 			Name:      "recommended packages by default",
 			State:     module.State{IndexFresh: true},
 			Args:      &module.Pkg{Name: []string{"fortune-mod"}},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod", "also install librecode3, fortunes-min"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod", "also install " + librecode + ", fortunes-min"}},
 			WantState: module.State{IndexFresh: true},
 			After:     `dpkg-query -W -f='${db:Status-Abbrev}' fortunes-min | grep -q '^ii'`,
 		},
@@ -235,15 +236,15 @@ func TestPkgModule(t *testing.T) {
 			State:     module.State{IndexFresh: true},
 			Setup:     `echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/99norecommends`,
 			Args:      &module.Pkg{Name: []string{"fortune-mod"}, Recommends: new(true)},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod", "also install librecode3, fortunes-min"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod", "also install " + librecode + ", fortunes-min"}},
 			WantState: module.State{IndexFresh: true},
 			After:     `dpkg-query -W -f='${db:Status-Abbrev}' fortunes-min | grep -q '^ii'`,
 		},
 		{
 			Name:      "absent lists the packages that depend on it",
 			Setup:     install + " fortune-mod",
-			Args:      &module.Pkg{Name: []string{"librecode3"}, Absent: true},
-			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove librecode3", "also remove fortune-mod"}},
+			Args:      &module.Pkg{Name: []string{librecode}, Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove " + librecode, "also remove fortune-mod"}},
 			Unchanged: `dpkg-query -W -f='${db:Status-Abbrev}' fortune-mod | grep -q '^ii'`,
 			After:     `! dpkg-query -W -f='${db:Status-Abbrev}' fortune-mod | grep -q '^ii'`,
 		},
@@ -298,7 +299,7 @@ func TestPkgModule(t *testing.T) {
 			Setup:        halfConfigure,
 			Args:         &module.Pkg{Name: []string{"winch-fragile"}},
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"configure winch-fragile"}},
-			WantApplyErr: "post-installation script subprocess returned error exit status 1",
+			WantApplyErr: osRelease().postinstFailed,
 			Fix:          "touch /etc/winch-fragile.ok",
 		},
 		{
@@ -384,7 +385,7 @@ func TestPkgModule(t *testing.T) {
 		{
 			Name:    "absent fails when apt must remove a held package with it",
 			Setup:   install + " fortune-mod && apt-mark hold fortune-mod",
-			Args:    &module.Pkg{Name: []string{"librecode3"}, Absent: true},
+			Args:    &module.Pkg{Name: []string{librecode}, Absent: true},
 			WantErr: "held packages",
 		},
 		{
@@ -407,6 +408,19 @@ func TestPkgModule(t *testing.T) {
 			Args:  &module.Pkg{Name: []string{"at"}, Absent: true, Purge: true},
 			Want:  module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"purge at"}},
 			After: `[ ! -e /etc/at.deny ]`,
+		},
+		{
+			Name: "an install restarts no service",
+			// The file of the running program of winch-old is gone, so
+			// needrestart, which Ubuntu installs, would restart winch-old
+			// after an apt run.
+			State: module.State{IndexFresh: true},
+			Setup: "if grep -qx ID=ubuntu /etc/os-release; then command -v needrestart >/dev/null; fi && " + localRepo + ` && cp /usr/bin/sleep /usr/local/bin/winch-old && printf '[Service]\nExecStart=/usr/local/bin/winch-old infinity\n' > /etc/systemd/system/winch-old.service && systemctl daemon-reload && systemctl restart winch-old && ` +
+				`systemctl show -P InvocationID winch-old > /root/inv && rm /usr/local/bin/winch-old && cp /usr/bin/sleep /usr/local/bin/winch-old`,
+			Args:      &module.Pkg{Name: []string{"hello"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install hello"}},
+			WantState: module.State{IndexFresh: true},
+			After:     `[ "$(systemctl show -P InvocationID winch-old)" = "$(cat /root/inv)" ] && systemctl stop winch-old`,
 		},
 		{
 			Name:  "absent on a removed package is ok",
@@ -480,8 +494,10 @@ func TestPkgModule(t *testing.T) {
 		},
 		{
 			Name: "the providing package converges",
-			Args: &module.Pkg{Name: []string{"libssl3t64"}},
-			Want: module.Result{Status: module.OK},
+			// Ubuntu's image has libssl3t64 as an automatic install.
+			Setup: "apt-mark manual libssl3t64 >/dev/null",
+			Args:  &module.Pkg{Name: []string{"libssl3t64"}},
+			Want:  module.Result{Status: module.OK},
 		},
 		{
 			Name:         "an unknown package checks as a change and fails at apply",

@@ -83,7 +83,7 @@ func TestLockFilesNamesAMissingDirectory(t *testing.T) {
 
 // spec: Modules/pkg
 func TestAptEnvStopsEveryPrompt(t *testing.T) {
-	want := []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "APT_LISTBUGS_FRONTEND=none", "UCF_FORCE_CONFFOLD=1"}
+	want := []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "APT_LISTBUGS_FRONTEND=none", "UCF_FORCE_CONFFOLD=1", "NEEDRESTART_SUSPEND=1"}
 	if !slices.Equal(aptEnv, want) {
 		t.Errorf("aptEnv = %q, want %q", aptEnv, want)
 	}

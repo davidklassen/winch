@@ -44,8 +44,8 @@ func repoInput(defs fs.FS) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func repoName(arch, snapshot string, input []byte) string {
-	return "repo-" + arch + "-" + hashParts(snapshot, string(input), fillScript)
+func repoName(platform, snapshot string, input []byte) string {
+	return "repo-" + platform + "-" + hashParts(snapshot, string(input), fillScript)
 }
 
 // ensureRepo finds the repository of the lab's inputs in the cache, or
@@ -55,7 +55,7 @@ func (l *Lab) ensureRepo(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(l.cfg.Cache, repoName(l.Arch, l.snapshot, input))
+	dir := filepath.Join(l.cfg.Cache, repoName(l.platform(), l.snapshot, input))
 	if _, err := os.Stat(dir); l.cfg.Refresh || errors.Is(err, os.ErrNotExist) {
 		if err := l.buildRepo(ctx, dir, input); err != nil {
 			return err
@@ -74,8 +74,8 @@ func (l *Lab) ensureRepo(ctx context.Context) error {
 // fillScript downloads each listed package with the dependencies that the
 // VM lacks, one at a time, so packages that conflict all arrive. It builds
 // the test packages and writes an index for each part. The part signed holds
-// the packages of signed.list and of signed/, in a suite trixie with a signed
-// InRelease.
+// the packages of signed.list and of signed/, in a suite with the codename of
+// the image and a signed InRelease.
 const fillScript = `set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q >/dev/null
@@ -93,22 +93,23 @@ done
 for d in /root/defs/signed/*/; do
 	dpkg-deb -b "$d" /root/repo/signed/pool/ >/dev/null
 done
+apt-get install -q -y apt-utils gnupg >/dev/null
 for part in debian test; do
 	cd /root/repo/$part
 	apt-ftparchive packages pool > Packages
 done
-apt-get install -q -y gnupg >/dev/null
 arch=$(dpkg --print-architecture)
+codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
 cd /root/repo/signed
-mkdir -p dists/trixie/main/binary-$arch
-apt-ftparchive packages pool > dists/trixie/main/binary-$arch/Packages
-apt-ftparchive -o APT::FTPArchive::Release::Suite=trixie -o APT::FTPArchive::Release::Codename=trixie \
+mkdir -p dists/$codename/main/binary-$arch
+apt-ftparchive packages pool > dists/$codename/main/binary-$arch/Packages
+apt-ftparchive -o APT::FTPArchive::Release::Suite=$codename -o APT::FTPArchive::Release::Codename=$codename \
 	-o APT::FTPArchive::Release::Components=main -o APT::FTPArchive::Release::Architectures=$arch \
-	release dists/trixie > /root/Release
-mv /root/Release dists/trixie/Release
+	release dists/$codename > /root/Release
+mv /root/Release dists/$codename/Release
 export GNUPGHOME=$(mktemp -d)
 gpg --batch -q --import /root/defs/signing.key 2>/dev/null
-gpg --batch -q -u 'winch test repository' --clearsign -o dists/trixie/InRelease dists/trixie/Release
+gpg --batch -q -u 'winch test repository' --clearsign -o dists/$codename/InRelease dists/$codename/Release
 cd /root/repo
 tar -c .
 `
@@ -154,7 +155,7 @@ func (l *Lab) buildRepo(ctx context.Context, dir string, input []byte) error {
 		}
 		return err
 	}
-	return removeOthers(l.cfg.Cache, "repo-"+l.Arch+"-", dir)
+	return removeOthers(l.cfg.Cache, "repo-"+l.platform()+"-", dir)
 }
 
 // writeTree writes the files of fsys to tw below ".", as root, with mode 0755

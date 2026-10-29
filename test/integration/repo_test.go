@@ -9,7 +9,8 @@ import (
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
-// The lab's signed source. Its suite trixie holds winch-signed.
+// The lab's signed source. Its suite, the codename of the image, holds
+// winch-signed.
 const (
 	signedURL   = "http://10.0.2.100/signed"
 	signedFile  = "/etc/apt/sources.list.d/winch-signed.sources"
@@ -28,6 +29,7 @@ func signedSource(suite string) string {
 func TestRepoModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "repo")
+	suite := osRelease().codename
 	// The index of the lab's other sources, which a repo step keeps.
 	vm.MustRun(t, "apt-get update -q >/dev/null")
 	const others = "ls /var/lib/apt/lists | grep -q '^10.0.2.100_debian_'"
@@ -40,7 +42,7 @@ func TestRepoModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := func() *module.Repo {
-		return &module.Repo{Name: "winch-signed", URL: signedURL, Suite: "trixie", Components: []string{"main"}, KeyData: vmtest.RepoKey}
+		return &module.Repo{Name: "winch-signed", URL: signedURL, Suite: suite, Components: []string{"main"}, KeyData: vmtest.RepoKey}
 	}
 	refresh := "refresh the index of source winch-signed"
 	keyLine := "add key " + fpr + " winch test repository"
@@ -76,12 +78,12 @@ func TestRepoModule(t *testing.T) {
 			Setup:     signedSource("bookworm"),
 			State:     module.State{IndexFresh: true},
 			Args:      args(),
-			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{signedFile + ": Suites bookworm → trixie", refresh}},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{signedFile + ": Suites bookworm → " + suite, refresh}},
 			WantState: module.State{},
 		},
 		{
 			Name:      "change the url",
-			Setup:     strings.Replace(signedSource("trixie"), "URIs: "+signedURL, "URIs: http://10.0.2.100:80/signed", 1) + " && apt-get update -q >/dev/null && ls /var/lib/apt/lists | grep -q '^10.0.2.100:80_signed_'",
+			Setup:     strings.Replace(signedSource(suite), "URIs: "+signedURL, "URIs: http://10.0.2.100:80/signed", 1) + " && apt-get update -q >/dev/null && ls /var/lib/apt/lists | grep -q '^10.0.2.100:80_signed_'",
 			State:     module.State{IndexFresh: true},
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{signedFile + ": URIs http://10.0.2.100:80/signed → " + signedURL, refresh}},
@@ -90,7 +92,7 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:      "a key file with mode 0600 refreshes nothing",
-			Setup:     signedSource("trixie") + " && chmod 600 " + signedAsc,
+			Setup:     signedSource(suite) + " && chmod 600 " + signedAsc,
 			State:     module.State{IndexFresh: true},
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{signedAsc + ": mode 0600 → 0644"}},
@@ -98,7 +100,7 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:      "another key",
-			Setup:     signedSource("trixie") + " && cat > " + signedAsc + " <<'EOF'\n" + string(otherKey) + "EOF",
+			Setup:     signedSource(suite) + " && cat > " + signedAsc + " <<'EOF'\n" + string(otherKey) + "EOF",
 			State:     module.State{IndexFresh: true},
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove key " + other + " winch test key <test@example.com>", keyLine, refresh}},
@@ -113,19 +115,19 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:    "an immutable key file with another mode",
-			Setup:   signedSource("trixie") + " && chmod 600 " + signedAsc + " && chattr +i " + signedAsc,
+			Setup:   signedSource(suite) + " && chmod 600 " + signedAsc + " && chattr +i " + signedAsc,
 			Args:    args(),
 			WantErr: signedAsc + " is immutable; chattr -i changes it",
 		},
 		{
 			Name:    "an append-only key file with another key",
-			Setup:   signedSource("trixie") + " && cat > " + signedAsc + " <<'EOF'\n" + string(otherKey) + "EOF\nchattr +a " + signedAsc,
+			Setup:   signedSource(suite) + " && cat > " + signedAsc + " <<'EOF'\n" + string(otherKey) + "EOF\nchattr +a " + signedAsc,
 			Args:    args(),
 			WantErr: signedAsc + " is append-only; chattr -a changes it",
 		},
 		{
 			Name:  "immutable files that are as the step declares",
-			Setup: signedSource("trixie") + " && chattr +i " + signedFile + " " + signedAsc,
+			Setup: signedSource(suite) + " && chattr +i " + signedFile + " " + signedAsc,
 			Args:  args(),
 			Want:  module.Result{Status: module.OK},
 		},
@@ -144,7 +146,7 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:         "a failed refresh puts the old files back",
-			Setup:        signedSource("trixie") + " && mkdir /root/saved && cp " + signedFile + " " + signedAsc + " /root/saved/",
+			Setup:        signedSource(suite) + " && mkdir /root/saved && cp " + signedFile + " " + signedAsc + " /root/saved/",
 			Args:         withOther(),
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove key " + fpr + " winch test repository", "add key " + other + " winch test key <test@example.com>", refresh}},
 			WantApplyErr: "refresh the index of source winch-signed",
@@ -153,7 +155,7 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:         "a source that apt cannot fetch",
-			Args:         &module.Repo{Name: "winch-signed", URL: "http://127.0.0.1:9/down", Suite: "trixie", Components: []string{"main"}},
+			Args:         &module.Repo{Name: "winch-signed", URL: "http://127.0.0.1:9/down", Suite: suite, Components: []string{"main"}},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedFile + sourceAttrs, refresh}},
 			WantApplyErr: "refresh the index of source winch-signed",
 			After:        "[ ! -e " + signedFile + " ]",
@@ -161,13 +163,13 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:    "the source in another file",
-			Setup:   "echo 'deb [signed-by=/usr/share/keyrings/x.gpg] " + signedURL + "/ trixie main' > /etc/apt/sources.list.d/vendor.list",
+			Setup:   "echo 'deb [signed-by=/usr/share/keyrings/x.gpg] " + signedURL + "/ " + suite + " main' > /etc/apt/sources.list.d/vendor.list",
 			Args:    args(),
-			WantErr: "the source " + signedURL + " trixie is also in /etc/apt/sources.list.d/vendor.list; remove it there",
+			WantErr: "the source " + signedURL + " " + suite + " is also in /etc/apt/sources.list.d/vendor.list; remove it there",
 		},
 		{
 			Name:      "an old key file that holds no key",
-			Setup:     signedSource("trixie") + " && echo 'not a key' > " + signedAsc,
+			Setup:     signedSource(suite) + " && echo 'not a key' > " + signedAsc,
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"replace " + signedAsc + ": is not an ASCII-armored OpenPGP public key", keyLine, refresh}},
 			WantState: module.State{},
@@ -180,13 +182,13 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:    "the source in sources.list",
-			Setup:   "echo 'deb " + signedURL + " trixie main' >> /etc/apt/sources.list",
+			Setup:   "echo 'deb " + signedURL + " " + suite + " main' >> /etc/apt/sources.list",
 			Args:    args(),
-			WantErr: "the source " + signedURL + " trixie is also in /etc/apt/sources.list; remove it there",
+			WantErr: "the source " + signedURL + " " + suite + " is also in /etc/apt/sources.list; remove it there",
 		},
 		{
 			Name:  "apt does not read a backup file",
-			Setup: "echo 'deb " + signedURL + " trixie main' > /etc/apt/sources.list.d/vendor.list.save",
+			Setup: "echo 'deb " + signedURL + " " + suite + " main' > /etc/apt/sources.list.d/vendor.list.save",
 			Args:  args(),
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
 		},
@@ -201,13 +203,13 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:  "a disabled source in another file",
-			Setup: "printf 'Types: deb\\nURIs: " + signedURL + "\\nSuites: trixie\\nComponents: main\\nEnabled: no\\n' > /etc/apt/sources.list.d/vendor.sources",
+			Setup: "printf 'Types: deb\\nURIs: " + signedURL + "\\nSuites: " + suite + "\\nComponents: main\\nEnabled: no\\n' > /etc/apt/sources.list.d/vendor.sources",
 			Args:  args(),
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
 		},
 		{
 			Name:  "a deb-src entry in another file",
-			Setup: "echo 'deb-src " + signedURL + " trixie main' > /etc/apt/sources.list.d/vendor.list",
+			Setup: "echo 'deb-src " + signedURL + " " + suite + " main' > /etc/apt/sources.list.d/vendor.list",
 			Args:  args(),
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
 		},
@@ -244,7 +246,8 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 func TestRepoAfterAbsentStep(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "repo-absent")
-	vm.MustRun(t, "echo 'deb [signed-by=/usr/share/keyrings/x.gpg] "+signedURL+" trixie main' > /etc/apt/sources.list.d/vendor.list")
+	suite := osRelease().codename
+	vm.MustRun(t, "echo 'deb [signed-by=/usr/share/keyrings/x.gpg] "+signedURL+" "+suite+" main' > /etc/apt/sources.list.d/vendor.list")
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: demo\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  repo-absent: {}\n",
@@ -256,7 +259,7 @@ func TestRepoAfterAbsentStep(t *testing.T) {
   - repo:
       name: winch-signed
       url: ` + signedURL + `
-      suite: trixie
+      suite: ` + suite + `
       components: [main]
       key: signed.asc
 `,

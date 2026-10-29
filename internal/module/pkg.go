@@ -65,7 +65,7 @@ func (p *Pkg) Validate() error {
 	return nil
 }
 
-var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "APT_LISTBUGS_FRONTEND=none", "UCF_FORCE_CONFFOLD=1"}
+var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "APT_LISTBUGS_FRONTEND=none", "UCF_FORCE_CONFFOLD=1", "NEEDRESTART_SUSPEND=1"}
 
 // aptLock makes apt wait for another apt, such as unattended-upgrades.
 const aptLock = "DPkg::Lock::Timeout=300"
@@ -74,10 +74,15 @@ const aptLock = "DPkg::Lock::Timeout=300"
 // changed conffiles and asks no question.
 var aptApply = []string{"-y", "-q", "-o", aptLock, "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold"}
 
+// aptSolver picks apt's classic solver. The solver of apt 3.1 and later
+// ignores APT::Ignore-Hold, and fills a dependency that a removal breaks with
+// an install, where the classic solver removes the dependent package.
+const aptSolver = "APT::Solver=internal"
+
 // aptGet runs apt-get without the time limit. An apt-get that the limit stops
 // leaves dpkg half done.
 func aptGet(ctx context.Context, args ...string) (string, error) {
-	return runLimited(ctx, 0, KillDelay, aptEnv, "", "apt-get", args...)
+	return runLimited(ctx, 0, KillDelay, aptEnv, "", "apt-get", slices.Concat(args, []string{"-o", aptSolver})...)
 }
 
 func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, error) {

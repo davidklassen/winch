@@ -271,14 +271,14 @@ func TestPurgeModule(t *testing.T) {
 		},
 		{
 			Name:  "keeps the enable links of units",
-			Setup: `touch /etc/systemd/system/multi-user.target.wants/junk`,
+			Setup: enableSSH + " && touch /etc/systemd/system/multi-user.target.wants/junk",
 			Args:  &module.Dir{Path: "/etc/systemd/system/multi-user.target.wants", Purge: true},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove file /etc/systemd/system/multi-user.target.wants/junk"}},
 			After: `[ -L /etc/systemd/system/multi-user.target.wants/ssh.service ] && [ ! -e /etc/systemd/system/multi-user.target.wants/junk ]`,
 		},
 		{
 			Name:  "keeps the links and the wants directories in /etc/systemd/system",
-			Setup: `touch /etc/systemd/system/junk.service`,
+			Setup: enableSSH + " && touch /etc/systemd/system/junk.service",
 			Args:  &module.Dir{Path: "/etc/systemd/system", Purge: true},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove file /etc/systemd/system/junk.service"}},
 			After: `[ -L /etc/systemd/system/sshd.service ] && [ -d /etc/systemd/system/multi-user.target.wants ] && [ ! -e /etc/systemd/system/junk.service ]`,
