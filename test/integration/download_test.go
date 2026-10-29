@@ -133,7 +133,7 @@ func TestDownloadModule(t *testing.T) {
 	broken := txz[:len(txz)/2]
 	urlBroken := lab.Serve(t, "download/broken.tar.xz", broken)
 
-	reset := "[ ! -d /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w " + record + " && mkdir /tmp/w"
+	reset := "[ ! -d /tmp/w ] || find /tmp/w -depth -mindepth 1 -type d -exec mountpoint -q {} \\; -exec umount {} \\;\n[ ! -d /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w " + record + " && mkdir /tmp/w"
 	t.Run("a failed unpack stays a change and keeps the old tree", func(t *testing.T) {
 		ctx := t.Context()
 		s := vm.Session(t)
@@ -142,7 +142,7 @@ func TestDownloadModule(t *testing.T) {
 		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, nil, protocol.Guard{}); err == nil || !strings.Contains(err.Error(), "unpack "+urlEscape+" into /tmp/w/opt") {
 			t.Fatalf("apply of an archive with a link out of the directory = %v, want an unpack error", err)
 		}
-		want := []string{"download " + urlEscape + " (no record of an earlier download)", "unpack into /tmp/w/opt (owner admin, group root)"}
+		want := []string{"download " + urlEscape + " (no record of an earlier download)", "unpack into /tmp/w/opt (owner admin, group root)", "remove its content: 4 files, 2 directories"}
 		got, err := s.Check(ctx, "download", args, &module.State{})
 		if err != nil || got.Status != module.Change || !slices.Equal(got.Changes, want) {
 			t.Fatalf("check after the failed apply = %+v, %v; want the changes %q", got, err, want)
@@ -246,11 +246,11 @@ func TestDownloadModule(t *testing.T) {
 			After: `[ "$(cat /tmp/w/f)" = "version 1" ] && [ ! -e ` + record + ` ]`,
 		},
 		{
-			Name:  "an unpack directory without a record unpacks again",
-			Setup: "mkdir /tmp/w/opt",
+			Name:  "an unpack directory without a record unpacks again and keeps its owner and mode",
+			Setup: "mkdir -m 0750 /tmp/w/opt && chown nobody:nogroup /tmp/w/opt",
 			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", unpackLine}},
-			After: `[ "$(/tmp/w/opt/app/latest)" = tool ] && [ "$(ls -A /tmp/w)" = opt ]`,
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", unpackLine, "remove its content: 0 files, 0 directories"}},
+			After: `[ "$(/tmp/w/opt/app/latest)" = tool ] && [ "$(ls -A /tmp/w)" = opt ] && [ "$(stat -c '%U %G %a' /tmp/w/opt)" = "nobody nogroup 750" ]`,
 		},
 		{
 			Name:      "a new checksum downloads again",
@@ -323,15 +323,15 @@ func TestDownloadModule(t *testing.T) {
 			Name:  "the archive replaces an older tree",
 			Setup: "mkdir -p /tmp/w/opt/app && echo old > /tmp/w/opt/app/bin && echo old > /tmp/w/opt/old && ln -s nowhere /tmp/w/opt/app/latest && chown -R nobody:nogroup /tmp/w/opt",
 			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", unpackLine}},
-			After: `[ "$(/tmp/w/opt/app/latest)" = tool ] && [ "$(stat -c '%U %G' /tmp/w/opt)" = "root root" ] && [ "$(ls -A /tmp/w)" = opt ]` +
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", unpackLine, "remove its content: 3 files, 1 directory"}},
+			After: `[ "$(/tmp/w/opt/app/latest)" = tool ] && [ "$(stat -c '%U %G' /tmp/w/opt /tmp/w/opt/app)" = "$(printf '%s\n' 'nobody nogroup' 'root root')" ] && [ "$(ls -A /tmp/w)" = opt ]` +
 				` && [ "$(cd /tmp/w/opt && find . | LC_ALL=C sort | tr '\n' ' ')" = ". ./app ./app/README ./app/bin ./app/bin/tool ./app/hard ./app/latest " ]`,
 		},
 		{
 			Name:  "a file of the archive replaces a directory",
 			Setup: "mkdir -p /tmp/w/opt/app/README/sub",
 			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", unpackLine}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", unpackLine, "remove its content: 0 files, 3 directories"}},
 			After: `[ "$(cat /tmp/w/opt/app/README)" = "read me" ]`,
 		},
 		{
@@ -342,6 +342,24 @@ func TestDownloadModule(t *testing.T) {
 			WantApplyErr: "remove the tree of a stopped unpack into /tmp/w/opt: ",
 			After:        `[ ! -e /tmp/w/opt ] && [ ! -e ` + record + ` ]`,
 			Fix:          "chattr -i /tmp/w/.winch-unpack-opt/f",
+		},
+		{
+			Name:    "an unpack directory that is a mount point fails",
+			Setup:   "mkdir /tmp/w/opt && mount -t tmpfs tmpfs /tmp/w/opt",
+			Args:    &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt"},
+			WantErr: "/tmp/w/opt is a mount point",
+		},
+		{
+			Name:    "a mount point in the old tree fails",
+			Setup:   extracted + " && mkdir /tmp/w/opt/app/m && mount -t tmpfs tmpfs /tmp/w/opt/app/m",
+			Args:    &module.Download{URL: urlTgz2, SHA256: sha(tgz2), Unpack: "/tmp/w/opt"},
+			WantErr: "/tmp/w/opt/app/m is a mount point",
+		},
+		{
+			Name:    "an immutable file in the old tree fails",
+			Setup:   extracted + " && chattr +i /tmp/w/opt/app/README",
+			Args:    &module.Download{URL: urlTgz2, SHA256: sha(tgz2), Unpack: "/tmp/w/opt"},
+			WantErr: "/tmp/w/opt/app/README is immutable; chattr -i changes it",
 		},
 		{
 			Name:  "unpack a tar.xz",
@@ -388,7 +406,7 @@ func TestDownloadModule(t *testing.T) {
 			Args:      &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt", Owner: "admin"},
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (new owner)", "unpack into /tmp/w/opt (owner admin, group root)"}},
 			Unchanged: `[ "$(stat -c %U /tmp/w/opt/app/bin/tool)" != admin ]`,
-			After:     `[ "$(stat -c %U /tmp/w/opt/app/bin/tool)" = admin ] && grep -qx '` + sha(tgz) + `:admin:root /tmp/w/opt' ` + record,
+			After:     `[ "$(stat -c %U /tmp/w/opt /tmp/w/opt/app/bin/tool)" = "$(printf '%s\n' nobody admin)" ] && grep -qx '` + sha(tgz) + `:admin:root /tmp/w/opt' ` + record,
 		},
 		{
 			Name:  "a new group unpacks again",
@@ -407,7 +425,7 @@ func TestDownloadModule(t *testing.T) {
 			Name:  "a new unpack directory that exists unpacks again",
 			Setup: extracted + " && mkdir /tmp/w/opt2 && echo '" + sha(v1) + " /tmp/w/other' >> " + record,
 			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt2"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", "unpack into /tmp/w/opt2 (owner root, group root)"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", "unpack into /tmp/w/opt2 (owner root, group root)", "remove its content: 0 files, 0 directories"}},
 			After: `[ "$(/tmp/w/opt2/app/latest)" = tool ] && [ "$(cat ` + record + `)" = "$(printf '%s\n' '` + unpackRecord + `' '` + sha(v1) + ` /tmp/w/other' '` + sha(tgz) + `:root:root /tmp/w/opt2')" ]`,
 		},
 		{
@@ -548,6 +566,46 @@ func TestDownloadUnpackRun(t *testing.T) {
 	}
 	if out := vm.MustRun(t, "/opt/winch-test/app/bin/tool && ls -A /opt/winch-test && cd /opt/winch-test/app && find . | LC_ALL=C sort"); out != "v2\napp\n.\n./bin\n./bin/tool\n./lib\n./lib/so\n" {
 		t.Errorf("tool output, /opt/winch-test, and the tree after the new sha256 = %q, want v2, only the unpack directory, and the tree of the archive", out)
+	}
+}
+
+// spec: Modules/download; Modules/file, dir, link
+func TestDownloadUnpackDirStep(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "download-unpack-dir")
+	v1 := tarGz(t, []entry{{name: "bin/tool", typ: tar.TypeReg, mode: 0o755, body: "#!/bin/sh\necho v1\n"}})
+	v2 := tarGz(t, []entry{{name: "bin/tool", typ: tar.TypeReg, mode: 0o755, body: "#!/bin/sh\necho v2\n"}})
+	url1 := lab.Serve(t, "download-unpack-dir/v1.tar.gz", v1)
+	url2 := lab.Serve(t, "download-unpack-dir/v2.tar.gz", v2)
+	project := func(url string, sum string) string {
+		return vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: acme\ninventory: test\n",
+			"inventories/test.yaml": "hosts:\n  " + vm.Name + ": {}\n",
+			"pipelines/site.yaml": `stages:
+  - name: tools
+    hosts: all
+    steps:
+      - dir:
+          path: /opt/winch-test/app
+          owner: nobody
+          mode: "0750"
+      - download:
+          url: ` + url + `
+          sha256: ` + sum + `
+          unpack: /opt/winch-test/app
+`,
+		})
+	}
+	for _, dir := range []string{project(url1, sha(v1)), project(url2, sha(v2))} {
+		if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+			t.Fatalf("apply: exit %d", r.Code)
+		}
+		if r := lab.Winch(t, dir, "plan", "site", "--exit-code"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+			t.Errorf("plan after apply: exit %d, stdout %q", r.Code, r.Stdout)
+		}
+	}
+	if out := vm.MustRun(t, "/opt/winch-test/app/bin/tool && stat -c '%U %a' /opt/winch-test/app"); out != "v2\nnobody 750\n" {
+		t.Errorf("tool output and the unpack directory = %q, want v2 and nobody 750", out)
 	}
 }
 

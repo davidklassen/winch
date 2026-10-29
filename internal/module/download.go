@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -161,7 +162,8 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 }
 
 // checkUnpack compares the record of the last unpack with the step. It reads
-// no archive and no tree.
+// no archive. It reads the old tree only when the step unpacks again, since
+// apply removes the tree.
 func (d *Download) checkUnpack(owner, group string) (Result, error) {
 	parent, missing, err := openParent(d.Unpack)
 	if err != nil {
@@ -195,7 +197,15 @@ func (d *Download) checkUnpack(owner, group string) (Result, error) {
 	default:
 		return Result{Status: OK}, nil
 	}
-	return Result{Status: Change, Action: Modify, Changes: []string{"download " + d.URL + " (" + why + ")", unpack}}, nil
+	t, err := walkTree(parent, path.Base(d.Unpack), d.Unpack, fi)
+	if err != nil {
+		return Result{}, err
+	}
+	changes := []string{"download " + d.URL + " (" + why + ")", unpack}
+	if d.Recorded == "" {
+		changes = append(changes, "remove its content: "+t.counts())
+	}
+	return Result{Status: Change, Action: Modify, Changes: changes}, nil
 }
 
 // Record is what the helper records after a successful unpack:
@@ -281,8 +291,9 @@ func (d *Download) Apply(ctx context.Context, note func(string)) error {
 
 // applyUnpack downloads the archive to a temporary file next to the unpack
 // directory and checks every entry. It unpacks the archive into a new
-// directory with the owner uid and the group gid, swaps it with the unpack
-// directory, and removes the old tree.
+// directory with the owner uid and the group gid. The new directory takes the
+// owner, group, and mode of an existing unpack directory. It swaps the two
+// directories and removes the old tree.
 func (d *Download) applyUnpack(ctx context.Context, uid, gid uint32, note func(string)) error {
 	parent, missing, err := openParent(d.Unpack)
 	if err != nil {
@@ -316,24 +327,30 @@ func (d *Download) applyUnpack(ctx context.Context, uid, gid uint32, note func(s
 	if err := sub.RemoveAll(newName); err != nil {
 		return fmt.Errorf("remove the tree of a stopped unpack into %s: %w", d.Unpack, err)
 	}
-	root, err := mkdir(sub, newName, uid, gid, 0o755)
+	fi, exists, err := lstat(sub, name, nil)
+	if err != nil {
+		return err
+	}
+	if exists && !fi.IsDir() {
+		return fmt.Errorf("%s is %s, not a directory", d.Unpack, kind(fi))
+	}
+	dirUID, dirGID, dirMode := uid, gid, uint32(0o755)
+	// A dir step can set the owner and mode of the unpack directory.
+	if exists {
+		st := fi.Sys().(*syscall.Stat_t)
+		dirUID, dirGID, dirMode = st.Uid, st.Gid, uint32(st.Mode)&0o7777
+	}
+	root, err := mkdir(sub, newName, dirUID, dirGID, dirMode)
 	if err != nil {
 		return err
 	}
 	defer sub.RemoveAll(newName) //nolint:errcheck // the error of the unpack or the swap explains the failure
-	err = (unpacker{root: root, path: d.Unpack, uid: uid, gid: gid}).read(ctx, tmp, typ)
-	root.Close()
-	if err != nil {
+	defer root.Close()
+	if err := (unpacker{root: root, path: d.Unpack, uid: uid, gid: gid}).read(ctx, tmp, typ); err != nil {
 		return fmt.Errorf("unpack %s into %s: %w", d.URL, d.Unpack, err)
 	}
-	fi, exists, err := lstat(sub, name, nil)
-	switch {
-	case err != nil:
-		return err
-	case !exists:
+	if !exists {
 		return sub.Rename(newName, name)
-	case !fi.IsDir():
-		return fmt.Errorf("%s is %s, not a directory", d.Unpack, kind(fi))
 	}
 	if err := exchange(sub, newName, name); err != nil {
 		return fmt.Errorf("swap the new tree into %s: %w", d.Unpack, err)
