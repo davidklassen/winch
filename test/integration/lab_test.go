@@ -30,6 +30,17 @@ func TestLab(t *testing.T) {
 		}
 	})
 
+	t.Run("the VM resolves its own host name at once", func(t *testing.T) {
+		out := vm.MustRun(t, `python3 -c 'import socket, time; t = time.monotonic(); socket.getfqdn(); print(time.monotonic() - t)'`)
+		sec, err := strconv.ParseFloat(strings.TrimSpace(out), 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sec > 5 {
+			t.Errorf("the lookup of the host name takes %.1fs", sec)
+		}
+	})
+
 	if lab.Online() {
 		t.Run("online, apt reads the image's sources and the test packages", func(t *testing.T) {
 			out := vm.MustRun(t, "apt-get update")
