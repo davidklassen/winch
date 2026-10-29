@@ -444,9 +444,9 @@ func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *m
 
 const accessMarker = "winch-access"
 
-// accessCommand works only for a login that can still use sudo without a
-// password, when the login user is not root.
-const accessCommand = `if [ "$(id -u)" -eq 0 ]; then exec echo ` + accessMarker + `; fi; exec sudo -n echo ` + accessMarker
+// accessCommand runs the marker the way the session start runs its script, so
+// it proves what the next session needs.
+var accessCommand = command("echo " + accessMarker)
 
 // Access opens a new SSH connection to the host, without a connection that
 // the SSH config shares, and runs a command that needs the login and sudo.

@@ -15,7 +15,8 @@ import (
 )
 
 // spec: Running a pipeline/Lockout protection (a second SSH connection runs
-// a marker; through sudo -n for a login user other than root)
+// a marker; through sudo -n for a login user other than root, in the form of
+// the session start)
 func TestAccess(t *testing.T) {
 	s := &Session{cfg: Config{Host: "web1", Address: "192.0.2.1", User: "admin", Batch: true}}
 	tests := []struct {
@@ -24,7 +25,7 @@ func TestAccess(t *testing.T) {
 		wantErr         string
 	}{
 		{"root", "0", "#!/bin/sh\nexit 1\n", "", ""},
-		{"sudo works", "1000", goodSudo, "-n echo\n", ""},
+		{"sudo works", "1000", goodSudo, "-n true\n-n sh\n", ""},
 		{"sudo fails", "1000", "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n", "", "sudo: a password is required"},
 	}
 	for _, tt := range tests {
@@ -209,7 +210,10 @@ func TestAccessStderr(t *testing.T) {
 // spec: Running a pipeline/Lockout protection (gap: a refusal on stdout,
 // such as from nologin, names the reason)
 func TestAccessRefusalOnStdout(t *testing.T) {
-	fakeBin(t, "aarch64", "1000", "#!/bin/sh\necho 'This account is currently not available.'\nexit 1\n")
+	fakeBin(t, "aarch64", "1000", goodSudo)
+	t.Setenv("SSH_FAIL_ONCE", filepath.Join(t.TempDir(), "failed"))
+	t.Setenv("SSH_FAIL_OUT", "This account is currently not available.")
+	t.Setenv("SSH_FAIL_CODE", "1")
 	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
 	err := s.Access(context.Background())
 	if want := "exit status 1: This account is currently not available."; err == nil || err.Error() != want {
