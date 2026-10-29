@@ -41,7 +41,9 @@ type User struct {
 	account  []string
 	mkHome   string
 	password bool
-	keys     bool
+	// opens are the account files that the planned commands open for writing.
+	opens []string
+	keys  bool
 	// keyHome is the home of the keys that Apply writes.
 	keyHome string
 	// missing marks a step that only adds groups to a user that does not
@@ -190,6 +192,9 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 	}
 	if err != nil {
 		return res, err
+	}
+	if err := noFlagsAt(u.opens...); err != nil {
+		return Result{}, err
 	}
 	// sshd's AllowGroups, DenyGroups, and Match Group read the groups at the
 	// next login.
@@ -435,9 +440,7 @@ func (u *User) checkNew(a accounts) (Result, string, string, error) {
 		changes = append(changes, "set password")
 		u.password = true
 	}
-	if err := noFlagsAt("/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow"); err != nil {
-		return Result{}, "", "", err
-	}
+	u.opens = []string{"/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow"}
 	u.account = append(args, u.Name)
 	return Result{Status: Change, Action: Create, Changes: changes}, home, group, nil
 }
@@ -543,15 +546,11 @@ func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, strin
 		}
 	}
 	// usermod and chpasswd open /etc/passwd and /etc/shadow for any change.
-	var files []string
 	if len(args) > 1 || u.password {
-		files = append(files, "/etc/passwd", "/etc/shadow")
+		u.opens = append(u.opens, "/etc/passwd", "/etc/shadow")
 	}
 	if slices.Contains(args, "-G") {
-		files = append(files, "/etc/group", "/etc/gshadow")
-	}
-	if err := noFlagsAt(files...); err != nil {
-		return Result{}, "", "", err
+		u.opens = append(u.opens, "/etc/group", "/etc/gshadow")
 	}
 	if len(args) > 1 {
 		u.account = append(args, u.Name)
