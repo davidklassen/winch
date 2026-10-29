@@ -158,6 +158,14 @@ func (p *Plan) WriteNotes(out *color.Writer) {
 			}
 		}
 	}
+	for _, h := range p.Hosts {
+		if p.Failed[h.Name] != nil {
+			continue
+		}
+		for _, t := range p.goneThens[h.Name] {
+			fmt.Fprintf(out, "%s: a pending then of %s %s matches no step and will not run\n", h.Name, secret.Printable(t.Module), secret.Printable(strings.Join(t.Mains, ", ")))
+		}
+	}
 }
 
 var markStyles = map[string]color.Style{"+": color.Green, "-": color.Red, "~": color.Yellow, "!": color.Cyan, "*": color.Cyan}

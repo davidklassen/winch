@@ -54,7 +54,10 @@ type Conn interface {
 	Pend(ctx context.Context, c protocol.Check) error
 	// Passed removes the record of a health gate or assert.
 	Passed(ctx context.Context, c protocol.Check) error
-	// Command runs the command of a then, and then removes its record.
+	// DropThen removes the record of a then that matches no step.
+	DropThen(ctx context.Context, t protocol.Then) error
+	// Command runs the command of a then, and then removes the records that
+	// match it.
 	Command(ctx context.Context, command string, then protocol.Then) error
 	// Health runs a health gate, and then removes its record.
 	Health(ctx context.Context, h protocol.Health) error
@@ -110,8 +113,10 @@ type Plan struct {
 	// gone are the records of each host for gates and asserts that the
 	// pipeline no longer has.
 	gone map[string][]protocol.Check
-	hash string
-	opts Options
+	// goneThens are the then records of each host that match no step.
+	goneThens map[string][]protocol.Then
+	hash      string
+	opts      Options
 }
 
 type StagePlan struct {
@@ -204,8 +209,8 @@ type hostRun struct {
 	ran []*project.Step
 	// notified are the handlers that the plan expects to run later.
 	notified map[string]bool
-	// thens are the pending then records that no step matched yet.
-	thens map[protocol.Then]bool
+	// thens are the pending then records.
+	thens []*pendingThen
 	// checks are the pending gates and asserts.
 	checks map[protocol.Check]bool
 	// pending are the records that the host reported at the first contact.
@@ -239,6 +244,31 @@ type hostRun struct {
 	// written returns the paths that the project writes on the host, for dir
 	// steps with purge. It is set at the first contact.
 	written func() (project.Writes, error)
+}
+
+// pendingThen is a pending then record. matched is set when a step of the
+// plan matches it, and ran when the plan runs its then.
+type pendingThen struct {
+	protocol.Then
+	matched, ran bool
+}
+
+// matchThen marks the pending records that match t as matched, and with run
+// as run. It reports whether one of them had not run yet.
+func (hr *hostRun) matchThen(t *protocol.Then, run bool) bool {
+	if t == nil {
+		return false
+	}
+	pending := false
+	for _, p := range hr.thens {
+		if !t.Matches(p.Then) {
+			continue
+		}
+		p.matched = true
+		pending = pending || !p.ran
+		p.ran = p.ran || run
+	}
+	return pending
 }
 
 type managed struct {
@@ -321,7 +351,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, units: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, units: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -354,10 +384,12 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		plan.Stages = append(plan.Stages, sp)
 	}
 	plan.gone = map[string][]protocol.Check{}
+	plan.goneThens = map[string][]protocol.Then{}
 	for name, hr := range runs {
 		if hr.pending != nil {
 			plan.Pending[name] = *hr.pending
 			plan.gone[name] = goneChecks(p.Pipeline, hr.pending.Checks)
+			plan.goneThens[name] = goneThens(p.Pipeline, name, hr)
 		}
 		plan.Destinations[name] = hr.dest
 	}
@@ -392,7 +424,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 			hr.notified[n] = true
 		}
 		for _, t := range pending.Then {
-			hr.thens[t] = true
+			hr.thens = append(hr.thens, &pendingThen{Then: t})
 		}
 		for _, c := range pending.Checks {
 			hr.checks[c] = true
@@ -408,14 +440,12 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 			name := s.Handler.Record()
 			s.Runs = hr.notified[name]
 			delete(hr.notified, name)
-			if s.Runs {
-				for j, hs := range s.Steps {
-					if hs.Last && hs.Then != nil && hr.thens[*hs.Then] {
-						s.Steps[j].PendingThen = true
-						delete(hr.thens, *hs.Then)
-					}
-					s.Steps[j].PendingAssert = hs.Check != nil && hr.checks[*hs.Check]
+			for j, hs := range s.Steps {
+				if hs.Last {
+					pending := hr.matchThen(hs.Then, s.Runs)
+					s.Steps[j].PendingThen = s.Runs && pending
 				}
+				s.Steps[j].PendingAssert = s.Runs && hs.Check != nil && hr.checks[*hs.Check]
 			}
 			continue
 		}
@@ -457,10 +487,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		if !p.Last {
 			continue
 		}
-		if p.Then != nil && hr.thens[*p.Then] {
-			steps[i].PendingThen = true
-			delete(hr.thens, *p.Then)
-		}
+		steps[i].PendingThen = hr.matchThen(p.Then, true)
 		steps[i].ThenRuns = p.Then != nil && (changed || steps[i].PendingThen)
 		changed = false
 	}
@@ -861,7 +888,7 @@ func (hr *hostRun) dropCreatedParents(m module.Module, res *module.Result) {
 func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 	var out []Planned
 	late := map[*project.Handler]bool{}
-	add := func(env *project.Env, st project.Step, in *project.Step, addr string, place protocol.Then) error {
+	add := func(env *project.Env, st project.Step, in *project.Step, addr string, place protocol.Check) error {
 		steps, err := st.Eval(env)
 		if err != nil {
 			return err
@@ -889,7 +916,7 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 	for i := range stage.Steps {
 		st := &stage.Steps[i]
 		if st.Recipe == nil {
-			if err := add(hr.env, *st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1), protocol.Then{Pipeline: stage.Pipeline, Stage: stage.Name, Step: i + 1}); err != nil {
+			if err := add(hr.env, *st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1), protocol.Check{Pipeline: stage.Pipeline, Stage: stage.Name, Step: i + 1}); err != nil {
 				return nil, err
 			}
 			continue
@@ -903,7 +930,7 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 		}
 		env := hr.env.For(st)
 		for j, rs := range st.Recipe.Steps {
-			if err := add(env, rs, st, fmt.Sprintf("%s#%d", st.Recipe.Name, j+1), protocol.Then{Recipe: st.Recipe.Name, Step: j + 1}); err != nil {
+			if err := add(env, rs, st, fmt.Sprintf("%s#%d", st.Recipe.Name, j+1), protocol.Check{Recipe: st.Recipe.Name, Step: j + 1}); err != nil {
 				return nil, err
 			}
 		}
@@ -978,7 +1005,7 @@ func address(addr string, st project.Step, i int) string {
 // step of a handler of a recipe, or nil for a handler of a stage.
 func handlerSlot(h *project.Handler, env *project.Env, in *project.Step, hr *hostRun) (*Slot, error) {
 	slot := &Slot{Handler: h}
-	place := protocol.Then{Pipeline: h.Pipeline, Stage: h.Stage, Handler: h.Name}
+	place := protocol.Check{Pipeline: h.Pipeline, Stage: h.Stage, Handler: h.Name}
 	if h.Recipe != nil {
 		place.Recipe = h.Recipe.Name
 	}
@@ -1022,26 +1049,54 @@ func scope(stage *project.Stage, p Planned) string {
 
 // thenRecord is the record of the then of the evaluated steps at place, or nil
 // for a step without then.
-func thenRecord(steps []project.Step, place protocol.Then) *protocol.Then {
+func thenRecord(steps []project.Step, place protocol.Check) *protocol.Then {
 	if len(steps) == 0 || steps[0].Then == "" {
 		return nil
 	}
-	last := steps[len(steps)-1]
-	place.Module, place.Main = last.Module, last.Args.Main()
-	if c, ok := last.Args.(*module.Cmd); ok {
-		sum := sha256.Sum256([]byte(c.Command))
-		place.Main = hex.EncodeToString(sum[:])
+	t := &protocol.Then{Recipe: place.Recipe, Pipeline: place.Pipeline, Stage: place.Stage, Handler: place.Handler, Module: steps[0].Module}
+	for _, st := range steps {
+		main := st.Args.Main()
+		if c, ok := st.Args.(*module.Cmd); ok {
+			sum := sha256.Sum256([]byte(c.Command))
+			main = hex.EncodeToString(sum[:])
+		}
+		t.Mains = append(t.Mains, main)
 	}
-	return &place
+	return t
 }
 
 // checkRecord is the record of the assert step st at place, or nil for
 // another step.
-func checkRecord(st project.Step, place protocol.Then) *protocol.Check {
+func checkRecord(st project.Step, place protocol.Check) *protocol.Check {
 	if st.Module != "assert" {
 		return nil
 	}
-	return &protocol.Check{Recipe: place.Recipe, Pipeline: place.Pipeline, Stage: place.Stage, Handler: place.Handler, Step: place.Step}
+	return &place
+}
+
+// goneThens returns the then records of host that no step of the plan
+// matches, in a recipe that runs on the host, or in a stage of pl that the
+// plan checks on the host or that pl no longer has. A record of another
+// pipeline, or of a recipe or stage that the plan does not check, stays.
+func goneThens(pl *project.Pipeline, host string, hr *hostRun) []protocol.Then {
+	var gone []protocol.Then
+	for _, t := range hr.thens {
+		if t.matched {
+			continue
+		}
+		reach := false
+		switch {
+		case t.Recipe != "":
+			reach = slices.ContainsFunc(hr.ran, func(r *project.Step) bool { return r.Recipe.Name == t.Recipe })
+		case t.Pipeline == pl.Name:
+			i := slices.IndexFunc(pl.Stages, func(s project.Stage) bool { return s.Name == t.Stage })
+			reach = i < 0 || !pl.Stages[i].Skipped && slices.ContainsFunc(pl.Stages[i].Targets, func(h project.Host) bool { return h.Name == host })
+		}
+		if reach {
+			gone = append(gone, t.Then)
+		}
+	}
+	return gone
 }
 
 // goneChecks returns the records of gates and asserts that pl no longer has:

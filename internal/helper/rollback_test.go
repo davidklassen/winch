@@ -79,7 +79,7 @@ func (l *lockout) applyBoth(t *testing.T) protocol.StepResult {
 		t.Fatal(r.Error)
 	}
 	g.Confirm = true
-	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: g, Notify: []string{"ssh.restart"}, Then: &protocol.Then{Recipe: "ssh", Step: 2}})
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: g, Notify: []string{"ssh.restart"}, Then: &protocol.Then{Recipe: "ssh", Module: "file", Mains: []string{"2"}}})
 	if r.Error != "" {
 		t.Fatal(r.Error)
 	}
@@ -578,7 +578,7 @@ func TestFailedNotifiedSaveFailsTheStep(t *testing.T) {
 	mkdir(t, filepath.Dir(store))
 	write(t, store, "")
 	g := protocol.Guard{Recipe: "app", Handlers: []string{"nftables.reload"}}
-	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"nftables.reload"}, Then: &protocol.Then{Recipe: "app", Step: 1}})
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"nftables.reload"}, Then: &protocol.Then{Recipe: "app", Module: "file", Mains: []string{"1"}}})
 	if !strings.Contains(r.Error, "not a directory") {
 		t.Fatalf("apply error %q, want the failed save", r.Error)
 	}

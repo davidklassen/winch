@@ -4,6 +4,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/davidklassen/winch/internal/module"
@@ -115,22 +116,26 @@ type Boot struct {
 	Packages []string `json:"packages,omitempty"`
 }
 
-// Then is a record of a then: the place of its step, and its module and main
-// argument. Step counts from 1 in the steps of the recipe, of its handler, or
-// of the stage of the pipeline for a step of a stage. Main is that of the last
-// element of a loop.
+// Then is a record of a then: the scope of its step, and its module and main
+// arguments, one for each element of a loop.
 type Then struct {
-	Recipe   string `json:"recipe,omitempty"`
-	Pipeline string `json:"pipeline,omitempty"`
-	Stage    string `json:"stage,omitempty"`
-	Handler  string `json:"handler,omitempty"`
-	Step     int    `json:"step"`
-	Module   string `json:"module,omitempty"`
-	Main     string `json:"main,omitempty"`
+	Recipe   string   `json:"recipe,omitempty"`
+	Pipeline string   `json:"pipeline,omitempty"`
+	Stage    string   `json:"stage,omitempty"`
+	Handler  string   `json:"handler,omitempty"`
+	Module   string   `json:"module,omitempty"`
+	Mains    []string `json:"mains,omitempty"`
+}
+
+// Matches reports whether o is a record of the same step as t: the same scope
+// and module, and a main argument in common.
+func (t Then) Matches(o Then) bool {
+	return t.Recipe == o.Recipe && t.Pipeline == o.Pipeline && t.Stage == o.Stage && t.Handler == o.Handler && t.Module == o.Module &&
+		slices.ContainsFunc(t.Mains, func(m string) bool { return slices.Contains(o.Mains, m) })
 }
 
 // Command is the params of command, which runs the command and then removes
-// the record of its then.
+// the records that match its then.
 type Command struct {
 	Command string `json:"command"`
 	Then    Then   `json:"then"`
@@ -143,7 +148,9 @@ type Exec struct {
 }
 
 // Check is a record of a pending health gate or assert: the place of its
-// stage or step, as a Then has it. Step is 0 for the gate of a stage.
+// stage or step. Step counts from 1 in the steps of the recipe, of its
+// handler, or of the stage of the pipeline for a step of a stage. It is 0 for
+// the gate of a stage.
 type Check struct {
 	Recipe   string `json:"recipe,omitempty"`
 	Pipeline string `json:"pipeline,omitempty"`

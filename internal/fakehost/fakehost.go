@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -716,7 +717,7 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 			c.hosts.pending[c.host] = append(c.hosts.pending[c.host], n)
 		}
 	}
-	if then != nil && !slices.Contains(c.hosts.thens[c.host], *then) {
+	if then != nil && !slices.ContainsFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return reflect.DeepEqual(t, *then) }) {
 		c.hosts.thens[c.host] = append(c.hosts.thens[c.host], *then)
 	}
 	c.hosts.mu.Unlock()
@@ -888,7 +889,14 @@ func (c *Conn) Command(ctx context.Context, command string, then protocol.Then) 
 	if c.hosts.failCmd[c.host+" "+command] {
 		return fmt.Errorf("%s: exit status 1", command)
 	}
-	c.hosts.thens[c.host] = slices.DeleteFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return t == then })
+	c.hosts.thens[c.host] = slices.DeleteFunc(c.hosts.thens[c.host], then.Matches)
+	return nil
+}
+
+func (c *Conn) DropThen(ctx context.Context, then protocol.Then) error {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	c.hosts.thens[c.host] = slices.DeleteFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return reflect.DeepEqual(t, then) })
 	return nil
 }
 

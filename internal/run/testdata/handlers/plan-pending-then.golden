@@ -7,5 +7,10 @@ web1
     ! then: newaliases
 
 2 hosts: 1 to change, 1 unchanged, 0 unknown
-plan cedd059083de04c4
+plan 033c8ecb64e28ccc
 stderr:
+web2: a pending then of file /etc/nginx/a.conf matches no step and will not run
+web2: a pending then of file /etc/motd matches no step and will not run
+web2: a pending then of file /etc/motd matches no step and will not run
+web2: a pending then of dir /var/www/about.html matches no step and will not run
+web2: a pending then of file /etc/issue matches no step and will not run

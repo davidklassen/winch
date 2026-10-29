@@ -276,6 +276,92 @@ func TestHandlers(t *testing.T) {
 			t.Errorf("records = %q, want only v.restart", out)
 		}
 	})
+
+	t.Run("a pending then follows its step", func(t *testing.T) {
+		project := func(steps string) string {
+			return vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: tdemo\ninventory: test\n",
+				"inventories/test.yaml": "hosts:\n  handlers: {}\n",
+				"pipelines/site.yaml":   "stages:\n  - name: t\n    hosts: all\n    steps:\n" + steps,
+			})
+		}
+		const moved = `      - file:
+          path: /root/t/moved
+          content: "x\n"
+        then: test -e /root/t-ok && echo moved >> /root/t-runs
+`
+		const loop = `      - file:
+          path: !tpl /root/t/{{ .item }}
+          content: "x\n"
+        loop: [a, b]
+        then: test -e /root/t-ok && echo loop >> /root/t-runs
+`
+		const gone = `      - file:
+          path: /root/t/gone
+          content: "x\n"
+        then: test -e /root/t-ok
+`
+		const added = `      - file:
+          path: /root/t/added
+          content: "x\n"
+`
+		const record = "cat /var/lib/winch/then/tdemo 2>/dev/null; true"
+		vm.MustRun(t, "mkdir -p /root/t")
+		fails := func(steps string) {
+			t.Helper()
+			r := lab.Winch(t, project(steps), "apply", "site", "--yes")
+			if r.Code != 1 || !strings.Contains(r.Stderr, "then: test -e /root/t-ok") {
+				t.Fatalf("apply: exit %d, want the then error\n%s", r.Code, r.Stderr)
+			}
+			if vm.MustRun(t, record) == "" {
+				t.Fatal("no then record after the failed then")
+			}
+		}
+		runs := func(steps, then string) {
+			t.Helper()
+			vm.MustRun(t, "touch /root/t-ok")
+			defer vm.MustRun(t, "rm -f /root/t-ok /root/t-runs")
+			dir := project(steps)
+			r := lab.Winch(t, dir, "plan", "site")
+			if r.Code != 0 || !strings.Contains(r.Stdout, "! then: "+then) {
+				t.Fatalf("plan: exit %d, want the pending then\n%s%s", r.Code, r.Stdout, r.Stderr)
+			}
+			if r = lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+				t.Fatalf("apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+			}
+			if out := vm.MustRun(t, "cat /root/t-runs"); strings.Count(out, "\n") != 1 {
+				t.Errorf("then ran %q, want once", out)
+			}
+			if out := vm.MustRun(t, record); out != "" {
+				t.Errorf("then records = %q, want none", out)
+			}
+		}
+
+		// A step moved below a new step keeps its pending then.
+		fails(moved)
+		runs(added+moved, "test -e /root/t-ok && echo moved >> /root/t-runs")
+
+		// A loop step without its last element still matches.
+		fails(loop)
+		runs(strings.Replace(loop, "[a, b]", "[a]", 1), "test -e /root/t-ok && echo loop >> /root/t-runs")
+
+		// A step that is gone gives the note, and apply removes its record.
+		fails(gone)
+		dir := project(strings.Replace(added, "x\\n", "y\\n", 1))
+		r := lab.Winch(t, dir, "plan", "site")
+		if want := "handlers: a pending then of file /root/t/gone matches no step and will not run\n"; r.Code != 0 || r.Stderr != want {
+			t.Fatalf("plan: exit %d, stderr %q, want %q", r.Code, r.Stderr, want)
+		}
+		if r = lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+			t.Fatalf("apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if out := vm.MustRun(t, record); out != "" {
+			t.Errorf("then records = %q, want none", out)
+		}
+		if r = lab.Winch(t, dir, "plan", "site"); r.Code != 0 || r.Stderr != "" {
+			t.Errorf("second plan: exit %d, stderr %q", r.Code, r.Stderr)
+		}
+	})
 }
 
 const stageHandlerPipeline = `stages:

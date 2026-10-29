@@ -154,7 +154,7 @@ func TestHashChanges(t *testing.T) {
 		{name: "a cmd whose creates exists", setup: func(h *fakehost.Hosts) { h.SetFile("web1", "/srv/built", "") }},
 		{name: "a pending handler", setup: func(h *fakehost.Hosts) { h.SetPending("web1", "app.reload") }},
 		{name: "a pending then", setup: func(h *fakehost.Hosts) {
-			h.SetThen("web2", protocol.Then{Pipeline: "site", Stage: "extra", Step: 1})
+			h.SetThen("web2", protocol.Then{Pipeline: "site", Stage: "extra"})
 		}},
 		{name: "the stage order", files: func(t *testing.T) map[string]string {
 			files := maps.Clone(hashFiles)
