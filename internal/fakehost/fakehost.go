@@ -554,8 +554,9 @@ func (c *Conn) checkDir(d *module.Dir) module.Result {
 }
 
 // checkPkg plans the packages that SetPkgDeps makes the step's packages
-// depend on, or depend on them. The first install with a state that is not
-// fresh refreshes the index.
+// depend on, or depend on them. A removal also takes the packages that
+// depend on them in turn, and counts the packages that earlier steps install.
+// The first install with a state that is not fresh refreshes the index.
 func (c *Conn) checkPkg(p *module.Pkg, st *module.State) module.Result {
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
@@ -570,9 +571,14 @@ func (c *Conn) checkPkg(p *module.Pkg, st *module.State) module.Result {
 		if len(todo) == 0 {
 			return module.Result{Status: module.OK}
 		}
-		for n := range installed {
-			if !slices.Contains(todo, n) && slices.ContainsFunc(c.hosts.pkgDeps[n], func(d string) bool { return slices.Contains(todo, d) }) {
-				others = append(others, n)
+		gone := func(d string) bool { return slices.Contains(todo, d) || slices.Contains(others, d) }
+		for more := true; more; {
+			more = false
+			for n, deps := range c.hosts.pkgDeps {
+				if (installed[n] || slices.Contains(p.Installed, n)) && !gone(n) && slices.ContainsFunc(deps, gone) {
+					others = append(others, n)
+					more = true
+				}
 			}
 		}
 		changes := []string{"remove " + strings.Join(todo, ", ")}

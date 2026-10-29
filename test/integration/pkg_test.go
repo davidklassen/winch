@@ -567,6 +567,10 @@ func TestPkgPlanRules(t *testing.T) {
 		"pipelines/remove.yaml":  pipeline(gone + deps),
 		"pipelines/late.yaml":    pipeline(reconf + answer),
 		"pipelines/early.yaml":   pipeline(answer + reconf),
+		// winch-conflict conflicts with hello.
+		"pipelines/swap.yaml": pipeline("      - pkg:\n          name: hello\n          absent: true\n      - pkg:\n          name: winch-conflict\n" + gone),
+		// winch-uses-fragile depends on winch-fragile.
+		"pipelines/unknown.yaml": pipeline("      - pkg:\n          name: [winch-uses-fragile, winch-nowhere]\n" + gone),
 	})
 	fails := func(name, pipeline, want string) {
 		t.Helper()
@@ -592,6 +596,17 @@ func TestPkgPlanRules(t *testing.T) {
 	vm.MustRun(t, "apt-get update -q >/dev/null")
 	fails("an install that pulls a removed package", "install", "s: pkg winch-up-new: s: pkg winch-up-deps also installs winch-up-new, which this step removes"+undo)
 	fails("a removed package that an install pulls", "remove", "s: pkg winch-up-deps: this step also installs winch-up-new, which s: pkg winch-up-new removes"+undo)
+	vm.MustRun(t, "DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-up-new >/dev/null")
+	fails("a removal that takes a package of an earlier install", "install", "s: pkg winch-up-new: this step also removes winch-up-deps, which s: pkg winch-up-deps installs"+undo)
+	vm.MustRun(t, "DEBIAN_FRONTEND=noninteractive apt-get install -y -q hello >/dev/null")
+	plans := func(name, pipeline string) {
+		t.Helper()
+		if r := lab.Winch(t, dir, "plan", pipeline); r.Code != 0 {
+			t.Errorf("%s: exit %d:\n%s%s", name, r.Code, r.Stdout, r.Stderr)
+		}
+	}
+	plans("a removal after an install that replaces a removed package", "swap")
+	plans("a removal after an install with unknown dependencies", "unknown")
 	vm.MustRun(t, "DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-up-deps >/dev/null")
 	fails("a removal that takes an installed package", "install", "s: pkg winch-up-new: this step also removes winch-up-deps, which s: pkg winch-up-deps installs"+undo)
 	fails("an installed package that a removal takes", "remove", "s: pkg winch-up-deps: s: pkg winch-up-new also removes winch-up-deps, which this step installs"+undo)

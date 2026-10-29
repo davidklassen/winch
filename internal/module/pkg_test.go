@@ -172,3 +172,84 @@ func TestPkgPlan(t *testing.T) {
 		})
 	}
 }
+
+func TestInstallStanzas(t *testing.T) {
+	const status = `Package: libc6
+Status: install ok installed
+Architecture: arm64
+Version: 2.41-1
+
+Package: libc6
+Status: install ok installed
+Architecture: armhf
+Version: 2.41-1
+
+Package: old
+Status: deinstall ok config-files
+Architecture: all
+Version: 1
+Conffiles:
+ /etc/old 0123
+
+Package: hello
+Status: install ok installed
+Architecture: arm64
+Version: 2.10-5
+
+Package: half
+Status: install ok unpacked
+Architecture: all
+Version: 1
+
+`
+	const candidates = `Package: libc6
+Architecture: arm64
+Version: 2.41-2
+Description: GNU C Library
+ shared libraries
+
+Package: old
+Architecture: all
+Version: 2
+
+Package: new
+Architecture: all
+Version: 1
+
+Package: half
+Status: install ok unpacked
+Architecture: all
+Version: 1
+
+`
+	const want = `Package: libc6
+Status: install ok installed
+Architecture: armhf
+Version: 2.41-1
+
+Package: libc6
+Architecture: arm64
+Version: 2.41-2
+Description: GNU C Library
+ shared libraries
+Status: install ok installed
+
+Package: old
+Architecture: all
+Version: 2
+Status: install ok installed
+
+Package: new
+Architecture: all
+Version: 1
+Status: install ok installed
+
+Package: half
+Architecture: all
+Version: 1
+Status: install ok installed
+`
+	if got := installStanzas(status, candidates, []string{"hello"}); got != want {
+		t.Errorf("installStanzas =\n%s\nwant\n%s", got, want)
+	}
+}
