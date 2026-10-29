@@ -1340,3 +1340,36 @@ func TestSecretValidateFailsWithPlaceholders(t *testing.T) {
 		t.Errorf("shown validate = %q, want (secret)", got)
 	}
 }
+
+// spec: Modules/repo (a source file that holds a secret fails the plan)
+func TestEvalRepoSecret(t *testing.T) {
+	const msg = "holds a secret, and every user of the host can read the source file"
+	repo := func(url, suite, components string) string {
+		return "  - repo:\n      name: app\n      url: " + url + "\n      suite: " + suite + "\n      components: " + components + "\n"
+	}
+	const plain = "https://apt.example.com/debian"
+	for _, tt := range []struct {
+		name, step, want string
+	}{
+		{"secret in the url path", repo(`!tpl "https://apt.example.com/{{ .vars.pw }}/debian"`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg},
+		{"a default that reads a secret", repo(`!tpl "https://apt.example.com/{{ .vars.line }}"`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg},
+		{"a secret of a host from match", repo(`!expr '"https://apt.example.com/" + match("web1")[0].vars.pw'`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg},
+		{"a loop over secrets", repo(`!tpl "https://apt.example.com/{{ .item }}"`, "trixie", "[main]") + "    loop: !expr values(vars.users)\n", "recipes/r/recipe.yaml:4:12: url: " + msg},
+		{"suite", repo(plain, "!expr vars.pw", "[main]"), "recipes/r/recipe.yaml:5:14: suite: " + msg},
+		{"components", repo(plain, "trixie", "!expr '[vars.pw]'"), "recipes/r/recipe.yaml:6:19: components: " + msg},
+		{"a plain field of a map with a secret", repo(`!tpl "https://apt.example.com/{{ .vars.users.bob }}"`, "trixie", "[main]"), ""},
+		{"a plain url in a loop over secrets", repo(plain, "trixie", "[main]") + "    loop: !expr values(vars.users)\n", ""},
+		{"no secret", repo(`!tpl "https://apt.example.com/{{ .vars.short }}"`, "trixie", "[main]"), ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := evalSecret(t, tt.step, nil)
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("error = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

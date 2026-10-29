@@ -1390,10 +1390,25 @@ func (st Step) runs(e *Env) (bool, error) {
 // An error shows each part that comes from a secret as secret.Mark.
 func (st Step) Eval(e *Env) ([]Step, error) {
 	out, err := st.eval(e)
-	return out, e.masked(err, func(v *Env) error {
-		_, err := st.eval(v)
-		return err
-	})
+	if err != nil {
+		return nil, e.masked(err, func(v *Env) error {
+			_, err := st.eval(v)
+			return err
+		})
+	}
+	for _, s := range out {
+		if s.Shown == nil || s.Shown.Public == "" {
+			continue
+		}
+		pos := st.Pos
+		if st.args != nil {
+			if p := find(st.args.node, []string{s.Shown.Public}); p != nil {
+				pos = p.Value.Pos
+			}
+		}
+		return nil, yamlx.Errorf(pos, "%s: holds a secret, and every user of the host can read the source file", s.Shown.Public)
+	}
+	return out, nil
 }
 
 // eval returns the steps for the variant of e. In the real variant of a
@@ -1602,12 +1617,36 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 			}
 		}
 	}
+	if r, ok := s.Args.(*module.Repo); ok {
+		sh.Public = publicRepo(r, mods, argsOK)
+	}
 	e.learn(parts)
 	reads := !argsOK || !contentOK || slices.ContainsFunc(parts, func(p string) bool { return p != "" })
-	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Lines == nil && !sh.Hidden {
+	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Lines == nil && !sh.Hidden && sh.Public == "" {
 		return nil, reads
 	}
 	return sh, reads
+}
+
+// publicRepo returns the argument of r, the repo of the real variant, that
+// holds a secret: one that differs in the variants mods. When a variant
+// fails, it returns "repo".
+func publicRepo(r *module.Repo, mods [3]module.Module, argsOK bool) string {
+	if !argsOK {
+		return "repo"
+	}
+	for _, m := range mods[1:] {
+		v := m.(*module.Repo)
+		switch {
+		case v.URL != r.URL:
+			return "url"
+		case v.Suite != r.Suite:
+			return "suite"
+		case !slices.Equal(v.Components, r.Components):
+			return "components"
+		}
+	}
+	return ""
 }
 
 // Written returns the paths that the steps for the host h write, in every
