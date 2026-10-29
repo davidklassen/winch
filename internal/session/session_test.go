@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -811,5 +812,47 @@ func TestOpenBatchHint(t *testing.T) {
 				t.Errorf("error %v, want %q and unreachable", err, tt.want)
 			}
 		})
+	}
+}
+
+// spec: CLI/Output (progress)
+func TestHoldDuringLogin(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	var log []string
+	var progress bytes.Buffer
+	s, err := Open(context.Background(), Config{
+		Host: "web1", Address: "web1", Dir: t.TempDir(),
+		Binaries: []helperbin.Binary{helperbin.New("arm64", []byte("#!/bin/sh\nread -r line\necho '{\"id\":1,\"result\":{}}'\ncat >/dev/null\n"))},
+		Hello:    protocol.Hello{Run: "r1"},
+		Progress: plain(&progress),
+		Hold: func() func() {
+			log = append(log, "hold")
+			return func() { log = append(log, "resume after "+strconv.Quote(progress.String())) }
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if want := []string{"hold", `resume after ""`}; !slices.Equal(log, want) {
+		t.Errorf("holds %q, want %q", log, want)
+	}
+
+	log = nil
+	t.Setenv("SSH_FAIL_ONCE", filepath.Join(t.TempDir(), "failed"))
+	t.Setenv("SSH_FAIL_ERR", "Permission denied (publickey).")
+	t.Setenv("SSH_FAIL_CODE", "255")
+	progress.Reset()
+	if _, err := Open(context.Background(), Config{Host: "web1", Address: "web1", Dir: t.TempDir(),
+		Hello: protocol.Hello{Run: "r1"}, Progress: plain(&progress),
+		Hold: func() func() {
+			log = append(log, "hold")
+			return func() { log = append(log, "resume") }
+		},
+	}); err == nil {
+		t.Fatal("open did not fail")
+	}
+	if want := []string{"hold", "resume"}; !slices.Equal(log, want) {
+		t.Errorf("holds after a failed login %q, want %q", log, want)
 	}
 }

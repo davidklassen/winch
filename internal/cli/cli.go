@@ -54,6 +54,8 @@ type Env struct {
 	// Connect returns the function that opens sessions. With batch, ssh asks
 	// no questions.
 	Connect func(batch bool) run.Connect
+	// Progress is nil, or shows the busy hosts.
+	Progress run.Progress
 	// Home is the home directory, or empty when it is not known.
 	Home string
 	// AgeKey is the value of WINCH_AGE_KEY.
@@ -490,7 +492,7 @@ func (o *output) loadWith(f *flags, cmd string, load func(project.Keys) (*projec
 // start one at a time.
 func (env Env) sessions(f *flags) (run.Connect, run.Options) {
 	serial := env.Terminal && !f.batch
-	return env.Connect(!serial), run.Options{Serial: serial}
+	return env.Connect(!serial), run.Options{Serial: serial, Progress: env.Progress}
 }
 
 // failedCode is the exit code of the failed hosts: 1 when one failed, 4

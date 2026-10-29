@@ -19,3 +19,19 @@ func IsTerminal(f *os.File) bool {
 func UseColor(terminal bool, getenv func(string) string) bool {
 	return terminal && getenv("NO_COLOR") == "" && getenv("TERM") != "dumb"
 }
+
+// TerminalWidth returns the number of columns of the terminal f, or 0.
+func TerminalWidth(f *os.File) int {
+	var ws struct{ row, col, x, y uint16 }
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), syscall.TIOCGWINSZ, uintptr(unsafe.Pointer(&ws)))
+	if errno != 0 {
+		return 0
+	}
+	return int(ws.col)
+}
+
+// StatusLines reports whether the progress keeps status lines on stderr:
+// stdout and stderr are terminals, and TERM is not dumb.
+func StatusLines(stdout, stderr bool, getenv func(string) string) bool {
+	return stdout && stderr && getenv("TERM") != "dumb"
+}

@@ -48,6 +48,9 @@ type Config struct {
 	Binaries []helperbin.Binary
 	Hello    protocol.Hello
 	Progress *color.Writer
+	// Hold is nil, or hides the progress until the function it returns runs.
+	// It covers the login, where ssh can ask a question on the terminal.
+	Hold func() func()
 	// RetryDelay is the wait before another ssh start: the retry of a
 	// dropped connection, and each connect after a reboot. Zero means 2s.
 	RetryDelay time.Duration
@@ -231,10 +234,16 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	cmd.Stderr = s.stderr
 	// A child of ssh, such as a ProxyCommand, can keep stderr open.
 	cmd.WaitDelay = 5 * time.Second
+	resume := func() {}
+	if cfg.Hold != nil {
+		resume = cfg.Hold()
+	}
 	if err := cmd.Start(); err != nil {
+		resume()
 		return nil, false, fmt.Errorf("start ssh: %w", err)
 	}
 	line, err := s.stdout.ReadString('\n')
+	resume()
 	if err != nil {
 		err = s.fail(err)
 		if s.cmd.ProcessState.ExitCode() == 255 {

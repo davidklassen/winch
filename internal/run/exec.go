@@ -29,7 +29,7 @@ type ExecResult struct {
 func Exec(ctx context.Context, proj string, hosts []project.Host, command string, connect Connect, opts Options) []ExecResult {
 	results := make([]ExecResult, len(hosts))
 	open := func(h project.Host) (Conn, error) { return connect(context.WithoutCancel(ctx), proj, h) }
-	errs := rollout(ctx, "exec", hosts, 0, opts.Serial, open, func(i int, c Conn) error {
+	errs := rollout(ctx, "exec", hosts, 0, opts, open, func(i int, c Conn) error {
 		if ctx.Err() != nil {
 			return errors.Join(ErrInterrupted, c.Close())
 		}
