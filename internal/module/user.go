@@ -44,6 +44,9 @@ type User struct {
 	keys     bool
 	// keyHome is the home of the keys that Apply writes.
 	keyHome string
+	// missing marks a step that only adds groups to a user that does not
+	// exist.
+	missing bool
 	// loginGroups holds the groups of the login user before a step that
 	// adds groups to it.
 	loginGroups *[]string
@@ -177,6 +180,8 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 			return Result{}, err
 		}
 		res, home, group, err = u.checkExisting(a, cur)
+	} else if u.OnlyAddsGroups() {
+		return u.checkMissing(a), nil
 	} else {
 		if err := checkNewAccount("user", u.Name); err != nil {
 			return Result{}, err
@@ -219,6 +224,27 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 		}
 	}
 	return res, nil
+}
+
+// OnlyAddsGroups reports whether the step has only name and add_groups. Such a
+// step does not create the user.
+func (u *User) OnlyAddsGroups() bool {
+	return u.AddGroups != nil && u.UID == "" && u.Group == "" && !u.System && u.Home == "" && u.Shell == "" && u.Password == "" && u.Comment == "" && u.AuthorizedKeys == nil
+}
+
+// checkMissing plans the groups of a step that only adds groups to a user that
+// does not exist yet. An earlier step can create the user.
+func (u *User) checkMissing(a accounts) Result {
+	u.missing = true
+	changes := []string{"user does not exist yet"}
+	for _, g := range *u.AddGroups {
+		line := "add to group " + g
+		if _, ok := a.group(g); !ok {
+			line += " (does not exist yet)"
+		}
+		changes = append(changes, line)
+	}
+	return Result{Status: Change, Action: Modify, Changes: changes}
 }
 
 // checkLogin fails when the step changes a field of the login user that the
@@ -862,6 +888,9 @@ func prefixed(p string, fi fs.FileInfo, owner, group string, mode uint32) ([]str
 }
 
 func (u *User) Apply(ctx context.Context, _ func(string)) error {
+	if u.missing {
+		return fmt.Errorf("user %s does not exist", u.Name)
+	}
 	if u.account != nil {
 		if _, err := run(ctx, nil, u.account[0], u.account[1:]...); err != nil {
 			return err

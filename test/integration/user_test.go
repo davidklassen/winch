@@ -311,11 +311,20 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			After: `[ "$(id -nG wtalice)" = "wtalice adm wtgrp" ]`,
 		},
 		{
-			Name:  "create with add_groups",
+			Name:  "create with a shell and add_groups",
 			Setup: `groupadd wtgrp`,
-			Args:  &module.User{Name: "wtalice", AddGroups: &[]string{"wtgrp"}},
-			Want:  create("group wtalice (new)", "home /home/wtalice (owner wtalice, group wtalice, mode 0700, files from /etc/skel)", "shell /bin/sh", "groups wtgrp"),
+			Args:  &module.User{Name: "wtalice", Shell: "/bin/bash", AddGroups: &[]string{"wtgrp"}},
+			Want:  create("group wtalice (new)", "home /home/wtalice (owner wtalice, group wtalice, mode 0700, files from /etc/skel)", "shell /bin/bash", "groups wtgrp"),
 			After: `[ "$(id -nG wtalice)" = "wtalice wtgrp" ]`,
+		},
+		{
+			Name:         "add_groups on a missing user",
+			Setup:        `groupadd wtgrp`,
+			Args:         &module.User{Name: "wtalice", AddGroups: &[]string{"wtgrp"}},
+			Want:         change("user does not exist yet", "add to group wtgrp"),
+			WantApplyErr: "user wtalice does not exist",
+			Fix:          "useradd -m -U -G adm wtalice",
+			After:        `! getent passwd wtalice`,
 		},
 		{
 			Name:  "add_groups to the login user",
@@ -881,6 +890,7 @@ func TestUserAddGroupsCombine(t *testing.T) {
 		"recipes/docker/recipe.yaml": "steps:\n  - user:\n      name: wtdev\n      add_groups: [wtgrp]\n",
 		"recipes/web/recipe.yaml":    "steps:\n  - user:\n      name: wtdev\n      add_groups: [wtother]\n",
 		"pipelines/site.yaml":        "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: docker\n      - recipe: web\n",
+		"pipelines/create.yaml":      "stages:\n  - name: s\n    hosts: all\n    steps:\n      - user:\n          name: wtnew\n      - user:\n          name: wtnew\n          add_groups: [wtgrp]\n",
 		"pipelines/exact.yaml":       "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: docker\n      - user:\n          name: wtdev\n          groups: [adm]\n",
 	}
 	dir := vmtest.WriteProject(t, files)
@@ -895,6 +905,14 @@ func TestUserAddGroupsCombine(t *testing.T) {
 	r = lab.Winch(t, dir, "plan", "site")
 	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+	if r := lab.Winch(t, dir, "apply", "create", "--yes"); r.Code != 0 {
+		t.Fatalf("apply create: exit %d: %s", r.Code, r.Stderr)
+	}
+	vm.MustRun(t, `[ "$(id -nG wtnew)" = "wtnew wtgrp" ] && [ -d /home/wtnew ]`)
+	r = lab.Winch(t, dir, "plan", "create")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan create: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 	r = lab.Winch(t, dir, "plan", "exact")
 	want := "s: user wtdev: the user wtdev is also in docker: user wtdev, with other arguments"
