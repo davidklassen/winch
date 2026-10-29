@@ -23,7 +23,10 @@ import (
 // On Ubuntu, every SSH login runs landscape-sysinfo when its cache is older
 // than a minute. It takes seconds of CPU, so the first login after a minute
 // without one can miss a test's deadline.
+// Ubuntu resolves the host name only through DNS, which an offline VM does
+// not reach, so each lookup of it waits 10 s. /etc/hosts answers at once.
 const userData = `#cloud-config
+manage_etc_hosts: true
 users:
   - name: admin
     primary_group: admin

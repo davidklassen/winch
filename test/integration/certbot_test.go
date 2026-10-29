@@ -54,22 +54,26 @@ func issue(args string) string {
 
 const keySum = "sha256sum /etc/letsencrypt/live/a.example.com/privkey.pem"
 
+const certbotReset = `rm -rf /etc/letsencrypt/accounts /etc/letsencrypt/live/* /etc/letsencrypt/archive/* /etc/letsencrypt/renewal/* /root/deployed /root/key.sum /root/hook-ok
+systemctl stop apache2
+systemctl start nginx
+md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.conf /etc/apache2/sites-enabled/* > /root/web.md5`
+
+const webUnchanged = "md5sum -c --quiet /root/web.md5"
+
+// sans checks the names of the certificate a.example.com.
+func sans(names string) string {
+	return "openssl x509 -in /etc/letsencrypt/live/a.example.com/cert.pem -noout -ext subjectAltName | grep -qx '    " + names + "'"
+}
+
 // spec: Modules/certbot; Modules (commands)
 func TestCertbotModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "certbot")
 	startPebble(t, vm)
-	reset := `rm -rf /etc/letsencrypt/accounts /etc/letsencrypt/live/* /etc/letsencrypt/archive/* /etc/letsencrypt/renewal/* /root/deployed /root/key.sum /root/hook-ok
-systemctl stop apache2
-systemctl start nginx
-md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.conf /etc/apache2/sites-enabled/* > /root/web.md5`
-	sans := func(names string) string {
-		return "openssl x509 -in /etc/letsencrypt/live/a.example.com/cert.pem -noout -ext subjectAltName | grep -qx '    " + names + "'"
-	}
-	webUnchanged := "md5sum -c --quiet /root/web.md5"
 	ab := []string{"a.example.com", "b.example.com"}
 	deployed := "echo deployed >> /root/deployed"
-	vmtest.RunCases(t, vm, "certbot", reset, []vmtest.Case{
+	vmtest.RunCases(t, vm, "certbot", certbotReset, []vmtest.Case{
 		{
 			Name:      "first issue",
 			Args:      &module.Certbot{Name: "a.example.com", Domains: ab, Email: "admin@example.com", DeployHook: &deployed},
@@ -122,6 +126,21 @@ md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.con
 			After: "! grep -q pre_hook /etc/letsencrypt/renewal/a.example.com.conf",
 		},
 		{
+			Name:    "a renewal file without its certificate",
+			Setup:   issue("--cert-name a.example.com -d a.example.com") + "rm -r /etc/letsencrypt/live/a.example.com",
+			Args:    &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com"},
+			WantErr: "certbot delete --cert-name a.example.com",
+		},
+	})
+}
+
+// spec: Modules/certbot; Modules (commands)
+func TestCertbotModuleHooksAndAuthenticators(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "certbot-hooks")
+	startPebble(t, vm)
+	vmtest.RunCases(t, vm, "certbot", certbotReset, []vmtest.Case{
+		{
 			Name:  "a hook of several lines, with white space at the end of its first line",
 			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: new("echo one >> /root/deployed \necho two >> /root/deployed\n")},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook\necho one >> /root/deployed \necho two >> /root/deployed"}},
@@ -132,12 +151,6 @@ md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.con
 			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: new("test \"$X\" = '' && echo 'one' >> /root/deployed\necho '\"\"\"' >> /root/deployed\necho \"'''\" >> /root/deployed")},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook\ntest \"$X\" = '' && echo 'one' >> /root/deployed\necho '\"\"\"' >> /root/deployed\necho \"'''\" >> /root/deployed"}},
 			After: `[ "$(cat /root/deployed)" = "$(printf "one\n\"\"\"\n'''")" ] && { certbot renew --dry-run --no-random-sleep-on-renew --cert-name a.example.com >/root/renew.log 2>&1 || { cat /root/renew.log; exit 1; }; }`,
-		},
-		{
-			Name:    "a renewal file without its certificate",
-			Setup:   issue("--cert-name a.example.com -d a.example.com") + "rm -r /etc/letsencrypt/live/a.example.com",
-			Args:    &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com"},
-			WantErr: "certbot delete --cert-name a.example.com",
 		},
 		{
 			Name:         "a failing deploy_hook fails the step",
