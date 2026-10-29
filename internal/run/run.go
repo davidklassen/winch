@@ -4,6 +4,8 @@ package run
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -392,7 +394,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		if ctx.Err() != nil {
 			return nil, ErrInterrupted
 		}
-		where := scope(stage, p) + ": " + label(p.Step)
+		where := scope(stage, p) + ": " + oneLine(label(p.Step))
 		if err := hr.repo(&steps[i].Step, where); err != nil {
 			return nil, err
 		}
@@ -954,19 +956,39 @@ func thenRecord(steps []project.Step, place protocol.Then) *protocol.Then {
 	}
 	last := steps[len(steps)-1]
 	place.Module, place.Main = last.Module, last.Args.Main()
+	if c, ok := last.Args.(*module.Cmd); ok {
+		sum := sha256.Sum256([]byte(c.Command))
+		place.Main = hex.EncodeToString(sum[:])
+	}
 	return &place
 }
 
-// label is the text of a step in the plan and the logs.
+// label is the text of a step in JSON events, with each line of a command of
+// several lines.
 func label(st project.Step) string {
-	l := st.Module
+	l := stepHead(st)
 	if m := st.ShownMain(); m != "" {
 		l += " " + m
 	}
+	return secret.PrintableLines(l)
+}
+
+// stepHead is the label of a step without its main argument.
+func stepHead(st project.Step) string {
 	if st.Name != "" {
-		l = st.Name + ": " + l
+		return st.Name + ": " + st.Module
 	}
-	return secret.Printable(l)
+	return st.Module
+}
+
+// oneLine is a label for a line of text: its first line, and " ..." when it
+// has more.
+func oneLine(label string) string {
+	first, rest, _ := strings.Cut(label, "\n")
+	if rest != "" {
+		return first + " ..."
+	}
+	return first
 }
 
 var marks = map[module.Action]string{module.Create: "+", module.Modify: "~", module.Remove: "-"}
@@ -984,7 +1006,8 @@ func maskOldSecrets(s project.Step, res *module.Result) {
 		}
 	case *module.Certbot:
 		for j, c := range res.Changes {
-			if key, _, _ := strings.Cut(c, " "); strings.HasSuffix(key, "_hook") {
+			key, _, _ := strings.Cut(c, " ")
+			if key, _, _ = strings.Cut(key, "\n"); strings.HasSuffix(key, "_hook") {
 				res.Changes[j] = key + " (secret)"
 			}
 		}

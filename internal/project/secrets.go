@@ -17,6 +17,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -247,8 +248,9 @@ func maskError(err error, alt [2]error) error {
 
 // Shown is how the output shows a step whose evaluation reads a secret.
 type Shown struct {
-	Main string
-	Then string
+	Main     string
+	Then     string
+	Validate string
 	// Lines are the lines of the content with their masks, or nil when the
 	// content holds no secret.
 	Lines []secret.Line
@@ -270,6 +272,17 @@ func (st Step) ShownThen() string {
 		return st.Shown.Then
 	}
 	return st.Then
+}
+
+// ShownValidate is the validate command as the output shows it.
+func (st Step) ShownValidate() string {
+	if st.Shown != nil {
+		return st.Shown.Validate
+	}
+	if v, ok := st.Args.(module.WithValidate); ok {
+		return v.ValidateCommand()
+	}
+	return ""
 }
 
 // Recipients returns the recipients in winch.yaml.

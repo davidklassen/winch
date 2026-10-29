@@ -174,7 +174,7 @@ func TestCommandMain(t *testing.T) {
 		want    string
 	}{
 		{"make install", "make install"},
-		{"cd /srv\nmake install\n", "cd /srv ..."},
+		{"cd /srv\nmake install\n", "cd /srv\nmake install"},
 		{"make install\n", "make install"},
 	}
 	for _, tt := range tests {

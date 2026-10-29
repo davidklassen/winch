@@ -41,6 +41,8 @@ type StepEvent struct {
 	Changes []string `json:"changes,omitempty"`
 	Diff    []string `json:"diff,omitempty"`
 	Then    string   `json:"then,omitempty"`
+	// Validate is the validate command that apply runs.
+	Validate string `json:"validate,omitempty"`
 	// ThenPending is true for a then that a run before left pending.
 	ThenPending bool   `json:"then_pending,omitempty"`
 	Error       string `json:"error,omitempty"`
@@ -106,7 +108,7 @@ func (t text) Step(ev StepEvent) {
 		if ev.Note != "" {
 			note = " (" + ev.Note + ")"
 		}
-		markLine(&line, ev.Host+": "+ev.scope()+": ", marks[module.Action(ev.Action)], " "+ev.label()+linkNote(ev.Link)+note+"\n")
+		markLine(&line, ev.Host+": "+ev.scope()+": ", marks[module.Action(ev.Action)], " "+oneLine(ev.label())+linkNote(ev.Link)+note+"\n")
 	}
 	if line != nil {
 		color.Fprint(t.out, line)
@@ -363,7 +365,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 		}
 		ev := stepEvent(a.host, stage, p)
 		ev.Handler, ev.Step, ev.Module = handler, label(p.Step), p.Step.Module
-		l := ev.label()
+		l := oneLine(ev.label())
 		a.progress.Busy(a.host, ev.scope()+": "+l)
 		res, err := a.step(ctx, ev, l, p, guard(stage, p))
 		changed = changed || res.Status == module.Change
@@ -509,7 +511,10 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	ev.Link = secret.Printable(res.Link)
 	maskOldSecrets(p.Step, &res)
 	for _, c := range res.Changes {
-		ev.Changes = append(ev.Changes, secret.Printable(c))
+		ev.Changes = append(ev.Changes, secret.PrintableLines(c))
+	}
+	if res.Validates {
+		ev.Validate = secret.PrintableLines(p.Step.ShownValidate())
 	}
 	a.rep.Step(ev)
 	if res.Status == module.Change {

@@ -1527,14 +1527,21 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 		mods[n], args[n] = v.Args, a
 	}
 	sh := &Shown{Main: secret.Mark}
+	validate := s.ShownValidate()
+	if validate != "" {
+		sh.Validate = secret.Mark
+	}
 	var parts []string
 	if argsOK {
-		sh.Main, _ = secret.Mask(mods[0].Main(), mods[1].Main(), mods[2].Main())
+		sh.Main, _ = secret.MaskLines(mods[0].Main(), mods[1].Main(), mods[2].Main())
+		if validate != "" {
+			sh.Validate, _ = secret.MaskLines(validate, mods[1].(module.WithValidate).ValidateCommand(), mods[2].(module.WithValidate).ValidateCommand())
+		}
 		parts = secret.Parts(args[0], args[1], args[2])
 	}
-	var part string
-	sh.Then, part = secret.Mask(thens[0], thens[1], thens[2])
-	parts = append(parts, part)
+	var thenParts []string
+	sh.Then, thenParts = secret.MaskLines(thens[0], thens[1], thens[2])
+	parts = append(parts, thenParts...)
 	var data [3][]byte
 	for n := range mods {
 		if t, ok := mods[n].(module.WithText); ok {
@@ -1556,7 +1563,7 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 	}
 	e.learn(parts)
 	reads := !argsOK || !contentOK || slices.ContainsFunc(parts, func(p string) bool { return p != "" })
-	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Lines == nil && !sh.Hidden {
+	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Lines == nil && !sh.Hidden {
 		return nil, reads
 	}
 	return sh, reads

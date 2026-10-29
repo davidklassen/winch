@@ -1,0 +1,43 @@
+stdout:
+web1
+  base
+    ? Clean: cmd
+        true
+        rm -rf /srv/x
+    * assert
+        test -d /srv
+        test -d /etc
+    + file /etc/nginx/nginx.conf
+        owner root, group root, mode 0644
+        @@ -0,0 +1,1 @@
+        +events {}
+        validate: nginx -t
+    + file /etc/motd
+        owner root, group root, mode 0644
+        @@ -0,0 +1,1 @@
+        +hello
+        validate:
+          grep -q hello /etc/motd
+          test -s /etc/motd
+    ~ file /etc/app.conf
+        mode 0600 → 0644
+    ~ certbot example.com
+        deploy_hook
+            systemctl reload nginx
+            systemctl reload dovecot
+        pre_hook true ... →
+            systemctl stop nginx
+            sleep 1
+
+1 host: 1 to change, 0 unchanged, 0 unknown
+plan 072e0d32aa8a4e1d
+json:
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"Clean: cmd true\nrm -rf /srv/x","module":"cmd","status":"unknown"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:base#2","stage":"base","step":"assert test -d /srv\ntest -d /etc","module":"assert","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:base#3","stage":"base","step":"file /etc/nginx/nginx.conf","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+events {}"],"validate":"nginx -t"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:base#4","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hello"],"validate":"grep -q hello /etc/motd\ntest -s /etc/motd\n"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:base#5","stage":"base","step":"file /etc/issue","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:base#6","stage":"base","step":"file /etc/app.conf","module":"file","status":"change","action":"change","changes":["mode 0600 → 0644"]}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:base#7","stage":"base","step":"certbot example.com","module":"certbot","status":"change","action":"change","changes":["deploy_hook\nsystemctl reload nginx\nsystemctl reload dovecot","pre_hook true ... →\nsystemctl stop nginx\nsleep 1"]}
+{"type":"host","time":"0001-01-01T00:00:00Z","phase":"plan","host":"web1","status":"change"}
+stderr:

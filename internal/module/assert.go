@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -13,7 +14,7 @@ type Assert struct {
 	Message string `yaml:"message,required" json:"message"`
 }
 
-func (a *Assert) Main() string { return firstLine(a.Command) }
+func (a *Assert) Main() string { return strings.TrimSuffix(a.Command, "\n") }
 
 func (a *Assert) Validate() error {
 	if err := checkCommand("command", &a.Command); err != nil {

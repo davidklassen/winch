@@ -3,13 +3,17 @@ package run_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
 )
@@ -135,7 +139,8 @@ func TestPendingThenOfCmdCounts(t *testing.T) {
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: app migrate\n        then: echo done\n",
 	}
 	h := fakehost.New()
-	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Step: 1, Module: "cmd", Main: "app migrate"})
+	sum := sha256.Sum256([]byte("app migrate"))
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Step: 1, Module: "cmd", Main: hex.EncodeToString(sum[:])})
 	plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{})
 	if change, _, unknown, _ := plan.Counts(); change != 1 || unknown != 0 {
 		t.Errorf("counts: %d to change, %d unknown; want a pending then to count as a change", change, unknown)
@@ -212,5 +217,114 @@ func TestAssertOnly(t *testing.T) {
 	}
 	if ok, got := applyAll(t, p, h); !ok || len(h.Log["web1"]) != 0 {
 		t.Errorf("apply ran %q:\n%s", h.Log["web1"], got)
+	}
+}
+
+// spec: CLI/Output (a command of several lines); CLI/JSON output; Modules/file, dir, link (validate)
+func TestPlanShowsCommands(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - name: Clean
+        cmd:
+          command: |
+            true
+            rm -rf /srv/x
+      - assert:
+          command: |
+            test -d /srv
+            test -d /etc
+          message: no /srv
+      - file:
+          path: /etc/nginx/nginx.conf
+          content: "events {}\n"
+          validate: nginx -t
+      - file:
+          path: /etc/motd
+          content: "hello\n"
+          validate: |
+            grep -q hello /etc/motd
+            test -s /etc/motd
+      - file:
+          path: /etc/issue
+          content: "Debian\n"
+          validate: "false"
+      - file:
+          path: /etc/app.conf
+          content: "a\n"
+          validate: app check
+      - certbot:
+          name: example.com
+          domains: [example.com]
+          email: admin@example.com
+          pre_hook: |
+            systemctl stop nginx
+            sleep 1
+          deploy_hook: |
+            systemctl reload nginx
+            systemctl reload dovecot
+`,
+	}
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/issue", "Debian\n")
+	// Only the mode changes, so apply runs no validate.
+	h.SetResult("web1", "/etc/app.conf", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"mode 0600 → 0644"}})
+	h.SetResult("web1", "example.com", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{
+		"deploy_hook\nsystemctl reload nginx\nsystemctl reload dovecot",
+		"pre_hook true ... →\nsystemctl stop nginx\nsleep 1",
+	}})
+	p := &progress{calls: map[string][]string{}}
+	plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{Progress: p})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	out.WriteString("json:\n")
+	plan.WriteJSON(run.NewEvents(plain(&out), func() time.Time { return time.Time{} }))
+	golden.Assert(t, filepath.Join("testdata", "plan", "commands.golden"), output(&out, &errOut))
+
+	out.Reset()
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+		t.Fatal(errOut.String())
+	}
+	if want := "web1: base: ~ Clean: cmd true ...\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("apply has no line %q:\n%s", want, out.String())
+	}
+	if !slices.Contains(p.calls["web1"], "base: Clean: cmd true ...") || slices.ContainsFunc(p.calls["web1"], func(c string) bool { return strings.Contains(c, "\n") }) {
+		t.Errorf("progress %q, want one line per text", p.calls["web1"])
+	}
+	out.Reset()
+	h = fakehost.New()
+	h.SetFile("web1", "/etc/issue", "Debian\n")
+	plan = run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{})
+	if !run.Apply(context.Background(), plan, h.Connector(), run.NewEvents(plain(&out), func() time.Time { return time.Time{} })).OK() {
+		t.Fatal(errOut.String())
+	}
+	if want := `"step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"validate":"grep -q hello /etc/motd\ntest -s /etc/motd\n"}`; !strings.Contains(out.String(), want) {
+		t.Errorf("the applied events have no %q:\n%s", want, out.String())
+	}
+	if want := `"step":"file /etc/issue","module":"file","status":"ok"}`; !strings.Contains(out.String(), want) {
+		t.Errorf("the applied events have no %q:\n%s", want, out.String())
+	}
+}
+
+// spec: Steps (the record of a then holds a hash of the command of a cmd)
+func TestThenRecordOfCmd(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: \"true\\nnotify --token abc\"\n        then: echo done\n",
+	}
+	h := fakehost.New()
+	h.FailCommand("web1", "echo done")
+	if ok, got := applyAll(t, loadFiles(t, files), h); ok {
+		t.Fatalf("apply passed:\n%s", got)
+	}
+	sum := sha256.Sum256([]byte("true\nnotify --token abc"))
+	want := protocol.Then{Pipeline: "site", Stage: "base", Step: 1, Module: "cmd", Main: hex.EncodeToString(sum[:])}
+	if got := h.ThenOf("web1"); len(got) != 1 || got[0] != want {
+		t.Errorf("then records = %+v, want %+v", got, want)
 	}
 }

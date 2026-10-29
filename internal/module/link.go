@@ -23,6 +23,13 @@ type Link struct {
 
 func (l *Link) Main() string { return l.Path }
 
+func (l *Link) ValidateCommand() string {
+	if l.Validation == nil {
+		return ""
+	}
+	return *l.Validation
+}
+
 func (l *Link) Validate() error {
 	if err := checkPath(l.Path); err != nil {
 		return err
@@ -85,7 +92,7 @@ func (l *Link) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{Status: Change, Action: Modify, Changes: []string{line, "target " + *l.Target}}, nil
+		return Result{Status: Change, Action: Modify, Changes: []string{line, "target " + *l.Target}, Validates: l.Validation != nil}, nil
 	}
 	switch {
 	case l.Absent && !exists:
@@ -93,7 +100,7 @@ func (l *Link) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	case l.Absent:
 		return Result{Status: Change, Action: Remove}, nil
 	case !exists:
-		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), "target "+*l.Target)}, nil
+		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), "target "+*l.Target), Validates: l.Validation != nil}, nil
 	}
 	cur, err := dir.Readlink(name)
 	if err != nil {
@@ -102,7 +109,7 @@ func (l *Link) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	if cur == *l.Target {
 		return Result{Status: OK}, nil
 	}
-	return Result{Status: Change, Action: Modify, Changes: []string{"target " + cur + " → " + *l.Target}}, nil
+	return Result{Status: Change, Action: Modify, Changes: []string{"target " + cur + " → " + *l.Target}, Validates: l.Validation != nil}, nil
 }
 
 func (l *Link) Apply(ctx context.Context, _ func(string)) error {

@@ -102,9 +102,12 @@ func writePlanned(e *Events, host string, stage *project.Stage, steps []Planned)
 		if p.Result.Status == module.Change {
 			ev.Link = secret.Printable(p.Result.Link)
 			for _, c := range p.Result.Changes {
-				ev.Changes = append(ev.Changes, secret.Printable(c))
+				ev.Changes = append(ev.Changes, secret.PrintableLines(c))
 			}
 			ev.Diff = diffLines(p.Step, p.Result)
+			if p.Result.Validates {
+				ev.Validate = secret.PrintableLines(p.Step.ShownValidate())
+			}
 		}
 		if p.ThenRuns {
 			ev.Then, ev.ThenPending = secret.PrintableLines(p.Step.ShownThen()), p.PendingThen

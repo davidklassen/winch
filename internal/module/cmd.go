@@ -24,17 +24,7 @@ type Cmd struct {
 	Timeout *int   `yaml:"timeout" json:"timeout,omitempty"`
 }
 
-func (c *Cmd) Main() string { return firstLine(c.Command) }
-
-// firstLine is a command for a step line: its first line, and " ..." when it
-// has more.
-func firstLine(command string) string {
-	first, rest, _ := strings.Cut(strings.TrimSuffix(command, "\n"), "\n")
-	if rest != "" {
-		return first + " ..."
-	}
-	return first
-}
+func (c *Cmd) Main() string { return strings.TrimSuffix(c.Command, "\n") }
 
 func (c *Cmd) Validate() error {
 	if err := checkCommand("command", &c.Command); err != nil {
