@@ -48,6 +48,13 @@ type File struct {
 
 func (f *File) Main() string { return f.Path }
 
+func (f *File) ValidateCommand() string {
+	if f.Validation == nil {
+		return ""
+	}
+	return *f.Validation
+}
+
 func (f *File) Validate() error {
 	if err := checkPath(f.Path); err != nil {
 		return err
@@ -293,18 +300,18 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	switch {
 	case !exists:
 		changes := slices.Concat(parentChanges(missing), content, []string{want})
-		return Result{Status: Change, Action: Create, Changes: changes, Old: old, SourceSHA256: srcSum}, nil
+		return Result{Status: Change, Action: Create, Changes: changes, Old: old, SourceSHA256: srcSum, Validates: f.Validation != nil}, nil
 	case fi.Mode()&fs.ModeSymlink != 0:
 		target, _ := dir.Readlink(name)
 		changes := slices.Concat([]string{"replace the symbolic link to " + target}, content, []string{want})
-		return Result{Status: Change, Action: Modify, Changes: changes, Old: old, SourceSHA256: srcSum}, nil
+		return Result{Status: Change, Action: Modify, Changes: changes, Old: old, SourceSHA256: srcSum, Validates: f.Validation != nil}, nil
 	case fi.IsDir():
 		line, err := checkReplace(dir, name, f.Path, fi, f.Replace)
 		if err != nil {
 			return Result{}, err
 		}
 		changes := slices.Concat([]string{line}, content, []string{want})
-		return Result{Status: Change, Action: Modify, Changes: changes, Old: old, SourceSHA256: srcSum}, nil
+		return Result{Status: Change, Action: Modify, Changes: changes, Old: old, SourceSHA256: srcSum, Validates: f.Validation != nil}, nil
 	case !fi.Mode().IsRegular():
 		return Result{}, fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
 	}
@@ -323,7 +330,7 @@ func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 		wantSum = hc.sum
 	}
 	if sum != wantSum {
-		res.Status, res.Action, res.Changes = Change, Modify, content
+		res.Status, res.Action, res.Changes, res.Validates = Change, Modify, content, f.Validation != nil
 		if hc == nil {
 			old, err := readHead(r)
 			if err != nil {

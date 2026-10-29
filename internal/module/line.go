@@ -27,6 +27,13 @@ type Line struct {
 
 func (l *Line) Main() string { return l.Path }
 
+func (l *Line) ValidateCommand() string {
+	if l.Validation == nil {
+		return ""
+	}
+	return *l.Validation
+}
+
 func (l *Line) Validate() error {
 	if err := checkPath(l.Path); err != nil {
 		return err
@@ -82,7 +89,7 @@ func (l *Line) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	case !exists && l.Absent:
 		return Result{Status: OK}, nil
 	case !exists:
-		return Result{Status: Change, Action: Modify, Changes: []string{l.Path + " does not exist yet"}, Old: new("")}, nil
+		return Result{Status: Change, Action: Modify, Changes: []string{l.Path + " does not exist yet"}, Old: new(""), Validates: l.Validation != nil}, nil
 	}
 	out, old, err := l.edit(data)
 	if err != nil {
@@ -94,7 +101,7 @@ func (l *Line) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	if err := noFlags(dir, name, fi, l.Path); err != nil {
 		return Result{}, err
 	}
-	res := Result{Status: Change, Action: Modify}
+	res := Result{Status: Change, Action: Modify, Validates: l.Validation != nil}
 	if res.OldReason = notText([]byte(old)); res.OldReason == "" {
 		res.Old = &old
 	}

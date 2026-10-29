@@ -216,7 +216,7 @@ func TestStockModule(t *testing.T) {
 			Name:         "copy_from with a failing validate keeps the old file",
 			Setup:        `printf 'bad\n' > /tmp/w/src && printf 'old\n' > /tmp/w/f`,
 			Args:         &module.File{Path: "/tmp/w/f", CopyFrom: "/tmp/w/src", Validation: new("grep -q good /tmp/w/f")},
-			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"content from /tmp/w/src"}},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"content from /tmp/w/src"}, Validates: true},
 			WantApplyErr: "grep -q good /tmp/w/f",
 			After:        `[ "$(cat /tmp/w/f)" = old ]`,
 			Fix:          `printf 'good\n' > /tmp/w/src`,

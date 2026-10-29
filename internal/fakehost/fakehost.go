@@ -489,6 +489,12 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if c.hosts.fails(c.hosts.failCheck, c.host, f.Path) {
 		return module.Result{}, errors.New("permission denied")
 	}
+	c.hosts.mu.Lock()
+	res, ok := c.hosts.results[c.host+" "+f.Path]
+	c.hosts.mu.Unlock()
+	if ok {
+		return res, nil
+	}
 	cur, ok := c.hosts.File(c.host, f.Path)
 	switch {
 	case f.Absent && !ok:
@@ -496,10 +502,10 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	case f.Absent:
 		return module.Result{Status: module.Change, Action: module.Remove}, nil
 	case !ok:
-		return module.Result{Status: module.Change, Action: module.Create, Old: new(""),
+		return module.Result{Status: module.Change, Action: module.Create, Old: new(""), Validates: f.Validation != nil,
 			Changes: append(c.missingParents(f.Path), "owner root, group root, mode 0644")}, nil
 	case cur != string(f.Data):
-		return module.Result{Status: module.Change, Action: module.Modify, Old: &cur}, nil
+		return module.Result{Status: module.Change, Action: module.Modify, Old: &cur, Validates: f.Validation != nil}, nil
 	}
 	return module.Result{Status: module.OK}, nil
 }

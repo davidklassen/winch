@@ -207,7 +207,7 @@ func (c *Certbot) changes(cur *certState) []string {
 		lines := []string{"domains " + strings.Join(c.Domains, ", ")}
 		for _, s := range c.settings() {
 			if s.value != "" && s != (setting{"reuse_key", "false"}) {
-				lines = append(lines, s.key+" "+firstLine(s.value))
+				lines = append(lines, s.key+settingValue(s.value))
 			}
 		}
 		return lines
@@ -224,11 +224,7 @@ func (c *Certbot) changes(cur *certState) []string {
 		if old == s.value {
 			continue
 		}
-		if head(old) == head(s.value) {
-			lines = append(lines, s.key+" changes after its first line")
-			continue
-		}
-		lines = append(lines, s.key+" "+orNone(firstLine(old))+" → "+orNone(firstLine(s.value)))
+		lines = append(lines, s.key+" "+orNone(firstLine(old))+" →"+settingValue(orNone(s.value)))
 	}
 	if lines == nil {
 		return nil
@@ -249,10 +245,23 @@ func (c *Certbot) changes(cur *certState) []string {
 	return append(lines, again)
 }
 
-// head is the first line of s.
-func head(s string) string {
-	h, _, _ := strings.Cut(s, "\n")
-	return h
+// settingValue is a setting after its key in a plan line. A value of several lines
+// starts on the next line, so the plan shows it in full.
+func settingValue(v string) string {
+	v = strings.TrimSuffix(v, "\n")
+	if strings.Contains(v, "\n") {
+		return "\n" + v
+	}
+	return " " + v
+}
+
+// firstLine is the first line of s, and " ..." when it has more.
+func firstLine(s string) string {
+	first, rest, _ := strings.Cut(strings.TrimSuffix(s, "\n"), "\n")
+	if rest != "" {
+		return first + " ..."
+	}
+	return first
 }
 
 func sameSet(a, b []string) bool {

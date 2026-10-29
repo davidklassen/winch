@@ -52,6 +52,9 @@ type Result struct {
 	// selected removal of any of these paths suppresses the plan's note.
 	MissingUnitFiles []string `json:"missing_unit_files,omitempty"`
 	Deferred         bool     `json:"deferred,omitempty"`
+	// Validates is set on a change for which apply runs the validate command
+	// of the step.
+	Validates bool `json:"validates,omitempty"`
 	// Guard is set on a change that can lock out the login user: apply
 	// checks the access after it, as for confirm_access.
 	Guard bool `json:"guard,omitempty"`
@@ -92,6 +95,12 @@ type Module interface {
 type WithText interface {
 	Module
 	Text() ([]byte, string)
+}
+
+// WithValidate is a module with a validate command: "" when it has none.
+type WithValidate interface {
+	Module
+	ValidateCommand() string
 }
 
 // WithContent is a module that writes content. A check sends only the hash

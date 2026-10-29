@@ -320,3 +320,58 @@ func TestSecretHook(t *testing.T) {
 		t.Errorf("applied events:\n%s", applied)
 	}
 }
+
+// spec: Variables/Secrets in output; CLI/Output (a command of several lines)
+func TestSecretCommands(t *testing.T) {
+	identity, recipient := ageKey(t)
+	text, err := secret.Encrypt("new-token", []age.Recipient{recipient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: !secret " + text + "\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - cmd:
+          command: !tpl "true\nnotify --token {{ .vars.token }}"
+      - file:
+          path: /etc/app.conf
+          content: "a\n"
+          validate: !tpl "true\napp check --token {{ .vars.token }}"
+      - certbot:
+          name: example.com
+          domains: [example.com]
+          email: admin@example.com
+          deploy_hook: !tpl "true\nnotify --token {{ .vars.token }}"
+`,
+	})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	h.SetResult("web1", "example.com", module.Result{Status: module.Change, Action: module.Create, Changes: []string{
+		"deploy_hook\ntrue\nnotify --token new-token",
+	}})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	plan.WriteJSON(run.NewEvents(plain(&out), func() time.Time { return time.Time{} }))
+	for _, want := range []string{
+		"    ? cmd\n        true\n        notify --token (secret)\n",
+		"        validate:\n          true\n          app check --token (secret)\n",
+		"    + certbot example.com\n        deploy_hook (secret)\n",
+		`"step":"cmd true\nnotify --token (secret)"`,
+		`"validate":"true\napp check --token (secret)"`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the plan has no %q:\n%s%s", want, out.String(), errOut.String())
+		}
+	}
+	if strings.Contains(out.String()+errOut.String(), "new-token") {
+		t.Errorf("the plan shows the secret:\n%s", out.String())
+	}
+}

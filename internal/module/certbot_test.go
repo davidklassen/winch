@@ -156,7 +156,7 @@ func TestCertbotChanges(t *testing.T) {
 			"new with every setting",
 			&Certbot{Name: "a", Domains: []string{"a.example.com"}, Email: "a@example.com", Authenticator: "webroot", WebrootPath: "/var/www", PreHook: new("a"), PostHook: new("b\nc"), DeployHook: new("d"), ReuseKey: true},
 			nil,
-			[]string{"domains a.example.com", "authenticator webroot", "webroot_path /var/www", "pre_hook a", "post_hook b ...", "deploy_hook d", "reuse_key true"},
+			[]string{"domains a.example.com", "authenticator webroot", "webroot_path /var/www", "pre_hook a", "post_hook\nb\nc", "deploy_hook d", "reuse_key true"},
 		},
 		{"the same domains in another order", c, same, nil},
 		{
@@ -172,10 +172,10 @@ func TestCertbotChanges(t *testing.T) {
 			[]string{"installer nginx → (none)", "issue the certificate again, with a new key"},
 		},
 		{
-			"a hook changes after its first line",
+			"a hook of several lines",
 			&Certbot{Name: "example.com", Domains: []string{"example.com", "www.example.com"}, Email: "a@example.com", DeployHook: new("systemctl reload nginx\nsystemctl reload dovecot")},
 			same,
-			[]string{"deploy_hook changes after its first line", "issue the certificate again, with a new key; run deploy_hook"},
+			[]string{"deploy_hook systemctl reload nginx →\nsystemctl reload nginx\nsystemctl reload dovecot", "issue the certificate again, with a new key; run deploy_hook"},
 		},
 		{
 			"every setting changes",
@@ -425,8 +425,8 @@ func TestCertbotWrappedHookChanges(t *testing.T) {
 		hook *string
 		want string
 	}{
-		{"later line", new("echo one\necho new"), "deploy_hook changes after its first line"},
-		{"first line", new("echo new\necho old"), "deploy_hook echo one ... → echo new ..."},
+		{"later line", new("echo one\necho new"), "deploy_hook echo one ... →\necho one\necho new"},
+		{"first line", new("echo new\necho old"), "deploy_hook echo one ... →\necho new\necho old"},
 		{"removed hook", nil, "deploy_hook echo one ... → (none)"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

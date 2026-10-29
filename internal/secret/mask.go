@@ -33,6 +33,23 @@ func Mask(real, a, b string) (shown, part string) {
 	return pre + Mark + suf, real[len(pre) : len(real)-len(suf)]
 }
 
+// MaskLines is Mask for text with lines, such as a command: it masks each
+// line on its own when a and b have the lines of real. It returns the masked
+// parts of real.
+func MaskLines(real, a, b string) (shown string, parts []string) {
+	rl, al, bl := strings.Split(real, "\n"), strings.Split(a, "\n"), strings.Split(b, "\n")
+	if len(rl) != len(al) || len(rl) != len(bl) {
+		rl, al, bl = []string{real}, []string{a}, []string{b}
+	}
+	for i := range rl {
+		var part string
+		if rl[i], part = Mask(rl[i], al[i], bl[i]); part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(rl, "\n"), parts
+}
+
 // common returns the prefix and the suffix that real, a, and b share, without
 // overlap.
 func common(real, a, b string) (pre, suf string) {
@@ -86,15 +103,8 @@ func parts(real, a, b any, out *[]string) {
 			leaves(r, out)
 			return
 		}
-		rl, al, bl := strings.Split(r, "\n"), strings.Split(as, "\n"), strings.Split(bs, "\n")
-		if len(rl) != len(al) || len(rl) != len(bl) {
-			rl, al, bl = []string{r}, []string{as}, []string{bs}
-		}
-		for i := range rl {
-			if _, part := Mask(rl[i], al[i], bl[i]); part != "" {
-				*out = append(*out, part)
-			}
-		}
+		_, p := MaskLines(r, as, bs)
+		*out = append(*out, p...)
 	default:
 		if !reflect.DeepEqual(r, a) || !reflect.DeepEqual(r, b) {
 			leaves(r, out)

@@ -196,7 +196,7 @@ func TestFileModule(t *testing.T) {
 			Name:         "replace keeps the directory when validate fails",
 			Setup:        `mkdir /tmp/w/d && echo keep > /tmp/w/d/f`,
 			Args:         &module.File{Path: "/tmp/w/d", Data: []byte("x\n"), Replace: true, Validation: new("test -e /tmp/w/valid")},
-			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 1 file, 0 directories", attrs}, Old: new("")},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 1 file, 0 directories", attrs}, Old: new(""), Validates: true},
 			WantApplyErr: "validate",
 			After:        `[ "$(cat /tmp/w/d/f)" = keep ] && [ -z "$(ls -A /tmp/w | grep -v '^d$')" ]`,
 			Fix:          "touch /tmp/w/valid",
@@ -205,7 +205,7 @@ func TestFileModule(t *testing.T) {
 			Name:  "replace with validate",
 			Setup: `mkdir /tmp/w/d`,
 			Args:  &module.File{Path: "/tmp/w/d", Data: []byte("x\n"), Replace: true, Validation: new("grep -q x /tmp/w/d")},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 0 files, 0 directories", attrs}, Old: new("")},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove directory /tmp/w/d: 0 files, 0 directories", attrs}, Old: new(""), Validates: true},
 			After: `[ "$(cat /tmp/w/d)" = x ]`,
 		},
 		{

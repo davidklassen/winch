@@ -190,8 +190,17 @@ func command(cmd, indent string) string {
 	if !strings.Contains(cmd, "\n") {
 		return " " + secret.Printable(cmd)
 	}
+	return lines(cmd, indent)
+}
+
+// lines returns text, when it is not empty, as a block of lines with indent
+// for the end of a line.
+func lines(text, indent string) string {
+	if text == "" {
+		return ""
+	}
 	var b strings.Builder
-	for line := range strings.SplitSeq(cmd, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		b.WriteString("\n")
 		if line != "" {
 			b.WriteString(indent + secret.Printable(line))
@@ -224,14 +233,22 @@ func writeStep(t *color.Text, indent string, st project.Step, res module.Result)
 	case res.Deferred:
 		mark = "*"
 	}
-	markLine(t, indent, mark, " "+label(st)+linkNote(res.Link)+"\n")
+	main := ""
+	if m := st.ShownMain(); m != "" {
+		main = command(m, indent+"    ")
+	}
+	markLine(t, indent, mark, " "+secret.Printable(stepHead(st))+main+linkNote(res.Link)+"\n")
 	for _, c := range res.Changes {
-		fmt.Fprintf(t, "%s    %s\n", indent, secret.Printable(c))
+		first, rest, _ := strings.Cut(c, "\n")
+		fmt.Fprintf(t, "%s    %s%s\n", indent, secret.Printable(first), lines(rest, indent+"        "))
 	}
 	for _, l := range diffLines(st, res) {
 		t.Add(color.Plain, indent+"    ")
 		t.Add(diffStyle(l), l)
 		t.Add(color.Plain, "\n")
+	}
+	if res.Validates {
+		fmt.Fprintf(t, "%s    validate:%s\n", indent, command(st.ShownValidate(), indent+"      "))
 	}
 }
 

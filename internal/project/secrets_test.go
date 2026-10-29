@@ -1250,3 +1250,50 @@ func TestValidateWarnsOldRecipients(t *testing.T) {
 		})
 	}
 }
+
+// spec: Variables/Secrets in output; CLI/Output (a command of several lines)
+func TestSecretCommandOfSeveralLines(t *testing.T) {
+	files := map[string]string{
+		"recipes/r/recipe.yaml": `steps:
+  - cmd:
+      command: !tpl "curl -H t:{{ .vars.pw }}\nrm -rf /srv/x\nnotify {{ .vars.pw }}"
+    then: !tpl "a {{ .vars.pw }}\nrm -rf /srv/y\nb {{ .vars.pw }}"
+  - file:
+      path: /a
+      content: x
+      validate: !tpl "c {{ .vars.pw }}\nrm -rf /srv/z\nd {{ .vars.pw }}"
+`,
+	}
+	steps, _, err := evalSecret(t, "", files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, got, want string }{
+		{"command", steps[0].ShownMain(), "curl -H t:(secret)\nrm -rf /srv/x\nnotify (secret)"},
+		{"then", steps[0].ShownThen(), "a (secret)\nrm -rf /srv/y\nb (secret)"},
+		{"validate", steps[1].ShownValidate(), "c (secret)\nrm -rf /srv/z\nd (secret)"},
+	} {
+		if c.got != c.want {
+			t.Errorf("shown %s = %q, want %q", c.name, c.got, c.want)
+		}
+	}
+}
+
+// spec: Variables/Secrets in output (two evaluations: a failed placeholder
+// evaluation shows the whole argument)
+func TestSecretValidateFailsWithPlaceholders(t *testing.T) {
+	files := map[string]string{
+		// A placeholder gives a list, which is not a command.
+		"recipes/r/recipe.yaml": "steps:\n  - file:\n      path: /a\n      content: x\n      validate: !expr 'vars.pw == \"hunter2\" ? \"check h\" : [1]'\n",
+	}
+	steps, _, err := evalSecret(t, "", files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := steps[0].Args.(*module.File).ValidateCommand(); got != "check h" {
+		t.Errorf("validate = %q", got)
+	}
+	if got := steps[0].ShownValidate(); got != "(secret)" {
+		t.Errorf("shown validate = %q, want (secret)", got)
+	}
+}
