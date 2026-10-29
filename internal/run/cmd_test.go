@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -140,7 +141,7 @@ func TestPendingThenOfCmdCounts(t *testing.T) {
 	}
 	h := fakehost.New()
 	sum := sha256.Sum256([]byte("app migrate"))
-	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Step: 1, Module: "cmd", Main: hex.EncodeToString(sum[:])})
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "cmd", Mains: []string{hex.EncodeToString(sum[:])}})
 	plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{})
 	if change, _, unknown, _ := plan.Counts(); change != 1 || unknown != 0 {
 		t.Errorf("counts: %d to change, %d unknown; want a pending then to count as a change", change, unknown)
@@ -323,8 +324,8 @@ func TestThenRecordOfCmd(t *testing.T) {
 		t.Fatalf("apply passed:\n%s", got)
 	}
 	sum := sha256.Sum256([]byte("true\nnotify --token abc"))
-	want := protocol.Then{Pipeline: "site", Stage: "base", Step: 1, Module: "cmd", Main: hex.EncodeToString(sum[:])}
-	if got := h.ThenOf("web1"); len(got) != 1 || got[0] != want {
+	want := protocol.Then{Pipeline: "site", Stage: "base", Module: "cmd", Mains: []string{hex.EncodeToString(sum[:])}}
+	if got := h.ThenOf("web1"); len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Errorf("then records = %+v, want %+v", got, want)
 	}
 }

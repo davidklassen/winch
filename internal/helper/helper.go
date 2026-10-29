@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"syscall"
@@ -124,6 +125,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			}
 		case req.Method == "command":
 			err = command(ctx, req.Params, thens)
+		case req.Method == "dropthen":
+			err = dropThen(req.Params, thens)
 		case req.Method == "exec":
 			result, err = execCommand(inCtx, req.Params)
 		case req.Method == "health":
@@ -506,7 +509,8 @@ func handled(params json.RawMessage, handlers records) error {
 	return handlers.remove(h.Name)
 }
 
-// command runs the command of a then, and then removes its record.
+// command runs the command of a then, and then removes the records that
+// match it.
 func command(ctx context.Context, params json.RawMessage, thens records) error {
 	var c protocol.Command
 	if err := json.Unmarshal(params, &c); err != nil {
@@ -515,11 +519,32 @@ func command(ctx context.Context, params json.RawMessage, thens records) error {
 	if err := module.Shell(ctx, c.Command); err != nil {
 		return err
 	}
-	line, err := json.Marshal(c.Then)
+	return removeThens(thens, c.Then.Matches)
+}
+
+// dropThen removes the record of a then that matches no step.
+func dropThen(params json.RawMessage, thens records) error {
+	var t protocol.Then
+	if err := json.Unmarshal(params, &t); err != nil {
+		return fmt.Errorf("decode dropthen: %w", err)
+	}
+	return removeThens(thens, func(o protocol.Then) bool { return reflect.DeepEqual(t, o) })
+}
+
+// removeThens removes the then records for which drop returns true.
+func removeThens(thens records, drop func(protocol.Then) bool) error {
+	lines, err := thens.read()
 	if err != nil {
 		return err
 	}
-	return thens.remove(string(line))
+	var gone []string
+	for _, l := range lines {
+		var t protocol.Then
+		if json.Unmarshal([]byte(l), &t) == nil && drop(t) {
+			gone = append(gone, l)
+		}
+	}
+	return thens.remove(gone...)
 }
 
 func execCommand(ctx context.Context, params json.RawMessage) (module.ExecResult, error) {

@@ -162,6 +162,12 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 					return nil, fmt.Errorf("failed: %w", err)
 				}
 			}
+			for _, gone := range plan.goneThens[h.Name] {
+				if err := c.DropThen(context.WithoutCancel(ctx), gone); err != nil {
+					c.Close() //nolint:errcheck // the host fails already
+					return nil, fmt.Errorf("failed: %w", err)
+				}
+			}
 			a.conn = c
 		}
 		return a.conn, nil
@@ -182,12 +188,9 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 			hps, hosts = append(hps, hp), append(hosts, hp.Host)
 			if runs[name] == nil {
-				runs[name] = &hostApply{host: name, rep: rep, progress: plan.opts.progress(), notified: map[string]bool{}, thens: map[protocol.Then]bool{}}
+				runs[name] = &hostApply{host: name, rep: rep, progress: plan.opts.progress(), notified: map[string]bool{}, thens: slices.Clone(plan.Pending[name].Then)}
 				for _, n := range plan.Pending[name].Handlers {
 					runs[name].notified[n] = true
-				}
-				for _, t := range plan.Pending[name].Then {
-					runs[name].thens[t] = true
 				}
 			}
 		}
@@ -312,7 +315,7 @@ type hostApply struct {
 	// run, or pending on the host.
 	notified map[string]bool
 	// thens are the pending then records that no step ran yet.
-	thens map[protocol.Then]bool
+	thens []protocol.Then
 	// gate is the gate of the current stage while it is not recorded and
 	// will run after a change.
 	gate *protocol.Check
@@ -453,13 +456,14 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 		}
 		t := p.Then
 		failLabel := cmp.Or(changedLabel, l)
-		run := t != nil && (changedLabel != "" || a.thens[*t])
+		pending := t != nil && slices.ContainsFunc(a.thens, t.Matches)
+		run := t != nil && (changedLabel != "" || pending)
 		changedLabel = ""
 		if !run {
 			continue
 		}
 		tev := ev
-		tev.Step, tev.Module, tev.Then, tev.ThenPending = "", "", secret.PrintableLines(p.Step.ShownThen()), a.thens[*t]
+		tev.Step, tev.Module, tev.Then, tev.ThenPending = "", "", secret.PrintableLines(p.Step.ShownThen()), pending
 		a.progress.Busy(a.host, ev.scope()+": "+failLabel+": then")
 		if err := a.conn.Command(context.WithoutCancel(ctx), p.Step.Then, *t); err != nil {
 			tev.Status, tev.Error = "failed", err.Error()
@@ -468,8 +472,8 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 		}
 		tev.Status = "change"
 		a.rep.Step(tev)
-		if a.thens[*t] {
-			delete(a.thens, *t)
+		if pending {
+			a.thens = slices.DeleteFunc(a.thens, t.Matches)
 			changed = true
 		}
 	}

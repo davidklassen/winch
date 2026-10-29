@@ -566,8 +566,13 @@ func (s *Session) Passed(ctx context.Context, c protocol.Check) error {
 	return s.call("passed", c, nil)
 }
 
+// DropThen removes the record of a then that matches no step.
+func (s *Session) DropThen(ctx context.Context, t protocol.Then) error {
+	return s.call("dropthen", t, nil)
+}
+
 // Command runs the command of a then as root on the host, and then removes
-// its record.
+// the records that match it.
 func (s *Session) Command(ctx context.Context, command string, then protocol.Then) error {
 	return s.call("command", protocol.Command{Command: command, Then: then}, nil)
 }
