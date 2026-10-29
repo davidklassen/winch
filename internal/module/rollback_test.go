@@ -298,12 +298,14 @@ func TestServiceUndo(t *testing.T) {
 }
 
 // spec: Running a pipeline/Lockout protection (a user step that changes the
-// keys of the login user); roadmap phase 16 (a purge of the sudo rules)
+// keys of the login user, a change of /etc/pam.d); roadmap phase 16 (a purge
+// of the sudo rules)
 func TestGuard(t *testing.T) {
 	admin := passwdEntry{name: "admin", uid: 1000, home: "/home/admin"}
 	root := passwdEntry{name: "root", uid: 0, home: "/root"}
 	keys := "changes the keys of the login user admin"
 	sudo := "changes the sudo rules, which the login user admin needs"
+	pam := "changes the PAM rules, which every login reads"
 	tests := []struct {
 		name    string
 		login   passwdEntry
@@ -324,13 +326,23 @@ func TestGuard(t *testing.T) {
 		{"root needs no sudo", root, []Touch{{"/etc/sudoers.d/admin", true}}, ""},
 		{"a recursive owner of /home", admin, []Touch{{"/home", true}}, keys},
 		{"root's keys", root, []Touch{{"/root/.ssh/authorized_keys", true}}, "changes the keys of the login user root"},
+		{"a PAM file", admin, []Touch{{"/etc/pam.d/common-account", true}}, pam},
+		{"a PAM file for root", root, []Touch{{"/etc/pam.d/common-account", true}}, pam},
+		{"a purge of the PAM rules", root, []Touch{{"/etc/pam.d", false}, {"/etc/pam.d/sshd", true}}, pam},
+		{"a name with the PAM prefix", root, []Touch{{"/etc/pam.d.bak", true}}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := guard(tt.touches, tt.login); got != tt.want {
-				t.Errorf("guard = %q, want %q", got, tt.want)
+			if got := Guard(tt.touches, &Login{tt.login}); got != tt.want {
+				t.Errorf("Guard = %q, want %q", got, tt.want)
 			}
 		})
+	}
+	if got := Guard([]Touch{{"/etc/pam.d/sshd", true}}, nil); got != pam {
+		t.Errorf("Guard for an unknown login user = %q, want %q", got, pam)
+	}
+	if got := Guard([]Touch{{"/etc/sudoers.d/admin", true}}, nil); got != "" {
+		t.Errorf("Guard of sudo rules for an unknown login user = %q, want none", got)
 	}
 }
 

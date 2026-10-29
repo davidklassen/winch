@@ -469,8 +469,8 @@ func TestStagesLeaveHandlerPending(t *testing.T) {
 		if got := h.PendingOf(host); !slices.Equal(got, []string{"app.reload"}) {
 			t.Errorf("%s: pending %q, want app.reload", host, got)
 		}
-		if len(h.Log[host]) != 0 {
-			t.Errorf("%s: the handler ran: %q", host, h.Log[host])
+		if want := []string{"access"}; !slices.Equal(h.Log[host], want) {
+			t.Errorf("%s ran %q, want %q", host, h.Log[host], want)
 		}
 		if _, ok := h.File(host, "/etc/app.conf"); ok {
 			t.Errorf("%s: the skipped stage ran", host)

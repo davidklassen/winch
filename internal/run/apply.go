@@ -221,7 +221,14 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 				a := runs[hosts[i].Name]
 				var err error
 				changed[i], err = a.apply(ctx, stage, hps[i])
-				if err != nil || last[hosts[i].Name] == si {
+				final := last[hosts[i].Name] == si
+				if err == nil && final && (changed[i] || o.Changed[hosts[i].Name]) {
+					a.progress.Busy(a.host, "access check")
+					if aerr := a.access(context.WithoutCancel(ctx), time.Time{}); aerr != nil {
+						err = fmt.Errorf("failed: winch lost access after the run: %w", aerr)
+					}
+				}
+				if err != nil || final {
 					if cerr := a.close(); err == nil && cerr != nil {
 						err = fmt.Errorf("failed: %w", cerr)
 					}
@@ -492,12 +499,7 @@ func (a *hostApply) confirm(ctx context.Context, left time.Duration) error {
 		}
 		return errors.New("the rollback timer ended first; the old files are back")
 	}
-	deadline := time.Now().Add(left - timerMargin)
-	err := a.conn.Access(ctx)
-	if err != nil && time.Now().Add(accessPoll).Before(deadline) {
-		time.Sleep(accessPoll)
-		err = a.conn.Access(ctx)
-	}
+	err := a.access(ctx, time.Now().Add(left-timerMargin))
 	if err == nil {
 		return a.conn.Confirm(ctx)
 	}
@@ -505,6 +507,17 @@ func (a *hostApply) confirm(ctx context.Context, left time.Duration) error {
 		return fmt.Errorf("no new SSH connection works: %w; the rollback failed: %w", err, rerr)
 	}
 	return fmt.Errorf("no new SSH connection works: %w; the old files are back", err)
+}
+
+// access checks the access with a second SSH connection, at most twice. With
+// a deadline, it does not start the second try after it.
+func (a *hostApply) access(ctx context.Context, deadline time.Time) error {
+	err := a.conn.Access(ctx)
+	if err != nil && (deadline.IsZero() || time.Now().Add(accessPoll).Before(deadline)) {
+		time.Sleep(accessPoll)
+		err = a.conn.Access(ctx)
+	}
+	return err
 }
 
 // reboot reboots the host, waits until it is back, and reads the facts again.

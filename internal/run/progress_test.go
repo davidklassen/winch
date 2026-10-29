@@ -67,7 +67,7 @@ func TestProgress(t *testing.T) {
 		}
 		step := "nginx: Configure: file /etc/nginx/nginx.conf"
 		want := []string{"connecting", step, "idle",
-			"connecting", step, step + ": then", "nginx: handler nginx.reload: cmd systemctl reload nginx", "web: health", "idle"}
+			"connecting", step, step + ": then", "nginx: handler nginx.reload: cmd systemctl reload nginx", "web: health", "access check", "idle"}
 		if !slices.Equal(p.calls["web1"], want) {
 			t.Errorf("serial %v: progress %q, want %q", serial, p.calls["web1"], want)
 		}

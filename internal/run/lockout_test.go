@@ -91,7 +91,7 @@ func TestConfirmAccess(t *testing.T) {
 	if !o.OK() {
 		t.Fatalf("apply failed: %v", o.Failed)
 	}
-	if want := []string{"ssh reload", "access", "confirm", "nftables restart", "access", "confirm"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"ssh reload", "access", "confirm", "nftables restart", "access", "confirm", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
 	want := map[string]protocol.Guard{
@@ -140,7 +140,7 @@ func TestGuardedResult(t *testing.T) {
 	if !o.OK() {
 		t.Fatalf("apply failed: %v", o.Failed)
 	}
-	if want := []string{"access", "confirm"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"access", "confirm", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
 	if g := h.Guards["web1 mail"]; !reflect.DeepEqual(g, protocol.Guard{Pipeline: "site", Stage: "base"}) {
@@ -169,10 +169,10 @@ func TestRebootStep(t *testing.T) {
 		wantErr    string
 		noConnect  bool
 	}{
-		{name: "always", ifRequired: "false", wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted)\n", wantLog: []string{"reboot 30s"}},
-		{name: "required", ifRequired: "true", required: true, wantPlan: "    ~ reboot if required\n", wantApply: "web1: base: ~ reboot if required (rebooted)\n", wantLog: []string{"reboot 30s"}},
+		{name: "always", ifRequired: "false", wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
+		{name: "required", ifRequired: "true", required: true, wantPlan: "    ~ reboot if required\n", wantApply: "web1: base: ~ reboot if required (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "degraded", ifRequired: "false", boot: &protocol.Boot{State: "degraded", Failed: []string{"a.service", "b.service"}},
-			wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted; degraded, failed units: a.service, b.service)\n", wantLog: []string{"reboot 30s"}},
+			wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted; degraded, failed units: a.service, b.service)\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "still required", ifRequired: "true", required: true, boot: &protocol.Boot{State: "running", Kernel: "6.12.43+deb13-amd64", Newest: "99.0.0+deb13-amd64"},
 			wantPlan: "    ~ reboot if required\n", wantApply: "", wantLog: []string{"reboot 30s"},
 			wantErr: "base: failed: reboot if required: the host still needs a reboot after the reboot: running kernel 6.12.43+deb13-amd64, newest kernel 99.0.0+deb13-amd64"},
@@ -182,7 +182,7 @@ func TestRebootStep(t *testing.T) {
 		{name: "still required by packages", ifRequired: "true", required: true, boot: &protocol.Boot{State: "running", Kernel: "6.12.43+deb13-amd64", Newest: "6.12.43+deb13-amd64", Packages: []string{"dbus", "libc6"}},
 			wantPlan: "    ~ reboot if required\n", wantApply: "", wantLog: []string{"reboot 30s"},
 			wantErr: "base: failed: reboot if required: the host still needs a reboot after the reboot: /run/reboot-required lists the packages dbus, libc6"},
-		{name: "maybe, with a change", ifRequired: "true", more: motd, wantPlan: "    * reboot if required\n", wantApply: "web1: base: + file /etc/motd\n"},
+		{name: "maybe, with a change", ifRequired: "true", more: motd, wantPlan: "    * reboot if required\n", wantApply: "web1: base: + file /etc/motd\n", wantLog: []string{"access"}},
 		{name: "maybe, alone", ifRequired: "true", wantPlan: "0 to change, 1 unchanged", wantApply: "", noConnect: true},
 	}
 	for _, tt := range tests {
@@ -223,7 +223,7 @@ func TestRebootStep(t *testing.T) {
 			if !slices.Equal(h.Log["web1"], tt.wantLog) {
 				t.Errorf("log %q, want %q", h.Log["web1"], tt.wantLog)
 			}
-			if tt.wantLog != nil && h.FactsReads["web1"] != 2 {
+			if slices.Contains(tt.wantLog, "reboot 30s") && h.FactsReads["web1"] != 2 {
 				t.Errorf("facts read %d times, want 2: plan, and after the reboot", h.FactsReads["web1"])
 			}
 		})
@@ -430,7 +430,7 @@ func TestAccessSecondTry(t *testing.T) {
 	if _, o := applyWeb1(t, p, h); !o.OK() {
 		t.Fatalf("apply failed: %v", o.Failed)
 	}
-	if want := []string{"access", "access", "confirm"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"access", "access", "confirm", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
 }
@@ -460,5 +460,46 @@ func TestTimerEndedFirst(t *testing.T) {
 	out, _ = applyWeb1(t, p, h)
 	if want := "hostname mail: the rollback timer ended first; the rollback failed: restore /etc/hostname: no space left on device"; !strings.Contains(out, want) {
 		t.Errorf("output:\n%s\nwant %q", out, want)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the access check after the
+// last step and handler of a host that changed something)
+func TestLostAccessAfterRun(t *testing.T) {
+	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/motd
+          content: hi
+  - name: app
+    hosts: all
+    steps:
+      - file:
+          path: /etc/issue
+          content: hi
+`})
+	h := fakehost.New()
+	if _, o := applyWeb1(t, p, h); !o.OK() {
+		t.Fatalf("apply failed: %v", o.Failed)
+	}
+	if want := []string{"access"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+
+	// Only the first stage changes something.
+	h = fakehost.New()
+	h.SetFile("web1", "/etc/issue", "hi")
+	h.FailAccess("web1")
+	out, o := applyWeb1(t, p, h)
+	if o.OK() {
+		t.Fatal("apply succeeded without access")
+	}
+	if want := "web1: failed: winch lost access after the run: ssh: connect to host web1 port 22: Connection timed out"; !strings.Contains(out, want) {
+		t.Errorf("output:\n%s\nwant %q", out, want)
+	}
+	if want := []string{"access", "access"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
 }
