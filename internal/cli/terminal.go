@@ -29,3 +29,9 @@ func TerminalWidth(f *os.File) int {
 	}
 	return int(ws.col)
 }
+
+// StatusLines reports whether the progress keeps status lines on stderr:
+// stdout and stderr are terminals, and TERM is not dumb.
+func StatusLines(stdout, stderr bool, getenv func(string) string) bool {
+	return stdout && stderr && getenv("TERM") != "dumb"
+}

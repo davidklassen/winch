@@ -35,3 +35,24 @@ func TestProgressOnStderr(t *testing.T) {
 		t.Errorf("status lines stay at the end: %q", errOut.String())
 	}
 }
+
+// spec: CLI/Output (progress)
+func TestStatusLines(t *testing.T) {
+	tests := []struct {
+		name           string
+		stdout, stderr bool
+		term           string
+		want           bool
+	}{
+		{"both terminals", true, true, "xterm", true},
+		{"stdout to a pipe", false, true, "xterm", false},
+		{"stderr to a file", true, false, "xterm", false},
+		{"TERM=dumb", true, true, "dumb", false},
+	}
+	for _, tt := range tests {
+		getenv := func(k string) string { return map[string]string{"TERM": tt.term}[k] }
+		if got := StatusLines(tt.stdout, tt.stderr, getenv); got != tt.want {
+			t.Errorf("%s: StatusLines = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

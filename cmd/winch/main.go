@@ -24,7 +24,7 @@ import (
 
 func main() {
 	filter := secret.NewFilter()
-	display := progress.New(os.Stderr, filter.Parts, cli.IsTerminal(os.Stderr) && os.Getenv("TERM") != "dumb",
+	display := progress.New(os.Stderr, filter.Parts, cli.StatusLines(cli.IsTerminal(os.Stdout), cli.IsTerminal(os.Stderr), os.Getenv),
 		func() int { return cli.TerminalWidth(os.Stderr) }, time.Now)
 	stdout, errOut := display.Writer(os.Stdout), display.Writer(os.Stderr)
 	stderr := color.NewWriter(errOut, filter.Parts, false)
