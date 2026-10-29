@@ -219,7 +219,10 @@ func TestLoadVars(t *testing.T) {
 			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !expr $env.vars.domain", 1),
 		}},
 		{name: "when-whole-host", files: map[string]string{
-			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'toJSON(host) != \"\"'", 1),
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'json(host) != \"\"'", 1),
+		}},
+		{name: "to-json", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'toJSON(vars.mail_server) != \"\"'", 1),
 		}},
 		{name: "default-tpl-dot", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ . }}'", 1),

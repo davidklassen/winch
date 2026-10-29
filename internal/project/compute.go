@@ -82,12 +82,13 @@ type hostEnv struct {
 }
 
 // exprOptions add quote, sqlquote, and json, and replace keys, values, and toPairs, whose order
-// is random in expr, with versions in sorted key order.
+// is random in expr, with versions in sorted key order. json replaces toJSON.
 var exprOptions = []expr.Option{
 	expr.Env(exprEnv{}),
 	expr.DisableBuiltin("keys"),
 	expr.DisableBuiltin("values"),
 	expr.DisableBuiltin("toPairs"),
+	expr.DisableBuiltin("toJSON"),
 	sortedFunc("keys", func(k string, v any) any { return k }),
 	sortedFunc("values", func(k string, v any) any { return v }),
 	sortedFunc("toPairs", func(k string, v any) any { return []any{k, v} }),
