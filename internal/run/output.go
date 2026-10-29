@@ -250,6 +250,9 @@ func writeStep(t *color.Text, indent string, st project.Step, res module.Result)
 	if res.Validates {
 		fmt.Fprintf(t, "%s    validate:%s\n", indent, command(st.ShownValidate(), indent+"      "))
 	}
+	if u := st.ShownUnless(); u != "" {
+		fmt.Fprintf(t, "%s    unless:%s\n", indent, command(u, indent+"      "))
+	}
 }
 
 func diffStyle(line string) color.Style {

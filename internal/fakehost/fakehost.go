@@ -403,6 +403,12 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	}
 	switch m := m.(type) {
 	case *module.Cmd:
+		if m.Unless != nil {
+			if c.hosts.failCmd[c.host+" "+*m.Unless] {
+				return module.Result{Status: module.Change, Action: module.Modify}, nil
+			}
+			return module.Result{Status: module.OK}, nil
+		}
 		if m.Creates == "" {
 			return module.Result{Status: module.Unknown}, nil
 		}

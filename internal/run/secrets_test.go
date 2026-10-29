@@ -289,6 +289,9 @@ func TestSecretCommands(t *testing.T) {
     steps:
       - cmd:
           command: !tpl "true\nnotify --token {{ .vars.token }}"
+      - cmd:
+          command: app login
+          unless: !tpl "app ping --token {{ .vars.token }}"
       - file:
           path: /etc/app.conf
           content: "a\n"
@@ -300,6 +303,7 @@ func TestSecretCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := fakehost.New()
+	h.FailCommand("web1", "app ping --token new-token")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -307,6 +311,7 @@ func TestSecretCommands(t *testing.T) {
 	for _, want := range []string{
 		"    ? cmd\n        true\n        notify --token (secret)\n",
 		"        validate:\n          true\n          app check --token (secret)\n",
+		"    ~ cmd app login\n        unless: app ping --token (secret)\n",
 		`"step":"cmd true\nnotify --token (secret)"`,
 		`"validate":"true\napp check --token (secret)"`,
 	} {

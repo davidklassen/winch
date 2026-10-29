@@ -82,6 +82,27 @@ func TestCmdModule(t *testing.T) {
 			After: "test ! -e /root/out",
 		},
 		{
+			Name:  "unless exits 0",
+			Args:  &module.Cmd{Command: "echo ran > /root/out", Unless: new("true")},
+			Want:  module.Result{Status: module.OK},
+			After: "test ! -e /root/out",
+		},
+		{
+			Name:      "unless exits non-zero",
+			Args:      &module.Cmd{Command: "touch /root/made", Unless: new("test -e /root/made")},
+			Want:      module.Result{Status: module.Change, Action: module.Modify},
+			Unchanged: "test ! -e /root/made",
+			After:     "test -e /root/made",
+		},
+		{
+			Name:      "unless runs as root in / with the command environment",
+			Setup:     user + "mkdir /srv/winch-c && chown winchc /srv/winch-c",
+			Args:      &module.Cmd{Command: "touch made", User: "winchc", Dir: "/srv/winch-c", Unless: new(`test "$(id -un)" = root && test "$(pwd)" = / && test "$HOME" = /root && test "$LC_ALL" = C.UTF-8 && test -e /srv/winch-c/made`)},
+			Want:      module.Result{Status: module.Change, Action: module.Modify},
+			Unchanged: "test ! -e /srv/winch-c/made",
+			After:     `test "$(stat -c %U /srv/winch-c/made)" = winchc`,
+		},
+		{
 			Name:       "the command environment",
 			Args:       &module.Cmd{Command: `{ pwd; id -un; echo "$HOME"; umask; echo "$LC_ALL"; wc -c; } > /root/out`},
 			Want:       module.Result{Status: module.Unknown},
@@ -217,6 +238,7 @@ func TestCmdPipeline(t *testing.T) {
 		"pipelines/site.yaml":     "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: app\n",
 		"pipelines/uptime.yaml":   "stages:\n  - name: s\n    hosts: all\n    steps:\n      - cmd:\n          command: uptime\n",
 		"pipelines/gate.yaml":     gatePipeline,
+		"pipelines/unless.yaml":   "stages:\n  - name: s\n    hosts: all\n    steps:\n      - cmd:\n          command: touch /root/unless\n          unless: test -e /root/unless\n",
 		"recipes/app/recipe.yaml": cmdRecipe,
 	})
 
@@ -243,6 +265,17 @@ func TestCmdPipeline(t *testing.T) {
 	r = lab.Winch(t, dir, "plan", "uptime", "--exit-code")
 	if r.Code != 2 || !strings.HasSuffix(strings.SplitN(r.Stdout, "plan ", 2)[0], "    ? cmd uptime\n\n1 host: 0 to change, 0 unchanged, 1 unknown\n") {
 		t.Errorf("a plan with only ? lines: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+
+	r = lab.Winch(t, dir, "plan", "unless", "--exit-code")
+	if want := "    ~ cmd touch /root/unless\n        unless: test -e /root/unless\n"; r.Code != 2 || !strings.Contains(r.Stdout, want) {
+		t.Errorf("a plan with unless: exit %d, no %q in %q", r.Code, want, r.Stdout)
+	}
+	if r := lab.Winch(t, dir, "apply", "unless", "--yes"); r.Code != 0 {
+		t.Fatalf("apply unless: exit %d, stderr %q", r.Code, r.Stderr)
+	}
+	if r := lab.Winch(t, dir, "plan", "unless", "--exit-code"); r.Code != 0 {
+		t.Errorf("a plan after the command of unless: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 
 	r = lab.Winch(t, dir, "apply", "gate", "--yes")

@@ -328,3 +328,39 @@ func TestThenRecordOfCmd(t *testing.T) {
 		t.Errorf("then records = %+v, want %+v", got, want)
 	}
 }
+
+// spec: Modules/cmd (unless); CLI/Output (a command of several lines)
+func TestPlanShowsUnless(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - cmd:
+          command: make install
+          unless: test -x /usr/local/bin/app
+      - cmd:
+          command: app migrate
+          unless: |
+            app status
+            app check
+      - cmd:
+          command: apt-get clean
+          unless: "true"
+`,
+	}
+	h := fakehost.New()
+	h.FailCommand("web1", "test -x /usr/local/bin/app")
+	h.FailCommand("web1", "app status\napp check\n")
+	plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	want := "    ~ cmd make install\n        unless: test -x /usr/local/bin/app\n" +
+		"    ~ cmd app migrate\n        unless:\n          app status\n          app check\n\n" +
+		"1 host: 1 to change, 0 unchanged, 0 unknown\n"
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("the plan has no %q:\n%s%s", want, out.String(), errOut.String())
+	}
+}

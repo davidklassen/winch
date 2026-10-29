@@ -1587,11 +1587,18 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 	if validate != "" {
 		sh.Validate = secret.Mark
 	}
+	unless := s.ShownUnless()
+	if unless != "" {
+		sh.Unless = secret.Mark
+	}
 	var parts []string
 	if argsOK {
 		sh.Main, _ = secret.MaskLines(mods[0].Main(), mods[1].Main(), mods[2].Main())
 		if validate != "" {
 			sh.Validate, _ = secret.MaskLines(validate, mods[1].(module.WithValidate).ValidateCommand(), mods[2].(module.WithValidate).ValidateCommand())
+		}
+		if unless != "" {
+			sh.Unless, _ = secret.MaskLines(unless, mods[1].(*module.Cmd).UnlessCommand(), mods[2].(*module.Cmd).UnlessCommand())
 		}
 		parts = secret.Parts(args[0], args[1], args[2])
 	}
@@ -1622,7 +1629,7 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 	}
 	e.learn(parts)
 	reads := !argsOK || !contentOK || slices.ContainsFunc(parts, func(p string) bool { return p != "" })
-	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Lines == nil && !sh.Hidden && sh.Public == "" {
+	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Unless == unless && sh.Lines == nil && !sh.Hidden && sh.Public == "" {
 		return nil, reads
 	}
 	return sh, reads

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"syscall"
@@ -17,14 +18,22 @@ import (
 )
 
 type Cmd struct {
-	Command string `yaml:"command,required" json:"command"`
-	Creates string `yaml:"creates" json:"creates,omitempty"`
-	User    string `yaml:"user" json:"user,omitempty"`
-	Dir     string `yaml:"dir" json:"dir,omitempty"`
-	Timeout *int   `yaml:"timeout" json:"timeout,omitempty"`
+	Command string  `yaml:"command,required" json:"command"`
+	Creates string  `yaml:"creates" json:"creates,omitempty"`
+	Unless  *string `yaml:"unless" json:"unless,omitempty"`
+	User    string  `yaml:"user" json:"user,omitempty"`
+	Dir     string  `yaml:"dir" json:"dir,omitempty"`
+	Timeout *int    `yaml:"timeout" json:"timeout,omitempty"`
 }
 
 func (c *Cmd) Main() string { return strings.TrimSuffix(c.Command, "\n") }
+
+func (c *Cmd) UnlessCommand() string {
+	if c.Unless == nil {
+		return ""
+	}
+	return *c.Unless
+}
 
 func (c *Cmd) Validate() error {
 	if err := checkCommand("command", &c.Command); err != nil {
@@ -37,6 +46,12 @@ func (c *Cmd) Validate() error {
 		if int64(*c.Timeout) > math.MaxInt64/int64(time.Second) {
 			return &yamlx.FieldError{Field: "timeout", Msg: fmt.Sprintf("must be at most %d seconds", math.MaxInt64/int64(time.Second))}
 		}
+	}
+	if err := checkCommand("unless", c.Unless); err != nil {
+		return err
+	}
+	if c.Unless != nil && c.Creates != "" {
+		return &yamlx.FieldError{Field: "unless", Msg: "a cmd has at most one of creates and unless"}
 	}
 	if c.Creates != "" {
 		if err := checkAbs("creates", c.Creates); err != nil {
@@ -58,6 +73,16 @@ func (c *Cmd) Validate() error {
 }
 
 func (c *Cmd) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+	if c.Unless != nil {
+		err := ShellLimit(ctx, *c.Unless, c.limit(), KillDelay)
+		switch {
+		case err == nil:
+			return Result{Status: OK}, nil
+		case errors.As(err, new(*exec.ExitError)):
+			return Result{Status: Change, Action: Modify}, nil
+		}
+		return Result{}, fmt.Errorf("unless: %w", err)
+	}
 	if c.Creates == "" {
 		return Result{Status: Unknown}, nil
 	}
@@ -91,11 +116,7 @@ func (c *Cmd) Apply(ctx context.Context, _ func(string)) error {
 		}
 		as = &runAs{user: u, groups: groups}
 	}
-	limit := commandLimit
-	if c.Timeout != nil {
-		limit = time.Duration(*c.Timeout) * time.Second
-	}
-	err := shellLimit(ctx, c.Command, cmp.Or(c.Dir, "/"), nil, as, limit, KillDelay)
+	err := shellLimit(ctx, c.Command, cmp.Or(c.Dir, "/"), nil, as, c.limit(), KillDelay)
 	// exec names sh, not the directory, when the user cannot enter it.
 	if pe, ok := errors.AsType[*fs.PathError](err); ok && pe.Op == "fork/exec" && c.Dir != "" {
 		return fmt.Errorf("dir %s: %w", c.Dir, pe.Err)
@@ -108,4 +129,11 @@ func (c *Cmd) Apply(ctx context.Context, _ func(string)) error {
 		return fmt.Errorf("the command did not create %s", c.Creates)
 	}
 	return err
+}
+
+func (c *Cmd) limit() time.Duration {
+	if c.Timeout == nil {
+		return commandLimit
+	}
+	return time.Duration(*c.Timeout) * time.Second
 }

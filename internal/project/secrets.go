@@ -251,6 +251,7 @@ type Shown struct {
 	Main     string
 	Then     string
 	Validate string
+	Unless   string
 	// Lines are the lines of the content with their masks, or nil when the
 	// content holds no secret.
 	Lines []secret.Line
@@ -284,6 +285,17 @@ func (st Step) ShownValidate() string {
 	}
 	if v, ok := st.Args.(module.WithValidate); ok {
 		return v.ValidateCommand()
+	}
+	return ""
+}
+
+// ShownUnless is the unless command of a cmd as the output shows it.
+func (st Step) ShownUnless() string {
+	if st.Shown != nil {
+		return st.Shown.Unless
+	}
+	if c, ok := st.Args.(*module.Cmd); ok {
+		return c.UnlessCommand()
 	}
 	return ""
 }
