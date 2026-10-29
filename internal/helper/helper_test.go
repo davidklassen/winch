@@ -24,7 +24,9 @@ type client struct {
 	w    *io.PipeWriter
 	r    *bufio.Scanner
 	done chan error
-	id   int
+	// exited closes when Serve returns.
+	exited chan struct{}
+	id     int
 }
 
 func start(t *testing.T, dir, self string) *client {
@@ -37,13 +39,19 @@ func startAs(t *testing.T, dir, self string, uid uint32) *client {
 	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	c := &client{w: inW, r: bufio.NewScanner(outR), done: make(chan error, 1)}
+	c := &client{w: inW, r: bufio.NewScanner(outR), done: make(chan error, 1), exited: make(chan struct{})}
 	go func() {
 		err := Serve(context.Background(), inR, outW, dir, self, module.State{LoginUID: uid})
+		close(c.exited)
 		outW.Close()
 		c.done <- err
 	}()
-	t.Cleanup(func() { inW.Close() })
+	// The helper puts back files when its input closes, so the test waits
+	// before its directories go.
+	t.Cleanup(func() {
+		inW.Close()
+		<-c.exited
+	})
 	return c
 }
 

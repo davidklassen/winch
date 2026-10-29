@@ -2,6 +2,7 @@ package integration
 
 import (
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -354,6 +355,122 @@ func TestLockoutSSHPort(t *testing.T) {
 		t.Fatalf("apply with a taken port: exit %d", r.Code)
 	}
 	listens(t, "22 2222")
+}
+
+const pendingConfirmPipeline = `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/ssh/sshd_config.d/winch.conf
+          content: !tpl "MaxAuthTries {{ .vars.tries }}\n"
+        then: !expr vars.wait
+        notify: reload
+      - name: Fails on request
+        cmd:
+          command: exit 3
+        when: !expr vars.fail
+      - reboot:
+          if_required: true
+          timeout: 300
+      - name: Fails after the reboot on request
+        cmd:
+          command: exit 4
+        when: !expr vars.fail_late
+    handlers:
+      reload:
+        - service:
+            name: ssh
+            reloaded: true
+          confirm_access: true
+`
+
+// spec: Running a pipeline/Lockout protection (the run of a host ends before
+// a notified handler with confirm_access ran)
+func TestLockoutPendingHandler(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "pending-confirm")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: pdemo\ninventory: test\nvars:\n  tries: 6\n  wait: \"true\"\n  fail: false\n  fail_late: false\n",
+		"inventories/test.yaml": "hosts:\n  pending-confirm: {}\n",
+		"pipelines/site.yaml":   pendingConfirmPipeline,
+	})
+	const conf = "cat /etc/ssh/sshd_config.d/winch.conf"
+	const records = "cat /var/lib/winch/handlers/pdemo 2>/dev/null; true"
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("first apply: exit %d\n%s", r.Code, r.Stderr)
+	}
+
+	t.Run("a failed step puts back the file", func(t *testing.T) {
+		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.tries=7", "--set", "vars.fail=true")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "Fails on request") {
+			t.Fatalf("apply: exit %d, want the failed step\n%s", r.Code, r.Stderr)
+		}
+		if out := vm.MustRun(t, conf); out != "MaxAuthTries 6\n" {
+			t.Errorf("sshd config after the failed run: %q, want the old file", out)
+		}
+		if out := vm.MustRun(t, records); out != "" {
+			t.Errorf("pending handlers = %q, want none", out)
+		}
+		r = lab.Winch(t, dir, "plan", "site", "--set", "vars.tries=7")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "~ file /etc/ssh/sshd_config.d/winch.conf") {
+			t.Errorf("plan after the failed run: exit %d, want the change again\n%s", r.Code, r.Stdout)
+		}
+	})
+
+	t.Run("a broken session puts back the file", func(t *testing.T) {
+		w := startWinch(t, dir, "apply", "site", "--yes", "--set", "vars.tries=8", "--set", "vars.wait=sleep 10")
+		vm.MustRun(t, `timeout 60 sh -c 'until grep -q reload /var/lib/winch/handlers/pdemo 2>/dev/null && grep -qx "MaxAuthTries 8" /etc/ssh/sshd_config.d/winch.conf; do sleep 0.2; done'`)
+		// The kill reaches ssh too, so the connection drops.
+		if err := syscall.Kill(-w.cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			t.Fatal(err)
+		}
+		<-w.done
+		// The helper ends after the command of then.
+		vm.MustRun(t, `timeout 60 sh -c 'until flock -n /var/lib/winch/lock true; do sleep 0.5; done'`)
+		if out := vm.MustRun(t, conf); out != "MaxAuthTries 6\n" {
+			t.Errorf("sshd config after the broken session: %q, want the old file", out)
+		}
+		if out := vm.MustRun(t, records); out != "" {
+			t.Errorf("pending handlers = %q, want none", out)
+		}
+	})
+
+	t.Run("the commands of the helper do not ignore SIGPIPE", func(t *testing.T) {
+		// SIGPIPE is signal 13: bit 0x1000 of the mask.
+		r := lab.Winch(t, dir, "exec", "all", "--", "grep SigIgn /proc/self/status")
+		if r.Code != 0 || !strings.HasSuffix(strings.TrimSpace(r.Stdout), "SigIgn:\t0000000000000000") {
+			t.Errorf("exec: exit %d, want no ignored signal\n%s", r.Code, r.Stdout)
+		}
+	})
+
+	t.Run("a failed step after a reboot puts back the file", func(t *testing.T) {
+		vm.MustRun(t, "touch /run/reboot-required")
+		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.tries=10", "--set", "vars.fail_late=true")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "Fails after the reboot on request") {
+			t.Fatalf("apply: exit %d, want the failed step\n%s", r.Code, r.Stderr)
+		}
+		if out := vm.MustRun(t, conf); out != "MaxAuthTries 6\n" {
+			t.Errorf("sshd config after the failed run: %q, want the old file", out)
+		}
+		if out := vm.MustRun(t, records); out != "" {
+			t.Errorf("pending handlers = %q, want none", out)
+		}
+	})
+
+	t.Run("a reboot keeps the file for the handler", func(t *testing.T) {
+		vm.MustRun(t, "touch /run/reboot-required")
+		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.tries=9")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "~ handler base.reload: service ssh") {
+			t.Fatalf("apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if out := vm.MustRun(t, conf); out != "MaxAuthTries 9\n" {
+			t.Errorf("sshd config after the reboot: %q, want the new file", out)
+		}
+		if out := vm.MustRun(t, records); out != "" {
+			t.Errorf("pending handlers = %q, want none", out)
+		}
+	})
 }
 
 // spec: Running a pipeline/Lockout protection (a change of /etc/pam.d)

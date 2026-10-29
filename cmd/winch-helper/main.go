@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -32,6 +33,10 @@ func main() {
 			os.Unsetenv(name) //nolint:errcheck // cannot fail for a valid name
 		}
 	}
+	// A write to a broken session fails instead of killing the helper, so
+	// that it can put back the files of a handler that did not run. Notify,
+	// unlike Ignore, does not pass to the commands that the helper starts.
+	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 	// The login user's umask reaches the helper through sudo.
 	syscall.Umask(0o022)
 	os.Chdir("/")         //nolint:errcheck // / always exists

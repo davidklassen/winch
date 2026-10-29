@@ -95,7 +95,7 @@ func TestConfirmAccess(t *testing.T) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
 	want := map[string]protocol.Guard{
-		"web1 /etc/ssh/sshd_config.d/local.conf": {Recipe: "ssh", Save: true},
+		"web1 /etc/ssh/sshd_config.d/local.conf": {Recipe: "ssh", Save: true, Handlers: []string{"ssh.reload"}},
 		"web1 ssh":                               {Recipe: "ssh", Save: true, Confirm: true},
 		"web1 /etc/motd":                         {Pipeline: "site", Stage: "base"},
 		"web1 /etc/nftables.conf":                {Pipeline: "site", Stage: "firewall", Save: true},
@@ -352,8 +352,8 @@ func TestConfirmAccessAcrossRecipes(t *testing.T) {
 		t.Fatalf("apply failed: %v", o.Failed)
 	}
 	want := map[string]protocol.Guard{
-		"/etc/ssh/sshd_config.d/hardening.conf": {Recipe: "hardening", Notified: []string{"ssh"}},
-		"/etc/ssh/sshd_config.d/stage.conf":     {Pipeline: "site", Stage: "base", Notified: []string{"ssh"}},
+		"/etc/ssh/sshd_config.d/hardening.conf": {Recipe: "hardening", Handlers: []string{"ssh.reload"}},
+		"/etc/ssh/sshd_config.d/stage.conf":     {Pipeline: "site", Stage: "base", Handlers: []string{"ssh.reload"}},
 	}
 	for path, w := range want {
 		if g := h.Guards["web1 "+path]; !reflect.DeepEqual(g, w) {
@@ -400,7 +400,7 @@ func TestConfirmAccessOwnAndNotifiedStores(t *testing.T) {
 		name, steps string
 		want        protocol.Guard
 	}{
-		{"both recipes run", "      - recipe: ssh\n      - recipe: nftables\n", protocol.Guard{Recipe: "ssh", Save: true, Notified: []string{"nftables"}}},
+		{"both recipes run", "      - recipe: ssh\n      - recipe: nftables\n", protocol.Guard{Recipe: "ssh", Save: true, Handlers: []string{"nftables.reload", "nftables.restart"}}},
 		{"nftables does not run", "      - recipe: ssh\n      - recipe: nftables\n        when: !expr host.name == \"db1\"\n", protocol.Guard{Recipe: "ssh", Save: true}},
 	} {
 		h := fakehost.New()

@@ -366,16 +366,12 @@ func TestStageHandlers(t *testing.T) {
 		if out := vm.MustRun(t, "nft list ruleset"); !strings.Contains(out, "tcp dport 22 accept") {
 			t.Errorf("the old ruleset is not back:\n%s", out)
 		}
-		// The file step notified reload, so the next run reloads again.
-		if out := vm.MustRun(t, records); out != "site\tfirewall\treload\n" {
-			t.Errorf("pending handlers = %q, want the reload handler of stage firewall", out)
-		}
-		r = lab.Winch(t, dir, "apply", "site", "--yes")
-		if r.Code != 0 || !strings.Contains(r.Stdout, "stage-handlers: firewall: ~ handler firewall.reload: service nftables") {
-			t.Fatalf("apply after the rollback: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
-		}
+		// The handler failed, so the run drops it with the old files back.
 		if out := vm.MustRun(t, records); out != "" {
 			t.Errorf("pending handlers = %q, want none", out)
+		}
+		if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+			t.Errorf("plan after the rollback: exit %d, stdout %q", r.Code, r.Stdout)
 		}
 	})
 
