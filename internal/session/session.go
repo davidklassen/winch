@@ -288,8 +288,14 @@ func hint(cfg Config, err error) error {
 // Another line, such as a refused login on a jump host before the close of
 // the proxy, means that the host did more than drop the connection.
 func (s *Session) dropped() bool {
-	out := strings.TrimSpace(s.stderr.String())
-	if s.cmd.ProcessState.ExitCode() != 255 || out == "" {
+	return Dropped(s.cmd.ProcessState.ExitCode(), s.stderr.String())
+}
+
+// Dropped reports whether ssh exited with code and stderr after the host
+// closed or reset the connection before the SSH handshake.
+func Dropped(code int, stderr string) bool {
+	out := strings.TrimSpace(stderr)
+	if code != 255 || out == "" {
 		return false
 	}
 	for line := range strings.Lines(out) {

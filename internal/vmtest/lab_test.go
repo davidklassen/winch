@@ -1,6 +1,7 @@
 package vmtest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -373,6 +374,42 @@ func TestWaitBoot(t *testing.T) {
 				return
 			}
 			synctest.Test(t, test)
+		})
+	}
+}
+
+// spec: roadmap: Testing/VMs
+func TestRunRetriesDroppedLogin(t *testing.T) {
+	for _, c := range []struct {
+		name, first string
+		// drops is the number of logins that sshd drops.
+		drops, calls int
+		ok           bool
+	}{
+		{"a reset before the handshake", "kex_exchange_identification: read: Connection reset by peer", 1, 2, true},
+		{"a second reset", "kex_exchange_identification: read: Connection reset by peer", 2, 2, false},
+		{"another failure", "admin@demo: Permission denied (publickey).", 1, 1, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			calls := filepath.Join(dir, "calls")
+			ssh := fmt.Sprintf("#!/bin/sh\necho x >> %[1]s\nif [ $(wc -l < %[1]s) -le %[3]d ]; then echo %[2]s >&2; exit 255; fi\necho ok\n", calls, Quote(c.first), c.drops)
+			if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "bin", "ssh"), []byte(ssh), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			vm := &VM{Name: "demo", lab: &Lab{Dir: dir}}
+			out, err := vm.Run(t.Context(), "true")
+			if c.ok && (err != nil || out != "ok\n") {
+				t.Errorf("Run = %q, %v; want ok", out, err)
+			} else if !c.ok && err == nil {
+				t.Errorf("Run = %q, want an error", out)
+			}
+			if got, _ := os.ReadFile(calls); bytes.Count(got, []byte("\n")) != c.calls {
+				t.Errorf("ssh ran %q, want %d times", got, c.calls)
+			}
 		})
 	}
 }

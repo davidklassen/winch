@@ -3,7 +3,9 @@ package integration
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/vmtest"
@@ -64,7 +66,33 @@ func run(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	defer os.RemoveAll(dir)
+	code := runLab(m, dir, cfg)
+	if code == 0 {
+		os.RemoveAll(dir)
+		return 0
+	}
+	if err := keepLogs(dir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+	fmt.Fprintf(os.Stderr, "the logs of the VMs are in %s\n", filepath.Join(dir, "vms"))
+	return code
+}
+
+// keepLogs removes all files in dir but the console and QEMU logs of the VMs.
+func keepLogs(dir string) error {
+	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if filepath.Base(filepath.Dir(filepath.Dir(p))) == "vms" && (d.Name() == "console.log" || d.Name() == "qemu.log") {
+			return nil
+		}
+		return os.Remove(p)
+	})
+}
+
+func runLab(m *testing.M, dir string, cfg vmtest.Config) int {
+	var err error
 	lab, err = vmtest.NewLab(context.Background(), dir, cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

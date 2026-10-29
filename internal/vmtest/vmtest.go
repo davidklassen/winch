@@ -20,6 +20,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/davidklassen/winch/internal/session"
 )
 
 type Config struct {
@@ -447,11 +449,22 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-// Run runs a shell command as root on the VM over ssh.
+// Run runs a shell command as root on the VM over ssh. A login while sshd
+// executes itself again after a reload gets a reset before the handshake; Run
+// then logs in once more after two seconds, as winch does.
 func (vm *VM) Run(ctx context.Context, command string) (string, error) {
 	command = "sudo sh -c " + Quote(command)
-	cmd := exec.CommandContext(ctx, filepath.Join(vm.lab.Dir, "bin", "ssh"), "-o", "ConnectTimeout=5", vm.Name, command)
-	out, err := cmd.CombinedOutput()
+	ssh := func() ([]byte, error) {
+		return exec.CommandContext(ctx, filepath.Join(vm.lab.Dir, "bin", "ssh"), "-o", "ConnectTimeout=5", vm.Name, command).CombinedOutput()
+	}
+	out, err := ssh()
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok && session.Dropped(exit.ExitCode(), string(out)) {
+		select {
+		case <-ctx.Done():
+		case <-time.After(2 * time.Second):
+			out, err = ssh()
+		}
+	}
 	if err != nil {
 		return string(out), fmt.Errorf("%s: %w: %s%s", command, err, out, vm.lab.hint(string(out)))
 	}

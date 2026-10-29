@@ -11,8 +11,10 @@ import (
 
 // pebbleSetup installs certbot with its plugins and the web servers, and
 // starts Pebble, the ACME test server. Its DNS server answers 127.0.0.1 for
-// every name, so Pebble checks the challenges on this VM. Pebble reuses no
-// authorization, so each issue answers its challenge.
+// every name, so Pebble checks the challenges on this VM. With
+// PEBBLE_AUTHZREUSE=0, Pebble still reuses a valid authorization of the
+// account in 1% of the orders. A test whose challenge must fail removes the
+// account first, and certbot registers a new one.
 const pebbleSetup = `set -e
 apt-get update -q >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q certbot python3-certbot-nginx python3-certbot-apache nginx apache2 pebble curl >/dev/null
@@ -37,6 +39,13 @@ for i in $(seq 100); do curl -sf -o /dev/null https://localhost:14000/dir && exi
 exit 1
 `
 
+// startPebble runs pebbleSetup on vm. A failed test logs Pebble's log.
+func startPebble(t *testing.T, vm *vmtest.VM) {
+	t.Helper()
+	vm.MustRun(t, pebbleSetup)
+	vm.LogOnFailure(t, "journalctl -u pebble -n 200 --no-pager")
+}
+
 // issue runs certbot with the nginx authenticator, as a person would, with
 // args after the common ones.
 func issue(args string) string {
@@ -49,8 +58,8 @@ const keySum = "sha256sum /etc/letsencrypt/live/a.example.com/privkey.pem"
 func TestCertbotModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "certbot")
-	vm.MustRun(t, pebbleSetup)
-	reset := `rm -rf /etc/letsencrypt/live/* /etc/letsencrypt/archive/* /etc/letsencrypt/renewal/* /root/deployed /root/key.sum /root/hook-ok
+	startPebble(t, vm)
+	reset := `rm -rf /etc/letsencrypt/accounts /etc/letsencrypt/live/* /etc/letsencrypt/archive/* /etc/letsencrypt/renewal/* /root/deployed /root/key.sum /root/hook-ok
 systemctl stop apache2
 systemctl start nginx
 md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.conf /etc/apache2/sites-enabled/* > /root/web.md5`
@@ -191,7 +200,7 @@ md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.con
 func TestCertbotPendingHooks(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "pending-hooks")
-	vm.MustRun(t, pebbleSetup)
+	startPebble(t, vm)
 	for _, hook := range []string{"deploy_hook", "post_hook"} {
 		t.Run(hook, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{
@@ -324,7 +333,7 @@ func TestCertbotPendingHooks(t *testing.T) {
 			t.Fatalf("first apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
 		}
 		// nginx does not serve this directory, so Pebble's challenge fails.
-		vm.MustRun(t, "mkdir -p /root/unserved && rm /root/challenge-hooks")
+		vm.MustRun(t, "mkdir -p /root/unserved && rm -r /root/challenge-hooks /etc/letsencrypt/accounts")
 		r := lab.Winch(t, vmtest.WriteProject(t, step("/root/unserved")), "apply", "site", "--yes")
 		if r.Code != 1 || !strings.Contains(r.Stderr, "Some challenges have failed") || strings.Contains(r.Stderr, "reported error code") {
 			t.Fatalf("apply with a failing challenge: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
