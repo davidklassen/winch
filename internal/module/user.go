@@ -299,6 +299,9 @@ func (u *User) checkAbsent(a accounts, cur passwdEntry, exists bool, login uint3
 	if cur.uid == login {
 		return Result{}, fmt.Errorf("%s is the login user of this session; log in as another user to remove it", u.Name)
 	}
+	if err := noFlagsAt("/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow"); err != nil {
+		return Result{}, err
+	}
 	u.account = []string{"userdel", u.Name}
 	res := Result{Status: Change, Action: Remove}
 	if removesGroup(a, cur) {
@@ -432,6 +435,9 @@ func (u *User) checkNew(a accounts) (Result, string, string, error) {
 		changes = append(changes, "set password")
 		u.password = true
 	}
+	if err := noFlagsAt("/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow"); err != nil {
+		return Result{}, "", "", err
+	}
 	u.account = append(args, u.Name)
 	return Result{Status: Change, Action: Create, Changes: changes}, home, group, nil
 }
@@ -535,6 +541,17 @@ func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, strin
 		if len(procs) > 0 {
 			changes = append(changes, fmt.Sprintf("processes of %s run (%s); usermod fails while they run", u.Name, strings.Join(procs, ", ")))
 		}
+	}
+	// usermod and chpasswd open /etc/passwd and /etc/shadow for any change.
+	var files []string
+	if len(args) > 1 || u.password {
+		files = append(files, "/etc/passwd", "/etc/shadow")
+	}
+	if slices.Contains(args, "-G") {
+		files = append(files, "/etc/group", "/etc/gshadow")
+	}
+	if err := noFlagsAt(files...); err != nil {
+		return Result{}, "", "", err
 	}
 	if len(args) > 1 {
 		u.account = append(args, u.Name)

@@ -58,6 +58,11 @@ func (h *Hostname) Check(ctx context.Context, _ *State, _ func(string)) (Result,
 			changes = append(changes, "running name "+running+" → "+h.Name)
 		}
 	}
+	if static != h.Name {
+		if err := noFlagsAt(hostnameFile); err != nil {
+			return Result{}, err
+		}
+	}
 	return Result{Status: Change, Action: Modify, Changes: changes}, nil
 }
 

@@ -47,7 +47,8 @@ func keys(k ...string) *[]string {
 func TestUserModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "user")
-	reset := `systemctl stop wt-sleep 2>/dev/null || true
+	reset := `chattr -ia /etc/passwd /etc/shadow /etc/group /etc/gshadow
+systemctl stop wt-sleep 2>/dev/null || true
 for u in wtalice wtbob wtsvc Debian-wt; do pkill -9 -u $u; userdel $u 2>/dev/null; done
 sed -i '/^wtbob:/d' /etc/passwd /etc/shadow
 sed -i 's|:/home/admin/:|:/home/admin:|' /etc/passwd
@@ -755,6 +756,124 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Fix:          "systemctl stop wt-sleep",
 			After:        `getent passwd wtalice`,
 		},
+		{
+			Name:      "create with an immutable /etc/passwd",
+			Setup:     `chattr +i /etc/passwd`,
+			Args:      &module.User{Name: "wtalice"},
+			WantErr:   "/etc/passwd is immutable; chattr -i changes it",
+			Unchanged: `! getent passwd wtalice`,
+		},
+		{
+			Name:    "create with an append-only /etc/passwd",
+			Setup:   `chattr +a /etc/passwd`,
+			Args:    &module.User{Name: "wtalice"},
+			WantErr: "/etc/passwd is append-only; chattr -a changes it",
+		},
+		{
+			Name:    "create with an immutable /etc/shadow",
+			Setup:   `chattr +i /etc/shadow`,
+			Args:    &module.User{Name: "wtalice"},
+			WantErr: "/etc/shadow is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "create with an immutable /etc/group",
+			Setup:   `chattr +i /etc/group`,
+			Args:    &module.User{Name: "wtalice"},
+			WantErr: "/etc/group is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "create with an immutable /etc/gshadow",
+			Setup:   `chattr +i /etc/gshadow`,
+			Args:    &module.User{Name: "wtalice"},
+			WantErr: "/etc/gshadow is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "a shell change with an immutable /etc/passwd",
+			Setup:   `useradd -m -U -s /bin/sh wtalice && chattr +i /etc/passwd`,
+			Args:    &module.User{Name: "wtalice", Shell: "/bin/bash"},
+			WantErr: "/etc/passwd is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "a shell change with an immutable /etc/shadow",
+			Setup:   `useradd -m -U -s /bin/sh wtalice && chattr +i /etc/shadow`,
+			Args:    &module.User{Name: "wtalice", Shell: "/bin/bash"},
+			WantErr: "/etc/shadow is immutable; chattr -i changes it",
+		},
+		{
+			Name:  "a shell change with an immutable /etc/group and /etc/gshadow",
+			Setup: `useradd -m -U -s /bin/sh wtalice && chattr +i /etc/group /etc/gshadow`,
+			Args:  &module.User{Name: "wtalice", Shell: "/bin/bash"},
+			Want:  change("shell /bin/sh → /bin/bash"),
+			After: `[ "$(getent passwd wtalice | cut -d: -f7)" = /bin/bash ]`,
+		},
+		{
+			Name:    "a password with an immutable /etc/shadow",
+			Setup:   `useradd -m -U wtalice && chattr +i /etc/shadow`,
+			Args:    &module.User{Name: "wtalice", Password: hash1},
+			WantErr: "/etc/shadow is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "a password with an immutable /etc/passwd",
+			Setup:   `useradd -m -U wtalice && chattr +i /etc/passwd`,
+			Args:    &module.User{Name: "wtalice", Password: hash1},
+			WantErr: "/etc/passwd is immutable; chattr -i changes it",
+		},
+		{
+			Name:  "a password with an immutable /etc/group and /etc/gshadow",
+			Setup: `useradd -m -U wtalice && chattr +i /etc/group /etc/gshadow`,
+			Args:  &module.User{Name: "wtalice", Password: hash1},
+			Want:  change("change password"),
+			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '` + hash1 + `' ]`,
+		},
+		{
+			Name:    "add groups with an immutable /etc/group",
+			Setup:   `useradd -m -U wtalice && groupadd wtgrp && chattr +i /etc/group`,
+			Args:    &module.User{Name: "wtalice", AddGroups: &[]string{"wtgrp"}},
+			WantErr: "/etc/group is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "add groups with an immutable /etc/gshadow",
+			Setup:   `useradd -m -U wtalice && groupadd wtgrp && chattr +i /etc/gshadow`,
+			Args:    &module.User{Name: "wtalice", AddGroups: &[]string{"wtgrp"}},
+			WantErr: "/etc/gshadow is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "absent with an immutable /etc/passwd",
+			Setup:   `useradd -M -U wtalice && chattr +i /etc/passwd`,
+			Args:    &module.User{Name: "wtalice", Absent: true},
+			WantErr: "/etc/passwd is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "absent with an immutable /etc/gshadow",
+			Setup:   `useradd -M -U wtalice && chattr +i /etc/gshadow`,
+			Args:    &module.User{Name: "wtalice", Absent: true},
+			WantErr: "/etc/gshadow is immutable; chattr -i changes it",
+		},
+		{
+			Name:  "a user as declared with immutable account files",
+			Setup: `useradd -m -U -s /bin/bash wtalice && chattr +i /etc/passwd /etc/shadow /etc/group /etc/gshadow`,
+			Args:  &module.User{Name: "wtalice", Shell: "/bin/bash"},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "keys with immutable account files",
+			Setup: `useradd -m -U wtalice && chattr +i /etc/passwd /etc/shadow /etc/group /etc/gshadow`,
+			Args:  &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			Want:  addK1,
+		},
+		{
+			Name:      "absent with an immutable /etc/shadow",
+			Setup:     `useradd -M -U wtalice && chattr +i /etc/shadow`,
+			Args:      &module.User{Name: "wtalice", Absent: true},
+			WantErr:   "/etc/shadow is immutable; chattr -i changes it",
+			Unchanged: `getent passwd wtalice`,
+		},
+		{
+			Name:    "absent with an immutable /etc/group",
+			Setup:   `useradd -M -U wtalice && chattr +i /etc/group`,
+			Args:    &module.User{Name: "wtalice", Absent: true},
+			WantErr: "/etc/group is immutable; chattr -i changes it",
+		},
 	})
 }
 
@@ -762,7 +881,7 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 func TestGroupModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "group")
-	reset := `for u in wtu1 wtu2 wtu3; do userdel $u 2>/dev/null; done; for g in wtgrp wtother Debian-wt; do groupdel $g 2>/dev/null; done; true`
+	reset := `chattr -ia /etc/passwd /etc/shadow /etc/group /etc/gshadow; for u in wtu1 wtu2 wtu3; do userdel $u 2>/dev/null; done; for g in wtgrp wtother Debian-wt; do groupdel $g 2>/dev/null; done; true`
 	vmtest.RunCases(t, vm, "group", reset, []vmtest.Case{
 		{
 			Name:      "create",
@@ -827,6 +946,50 @@ func TestGroupModule(t *testing.T) {
 			Setup:   `groupadd -g 2800 wtother`,
 			Args:    &module.Group{Name: "wtgrp", GID: "2800"},
 			WantErr: "gid 2800 belongs to group wtother",
+		},
+		{
+			Name:      "create with an immutable /etc/group",
+			Setup:     `chattr +i /etc/group`,
+			Args:      &module.Group{Name: "wtgrp"},
+			WantErr:   "/etc/group is immutable; chattr -i changes it",
+			Unchanged: `! getent group wtgrp`,
+		},
+		{
+			Name:    "create with an append-only /etc/gshadow",
+			Setup:   `chattr +a /etc/gshadow`,
+			Args:    &module.Group{Name: "wtgrp"},
+			WantErr: "/etc/gshadow is append-only; chattr -a changes it",
+		},
+		{
+			Name:  "a group as declared with an immutable /etc/passwd and /etc/group",
+			Setup: `groupadd -g 2600 wtgrp && chattr +i /etc/passwd /etc/group`,
+			Args:  &module.Group{Name: "wtgrp", GID: "2600"},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:    "create with an immutable /etc/gshadow",
+			Setup:   `chattr +i /etc/gshadow`,
+			Args:    &module.Group{Name: "wtgrp"},
+			WantErr: "/etc/gshadow is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "change gid with an immutable /etc/group",
+			Setup:   `groupadd -g 2600 wtgrp && chattr +i /etc/group`,
+			Args:    &module.Group{Name: "wtgrp", GID: "2700"},
+			WantErr: "/etc/group is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "change gid with an immutable /etc/passwd",
+			Setup:   `groupadd -g 2600 wtgrp && chattr +i /etc/passwd`,
+			Args:    &module.Group{Name: "wtgrp", GID: "2700"},
+			WantErr: "/etc/passwd is immutable; chattr -i changes it",
+		},
+		{
+			Name:  "change gid with an immutable /etc/shadow and /etc/gshadow",
+			Setup: `groupadd -g 2600 wtgrp && chattr +i /etc/shadow /etc/gshadow`,
+			Args:  &module.Group{Name: "wtgrp", GID: "2700"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"gid 2600 → 2700; files keep the old gid"}},
+			After: `[ "$(getent group wtgrp)" = "wtgrp:x:2700:" ]`,
 		},
 	})
 }
