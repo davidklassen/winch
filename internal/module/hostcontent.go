@@ -163,7 +163,7 @@ func stockSource(ctx context.Context, p string) (*hostContent, error) {
 	name, _, _ := strings.Cut(pkg, ":")
 	deb := path.Join(archives, archiveName(name, version, arch))
 	if _, err := os.Stat(deb); errors.Is(err, fs.ErrNotExist) {
-		if err := download(ctx, pkg+"="+version); err != nil {
+		if err := download(ctx, pkg+"="+version, deb); err != nil {
 			return nil, fmt.Errorf("get the archive of %s %s: %w", name, version, err)
 		}
 	} else if err != nil {
@@ -213,22 +213,32 @@ func debEntry(ctx context.Context, deb, p string) ([]byte, *tar.Header, error) {
 }
 
 // download puts the archive of the package version spec, such as
-// nginx-common=1.26.3-3, into apt's cache.
-func download(ctx context.Context, spec string) error {
-	if err := os.MkdirAll(archives, 0o755); err != nil {
+// nginx-common=1.26.3-3, into apt's cache as deb. apt-get download writes
+// to the final name as data arrives, so a killed download in the cache
+// would leave a partial archive at deb. apt-get clean warns about a
+// directory in the cache, so the directory of the download is next to it.
+func download(ctx context.Context, spec, deb string) error {
+	dir := path.Join(path.Dir(archives), "winch")
+	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}
+	for _, d := range []string{archives, dir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return err
+		}
+	}
+	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "apt-get", "download", "-q", "-o", "APT::Sandbox::User=root", spec)
-	cmd.Dir = archives
+	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(), aptEnv...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := wait(ctx, cmd, KillDelay); err != nil {
 		return failure("apt-get download", err, out.String())
 	}
-	return nil
+	return os.Rename(path.Join(dir, path.Base(deb)), deb)
 }
 
 // archiveName is the name of a package archive in apt's cache.
