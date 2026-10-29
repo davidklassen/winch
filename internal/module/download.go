@@ -280,9 +280,9 @@ func (d *Download) Apply(ctx context.Context, note func(string)) error {
 }
 
 // applyUnpack downloads the archive to a temporary file next to the unpack
-// directory, unpacks it, and deletes it. It creates the unpack directory when
-// it is missing. Each entry gets the owner uid and the group gid. It checks
-// every entry before it writes one.
+// directory and checks every entry. It unpacks the archive into a new
+// directory with the owner uid and the group gid, swaps it with the unpack
+// directory, and removes the old tree.
 func (d *Download) applyUnpack(ctx context.Context, uid, gid uint32, note func(string)) error {
 	parent, missing, err := openParent(d.Unpack)
 	if err != nil {
@@ -310,22 +310,36 @@ func (d *Download) applyUnpack(ctx context.Context, uid, gid uint32, note func(s
 		return fmt.Errorf("unpack %s: %w", d.URL, err)
 	}
 	name := path.Base(d.Unpack)
-	fi, exists, err := lstat(sub, name, nil)
+	newName := ".winch-unpack-" + name
+	// A killed unpack leaves the new directory, or the old tree after the
+	// swap.
+	if err := sub.RemoveAll(newName); err != nil {
+		return fmt.Errorf("remove the tree of a stopped unpack into %s: %w", d.Unpack, err)
+	}
+	root, err := mkdir(sub, newName, uid, gid, 0o755)
 	if err != nil {
 		return err
 	}
-	var root *os.Root
-	if exists {
-		root, err = openRoot(sub, name, fi)
-	} else {
-		root, err = mkdir(sub, name, uid, gid, 0o755)
-	}
+	defer sub.RemoveAll(newName) //nolint:errcheck // the error of the unpack or the swap explains the failure
+	err = (unpacker{root: root, path: d.Unpack, uid: uid, gid: gid}).read(ctx, tmp, typ)
+	root.Close()
 	if err != nil {
-		return err
-	}
-	defer root.Close()
-	if err := (unpacker{root: root, uid: uid, gid: gid}).read(ctx, tmp, typ); err != nil {
 		return fmt.Errorf("unpack %s into %s: %w", d.URL, d.Unpack, err)
+	}
+	fi, exists, err := lstat(sub, name, nil)
+	switch {
+	case err != nil:
+		return err
+	case !exists:
+		return sub.Rename(newName, name)
+	case !fi.IsDir():
+		return fmt.Errorf("%s is %s, not a directory", d.Unpack, kind(fi))
+	}
+	if err := exchange(sub, newName, name); err != nil {
+		return fmt.Errorf("swap the new tree into %s: %w", d.Unpack, err)
+	}
+	if err := sub.RemoveAll(newName); err != nil {
+		return fmt.Errorf("remove the old tree of %s: %w", d.Unpack, err)
 	}
 	return nil
 }
@@ -423,9 +437,10 @@ func fetchBody(ctx context.Context, url string, w io.Writer) (string, error) {
 }
 
 // unpacker writes the entries of an archive into root. Without a root, it
-// only checks the entries.
+// only checks the entries. Errors name the entries below path.
 type unpacker struct {
 	root     *os.Root
+	path     string
 	uid, gid uint32
 }
 
@@ -616,7 +631,7 @@ func (u unpacker) dir(name string, mode uint32) error {
 		return err
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("%s is %s, not a directory", path.Join(u.root.Name(), name), kind(fi))
+		return fmt.Errorf("%s is %s, not a directory", path.Join(u.path, name), kind(fi))
 	}
 	d, err := openRoot(u.root, name, fi)
 	if err != nil {
@@ -667,7 +682,7 @@ func (u unpacker) replace(name string) error {
 	case err != nil:
 		return err
 	case fi.IsDir():
-		return fmt.Errorf("%s is a directory", path.Join(u.root.Name(), name))
+		return fmt.Errorf("%s is a directory", path.Join(u.path, name))
 	}
 	return u.root.Remove(name)
 }
