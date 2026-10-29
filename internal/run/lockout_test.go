@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -100,7 +101,7 @@ func TestConfirmAccess(t *testing.T) {
 		"web1 nftables":                          {Pipeline: "site", Stage: "firewall", Save: true, Confirm: true},
 	}
 	for k, g := range want {
-		if h.Guards[k] != g {
+		if !reflect.DeepEqual(h.Guards[k], g) {
 			t.Errorf("guard of %s = %+v, want %+v", k, h.Guards[k], g)
 		}
 	}
@@ -141,7 +142,7 @@ func TestGuardedResult(t *testing.T) {
 	if want := []string{"access", "confirm"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
-	if g := h.Guards["web1 mail"]; g != (protocol.Guard{Pipeline: "site", Stage: "base"}) {
+	if g := h.Guards["web1 mail"]; !reflect.DeepEqual(g, protocol.Guard{Pipeline: "site", Stage: "base"}) {
 		t.Errorf("guard %+v: the step has no confirm_access", g)
 	}
 }
@@ -349,10 +350,70 @@ func TestConfirmAccessAcrossRecipes(t *testing.T) {
 	if _, o := applyWeb1(t, p, h); !o.OK() {
 		t.Fatalf("apply failed: %v", o.Failed)
 	}
-	want := protocol.Guard{Recipe: "ssh", Save: true}
-	for _, path := range []string{"/etc/ssh/sshd_config.d/hardening.conf", "/etc/ssh/sshd_config.d/stage.conf"} {
-		if g := h.Guards["web1 "+path]; g != want {
-			t.Errorf("guard of %s = %+v, want the store of the handler's recipe %+v", path, g, want)
+	want := map[string]protocol.Guard{
+		"/etc/ssh/sshd_config.d/hardening.conf": {Recipe: "hardening", Notified: []string{"ssh"}},
+		"/etc/ssh/sshd_config.d/stage.conf":     {Pipeline: "site", Stage: "base", Notified: []string{"ssh"}},
+	}
+	for path, w := range want {
+		if g := h.Guards["web1 "+path]; !reflect.DeepEqual(g, w) {
+			t.Errorf("guard of %s = %+v, want its own store and that of the handler's recipe %+v", path, g, w)
+		}
+	}
+}
+
+const notifyNftablesRecipes = `steps:
+  - file:
+      path: /etc/nftables-ssh.nft
+      content: "table inet ssh {}\n"
+    notify: [nftables.reload, nftables.restart]
+handlers:
+  reload:
+    - service:
+        name: ssh
+        reloaded: true
+      confirm_access: true
+`
+
+const nftablesHandlersRecipe = `steps:
+  - file:
+      path: /etc/nftables.conf
+      content: "flush ruleset\n"
+handlers:
+  reload:
+    - service:
+        name: nftables
+        reloaded: true
+      confirm_access: true
+  restart:
+    - service:
+        name: nftables
+        restarted: true
+      confirm_access: true
+`
+
+// spec: Running a pipeline/Lockout protection (a step saves in the store of
+// its own recipe and in that of each other recipe whose confirm_access handler
+// it notifies)
+func TestConfirmAccessOwnAndNotifiedStores(t *testing.T) {
+	for _, tt := range []struct {
+		name, steps string
+		want        protocol.Guard
+	}{
+		{"both recipes run", "      - recipe: ssh\n      - recipe: nftables\n", protocol.Guard{Recipe: "ssh", Save: true, Notified: []string{"nftables"}}},
+		{"nftables does not run", "      - recipe: ssh\n      - recipe: nftables\n        when: !expr host.name == \"db1\"\n", protocol.Guard{Recipe: "ssh", Save: true}},
+	} {
+		h := fakehost.New()
+		p := loadWeb1(t, map[string]string{
+			"pipelines/site.yaml":          "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.steps,
+			"recipes/ssh/recipe.yaml":      notifyNftablesRecipes,
+			"recipes/nftables/recipe.yaml": nftablesHandlersRecipe,
+			"inventories/test.yaml":        "hosts:\n  web1: {}\n  db1: {}\n",
+		})
+		if _, o := applyWeb1(t, p, h); !o.OK() {
+			t.Fatalf("%s: apply failed: %v", tt.name, o.Failed)
+		}
+		if g := h.Guards["web1 /etc/nftables-ssh.nft"]; !reflect.DeepEqual(g, tt.want) {
+			t.Errorf("%s: guard = %+v, want %+v", tt.name, g, tt.want)
 		}
 	}
 }

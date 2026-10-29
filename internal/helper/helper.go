@@ -327,6 +327,11 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	guard := s.Guard.Confirm || res.Guard
 	var deadline time.Time
+	for _, r := range s.Guard.Notified {
+		if _, _, err := rb.save(protocol.Guard{Recipe: r}, m); err != nil {
+			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+		}
+	}
 	if s.Guard.Save || guard {
 		saved, all, err := rb.save(s.Guard, m)
 		if err == nil && guard {

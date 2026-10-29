@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -481,9 +482,9 @@ func (a *hostApply) handler(ctx context.Context, stage *project.Stage, s *Slot) 
 
 // guard returns how the helper guards the step p of stage: it saves in the
 // store of the recipe, or of the stage for a module step of the stage, when
-// that has a step with confirm_access. A step that notifies a handler with
-// confirm_access of another recipe saves in the store of that recipe, which
-// the handler's timer puts back.
+// that has a step with confirm_access. It also saves in the store of each
+// other recipe whose confirm_access handler the step notifies on the host,
+// which the handler's timer puts back.
 func guard(stage *project.Stage, p Planned) protocol.Guard {
 	g := protocol.Guard{Confirm: p.Step.ConfirmAccess}
 	if p.In != nil {
@@ -491,12 +492,12 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 	} else {
 		g.Pipeline, g.Stage, g.Save = stage.Pipeline, stage.Name, stage.ConfirmsAccess()
 	}
-	if g.Save {
-		return g
-	}
 	for _, h := range p.Step.Notify {
-		if h.Recipe != nil && h.ConfirmsAccess() {
-			return protocol.Guard{Recipe: h.Recipe.Name, Save: true}
+		if h.Recipe == nil || h.Recipe.Name == g.Recipe || !h.ConfirmsAccess() || !slices.Contains(p.Notify, h.Record()) {
+			continue
+		}
+		if !slices.Contains(g.Notified, h.Recipe.Name) {
+			g.Notified = append(g.Notified, h.Recipe.Name)
 		}
 	}
 	return g

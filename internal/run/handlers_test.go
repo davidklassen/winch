@@ -5,6 +5,7 @@ import (
 	"context"
 	"maps"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -900,7 +901,7 @@ func TestStageHandlers(t *testing.T) {
 		"web1 other-reload":    {Pipeline: "site", Stage: "other"},
 	}
 	for k, g := range guards {
-		if h.Guards[k] != g {
+		if !reflect.DeepEqual(h.Guards[k], g) {
 			t.Errorf("guard of %s = %+v, want %+v", k, h.Guards[k], g)
 		}
 	}
