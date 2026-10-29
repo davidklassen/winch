@@ -237,7 +237,7 @@ func deleteOld(bin, self string) error {
 // step checks a step. With apply, it then records the handlers that the step
 // notifies and its then, and makes the changes the check found, or runs a
 // deferred step. When the changes fail, it removes the records that it added.
-// After a successful unpack, it records the checksum of the archive.
+// After a successful unpack, it records the checksum, owner, and group.
 func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, loginUser *module.Login, handlers, thens, downloads, certbotHooks records, rb *rollbacks, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
@@ -252,10 +252,9 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		return protocol.StepResult{}, fmt.Errorf("decode %s arguments: %w", s.Module, err)
 	}
 	d, isDownload := m.(*module.Download)
-	var unpackKey string
-	if isDownload && d.Unpack != "" {
-		unpackKey = d.Path + "\t" + d.Unpack
-		sum, err := recorded(downloads, unpackKey)
+	unpack := isDownload && d.Unpack != ""
+	if unpack {
+		sum, err := recorded(downloads, d.Unpack)
 		if err != nil {
 			return protocol.StepResult{}, err
 		}
@@ -305,10 +304,10 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	// The plan has shown the diff already.
 	out.Old, out.OldReason = nil, ""
-	// A failed unpack can leave the archive and the unpack directory as the
-	// check wants them, so only the record shows that the unpack is not done.
-	if unpackKey != "" {
-		if err := forgetArchive(downloads, d.Path); err != nil {
+	// A failed unpack leaves the unpack directory, so only the record shows
+	// that the unpack is not done.
+	if unpack {
+		if err := forget(downloads, d.Unpack); err != nil {
 			return out, err
 		}
 	}
@@ -364,8 +363,8 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		out.Timer = time.Until(deadline)
 		rb.running = &guarded{handlers: notified, thens: thenLines}
 	}
-	if unpackKey != "" {
-		return out, record(downloads, d.SHA256, unpackKey)
+	if unpack {
+		return out, record(downloads, d.Record(), d.Unpack)
 	}
 	return out, nil
 }

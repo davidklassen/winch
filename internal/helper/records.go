@@ -13,7 +13,7 @@ import (
 
 // records is a file of records of a project, one per line: the pending
 // handlers as <recipe>.<handler>, the pending then records as JSON, or the
-// checksums of unpacks as <sha256> <path><tab><unpack directory>.
+// unpacks as <sha256>:<owner>:<group> <unpack directory>.
 type records struct {
 	dir     string
 	project string
@@ -166,24 +166,6 @@ func forget(downloads records, key string) error {
 	lines = slices.DeleteFunc(lines, func(l string) bool {
 		_, lp, _ := strings.Cut(l, " ")
 		return lp == key
-	})
-	if len(lines) == n {
-		return nil
-	}
-	return downloads.write(lines)
-}
-
-// forgetArchive removes the unpack records of the archive p, for every unpack
-// directory.
-func forgetArchive(downloads records, p string) error {
-	lines, err := downloads.read()
-	if err != nil {
-		return err
-	}
-	n := len(lines)
-	lines = slices.DeleteFunc(lines, func(l string) bool {
-		_, key, _ := strings.Cut(l, " ")
-		return key == p || strings.HasPrefix(key, p+"\t")
 	})
 	if len(lines) == n {
 		return nil

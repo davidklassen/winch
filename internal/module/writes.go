@@ -26,12 +26,7 @@ func (r *Repo) Writes() []string {
 	return out
 }
 
-func (d *Download) Writes() []string {
-	if d.Unpack != "" {
-		return []string{d.Path, d.Unpack}
-	}
-	return []string{d.Path}
-}
+func (d *Download) Writes() []string { return []string{d.Main()} }
 
 // Writes returns the home that the step gives, or the home that useradd
 // gives a new user that is not a system user.

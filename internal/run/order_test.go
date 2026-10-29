@@ -274,7 +274,6 @@ var orderCases = []orderCase{
 	{"a cmd in the unpack dir of an earlier download", steps(`      - download:
           url: https://example.com/app.tar.gz
           sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-          path: /opt/app.tar.gz
           unpack: /opt/app
       - cmd:
           command: ./install
@@ -416,6 +415,15 @@ handlers:
           sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           path: /etc/a
 `), "", "s: download /etc/a: the path /etc/a is also in s: file /etc/a, with other arguments"},
+		{"two unpacks into one directory", steps(`      - download:
+          url: https://example.com/a.tgz
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          unpack: /opt/a
+      - download:
+          url: https://example.com/b.tgz
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          unpack: /opt/a
+`), "", "s: download /opt/a: the unpack directory /opt/a is also in s: download /opt/a, with other arguments"},
 		{"a dir and a link removed on one path", steps(`      - dir:
           path: /etc/a
           absent: true

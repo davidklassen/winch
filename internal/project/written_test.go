@@ -63,7 +63,6 @@ groups:
       - download:
           url: https://example.com/a.tgz
           sha256: "0000000000000000000000000000000000000000000000000000000000000000"
-          path: /opt/a.tgz
           unpack: /opt/a
       - file:
           path: /opt/b
@@ -72,7 +71,6 @@ groups:
       - download:
           url: https://example.com/c.tgz
           sha256: "0000000000000000000000000000000000000000000000000000000000000000"
-          path: /opt/c.tgz
           unpack: /opt/c
         when: !expr 'facts.os.version == "12"'
 `,
@@ -102,7 +100,7 @@ func TestWritten(t *testing.T) {
 		paths string
 		trees string
 	}{
-		{"web1", "/etc/x/a /etc/x/done /etc/x/handler /etc/x/l1 /etc/x/l2 /home/deploy /opt/a /opt/a.tgz /srv/app/conf", "/opt/a"},
+		{"web1", "/etc/x/a /etc/x/done /etc/x/handler /etc/x/l1 /etc/x/l2 /home/deploy /opt/a /srv/app/conf", "/opt/a"},
 		{"db1", "/etc/x/a /etc/x/db /etc/x/db-handler /etc/x/done /etc/x/handler /etc/x/l1 /etc/x/l2 /srv/app/conf", ""},
 	}
 	for _, tt := range tests {

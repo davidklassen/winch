@@ -33,7 +33,7 @@ func TestWrites(t *testing.T) {
 		{"repo with key", &Repo{Name: "rspamd", Key: "rspamd.asc"}, []string{"/etc/apt/sources.list.d/rspamd.sources", "/etc/apt/keyrings/rspamd.asc"}},
 		{"unit", &Unit{Name: "x.service"}, []string{"/etc/systemd/system/x.service"}},
 		{"download", &Download{Path: "/opt/a.tgz"}, []string{"/opt/a.tgz"}},
-		{"download unpack", &Download{Path: "/opt/a.tgz", Unpack: "/opt/a"}, []string{"/opt/a.tgz", "/opt/a"}},
+		{"download unpack", &Download{Unpack: "/opt/a"}, []string{"/opt/a"}},
 		{"user", &User{Name: "deploy"}, []string{"/home/deploy"}},
 		{"user with keys", &User{Name: "deploy", AuthorizedKeys: keys}, []string{"/home/deploy", "/home/deploy/.ssh", "/home/deploy/.ssh/authorized_keys"}},
 		{"user with home", &User{Name: "vmail", System: true, Home: "/var/vmail"}, []string{"/var/vmail"}},

@@ -594,7 +594,13 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		return nil
 	}
 	switch m := st.Args.(type) {
-	case *module.File, *module.Dir, *module.Link, *module.Download:
+	case *module.Download:
+		// A dir step may manage the unpack directory, and purge keeps the tree.
+		if m.Unpack != "" {
+			return add("the unpack directory "+m.Unpack, m)
+		}
+		return add("the path "+m.Path, m)
+	case *module.File, *module.Dir, *module.Link:
 		return add("the path "+m.Main(), m)
 	case *module.Unit:
 		return add("the path "+m.Path(), m)
