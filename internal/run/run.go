@@ -59,6 +59,29 @@ type Options struct {
 	// Serial starts the sessions one at a time, in inventory order, so ssh
 	// can ask its questions on the terminal.
 	Serial bool
+	// Progress is nil, or shows the busy hosts.
+	Progress Progress
+}
+
+// Progress shows what each host does now. The text of a step is its scope
+// and its label, as an apply line shows them after the host.
+type Progress interface {
+	Busy(host, text string)
+	Idle(host string)
+}
+
+type quiet struct{}
+
+func (quiet) Busy(string, string) {}
+
+func (quiet) Idle(string) {}
+
+// progress returns Progress, or a Progress that shows nothing.
+func (o Options) progress() Progress {
+	if o.Progress == nil {
+		return quiet{}
+	}
+	return o.Progress
 }
 
 // Connect opens a session with a host for the project named proj.
@@ -244,6 +267,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	open := func(h project.Host) (Conn, error) {
 		hr := runs[h.Name]
 		if hr.conn == nil {
+			opts.progress().Busy(h.Name, "connecting")
 			c, err := connect(context.WithoutCancel(ctx), p.Name, h)
 			if err != nil {
 				return nil, err
@@ -278,10 +302,10 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 		}
 		steps := make([][]Planned, len(hosts))
-		errs := rollout(ctx, stage.Name, hosts, 0, opts.Serial, open, func(i int, conn Conn) error {
+		errs := rollout(ctx, stage.Name, hosts, 0, opts, open, func(i int, conn Conn) error {
 			hr := runs[hosts[i].Name]
 			var err error
-			steps[i], err = check(ctx, conn, p, hosts[i], stage, hr)
+			steps[i], err = check(ctx, conn, opts.progress(), p, hosts[i], stage, hr)
 			if err == nil && last[hosts[i].Name] == si {
 				for _, s := range hr.startedBy {
 					err = errors.Join(err, s.err)
@@ -323,7 +347,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 
 // check checks the steps of a stage on one host. At the first contact, it
 // reads the facts and the pending handlers, and starts the host's evaluation.
-func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun) ([]Planned, error) {
+func check(ctx context.Context, conn Conn, progress Progress, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun) ([]Planned, error) {
 	if hr.env == nil {
 		f, err := conn.Facts(context.WithoutCancel(ctx))
 		if err != nil {
@@ -377,6 +401,7 @@ func check(ctx context.Context, conn Conn, p *project.Project, h project.Host, s
 			return nil, err
 		}
 		hr.newUnitFile(&steps[i].Step)
+		progress.Busy(h.Name, where)
 		steps[i].Result, err = conn.Check(context.WithoutCancel(ctx), p.Step.Module, steps[i].Step.Args, &hr.state)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", where, err)

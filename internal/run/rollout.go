@@ -13,8 +13,9 @@ import (
 // (0: no limit). Hosts start in inventory order. With serial, rollout opens
 // the sessions itself, one at a time; else each host opens its own. With a
 // limit, a failure keeps the hosts that did not start from starting. After
-// an interrupt, no host starts. rollout returns the error of each host.
-func rollout(ctx context.Context, stage string, hosts []project.Host, limit int, serial bool,
+// an interrupt, no host starts. A host is idle when its work ends. rollout
+// returns the error of each host.
+func rollout(ctx context.Context, stage string, hosts []project.Host, limit int, opts Options,
 	open func(project.Host) (Conn, error), work func(i int, c Conn) error) []error {
 	errs := make([]error, len(hosts))
 	var mu sync.Mutex
@@ -53,6 +54,7 @@ func rollout(ctx context.Context, stage string, hosts []project.Host, limit int,
 		run := func(conn Conn) {
 			defer wg.Done()
 			defer release()
+			defer opts.progress().Idle(h.Name)
 			if conn == nil {
 				var err error
 				if conn, err = open(h); err != nil {
@@ -65,11 +67,12 @@ func rollout(ctx context.Context, stage string, hosts []project.Host, limit int,
 			}
 		}
 		var conn Conn
-		if serial {
+		if opts.Serial {
 			var err error
 			if conn, err = open(h); err != nil {
 				fail(i, err)
 				release()
+				opts.progress().Idle(h.Name)
 				continue
 			}
 		}

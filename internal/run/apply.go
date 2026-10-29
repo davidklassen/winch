@@ -147,6 +147,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 	open := func(h project.Host) (Conn, error) {
 		a := runs[h.Name]
 		if a.conn == nil {
+			a.progress.Busy(h.Name, "connecting")
 			c, err := connect(context.WithoutCancel(ctx), plan.Project, h)
 			if err != nil {
 				return nil, fmt.Errorf("failed: %w", err)
@@ -171,7 +172,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 			hps, hosts = append(hps, hp), append(hosts, hp.Host)
 			if runs[name] == nil {
-				runs[name] = &hostApply{host: name, rep: rep, notified: map[string]bool{}, thens: map[protocol.Then]bool{}}
+				runs[name] = &hostApply{host: name, rep: rep, progress: plan.opts.progress(), notified: map[string]bool{}, thens: map[protocol.Then]bool{}}
 				for _, n := range plan.Pending[name].Handlers {
 					runs[name].notified[n] = true
 				}
@@ -182,7 +183,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 		}
 		changed := make([]bool, len(hps))
 		stage := sp.Stage
-		errs := rollout(ctx, stage.Name, hosts, stage.Parallelism, plan.opts.Serial, open, func(i int, _ Conn) error {
+		errs := rollout(ctx, stage.Name, hosts, stage.Parallelism, plan.opts, open, func(i int, _ Conn) error {
 			a := runs[hosts[i].Name]
 			var err error
 			changed[i], err = a.apply(ctx, stage, hps[i])
@@ -254,9 +255,10 @@ func hostStatus(err error) string {
 
 // hostApply is what apply keeps about a host between its stages.
 type hostApply struct {
-	host  string
-	rep   Reporter
-	state module.State
+	host     string
+	rep      Reporter
+	progress Progress
+	state    module.State
 	// notified are the handlers that wait for their slot: notified in this
 	// run, or pending on the host.
 	notified map[string]bool
@@ -297,6 +299,7 @@ func (a *hostApply) apply(ctx context.Context, stage *project.Stage, hp HostPlan
 func (a *hostApply) health(ctx context.Context, stage *project.Stage) error {
 	h := stage.Health
 	ev := healthEvent(a.host, stage)
+	a.progress.Busy(a.host, stage.Name+": health")
 	err := a.conn.Health(context.WithoutCancel(ctx), protocol.Health{Command: h.Command,
 		Stable: time.Duration(h.Stable) * time.Second, Timeout: time.Duration(h.Timeout) * time.Second})
 	if err != nil {
@@ -361,6 +364,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 		ev := stepEvent(a.host, stage, p)
 		ev.Handler, ev.Step, ev.Module = handler, label(p.Step), p.Step.Module
 		l := ev.label()
+		a.progress.Busy(a.host, ev.scope()+": "+l)
 		res, err := a.step(ctx, ev, l, p, guard(stage, p))
 		changed = changed || res.Status == module.Change
 		if err != nil {
@@ -381,6 +385,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 		}
 		tev := ev
 		tev.Step, tev.Module, tev.Then, tev.ThenPending = "", "", secret.PrintableLines(p.Step.ShownThen()), a.thens[*t]
+		a.progress.Busy(a.host, ev.scope()+": "+failLabel+": then")
 		if err := a.conn.Command(context.WithoutCancel(ctx), p.Step.Then, *t); err != nil {
 			tev.Status, tev.Error = "failed", err.Error()
 			a.rep.Step(tev)
