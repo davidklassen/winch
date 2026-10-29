@@ -416,18 +416,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
 		hr.trackUnits(p.Step.Args, steps[i].Result, where)
-		// The old answer can be an older secret, which the text filter does
-		// not know.
-		if _, ok := p.Step.Args.(*module.Debconf); ok && p.Step.Secret && steps[i].Result.Status == module.Change {
-			steps[i].Result.Changes = []string{"answer (secret)"}
-		}
-		if _, ok := p.Step.Args.(*module.Certbot); ok && p.Step.Secret {
-			for j, c := range steps[i].Result.Changes {
-				if key, _, _ := strings.Cut(c, " "); strings.HasSuffix(key, "_hook") {
-					steps[i].Result.Changes[j] = key + " (secret)"
-				}
-			}
-		}
+		maskOldSecrets(p.Step, &steps[i].Result)
 		if steps[i].Result.Status != module.OK {
 			changed = true
 			for _, n := range p.Notify {
@@ -981,3 +970,23 @@ func label(st project.Step) string {
 }
 
 var marks = map[module.Action]string{module.Create: "+", module.Modify: "~", module.Remove: "-"}
+
+// maskOldSecrets masks the changes of a secret step that show the value on
+// the host. It can be an older secret, which the text filter does not know.
+func maskOldSecrets(s project.Step, res *module.Result) {
+	if !s.Secret {
+		return
+	}
+	switch s.Args.(type) {
+	case *module.Debconf:
+		if res.Status == module.Change {
+			res.Changes = []string{"answer (secret)"}
+		}
+	case *module.Certbot:
+		for j, c := range res.Changes {
+			if key, _, _ := strings.Cut(c, " "); strings.HasSuffix(key, "_hook") {
+				res.Changes[j] = key + " (secret)"
+			}
+		}
+	}
+}

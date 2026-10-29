@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 
@@ -166,6 +167,20 @@ func TestSecretAnswer(t *testing.T) {
 			t.Errorf("the plan shows %q", s)
 		}
 	}
+	applied := applyJSON(t, plan, h)
+	if !strings.Contains(applied, `"changes":["answer (secret)"]`) || strings.Contains(applied, "old-token") || strings.Contains(applied, "new-token") {
+		t.Errorf("applied events:\n%s", applied)
+	}
+}
+
+// applyJSON applies plan on h and returns the JSON events of apply.
+func applyJSON(t *testing.T, plan *run.Plan, h *fakehost.Hosts) string {
+	t.Helper()
+	var out bytes.Buffer
+	if !run.Apply(context.Background(), plan, h.Connector(), run.NewEvents(plain(&out), time.Now)).OK() {
+		t.Fatalf("apply failed:\n%s", out.String())
+	}
+	return out.String()
 }
 
 // spec: Variables/Secrets in output; CLI/Output
@@ -299,5 +314,9 @@ func TestSecretHook(t *testing.T) {
 		if strings.Contains(out.String()+errOut.String(), s) {
 			t.Errorf("the plan shows %q", s)
 		}
+	}
+	applied := applyJSON(t, plan, h)
+	if !strings.Contains(applied, `"changes":["deploy_hook (secret)","issue the certificate again, with a new key"]`) || strings.Contains(applied, "old-token") || strings.Contains(applied, "new-token") {
+		t.Errorf("applied events:\n%s", applied)
 	}
 }
