@@ -117,6 +117,26 @@ func noFlags(dir *os.Root, name string, fi fs.FileInfo, p string) error {
 	return nil
 }
 
+// noFlagsAt fails when one of the files at paths has the immutable or
+// append-only flag. It skips a file that does not exist.
+func noFlagsAt(paths ...string) error {
+	for _, p := range paths {
+		dir, missing, err := openParent(p)
+		if err != nil {
+			return err
+		}
+		fi, ok, err := lstat(dir, path.Base(p), missing)
+		if ok {
+			err = noFlags(dir, path.Base(p), fi, p)
+		}
+		dir.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // The inode flags of chattr +a and +i.
 const (
 	fsImmutableFl = 0x10

@@ -41,7 +41,9 @@ type User struct {
 	account  []string
 	mkHome   string
 	password bool
-	keys     bool
+	// opens are the account files that the planned commands open for writing.
+	opens []string
+	keys  bool
 	// keyHome is the home of the keys that Apply writes.
 	keyHome string
 	// missing marks a step that only adds groups to a user that does not
@@ -191,6 +193,9 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 	if err != nil {
 		return res, err
 	}
+	if err := noFlagsAt(u.opens...); err != nil {
+		return Result{}, err
+	}
 	// sshd's AllowGroups, DenyGroups, and Match Group read the groups at the
 	// next login.
 	if u.loginGroups != nil {
@@ -298,6 +303,9 @@ func (u *User) checkAbsent(a accounts, cur passwdEntry, exists bool, login uint3
 	}
 	if cur.uid == login {
 		return Result{}, fmt.Errorf("%s is the login user of this session; log in as another user to remove it", u.Name)
+	}
+	if err := noFlagsAt("/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow"); err != nil {
+		return Result{}, err
 	}
 	u.account = []string{"userdel", u.Name}
 	res := Result{Status: Change, Action: Remove}
@@ -432,6 +440,7 @@ func (u *User) checkNew(a accounts) (Result, string, string, error) {
 		changes = append(changes, "set password")
 		u.password = true
 	}
+	u.opens = []string{"/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow"}
 	u.account = append(args, u.Name)
 	return Result{Status: Change, Action: Create, Changes: changes}, home, group, nil
 }
@@ -535,6 +544,13 @@ func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, strin
 		if len(procs) > 0 {
 			changes = append(changes, fmt.Sprintf("processes of %s run (%s); usermod fails while they run", u.Name, strings.Join(procs, ", ")))
 		}
+	}
+	// usermod and chpasswd open /etc/passwd and /etc/shadow for any change.
+	if len(args) > 1 || u.password {
+		u.opens = append(u.opens, "/etc/passwd", "/etc/shadow")
+	}
+	if slices.Contains(args, "-G") {
+		u.opens = append(u.opens, "/etc/group", "/etc/gshadow")
 	}
 	if len(args) > 1 {
 		u.account = append(args, u.Name)

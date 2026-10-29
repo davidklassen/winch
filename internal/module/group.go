@@ -96,10 +96,16 @@ func (g *Group) Check(ctx context.Context, _ *State, _ func(string)) (Result, er
 			g.todo = append(g.todo, "-r")
 		}
 		g.todo = append(g.todo, g.Name)
+		if err := noFlagsAt("/etc/group", "/etc/gshadow"); err != nil {
+			return Result{}, err
+		}
 		return Result{Status: Change, Action: Create, Changes: changes}, nil
 	}
 	if gid, _ := strconv.ParseUint(string(g.GID), 10, 32); g.GID == "" || uint32(gid) == cur.gid {
 		return Result{Status: OK}, nil
+	}
+	if err := noFlagsAt("/etc/passwd", "/etc/group"); err != nil {
+		return Result{}, err
 	}
 	g.todo = []string{"groupmod", "-g", string(g.GID), g.Name}
 	changes := []string{fmt.Sprintf("gid %d → %s; files keep the old gid", cur.gid, g.GID)}

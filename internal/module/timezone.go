@@ -57,6 +57,9 @@ func (z *Timezone) Check(ctx context.Context, _ *State, _ func(string)) (Result,
 	case err != nil:
 		return Result{}, err
 	case strings.TrimSpace(string(data)) != z.Name:
+		if err := noFlagsAt(timezoneFile); err != nil {
+			return Result{}, err
+		}
 		changes = append(changes, timezoneFile+" "+strings.TrimSpace(string(data))+" → "+z.Name)
 	}
 	if len(changes) == 0 {
@@ -108,7 +111,13 @@ func (z *Timezone) Apply(ctx context.Context, _ func(string)) error {
 	if _, err := run(ctx, nil, "timedatectl", "set-timezone", "--", z.Name); err != nil {
 		return err
 	}
-	if _, err := os.Lstat(timezoneFile); errors.Is(err, fs.ErrNotExist) {
+	data, err := os.ReadFile(timezoneFile)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case strings.TrimSpace(string(data)) == z.Name:
 		return nil
 	}
 	return writeRoot(timezoneFile, []byte(z.Name+"\n"), 0, 0, 0o644)

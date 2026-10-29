@@ -12,7 +12,7 @@ import (
 func TestHostnameModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "hostname")
-	reset := "hostnamectl set-hostname base"
+	reset := "chattr -ia /etc/hostname; hostnamectl set-hostname base"
 	vmtest.RunCases(t, vm, "hostname", reset, []vmtest.Case{
 		{
 			Name:      "a new name",
@@ -33,6 +33,32 @@ func TestHostnameModule(t *testing.T) {
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"static name base → wthost", "running name other → wthost"}},
 			After: `[ "$(hostname)" = wthost ] && [ "$(cat /etc/hostname)" = wthost ]`,
 		},
+		{
+			Name:      "an immutable /etc/hostname",
+			Setup:     "chattr +i /etc/hostname",
+			Args:      &module.Hostname{Name: "wthost"},
+			WantErr:   "/etc/hostname is immutable; chattr -i changes it",
+			Unchanged: `[ "$(hostname)" = base ]`,
+		},
+		{
+			Name:  "an immutable /etc/hostname with the static name",
+			Setup: "hostname other && chattr +i /etc/hostname",
+			Args:  &module.Hostname{Name: "base"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"running name other → base"}},
+			After: `[ "$(hostname)" = base ]`,
+		},
+		{
+			Name:    "an append-only /etc/hostname",
+			Setup:   "chattr +a /etc/hostname",
+			Args:    &module.Hostname{Name: "wthost"},
+			WantErr: "/etc/hostname is append-only; chattr -a changes it",
+		},
+		{
+			Name:  "the name with an immutable /etc/hostname",
+			Setup: "chattr +i /etc/hostname",
+			Args:  &module.Hostname{Name: "base"},
+			Want:  module.Result{Status: module.OK},
+		},
 	})
 }
 
@@ -40,7 +66,7 @@ func TestHostnameModule(t *testing.T) {
 func TestTimezoneModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "timezone")
-	reset := "timedatectl set-timezone Etc/UTC && rm -rf /etc/timezone /usr/share/zoneinfo/Mars"
+	reset := "chattr -ia /etc/timezone 2>/dev/null; timedatectl set-timezone Etc/UTC && rm -rf /etc/timezone /usr/share/zoneinfo/Mars"
 	vmtest.RunCases(t, vm, "timezone", reset, []vmtest.Case{
 		{
 			Name:      "a new zone",
@@ -75,6 +101,26 @@ func TestTimezoneModule(t *testing.T) {
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"/etc/timezone America/New_York → Etc/UTC"}},
 			Unchanged: `[ "$(cat /etc/timezone)" = America/New_York ]`,
 			After:     `[ "$(cat /etc/timezone)" = Etc/UTC ] && [ "$(stat -c '%U %G %a' /etc/timezone)" = "root root 644" ]`,
+		},
+		{
+			Name:      "an immutable /etc/timezone",
+			Setup:     "echo Etc/UTC > /etc/timezone && chattr +i /etc/timezone",
+			Args:      &module.Timezone{Name: "Europe/Berlin"},
+			WantErr:   "/etc/timezone is immutable; chattr -i changes it",
+			Unchanged: `[ "$(timedatectl show -p Timezone --value)" = Etc/UTC ]`,
+		},
+		{
+			Name:  "an immutable /etc/timezone with the zone",
+			Setup: "echo Europe/Berlin > /etc/timezone && chattr +i /etc/timezone",
+			Args:  &module.Timezone{Name: "Europe/Berlin"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"time zone Etc/UTC → Europe/Berlin"}},
+			After: `[ "$(timedatectl show -p Timezone --value)" = Europe/Berlin ]`,
+		},
+		{
+			Name:  "the zone with an immutable /etc/timezone",
+			Setup: "echo Etc/UTC > /etc/timezone && chattr +i /etc/timezone",
+			Args:  &module.Timezone{Name: "Etc/UTC"},
+			Want:  module.Result{Status: module.OK},
 		},
 	})
 }
