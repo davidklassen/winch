@@ -224,6 +224,37 @@ func TestStockModule(t *testing.T) {
 	})
 }
 
+// spec: Modules/file, dir, link (stock)
+func TestStockKilledDownload(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	vm := lab.StartVM(t, "stockkill")
+	vm.MustRun(t, "apt-get update -q >/dev/null")
+	s := vm.Session(t)
+	limit := "/etc/apt/apt.conf.d/99winch-limit"
+	vm.MustRun(t, "dpkg -s monit >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y -q monit >/dev/null\n"+
+		"rm -rf /var/cache/apt/archives/monit_* /var/cache/apt/archives/partial/monit_* && echo edited >> /etc/monit/monitrc\n"+
+		"echo 'Acquire::http::Dl-Limit \"1\";' > "+limit)
+	args := &module.File{Path: "/etc/monit/monitrc", Stock: true}
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Check(ctx, "file", args, &module.State{})
+		done <- err
+	}()
+	vm.MustRun(t, "timeout 10 sh -c 'until [ -n \"$(find /var/cache/apt/archives -name monit_\\* -size +0)\" ]; do sleep 0.1; done'; pkill -KILL -x apt-get; pkill -KILL -x http; true")
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "get the archive of monit") {
+		t.Fatalf("check with a killed download = %v, want an error of the download", err)
+	}
+	if out := vm.MustRun(t, "find /var/cache/apt -name 'monit_*' -o -name winch"); out != "" {
+		t.Errorf("a killed download left %q in apt's cache", out)
+	}
+	vm.MustRun(t, "rm "+limit)
+	got, err := s.Check(ctx, "file", args, &module.State{})
+	if err != nil || got.Status != module.Change || len(got.Changes) != 1 || !strings.HasPrefix(got.Changes[0], "content of monit ") {
+		t.Fatalf("check after the killed download = %+v, %v; want a change of the content", got, err)
+	}
+}
+
 // spec: Modules/file, dir, link (dir purge, flags, mount points, the
 // no-follow rule)
 func TestPurgeModule(t *testing.T) {
