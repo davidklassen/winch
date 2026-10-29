@@ -170,8 +170,8 @@ func (h *Hosts) SetAnswer(host, question, value string) {
 	h.answers[host+" "+question] = value
 }
 
-// SetResult makes the check of the dir step for path, of the line step for its
-// match, or of the service step
+// SetResult makes the check of the dir or link step for path, of the line step
+// for its match, or of the service step
 // for the unit name, on a host return res.
 func (h *Hosts) SetResult(host, name string, res module.Result) {
 	h.mu.Lock()
@@ -484,7 +484,12 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		}
 		return module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + d.URL}}, nil
 	}
-	if _, ok := m.(*module.Link); ok {
+	if l, ok := m.(*module.Link); ok {
+		c.hosts.mu.Lock()
+		defer c.hosts.mu.Unlock()
+		if res, ok := c.hosts.result(c.host + " " + l.Path); ok {
+			return res, nil
+		}
 		return module.Result{Status: module.OK}, nil
 	}
 	if l, ok := m.(*module.Line); ok {
