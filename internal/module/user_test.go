@@ -273,7 +273,7 @@ func TestKeyChanges(t *testing.T) {
 // spec: Modules/user and group
 func TestUserCheckLogin(t *testing.T) {
 	admin := passwdEntry{name: "admin", uid: 1000, gid: 1000, home: "/home/admin", shell: "/bin/bash"}
-	a := accounts{users: []passwdEntry{admin}, groups: []groupEntry{{name: "sudo", gid: 27, members: []string{"admin"}}, {name: "adm", gid: 4}, {name: "docker", gid: 990, members: []string{"bob", "admin"}}}}
+	a := accounts{users: []passwdEntry{admin}, groups: []groupEntry{{name: "admin", gid: 1000}, {name: "sudo", gid: 27, members: []string{"admin"}}, {name: "adm", gid: 4}, {name: "docker", gid: 990, members: []string{"bob", "admin"}}}}
 	tests := []struct {
 		name  string
 		user  User
@@ -286,6 +286,10 @@ func TestUserCheckLogin(t *testing.T) {
 		{"uid", User{Name: "admin", UID: "2000"}, 1000, "admin is the login user of this session; log in as another user to change its uid", false},
 		{"shell", User{Name: "admin", Shell: "/usr/sbin/nologin"}, 1000, "admin is the login user of this session; log in as another user to change its shell", false},
 		{"home", User{Name: "admin", Home: "/srv/admin"}, 1000, "admin is the login user of this session; log in as another user to change its home", false},
+		{"group", User{Name: "admin", Group: "sudo"}, 1000, "admin is the login user of this session; log in as another user to change its group", false},
+		{"a new group", User{Name: "admin", Group: "staff"}, 1000, "admin is the login user of this session; log in as another user to change its group", false},
+		{"same group by gid", User{Name: "admin", Group: "1000"}, 1000, "", false},
+		{"group of another user", User{Name: "admin", Group: "sudo"}, 0, "", false},
 		{"uid of another user", User{Name: "admin", UID: "2000"}, 0, "", false},
 		{"shell of another user", User{Name: "admin", Shell: "/usr/sbin/nologin"}, 0, "", false},
 		{"home of another user", User{Name: "admin", Home: "/srv/admin"}, 0, "", false},

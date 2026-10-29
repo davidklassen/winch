@@ -311,6 +311,13 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			After: `[ "$(id -nG admin)" = "admin wtgrp" ]`,
 		},
 		{
+			Name:      "the primary group of the login user",
+			Setup:     `groupadd wtgrp`,
+			Args:      &module.User{Name: "admin", Group: "wtgrp"},
+			WantErr:   "admin is the login user of this session; log in as another user to change its group",
+			Unchanged: `[ "$(id -gn admin)" = admin ]`,
+		},
+		{
 			Name:      "remove a group from the login user",
 			Setup:     `gpasswd -a admin sudo`,
 			Args:      &module.User{Name: "admin", Groups: &[]string{"admin"}},

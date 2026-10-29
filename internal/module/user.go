@@ -221,10 +221,13 @@ func (u *User) checkLogin(a accounts, cur passwdEntry, login uint32) error {
 		return nil
 	}
 	have := a.groupsOf(u.Name)
+	primary, ok := a.group(string(u.Group))
 	var field string
 	switch {
 	case u.UID != "" && u.uid() != cur.uid:
 		field = "uid"
+	case u.Group != "" && (!ok || primary.gid != cur.gid):
+		field = "group"
 	case u.Shell != "" && u.Shell != cur.shell:
 		field = "shell"
 	case u.Home != "" && u.Home != cur.home:
