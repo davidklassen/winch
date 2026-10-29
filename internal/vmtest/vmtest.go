@@ -192,13 +192,13 @@ func (l *Lab) hint(out string) string {
 }
 
 type VM struct {
-	Name    string
-	lab     *Lab
-	dir     string
-	qmpPort int
-	cmd     *exec.Cmd
-	exited  chan struct{}
-	watch   *watchdog
+	Name   string
+	lab    *Lab
+	dir    string
+	qmp    *qmp
+	cmd    *exec.Cmd
+	exited chan struct{}
+	watch  *watchdog
 }
 
 // Start starts a VM from the snapshot and gives it the apt sources of the
@@ -237,6 +237,8 @@ func (l *Lab) clone(ctx context.Context, name string, online bool) (_ *VM, err e
 	if err := vm.waitRunning(ctx); err != nil {
 		return nil, err
 	}
+	// QEMU writes QMP events to stdout. A full pipe can block QEMU.
+	go io.Copy(io.Discard, vm.qmp.r) //nolint:errcheck // the copy ends when QEMU exits
 	wait, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	for {
@@ -299,27 +301,29 @@ func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, 
 	if out, err := exec.CommandContext(ctx, "qemu-img", "create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", backing, disk, diskSize).CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("qemu-img: %v: %s", err, out)
 	}
-	sshPort, err := freePort()
-	if err != nil {
-		return nil, err
-	}
-	if vm.qmpPort, err = freePort(); err != nil {
-		return nil, err
-	}
-	args, err := qemuArgs(l.Arch, disk, vm.dir, ports{SSH: sshPort, QMP: vm.qmpPort, HTTP: l.httpPort}, online)
+	args, err := qemuArgs(l.Arch, disk, vm.dir, l.httpPort, online)
 	if err != nil {
 		return nil, err
 	}
 	if state != "" {
 		args = append(args, "-incoming", "file:"+state)
 	}
-	qemuLog, err := os.Create(filepath.Join(vm.dir, "qemu.log"))
+	logPath := filepath.Join(vm.dir, "qemu.log")
+	qemuLog, err := os.Create(logPath)
 	if err != nil {
 		return nil, err
 	}
 	defer qemuLog.Close()
 	vm.cmd = exec.Command(args[0], args[1:]...)
-	vm.cmd.Stdout, vm.cmd.Stderr = qemuLog, qemuLog
+	vm.cmd.Stderr = qemuLog
+	stdin, err := vm.cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := vm.cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
 	if err := vm.cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start qemu: %w", err)
 	}
@@ -331,6 +335,20 @@ func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, 
 	if vm.watch, err = startWatchdog(vm.cmd.Process.Pid); err != nil {
 		return nil, err
 	}
+	vm.qmp = &qmp{w: stdin, r: bufio.NewReader(stdout)}
+	if _, err := vm.qmp.r.ReadString('\n'); err != nil {
+		// QEMU closes stdout when it exits.
+		<-vm.exited
+		log, _ := os.ReadFile(logPath)
+		return nil, fmt.Errorf("vm %s: qmp greeting: %w: %s", name, err, log)
+	}
+	if err := vm.qmp.call("qmp_capabilities", nil, nil); err != nil {
+		return nil, fmt.Errorf("vm %s: %w", name, err)
+	}
+	sshPort, err := vm.qmp.sshPort()
+	if err != nil {
+		return nil, fmt.Errorf("vm %s: %w", name, err)
+	}
 	if _, err := l.WriteHost(name, fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port %d\n", name, sshPort)); err != nil {
 		return nil, err
 	}
@@ -341,19 +359,14 @@ func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, 
 func (vm *VM) waitRunning(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	q, err := dialQMP(ctx, vm.qmpPort, vm.exited)
-	if err != nil {
-		return fmt.Errorf("vm %s: %w", vm.Name, err)
-	}
-	defer q.Close() //nolint:errcheck // the answers are read
 	for {
 		var st struct{ Status string }
-		if err := q.call("query-status", nil, &st); err != nil {
+		if err := vm.qmp.call("query-status", nil, &st); err != nil {
 			return fmt.Errorf("vm %s: %w", vm.Name, err)
 		}
 		// The snapshot holds a stopped machine.
 		if st.Status == "paused" {
-			if err := q.call("cont", nil, nil); err != nil {
+			if err := vm.qmp.call("cont", nil, nil); err != nil {
 				return fmt.Errorf("vm %s: %w", vm.Name, err)
 			}
 			return nil
@@ -401,14 +414,11 @@ func tail(s string, n int) string {
 // repository.
 const diskSize = "8G"
 
-type ports struct {
-	SSH, QMP, HTTP int
-}
-
-// qemuArgs returns the QEMU command of a VM. Offline, restrict=on cuts the
-// VM off from every address but the guestfwd to the lab's HTTP server.
-func qemuArgs(arch, disk, dir string, p ports, online bool) ([]string, error) {
-	netdev := fmt.Sprintf("user,id=net0,hostfwd=tcp:127.0.0.1:%[1]d-:22,guestfwd=tcp:%[2]s:80-cmd:nc 127.0.0.1 %[3]d", p.SSH, labAddr, p.HTTP)
+// qemuArgs returns the QEMU command of a VM. The SSH forward binds port 0,
+// so the kernel picks a free port. Offline, restrict=on cuts the VM off from
+// every address but the guestfwd to the lab's HTTP server.
+func qemuArgs(arch, disk, dir string, httpPort int, online bool) ([]string, error) {
+	netdev := fmt.Sprintf("user,id=net0,hostfwd=tcp:127.0.0.1:0-:22,guestfwd=tcp:%s:80-cmd:nc 127.0.0.1 %d", labAddr, httpPort)
 	if !online {
 		netdev += ",restrict=on"
 	}
@@ -420,7 +430,7 @@ func qemuArgs(arch, disk, dir string, p ports, online bool) ([]string, error) {
 		"-smbios", "type=1,serial=ds=nocloud;s=http://" + labAddr + "/seed/",
 		"-display", "none", "-monitor", "none",
 		"-serial", "file:" + filepath.Join(dir, "console.log"),
-		"-qmp", fmt.Sprintf("tcp:127.0.0.1:%d,server=on,wait=off", p.QMP),
+		"-qmp", "stdio",
 	}
 	switch arch {
 	case "arm64":
@@ -443,15 +453,6 @@ func qemuArgs(arch, disk, dir string, p ports, online bool) ([]string, error) {
 		return append([]string{bin, "-machine", "q35", "-accel", accel, "-cpu", cpu}, common...), nil
 	}
 	return nil, fmt.Errorf("unknown architecture %q", arch)
-}
-
-func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
 // Run runs a shell command as root on the VM over ssh. A login while sshd
