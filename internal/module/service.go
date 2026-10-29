@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -211,7 +212,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		up := u.up()
 		// A unit that waits to restart is down, but systemd starts it again
 		// unless a stop cancels the restart.
-		s.crashed = strings.HasPrefix(u.sub, "auto-restart")
+		s.crashed = u.restarting()
 		// A unit whose stop job timed out is still stopping; a stop waits
 		// for it.
 		stopping := u.active == "deactivating"
@@ -335,7 +336,7 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 		_, err := run(ctx, nil, "systemctl", args...)
 		switch {
 		case err == nil && c == "start":
-			if err := checkConditions(ctx, s.Unit()); err != nil {
+			if err := checkStarted(ctx, s.Unit()); err != nil {
 				return err
 			}
 		case err == nil:
@@ -348,15 +349,24 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 	return nil
 }
 
-// checkConditions fails when unit is down because a Condition failed.
-// systemctl start exits 0 then, and systemd unloads the unit, so the unit
-// state does not show the result.
-func checkConditions(ctx context.Context, unit string) error {
+// checkStarted fails when unit is not running after its start. systemctl
+// start exits 0 also when a Condition failed, and when the unit ended or
+// crashed right after its start.
+func checkStarted(ctx context.Context, unit string) error {
+	deadline := time.Now().Add(commandLimit)
 	u, err := showUnit(ctx, unit)
+	for err == nil && u.active == "activating" && !u.restarting() && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+		u, err = showUnit(ctx, unit)
+	}
 	if err != nil {
 		return err
 	}
-	if u.up() {
+	if u.up() && !u.restarting() {
 		return nil
 	}
 	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
@@ -367,7 +377,7 @@ func checkConditions(ctx context.Context, unit string) error {
 	cmd.Stdout, cmd.Stderr = &res, &res
 	err = wait(ctx, cmd, KillDelay)
 	if err == nil {
-		return nil
+		return withJournal(ctx, unit, fmt.Errorf("%s is not running after its start: %s (%s)", unit, u.active, u.sub))
 	}
 	failed := failedConditions(unit, res.String())
 	if len(failed) == 0 {
@@ -558,9 +568,14 @@ func (u unitState) up() bool {
 	return u.active == "active" || u.active == "activating" || u.active == "reloading" || u.active == "refreshing"
 }
 
-// showUnit returns the load and active state of unit.
+// restarting reports whether the unit waits to restart after a crash.
+func (u unitState) restarting() bool {
+	return strings.HasPrefix(u.sub, "auto-restart")
+}
+
+// showUnit returns the load, active, and sub state of unit.
 func showUnit(ctx context.Context, unit string) (unitState, error) {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState", "--", unit)
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState", "--", unit)
 	if err != nil {
 		return unitState{}, err
 	}
