@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/fakehost"
@@ -273,4 +274,73 @@ func TestInterruptDuringPlan(t *testing.T) {
 	if code != exitFailed || h.Applies != 0 || strings.Contains(errOut.String(), "Apply these changes?") {
 		t.Errorf("exit %d, applies %d, stderr %q", code, h.Applies, errOut.String())
 	}
+}
+
+// spec: CLI/Prompts
+func TestQuestionDiscardsEarlyInput(t *testing.T) {
+	controller, terminal := openPTY(t)
+	h := fakehost.New()
+	h.OnCheck = func(host, _ string) {
+		if host != "web1" {
+			return
+		}
+		if _, err := controller.WriteString("y\n"); err != nil {
+			t.Error(err)
+		}
+		// The terminal echoes the line when it holds it as input.
+		var echo []byte
+		buf := make([]byte, 64)
+		for !strings.Contains(string(echo), "y\r\n") {
+			n, err := controller.Read(buf)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			echo = append(echo, buf[:n]...)
+		}
+	}
+	errOut := &questionWriter{asked: make(chan struct{})}
+	var out strings.Builder
+	code := make(chan int, 1)
+	go func() {
+		code <- Main(context.Background(), []string{"apply", "site"}, Env{
+			Dir: writeProject(t, motd), In: terminal, Out: &out, Err: errOut, Terminal: true,
+			Connect: h.ConnectorFor, Filter: secret.NewFilter(),
+		})
+	}()
+	select {
+	case <-errOut.asked:
+	case c := <-code:
+		t.Fatalf("exit %d before the question, applies %d, stderr %q", c, h.Applies, errOut.String())
+	}
+	if _, err := controller.WriteString("n\n"); err != nil {
+		t.Fatal(err)
+	}
+	c := <-code
+	if c != exitOK || h.Applies != 0 || !strings.HasSuffix(errOut.String(), "Nothing changed.\n") {
+		t.Errorf("exit %d, applies %d, stderr %q", c, h.Applies, errOut.String())
+	}
+}
+
+// questionWriter closes asked when winch asks the apply question.
+type questionWriter struct {
+	mu    sync.Mutex
+	b     strings.Builder
+	asked chan struct{}
+}
+
+func (w *questionWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.b.Write(p)
+	if strings.Contains(string(p), "Apply these changes?") {
+		close(w.asked)
+	}
+	return len(p), nil
+}
+
+func (w *questionWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.String()
 }

@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -643,8 +644,15 @@ func (o *output) loadCommand(ctx context.Context, f *flags, c project.Command) (
 	})
 }
 
-// ask asks for confirmation. An interrupt answers no.
+// ask asks for confirmation. An interrupt answers no. Keys typed before the
+// question do not answer it.
 func ask(ctx context.Context, env Env) bool {
+	if f, ok := env.In.(*os.File); ok {
+		if err := discardInput(f); err != nil {
+			fmt.Fprintf(env.stderr, "winch: discard the typed input: %v\n", err)
+			return false
+		}
+	}
 	fmt.Fprint(env.stderr, "Apply these changes? [y/N] ")
 	answer := make(chan string, 1)
 	go func() {
