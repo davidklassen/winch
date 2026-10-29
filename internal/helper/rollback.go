@@ -68,6 +68,28 @@ func (r *rollbacks) scope(g protocol.Guard) string {
 	return filepath.Join(r.dir, r.project, name)
 }
 
+// notified holds the records of the handlers with confirm_access that the
+// steps of the run notified. The reconnect after a reboot keeps it; the next
+// run's first session removes it with the stores.
+func (r *rollbacks) notified() records {
+	return records{dir: filepath.Join(r.dir, r.project), project: "notified", what: "notified handlers"}
+}
+
+func (r *rollbacks) handlerStore(h string) string {
+	return filepath.Join(r.dir, r.project, handlerStoreName(h))
+}
+
+// handlerStoreName is the directory name of the store of the handler with the
+// record h. A handler of a stage is <pipeline>\t<stage>\t<handler>, one of a
+// recipe <recipe>.<handler>.
+func handlerStoreName(h string) string {
+	if i := strings.LastIndex(h, "\t"); i >= 0 {
+		return stageStore(h[:i])
+	}
+	recipe, _, _ := strings.Cut(h, ".")
+	return "recipe-" + recipe
+}
+
 // stageStore is the directory name of the store of a stage, from
 // <pipeline>\t<stage>.
 func stageStore(stage string) string {
@@ -126,11 +148,10 @@ func readIndex(dir string) ([]module.Saved, error) {
 }
 
 // save keeps the old state of the paths that the checked step m changes in
-// the store of g. It returns the saved state of each, and the whole store. A
-// path that the store has keeps its first state: the state before the first
+// the store in dir. It returns the saved state of each, and the whole store.
+// A path that the store has keeps its first state: the state before the first
 // change.
-func (r *rollbacks) save(g protocol.Guard, m module.Module) (saved, all []module.Saved, err error) {
-	dir := r.scope(g)
+func (r *rollbacks) save(dir string, m module.Module) (saved, all []module.Saved, err error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, nil, err
 	}
@@ -245,12 +266,7 @@ func (r *rollbacks) clear(handlers records) error {
 	}
 	keep := map[string]bool{}
 	for _, h := range pending {
-		// A handler of a stage is <pipeline>\t<stage>\t<handler>.
-		if i := strings.LastIndex(h, "\t"); i >= 0 {
-			keep[stageStore(h[:i])] = true
-		} else if recipe, _, ok := strings.Cut(h, "."); ok {
-			keep["recipe-"+recipe] = true
-		}
+		keep[handlerStoreName(h)] = true
 	}
 	for _, e := range entries {
 		if keep[e.Name()] {
@@ -261,6 +277,56 @@ func (r *rollbacks) clear(handlers records) error {
 		}
 	}
 	return nil
+}
+
+// end runs when the session ends. The run of the host ended before each
+// handler with confirm_access that the run notified and that is still
+// pending: end puts back the store of the handler and drops its record. A
+// handler whose store does not come back stays pending. A timer that still
+// runs rolls back first.
+func (r *rollbacks) end(ctx context.Context, handlers, thens records) error {
+	errs := []error{rollbackStep(ctx, r, handlers, thens)}
+	notified, err := r.notified().read()
+	if err != nil || len(notified) == 0 {
+		return errors.Join(append(errs, err)...)
+	}
+	pending, err := handlers.read()
+	if err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	var drop []string
+	restored := map[string]error{}
+	for _, h := range notified {
+		if !slices.Contains(pending, h) {
+			continue
+		}
+		dir := r.handlerStore(h)
+		err, done := restored[dir]
+		if !done {
+			saved, rerr := readIndex(dir)
+			if rerr == nil {
+				rerr = module.Restore(ctx, saved)
+			}
+			err, restored[dir] = rerr, rerr
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("put back the files of the handler %s that did not run: %w", h, err))
+			continue
+		}
+		drop = append(drop, h)
+	}
+	return errors.Join(append(errs, handlers.remove(drop...))...)
+}
+
+// rollbackStep ends the timer of the guarded step at once, and drops the
+// records that the step added.
+func rollbackStep(ctx context.Context, r *rollbacks, handlers, thens records) error {
+	g := r.running
+	err := r.rollback(ctx)
+	if g != nil {
+		err = errors.Join(err, handlers.remove(g.handlers...), thens.remove(g.thens...))
+	}
+	return err
 }
 
 // RunTimer is the timer process: it waits until the job is gone, which

@@ -895,7 +895,7 @@ func TestStageHandlers(t *testing.T) {
 		t.Errorf("pending = %q, want %q", got, want)
 	}
 	guards := map[string]protocol.Guard{
-		"web1 /etc/app/a.conf": {Pipeline: "site", Stage: "web", Save: true},
+		"web1 /etc/app/a.conf": {Pipeline: "site", Stage: "web", Save: true, Handlers: []string{"site\tweb\treload"}},
 		"web1 app":             {Pipeline: "site", Stage: "web", Save: true, Confirm: true},
 		"web1 /etc/other.conf": {Pipeline: "site", Stage: "other"},
 		"web1 other-reload":    {Pipeline: "site", Stage: "other"},

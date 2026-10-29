@@ -24,7 +24,7 @@ import (
 // running helper binary in dir/bin, and login the login user and the
 // connection of the session. When in closes, a running exec command stops;
 // other requests finish.
-func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, login module.State) error {
+func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, login module.State) (err error) {
 	reqs := make(chan protocol.Request)
 	inCtx, inClosed := context.WithCancel(ctx)
 	defer inClosed()
@@ -43,14 +43,21 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 	}()
 	enc := json.NewEncoder(out)
 	var lock *os.File
-	defer func() {
-		if lock != nil {
-			lock.Close()
-		}
-	}()
 	var handlers, thens, downloads, certbotHooks, checks records
 	var rb *rollbacks
 	var loginUser *module.Login
+	// After a reboot, the same run goes on in a new session. A session that
+	// finds the host not rebooted yet is a try to reconnect.
+	rebooting := false
+	defer func() {
+		if lock == nil {
+			return
+		}
+		if !rebooting {
+			err = errors.Join(err, rb.end(ctx, handlers, thens))
+		}
+		lock.Close()
+	}()
 	for {
 		req, ok := <-reqs
 		if !ok {
@@ -128,15 +135,14 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "confirm":
 			err = rb.confirm()
 		case req.Method == "rollback":
-			g := rb.running
-			err = rb.rollback(ctx)
-			if g != nil {
-				err = errors.Join(err, handlers.remove(g.handlers...), thens.remove(g.thens...))
-			}
+			err = rollbackStep(ctx, rb, handlers, thens)
 		case req.Method == "reboot":
 			result, err = reboot()
+			rebooting = err == nil
 		case req.Method == "booted":
-			result, err = booted(ctx, req.Params)
+			var b protocol.Boot
+			b, err = booted(ctx, req.Params)
+			result, rebooting = b, b.Same
 		default:
 			err = fmt.Errorf("unknown method %q", req.Method)
 		}
@@ -350,13 +356,16 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	guard := s.Guard.Confirm || res.Guard
 	var deadline time.Time
-	for _, r := range s.Guard.Notified {
-		if _, _, err := rb.save(protocol.Guard{Recipe: r}, m); err != nil {
+	for _, h := range s.Guard.Handlers {
+		if _, _, err := rb.save(rb.handlerStore(h), m); err != nil {
 			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 		}
 	}
+	if _, err := rb.notified().add(s.Guard.Handlers); err != nil {
+		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+	}
 	if s.Guard.Save || guard {
-		saved, all, err := rb.save(s.Guard, m)
+		saved, all, err := rb.save(rb.scope(s.Guard), m)
 		if err == nil && guard {
 			deadline, err = startTimer(rb, s.Guard, m, saved, all)
 		}
