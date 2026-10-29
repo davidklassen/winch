@@ -522,6 +522,32 @@ handlers:
           name: staff
           gid: 1500
 `), "", "s: group staff: the group staff is also in s: group staff, with other arguments"},
+		{"a hostname and a file on its file", steps(`      - hostname:
+          name: web1
+      - file:
+          path: /etc/hostname
+          content: "mail\n"
+`), "", "s: file /etc/hostname: the path /etc/hostname is also in s: hostname web1, with other arguments"},
+		{"a timezone and a link on its file", steps(`      - timezone:
+          name: Etc/UTC
+      - link:
+          path: /etc/localtime
+          target: /usr/share/zoneinfo/Europe/Berlin
+`), "", "s: link /etc/localtime: the path /etc/localtime is also in s: timezone Etc/UTC, with other arguments"},
+		{"a file on /etc/timezone and a timezone", steps(`      - file:
+          path: /etc/timezone
+          content: "Europe/Berlin\n"
+      - timezone:
+          name: Etc/UTC
+`), "", "s: timezone Etc/UTC: the path /etc/timezone is also in s: file /etc/timezone, with other arguments"},
+		{"a certbot and a file on its renewal file", steps(`      - certbot:
+          name: example.com
+          domains: example.com
+          email: a@example.com
+      - file:
+          path: /etc/letsencrypt/renewal/example.com.conf
+          content: ""
+`), "", "s: file /etc/letsencrypt/renewal/example.com.conf: the path /etc/letsencrypt/renewal/example.com.conf is also in s: certbot example.com, with other arguments"},
 		{"a unit and a file on one path", steps(`      - recipe: web
       - file:
           path: /etc/systemd/system/app.service

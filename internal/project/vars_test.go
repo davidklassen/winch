@@ -209,6 +209,9 @@ func TestLoadVars(t *testing.T) {
 		{name: "when-env", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr '$env.vars.mail_server'", 1),
 		}},
+		{name: "when-now", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'now().Year() > 2000'", 1),
+		}},
 		{name: "arg-env", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "content: !expr 'string(vars.web_port)", "content: !expr 'string($env.vars.web_port)", 1),
 		}},

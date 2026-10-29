@@ -194,8 +194,8 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 }
 
 // exprCheck finds the variables that an expression reads by name, and
-// reports $env, an item that is not defined, and a read of vars other than
-// by name.
+// reports $env, now(), an item that is not defined, and a read of vars other
+// than by name.
 type exprCheck struct {
 	sc  scope
 	src file.Source
@@ -234,6 +234,10 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		}
 		if isVars(n) || n.Value == "host" {
 			c.whole = append(c.whole, n)
+		}
+	case *ast.BuiltinNode:
+		if n.Name == "now" {
+			c.fail(n, "now() is not allowed")
 		}
 	case *ast.CallNode:
 		id, ok := n.Callee.(*ast.IdentifierNode)

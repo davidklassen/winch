@@ -10,8 +10,9 @@ import (
 
 func purgeWarnings(invs []*Inventory, pipelines, selected []*Pipeline) []*yamlx.Error {
 	type source struct {
-		pos   yamlx.Pos
-		paths []string
+		pos     yamlx.Pos
+		paths   []string
+		command string
 	}
 	type warning struct {
 		pos yamlx.Pos
@@ -42,7 +43,13 @@ func purgeWarnings(invs []*Inventory, pipelines, selected []*Pipeline) []*yamlx.
 							}
 						}
 						var paths []string
-						if slices.Contains(selected, pl) && step.then != nil {
+						var command string
+						if step.then != nil {
+							command = "then"
+						} else if c, ok := args.(*module.Certbot); ok && hasDeployHook(step, c) {
+							command = "deploy_hook"
+						}
+						if slices.Contains(selected, pl) && command != "" {
 							switch args.(type) {
 							case *module.File, *module.Dir, *module.Link, *module.Line:
 								paths = []string{args.Main()}
@@ -58,7 +65,7 @@ func purgeWarnings(invs []*Inventory, pipelines, selected []*Pipeline) []*yamlx.
 						}
 						for _, host := range hosts {
 							if len(paths) > 0 {
-								sources[host.Name] = append(sources[host.Name], source{step.Pos, paths})
+								sources[host.Name] = append(sources[host.Name], source{step.Pos, paths, command})
 							}
 							if dir != "" {
 								purges[host.Name] = append(purges[host.Name], dir)
@@ -75,7 +82,7 @@ func purgeWarnings(invs []*Inventory, pipelines, selected []*Pipeline) []*yamlx.
 						key := warning{source.pos, dir}
 						if p != "" && path.Dir(p) == dir && !seen[key] {
 							seen[key] = true
-							out = append(out, yamlx.Errorf(source.pos, "purge of %s may remove files that then makes; add keep", dir))
+							out = append(out, yamlx.Errorf(source.pos, "purge of %s may remove files that %s makes; add keep", dir, source.command))
 						}
 					}
 				}
@@ -94,4 +101,11 @@ func hasKeep(st Step, d *module.Dir) bool {
 		return pair != nil && pair.Value.Tag != ""
 	}
 	return false
+}
+
+func hasDeployHook(st Step, c *module.Certbot) bool {
+	if c.DeployHook != nil {
+		return true
+	}
+	return st.args != nil && find(st.args.node, []string{"deploy_hook"}) != nil
 }
