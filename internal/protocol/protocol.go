@@ -72,7 +72,8 @@ type Step struct {
 
 // Guard tells the helper how to guard an apply against a lockout. The helper
 // keeps the old state of what a step changes in the rollback store of its
-// recipe, or of its stage for a module step of a stage.
+// recipe, or of its stage for a module step of a stage, and in the stores of
+// Notified.
 type Guard struct {
 	Recipe   string `json:"recipe,omitempty"`
 	Pipeline string `json:"pipeline,omitempty"`
@@ -80,6 +81,10 @@ type Guard struct {
 	// Save keeps the old state in the store: the recipe or the stage has a
 	// step with confirm_access.
 	Save bool `json:"save,omitempty"`
+	// Notified are the other recipes whose confirm_access handler the step
+	// notifies. The step keeps the old state in their stores too, which the
+	// timer of that handler puts back.
+	Notified []string `json:"notified,omitempty"`
 	// Confirm is the confirm_access of the step: a change starts the
 	// rollback timer, which puts back the whole store.
 	Confirm bool `json:"confirm,omitempty"`

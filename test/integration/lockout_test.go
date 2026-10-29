@@ -101,6 +101,76 @@ func TestLockoutFirewall(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (a step saves in the store of
+// its own recipe and in that of each recipe whose confirm_access handler it
+// notifies)
+func TestLockoutNotifiedStore(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "notified-store")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\nvars:\n  ssh_drop: false\n",
+		"inventories/test.yaml": "hosts:\n  notified-store: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: ssh\n      - recipe: nftables\n",
+		"recipes/ssh/recipe.yaml": `steps:
+  - file:
+      path: /etc/nftables-ssh.nft
+      content: !tpl |
+        table inet ssh {
+        	chain input {
+        		type filter hook input priority -10; policy accept;
+        		{{ if .vars.ssh_drop }}ct state new tcp dport 22 drop{{ end }}
+        	}
+        }
+    notify: nftables.reload
+handlers:
+  reload:
+    - service:
+        name: ssh
+        reloaded: true
+      confirm_access: true
+`,
+		"recipes/nftables/recipe.yaml": `steps:
+  - pkg:
+      name: nftables
+  - file:
+      path: /etc/nftables.conf
+      content: |
+        #!/usr/sbin/nft -f
+        flush ruleset
+        include "/etc/nftables-ssh.nft"
+      mode: "0755"
+      validate: nft -c -f /etc/nftables.conf
+    notify: reload
+  - service:
+      name: nftables
+      enabled: true
+      running: true
+handlers:
+  reload:
+    - service:
+        name: nftables
+        reloaded: true
+      confirm_access: true
+`,
+	})
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply with SSH open: exit %d", r.Code)
+	}
+	good := vm.MustRun(t, "cat /etc/nftables-ssh.nft")
+
+	r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.ssh_drop=true")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "notified-store: nftables: failed: handler nftables.reload: service nftables: no new SSH connection works: ") ||
+		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+		t.Fatalf("apply with SSH dropped: exit %d", r.Code)
+	}
+	if got := vm.MustRun(t, "cat /etc/nftables-ssh.nft"); got != good {
+		t.Errorf("/etc/nftables-ssh.nft after the rollback:\n%s\nwant\n%s", got, good)
+	}
+	if out := vm.MustRun(t, "nft list ruleset"); strings.Contains(out, "drop") {
+		t.Errorf("the ruleset drops SSH after the rollback:\n%s", out)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (a user step that changes the
 // keys of the login user)
 func TestLockoutKeys(t *testing.T) {

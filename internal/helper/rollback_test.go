@@ -520,6 +520,49 @@ func TestFailedGuardedApplyRollsBack(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (a step saves in the store of
+// its own recipe and in that of each recipe whose confirm_access handler it
+// notifies)
+func TestStepSavesInTheNotifiedStores(t *testing.T) {
+	l := startLockout(t)
+	g := protocol.Guard{Recipe: "ssh", Save: true, Notified: []string{"nftables"}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"nftables.reload"}}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	rb := &rollbacks{dir: filepath.Join(l.dir, "rollback"), project: "acme"}
+	for _, recipe := range []string{"ssh", "nftables"} {
+		saved, err := readIndex(rb.scope(protocol.Guard{Recipe: recipe}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(saved) != 1 || saved[0].Path != l.a {
+			t.Errorf("the store of %s holds %+v, want %s", recipe, saved, l.a)
+		}
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a failed copy into the store of
+// a notified recipe fails the step and drops its records)
+func TestFailedNotifiedSaveFailsTheStep(t *testing.T) {
+	l := startLockout(t)
+	// A file in place of the store directory fails the save.
+	rb := &rollbacks{dir: filepath.Join(l.dir, "rollback"), project: "acme"}
+	store := rb.scope(protocol.Guard{Recipe: "nftables"})
+	mkdir(t, filepath.Dir(store))
+	write(t, store, "")
+	g := protocol.Guard{Recipe: "app", Notified: []string{"nftables"}}
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"nftables.reload"}, Then: &protocol.Then{Recipe: "app", Step: 1}})
+	if !strings.Contains(r.Error, "not a directory") {
+		t.Fatalf("apply error %q, want the failed save", r.Error)
+	}
+	if content(t, l.a) != "old\n" {
+		t.Error("the step changed the file after the failed save")
+	}
+	if p := pendingAll(t, l.c); len(p.Handlers) != 0 || len(p.Then) != 0 {
+		t.Errorf("pending %+v, want no records of the failed step", p)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (a failed copy fails the step
 // before it changes anything)
 func TestFailedSaveFailsTheStep(t *testing.T) {
