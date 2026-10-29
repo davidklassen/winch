@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -197,6 +198,7 @@ type VM struct {
 	qmpPort int
 	cmd     *exec.Cmd
 	exited  chan struct{}
+	watch   *watchdog
 }
 
 // Start starts a VM from the snapshot and gives it the apt sources of the
@@ -326,6 +328,9 @@ func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, 
 		vm.cmd.Wait() //nolint:errcheck // Stop kills qemu; wait only notices the exit
 		close(vm.exited)
 	}()
+	if vm.watch, err = startWatchdog(vm.cmd.Process.Pid); err != nil {
+		return nil, err
+	}
 	if _, err := l.WriteHost(name, fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port %d\n", name, sshPort)); err != nil {
 		return nil, err
 	}
@@ -494,6 +499,9 @@ func (vm *VM) Thaw() error {
 
 // Stop ends the VM. Its files stay in the lab directory.
 func (vm *VM) Stop() {
+	if vm.watch != nil {
+		vm.watch.stop()
+	}
 	if vm.exited != nil {
 		vm.cmd.Process.Kill() //nolint:errcheck // the VM may have exited
 		<-vm.exited
@@ -503,4 +511,34 @@ func (vm *VM) Stop() {
 
 func Quote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// watchdog kills a process when the test process ends without stop, for
+// example at the time limit of go test. It reads a pipe whose only write end
+// the test process holds; the kernel closes it when the test process ends.
+type watchdog struct {
+	cmd *exec.Cmd
+	w   *os.File
+}
+
+func startWatchdog(pid int) (*watchdog, error) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	cmd := exec.Command("sh", "-c", `read _ || kill -9 "$1"`, "sh", strconv.Itoa(pid))
+	cmd.Stdin = r
+	if err := cmd.Start(); err != nil {
+		w.Close()
+		return nil, fmt.Errorf("start watchdog: %w", err)
+	}
+	return &watchdog{cmd: cmd, w: w}, nil
+}
+
+// stop ends the watchdog and leaves the process running.
+func (d *watchdog) stop() {
+	d.w.Write([]byte("\n")) //nolint:errcheck // Stop kills the process next
+	d.w.Close()
+	d.cmd.Wait() //nolint:errcheck // the watchdog exits 0
 }
