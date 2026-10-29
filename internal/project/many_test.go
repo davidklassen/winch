@@ -497,6 +497,8 @@ func TestMatchComputedDefault(t *testing.T) {
 		{name: "comparison", content: `!expr 'string(match("mon")[0]?.vars?.role == nil)'`, want: computed},
 		{name: "whole map", content: `!expr 'string(match("mon")[0].vars)'`, want: computed},
 		{name: "get", content: `!expr 'string(get(match("mon")[0].vars, "role") == nil)'`, want: computed},
+		{name: "json", content: `!expr 'json(match("mon"))'`, want: computed},
+		{name: "template json", tmpl: "{{ json .vars.monit_peers }}", want: computed},
 		{name: "values", content: `!expr 'string(len(filter(values(match("mon")[0].vars), # != "")))'`, want: computed},
 		{name: "toPairs", content: `!expr 'string(len(toPairs(match("mon")[0].vars)))'`, want: computed},
 		{name: "keys", content: `!expr 'join(keys(match("mon")[0].vars), ",")'`, want: `data="mail_server,monit_peers,role"`},

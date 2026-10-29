@@ -81,7 +81,7 @@ type hostEnv struct {
 	Vars    map[string]any `expr:"vars"`
 }
 
-// exprOptions add quote and sqlquote, and replace keys, values, and toPairs, whose order
+// exprOptions add quote, sqlquote, and json, and replace keys, values, and toPairs, whose order
 // is random in expr, with versions in sorted key order.
 var exprOptions = []expr.Option{
 	expr.Env(exprEnv{}),
@@ -109,6 +109,9 @@ var exprOptions = []expr.Option{
 		}
 		return sqlquote(s), nil
 	}, sqlquote),
+	expr.Function("json", func(args ...any) (any, error) {
+		return toJSON(args[0])
+	}, toJSON),
 }
 
 // readFunc checks the value of a member read. Its name cannot be written in
