@@ -1649,15 +1649,21 @@ func publicRepo(r *module.Repo, mods [3]module.Module, argsOK bool) string {
 	return ""
 }
 
+// Writes are the paths that the steps for a host write, sorted. Trees are
+// the unpack directories of download steps: a step writes everything in
+// them.
+type Writes struct {
+	Paths, Trees []string
+}
+
 // Written returns the paths that the steps for the host h write, in every
-// pipeline of the project, sorted. A stage that the selection leaves out
-// counts. A step that when skips does not count, and neither does an
-// absent one.
-func (p *Project) Written(h Host, f facts.Facts) ([]string, error) {
+// pipeline of the project. A stage that the selection leaves out counts. A
+// step that when skips does not count, and neither does an absent one.
+func (p *Project) Written(h Host, f facts.Facts) (Writes, error) {
 	if p.othersErr != nil {
-		return nil, p.othersErr
+		return Writes{}, p.othersErr
 	}
-	seen := map[string]bool{}
+	seen, trees := map[string]bool{}, map[string]bool{}
 	add := func(e *Env, st Step) error {
 		steps, err := st.Eval(e)
 		if err != nil {
@@ -1668,6 +1674,9 @@ func (p *Project) Written(h Host, f facts.Facts) ([]string, error) {
 				for _, p := range w.Writes() {
 					seen[p] = true
 				}
+			}
+			if d, ok := s.Args.(*module.Download); ok && d.Unpack != "" {
+				trees[d.Unpack] = true
 			}
 		}
 		return nil
@@ -1682,7 +1691,7 @@ func (p *Project) Written(h Host, f facts.Facts) ([]string, error) {
 		q.Pipeline = &all
 		e, err := q.Start(h, f)
 		if err != nil {
-			return nil, fmt.Errorf("pipeline %s: %w", pl.Name, err)
+			return Writes{}, fmt.Errorf("pipeline %s: %w", pl.Name, err)
 		}
 		for _, s := range all.Stages {
 			if !slices.ContainsFunc(s.Targets, func(t Host) bool { return t.Name == h.Name }) {
@@ -1690,20 +1699,20 @@ func (p *Project) Written(h Host, f facts.Facts) ([]string, error) {
 			}
 			for _, hs := range s.handlerSteps() {
 				if err := add(e, hs); err != nil {
-					return nil, err
+					return Writes{}, err
 				}
 			}
 			for i := range s.Steps {
 				st := &s.Steps[i]
 				if st.Recipe == nil {
 					if err := add(e, *st); err != nil {
-						return nil, err
+						return Writes{}, err
 					}
 					continue
 				}
 				ok, err := st.Runs(e)
 				if err != nil {
-					return nil, err
+					return Writes{}, err
 				}
 				if !ok {
 					continue
@@ -1715,11 +1724,11 @@ func (p *Project) Written(h Host, f facts.Facts) ([]string, error) {
 				}
 				for _, rs := range steps {
 					if err := add(re, rs); err != nil {
-						return nil, err
+						return Writes{}, err
 					}
 				}
 			}
 		}
 	}
-	return slices.Sorted(maps.Keys(seen)), nil
+	return Writes{slices.Sorted(maps.Keys(seen)), slices.Sorted(maps.Keys(trees))}, nil
 }

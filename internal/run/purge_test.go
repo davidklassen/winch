@@ -81,6 +81,44 @@ func TestPurgeKeep(t *testing.T) {
 	}
 }
 
+// spec: Modules/file, dir, link (dir purge keeps a download unpack directory
+// with everything in it)
+func TestPurgeKeepUnpack(t *testing.T) {
+	p := loadFiles(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - dir:
+          path: /opt/app
+          purge: true
+      - dir:
+          path: /opt/app/bin
+          purge: true
+      - dir:
+          path: /opt/app2
+          purge: true
+      - download:
+          url: https://example.com/app.tgz
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+          path: /opt/app.tgz
+          unpack: /opt/app
+`,
+	})
+	h := fakehost.New()
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	if o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))); !o.OK() {
+		t.Fatalf("apply failed: %s", errOut.String())
+	}
+	want := map[string][]string{"web1 /opt/app2": nil}
+	if !reflect.DeepEqual(h.DirKeep, want) {
+		t.Errorf("purged directories with their kept paths = %q, want %q", h.DirKeep, want)
+	}
+}
+
 // spec: CLI/JSON output
 func TestAppliedChanges(t *testing.T) {
 	p, err := project.Load(t.Context(), vmtest.WriteProject(t, map[string]string{

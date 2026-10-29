@@ -219,7 +219,7 @@ type hostRun struct {
 	pkgs []pkgStep
 	// written returns the paths that the project writes on the host, for dir
 	// steps with purge. It is set at the first contact.
-	written func() ([]string, error)
+	written func() (project.Writes, error)
 }
 
 type managed struct {
@@ -360,7 +360,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		if hr.env, err = p.Start(h, f); err != nil {
 			return nil, err
 		}
-		hr.written = sync.OnceValues(func() ([]string, error) { return p.Written(h, f) })
+		hr.written = sync.OnceValues(func() (project.Writes, error) { return p.Written(h, f) })
 		pending, err := conn.Pending(context.WithoutCancel(ctx))
 		if err != nil {
 			return nil, err
@@ -893,10 +893,14 @@ func (hr *hostRun) keep(steps []project.Step) error {
 		}
 		c := *d
 		c.Keep = nil
-		for _, p := range written {
+		for _, p := range written.Paths {
 			if strings.HasPrefix(p, d.Path+"/") {
 				c.Keep = append(c.Keep, p)
 			}
+		}
+		// A download unpack writes everything in its tree.
+		if slices.ContainsFunc(written.Trees, func(t string) bool { return t == d.Path || strings.HasPrefix(d.Path, t+"/") }) {
+			c.Purge = false
 		}
 		steps[i].Args = &c
 	}
