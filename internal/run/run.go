@@ -227,6 +227,11 @@ type hostRun struct {
 	// startedBy are the errors for units that start a unit that a service
 	// step stops or disables, while no service step names them.
 	startedBy []startedBy
+	// sshOff are the errors for steps that stop or disable one unit of the
+	// SSH server, by the other unit, while no step starts and enables it.
+	sshOff []startedBy
+	// sshOn are the SSH server units that a step starts and enables.
+	sshOn map[string]bool
 	// removed are the paths of the checked absent steps.
 	removed []string
 	// unitFiles are the contents of the unit files that checked unit steps
@@ -351,7 +356,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, units: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, units: map[string]bool{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -361,6 +366,9 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			steps[i], err = check(ctx, conn, opts.progress(), p, hosts[i], stage, hr)
 			if err == nil && last[hosts[i].Name] == si {
 				for _, s := range hr.startedBy {
+					err = errors.Join(err, s.err)
+				}
+				for _, s := range hr.sshOff {
 					err = errors.Join(err, s.err)
 				}
 			}
@@ -472,6 +480,9 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 			return nil, err
 		}
 		if err := hr.packages(p.Step.Args, steps[i].Result, where); err != nil {
+			return nil, err
+		}
+		if err := hr.sshServer(p.Step.Args, steps[i].Result, where); err != nil {
 			return nil, err
 		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
@@ -794,6 +805,62 @@ func (hr *hostRun) packages(m module.Module, res module.Result, where string) er
 		hr.pkgs = append(hr.pkgs, cur)
 	}
 	return nil
+}
+
+// sshServer fails a step that removes or masks the SSH server. It records a
+// step that stops or disables one of the SSH server units: the plan fails it
+// unless another step starts and enables the other unit.
+func (hr *hostRun) sshServer(m module.Module, res module.Result, where string) error {
+	cut := func() error { return fmt.Errorf("%s: this cuts off winch's access", where) }
+	switch m := m.(type) {
+	case *module.Service:
+		unit := m.Unit()
+		other := sshPair(unit)
+		if other == "" {
+			return nil
+		}
+		if m.Running != nil && *m.Running && m.Enabled != nil && *m.Enabled {
+			hr.sshOn[unit] = true
+			hr.sshOff = slices.DeleteFunc(hr.sshOff, func(s startedBy) bool { return s.unit == unit })
+		}
+		stops := m.Running != nil && !*m.Running && slices.Contains(res.Changes, "stop")
+		disables := m.Enabled != nil && !*m.Enabled && slices.Contains(res.Changes, "disable")
+		if (stops || disables) && !hr.sshOn[other] {
+			hr.sshOff = append(hr.sshOff, startedBy{other, cut()})
+		}
+	case *module.Pkg:
+		for _, c := range res.Changes {
+			verb, list, _ := strings.Cut(strings.TrimPrefix(c, "also "), " ")
+			if (verb == "remove" || verb == "purge") && slices.Contains(strings.Split(list, ", "), "openssh-server") {
+				return cut()
+			}
+		}
+	case *module.Link:
+		if res.Status == module.OK || m.Target == nil {
+			return nil
+		}
+		target := *m.Target
+		if !path.IsAbs(target) {
+			target = path.Join(path.Dir(m.Path), target)
+		}
+		unit := path.Base(m.Path)
+		if target == "/dev/null" &&
+			sshPair(unit) != "" && (&module.Unit{Name: unit}).Path() == m.Path {
+			return cut()
+		}
+	}
+	return nil
+}
+
+// sshPair returns the other unit of the SSH server, or "" for another unit.
+func sshPair(unit string) string {
+	switch unit {
+	case "ssh.service":
+		return "ssh.socket"
+	case "ssh.socket":
+		return "ssh.service"
+	}
+	return ""
 }
 
 // newUnitFile gives a service step the unit file that an earlier unit step of
