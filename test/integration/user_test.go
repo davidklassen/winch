@@ -835,7 +835,7 @@ func TestGroupModule(t *testing.T) {
 func TestUsers(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "users")
-	vm.MustRun(t, `useradd -M -U Debian-wt`)
+	vm.MustRun(t, `useradd -M -U Debian-wt && install -d -o Debian-wt /var/lib/wt`)
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  " + vm.Name + ": {}\n",
@@ -854,8 +854,8 @@ func TestUsers(t *testing.T) {
           authorized_keys:
             - ` + strings.TrimSpace(vmtest.PublicKey) + `
       - cmd:
-          command: id -un > /tmp/wt-user
-          creates: /tmp/wt-user
+          command: id -un > /var/lib/wt/user
+          creates: /var/lib/wt/user
           user: Debian-wt
 `,
 	})
@@ -866,7 +866,7 @@ func TestUsers(t *testing.T) {
 	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
 		t.Fatalf("apply: exit %d", r.Code)
 	}
-	vm.MustRun(t, `[ "$(cat /tmp/wt-user)" = Debian-wt ] && [ "$(id -nG wtdev)" = "wtteam Debian-wt" ]`)
+	vm.MustRun(t, `[ "$(cat /var/lib/wt/user)" = Debian-wt ] && [ "$(id -nG wtdev)" = "wtteam Debian-wt" ]`)
 	cmd := exec.CommandContext(t.Context(), "ssh", "-l", "wtdev", vm.Name, "id -un; id -gn")
 	cmd.Env = lab.Env()
 	out, err := cmd.CombinedOutput()

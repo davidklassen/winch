@@ -710,7 +710,7 @@ func TestLoadSkippedNameWarning(t *testing.T) {
 	}
 }
 
-// spec: Modules/download
+// spec: Modules/download; Modules/cmd
 func TestLoadTempDownloadWarning(t *testing.T) {
 	step := func(p string) string {
 		return "download:\n          url: https://example.com/a\n          sha256: " + strings.Repeat("a", 64) + "\n          path: " + p
@@ -742,6 +742,8 @@ func TestLoadTempDownloadWarning(t *testing.T) {
 		{"opt", step("/opt/a"), ""},
 		{"prefix only", step("/tmpfiles/a"), ""},
 		{"file in tmp", "file:\n          path: /tmp/a\n          content: x", ""},
+		{"cmd creates tmp", "cmd:\n          command: make\n          creates: /tmp/a", "pipelines/site.yaml:7:20: creates: the host removes files in /tmp, so the step runs again; use a path such as /opt or /var/lib"},
+		{"cmd creates opt", "cmd:\n          command: make\n          creates: /opt/a", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, map[string]string{

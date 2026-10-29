@@ -1001,7 +1001,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 		}
 	}
 	for _, p := range argsNode.Pairs {
-		if p.Key == "path" || p.Key == "unpack" {
+		if p.Key == "path" || p.Key == "unpack" || p.Key == "creates" {
 			if w := pathWarning(args); w != "" {
 				l.warnings = append(l.warnings, yamlx.Errorf(p.Value.Pos, "%s: %s", p.Key, w))
 			}
@@ -1019,7 +1019,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 
 // pathWarning returns a warning for the path of a step, or "": for a file or
 // a link that cron or sudo skip because its name has a ".", and for a download
-// into a directory that the host empties.
+// or a cmd creates path in a directory that the host empties.
 func pathWarning(m module.Module) string {
 	var p string
 	var absent bool
@@ -1029,13 +1029,9 @@ func pathWarning(m module.Module) string {
 	case *module.Link:
 		p, absent = m.Path, m.Absent
 	case *module.Download:
-		p = m.Main()
-		for _, d := range []string{"/tmp", "/var/tmp", "/run", "/dev/shm"} {
-			if p == d || strings.HasPrefix(p, d+"/") {
-				return "the host removes files in " + d + ", so the step downloads again; use a path such as /opt or /var/lib"
-			}
-		}
-		return ""
+		return tempWarning(m.Main(), "downloads")
+	case *module.Cmd:
+		return tempWarning(m.Creates, "runs")
 	}
 	dir, name := path.Split(p)
 	switch {
@@ -1048,6 +1044,17 @@ func pathWarning(m module.Module) string {
 	default:
 		return ""
 	}
+}
+
+// tempWarning returns a warning for a path under a directory that the host
+// empties, or "".
+func tempWarning(p, verb string) string {
+	for _, d := range []string{"/tmp", "/var/tmp", "/run", "/dev/shm"} {
+		if p == d || strings.HasPrefix(p, d+"/") {
+			return "the host removes files in " + d + ", so the step " + verb + " again; use a path such as /opt or /var/lib"
+		}
+	}
+	return ""
 }
 
 // openContent returns the content reads of the file step st when its mode

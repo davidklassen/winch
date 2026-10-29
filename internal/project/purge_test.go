@@ -132,3 +132,32 @@ func TestLoadPurgeWarningOfAStageHandler(t *testing.T) {
 		t.Errorf("warnings = %v, want one purge warning", p.Warnings)
 	}
 }
+
+// spec: Modules/file, dir, link (purge and generated files load warning)
+func TestLoadPurgeWarningOfADeployHook(t *testing.T) {
+	certbot := "      - certbot:\n          name: example.com\n          domains: example.com\n          email: a@example.com\n"
+	for _, tt := range []struct {
+		name, hook, want string
+	}{
+		{"deploy hook", "          deploy_hook: systemctl reload nginx\n", "purge of /etc/letsencrypt/renewal may remove files that deploy_hook makes; add keep"},
+		{"computed deploy hook", "          deploy_hook: !tpl 'systemctl reload {{ .host.short }}'\n", "purge of /etc/letsencrypt/renewal may remove files that deploy_hook makes; add keep"},
+		{"no hook", "", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeProject(t, map[string]string{
+				"pipelines/site.yaml": stage("      - dir:\n          path: /etc/letsencrypt/renewal\n          purge: true\n" + certbot + tt.hook),
+			})
+			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got string
+			if len(p.Warnings) > 0 {
+				got = p.Warnings[0].Error()
+			}
+			if len(p.Warnings) > 1 || !strings.Contains(got, tt.want) || tt.want == "" && got != "" {
+				t.Errorf("warnings = %v, want %q", p.Warnings, tt.want)
+			}
+		})
+	}
+}

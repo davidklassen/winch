@@ -1,0 +1,3 @@
+recipes/web/recipe.yaml:15:11: now() is not allowed
+ | now().Year() > 2000
+ | ^

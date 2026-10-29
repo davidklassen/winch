@@ -594,6 +594,17 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		}
 		return nil
 	}
+	addWrites := func(thing string, w module.Writer) error {
+		if err := add(thing, st.Args); err != nil {
+			return err
+		}
+		for _, p := range w.Writes() {
+			if err := add("the path "+p, st.Args); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	switch m := st.Args.(type) {
 	case *module.Download:
 		// A dir step may manage the unpack directory, and purge keeps the tree.
@@ -644,11 +655,11 @@ func (hr *hostRun) same(st project.Step, where string) error {
 	case *module.Group:
 		return add("the group "+m.Name, m)
 	case *module.Hostname:
-		return add("the host name", m)
+		return addWrites("the host name", m)
 	case *module.Timezone:
-		return add("the time zone", m)
+		return addWrites("the time zone", m)
 	case *module.Certbot:
-		return add("the certificate "+m.Name, m)
+		return addWrites("the certificate "+m.Name, m)
 	case *module.Firewall:
 		if other, ok := hr.managed["the firewall"]; ok {
 			return fmt.Errorf("%s: the firewall is also in %s; a host has one firewall step", where, other.where)
