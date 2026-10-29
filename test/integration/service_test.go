@@ -423,7 +423,7 @@ printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service
 		},
 		{
 			Name:  "the unit of an alias is ok",
-			Setup: enableSSH + " && systemctl is-active -q ssh",
+			Setup: enableSSH + " && systemctl start ssh && systemctl is-active -q ssh",
 			Args:  &module.Service{Name: "ssh", Enabled: new(true), Running: new(true)},
 			Want:  module.Result{Status: module.OK},
 		},
