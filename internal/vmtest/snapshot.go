@@ -10,10 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -88,7 +88,7 @@ func (l *Lab) snapshotInputs(ctx context.Context) (snapshotInputs, error) {
 	if _, err := io.Copy(h, f); err != nil {
 		return snapshotInputs{}, err
 	}
-	args, err := qemuArgs(l.Arch, "DISK", "DIR", ports{}, true)
+	args, err := qemuArgs(l.Arch, "DISK", "DIR", 0, true)
 	if err != nil {
 		return snapshotInputs{}, err
 	}
@@ -180,15 +180,10 @@ func (l *Lab) buildSnapshot(ctx context.Context, dir string) error {
 func (vm *VM) save(ctx context.Context, path string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	q, err := dialQMP(ctx, vm.qmpPort, vm.exited)
-	if err != nil {
+	if err := vm.qmp.call("stop", nil, nil); err != nil {
 		return err
 	}
-	defer q.Close() //nolint:errcheck // the answers are read
-	if err := q.call("stop", nil, nil); err != nil {
-		return err
-	}
-	if err := q.call("migrate", map[string]string{"uri": "file:" + path}, nil); err != nil {
+	if err := vm.qmp.call("migrate", map[string]string{"uri": "file:" + path}, nil); err != nil {
 		return err
 	}
 	for {
@@ -196,13 +191,13 @@ func (vm *VM) save(ctx context.Context, path string) error {
 			Status    string
 			ErrorDesc string `json:"error-desc"`
 		}
-		if err := q.call("query-migrate", nil, &st); err != nil {
+		if err := vm.qmp.call("query-migrate", nil, &st); err != nil {
 			return err
 		}
 		switch st.Status {
 		case "completed":
 			// QEMU on Linux can close the connection before it answers quit.
-			err := q.call("quit", nil, nil)
+			err := vm.qmp.call("quit", nil, nil)
 			select {
 			case <-vm.exited:
 				return nil
@@ -237,37 +232,10 @@ func removeOthers(dir, prefix, keep string) error {
 	return nil
 }
 
-// qmp is a client of the QEMU Machine Protocol.
+// qmp is a client of the QEMU Machine Protocol on QEMU's stdin and stdout.
 type qmp struct {
-	conn net.Conn
-	r    *bufio.Reader
-}
-
-// dialQMP connects to QEMU's QMP port. QEMU opens it soon after its start.
-func dialQMP(ctx context.Context, port int, exited <-chan struct{}) (*qmp, error) {
-	var d net.Dialer
-	for {
-		conn, err := d.DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err == nil {
-			q := &qmp{conn: conn, r: bufio.NewReader(conn)}
-			if _, err := q.r.ReadString('\n'); err != nil {
-				conn.Close() //nolint:errcheck // the handshake failed already
-				return nil, fmt.Errorf("qmp greeting: %w", err)
-			}
-			if err := q.call("qmp_capabilities", nil, nil); err != nil {
-				conn.Close() //nolint:errcheck // the handshake failed already
-				return nil, err
-			}
-			return q, nil
-		}
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("qmp: %w", err)
-		case <-exited:
-			return nil, errors.New("qemu exited")
-		case <-time.After(20 * time.Millisecond):
-		}
-	}
+	w io.Writer
+	r *bufio.Reader
 }
 
 func (q *qmp) call(command string, args, result any) error {
@@ -279,7 +247,7 @@ func (q *qmp) call(command string, args, result any) error {
 	if err != nil {
 		return err
 	}
-	if _, err := q.conn.Write(append(req, '\n')); err != nil {
+	if _, err := q.w.Write(append(req, '\n')); err != nil {
 		return fmt.Errorf("qmp %s: %w", command, err)
 	}
 	for {
@@ -307,6 +275,16 @@ func (q *qmp) call(command string, args, result any) error {
 	}
 }
 
-func (q *qmp) Close() error {
-	return q.conn.Close()
+// sshPort returns the host port of the VM's SSH forward.
+func (q *qmp) sshPort() (int, error) {
+	var out string
+	if err := q.call("human-monitor-command", map[string]string{"command-line": "info usernet"}, &out); err != nil {
+		return 0, err
+	}
+	for line := range strings.Lines(out) {
+		if f := strings.Fields(line); len(f) > 3 && f[0] == "TCP[HOST_FORWARD]" {
+			return strconv.Atoi(f[3])
+		}
+	}
+	return 0, fmt.Errorf("no SSH forward in info usernet: %s", out)
 }

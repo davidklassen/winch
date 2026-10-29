@@ -473,3 +473,63 @@ func TestWatchdog(t *testing.T) {
 		})
 	}
 }
+
+// spec: roadmap: Testing/VMs
+func TestBootSSHPort(t *testing.T) {
+	usernet := `  Protocol[State]    FD  Source Address  Port   Dest. Address  Port RecvQ SendQ\r\n  TCP[HOST_FORWARD]   12       127.0.0.1 56633       10.0.2.15    22     0     0\r\n`
+	// The fake QEMU exits when a command is not the expected one.
+	greet := `expect() { read cmd; case "$cmd" in *"$1"*) ;; *) exit 1 ;; esac; }
+echo '{"QMP": {}}'; expect qmp_capabilities; echo '{"return": {}}'; expect 'info usernet'
+`
+	for _, c := range []struct {
+		name string
+		qemu string
+		// want holds the parts of the error; none means success.
+		want []string
+	}{
+		{name: "forward", qemu: greet + fmt.Sprintf(`printf '%%s\n' '{"return": "%s"}'`, usernet)},
+		{name: "no forward", qemu: greet + `echo '{"return": ""}'`, want: []string{"vm demo", "no SSH forward"}},
+		{name: "QEMU fails", qemu: "echo boom >&2; exit 1", want: []string{"vm demo", "boom"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, d := range []string{"bin", "hosts"} {
+				if err := os.Mkdir(filepath.Join(dir, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeScript(t, filepath.Join(dir, "bin", "qemu-img"), "#!/bin/sh\n")
+			writeScript(t, filepath.Join(dir, "bin", "qemu-system-x86_64"), "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\n"+c.qemu+"\nexec sleep 30\n")
+			t.Setenv("PATH", filepath.Join(dir, "bin")+":"+os.Getenv("PATH"))
+			l := &Lab{Dir: dir, Arch: "amd64"}
+			vm, err := l.boot(t.Context(), "demo", filepath.Join(dir, "vms", "demo"), "base.qcow2", false, "")
+			if vm != nil {
+				defer vm.Stop()
+			}
+			args, _ := os.ReadFile(filepath.Join(dir, "bin", "qemu-system-x86_64.args"))
+			for _, w := range []string{"\n-qmp\nstdio\n", "hostfwd=tcp:127.0.0.1:0-:22,"} {
+				if !bytes.Contains(args, []byte(w)) {
+					t.Errorf("QEMU arguments %q, want %q in them", args, w)
+				}
+			}
+			if len(c.want) == 0 {
+				if err != nil {
+					t.Fatalf("boot = %v, want nil", err)
+				}
+				conf, _ := os.ReadFile(filepath.Join(dir, "hosts", "demo.conf"))
+				if want := "Host demo\n  HostName 127.0.0.1\n  Port 56633\n"; string(conf) != want {
+					t.Errorf("host config = %q, want %q", conf, want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("boot = nil, want an error with %q", c.want)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("boot = %v, want %q in it", err, w)
+				}
+			}
+		})
+	}
+}
