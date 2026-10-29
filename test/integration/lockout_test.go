@@ -138,3 +138,91 @@ func TestLockoutKeys(t *testing.T) {
 		t.Errorf("plan after the rollback: exit %d", r.Code)
 	}
 }
+
+const sshPortRecipe = `vars:
+  sshd_ports: [22, 2222]
+steps:
+  - file:
+      path: /etc/ssh/sshd_config.d/port.conf
+      content: !tpl "{{ range .vars.sshd_ports }}Port {{ . }}\n{{ end }}"
+    notify: restart
+handlers:
+  restart:
+    - service:
+        name: ssh
+        restarted: true
+      confirm_access: true
+`
+
+// spec: Running a pipeline/Lockout protection; Modules/service and unit
+// (sshd from ssh.socket)
+func TestLockoutSSHPort(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "ssh-port")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":               "name: demo\ninventory: test\n",
+		"inventories/test.yaml":    "hosts:\n  ssh-port: {}\n",
+		"pipelines/site.yaml":      "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: sshd\n",
+		"recipes/sshd/recipe.yaml": sshPortRecipe,
+	})
+	// Ubuntu starts sshd from ssh.socket.
+	socket := osRelease().id == "ubuntu"
+	if got := vm.MustRun(t, "systemctl is-active ssh.socket || true") == "active\n"; got != socket {
+		t.Fatalf("ssh.socket active: %t, want %t", got, socket)
+	}
+	listens := func(t *testing.T, want string) {
+		t.Helper()
+		out := vm.MustRun(t, "ss -Hltn")
+		var got []string
+		for _, port := range []string{"22", "2222"} {
+			if strings.Contains(out, ":"+port+" ") {
+				got = append(got, port)
+			}
+		}
+		if strings.Join(got, " ") != want {
+			t.Errorf("sshd listens on %q, want %q:\n%s", got, want, out)
+		}
+	}
+
+	// Only the new port: the access check fails, and the old port is back.
+	// With ssh.socket, the file step moves the port, and its own access
+	// check fails.
+	failed := "ssh-port: sshd: failed: handler sshd.restart: service ssh: no new SSH connection works: "
+	if socket {
+		failed = "ssh-port: sshd: failed: file /etc/ssh/sshd_config.d/port.conf: no new SSH connection works: "
+	}
+	r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.sshd_ports=[2222]")
+	if r.Code != 1 || !strings.Contains(r.Stderr, failed) ||
+		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+		t.Fatalf("apply with only port 2222: exit %d", r.Code)
+	}
+	vm.MustRun(t, "test ! -e /etc/ssh/sshd_config.d/port.conf")
+	listens(t, "22")
+
+	// Both ports: sshd listens on the new port too.
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || socket != strings.Contains(r.Stdout, "daemon-reload\n          restart ssh.socket\n") ||
+		socket != strings.Contains(r.Stdout, "changes the ports of ssh.socket, which winch connects to\n") {
+		t.Errorf("plan: exit %d; ssh.socket active: %t", r.Code, socket)
+	}
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply with both ports: exit %d", r.Code)
+	}
+	listens(t, "22 2222")
+	if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan: exit %d", r.Code)
+	}
+
+	if !socket {
+		return
+	}
+	// A port that another program holds: the restart of ssh.socket fails,
+	// and the rollback brings back the old ports.
+	vm.MustRun(t, "setsid -f python3 -c 'import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind((\"0.0.0.0\", 2223)); s.listen(); time.sleep(600)' >/dev/null 2>&1 </dev/null; sleep 1")
+	r = lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.sshd_ports=[22, 2223]")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "ssh-port: sshd: failed: file /etc/ssh/sshd_config.d/port.conf: systemctl restart: ") ||
+		!strings.HasSuffix(r.Stderr, "; the old files are back\n") {
+		t.Fatalf("apply with a taken port: exit %d", r.Code)
+	}
+	listens(t, "22 2222")
+}
