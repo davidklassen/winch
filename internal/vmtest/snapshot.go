@@ -20,6 +20,9 @@ import (
 
 // Ubuntu has a group admin, so useradd cannot create the user's own group.
 // cloud-init creates a missing group of groups, but not a primary_group.
+// On Ubuntu, every SSH login runs landscape-sysinfo when its cache is older
+// than a minute. It takes seconds of CPU, so the first login after a minute
+// without one can miss a test's deadline.
 const userData = `#cloud-config
 users:
   - name: admin
@@ -36,6 +39,7 @@ ssh_pwauth: false
 runcmd:
   - systemctl disable --now $(systemctl list-unit-files --no-legend 'apt-*.timer' | cut -d' ' -f1)
   - systemctl stop 'apt-*.service'
+  - rm -f /etc/update-motd.d/50-landscape-sysinfo
 `
 
 const metaData = "instance-id: base\nlocal-hostname: base\n"

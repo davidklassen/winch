@@ -148,9 +148,10 @@ func TestFirewallModule(t *testing.T) {
 	}
 
 	// A rule set whose access check fails rolls back. A second table drops
-	// new SSH connections for 50 seconds, as rules that close the path of the
-	// access check do.
-	project("  - cmd:\n      command: |\n        nft add table inet block\n        nft add chain inet block input '{ type filter hook input priority -10; }'\n        nft add rule inet block input tcp dport 22 ct state new drop\n        systemd-run --on-active=50 nft delete table inet block\n" +
+	// new SSH connections for 60 seconds, as rules that close the path of the
+	// access check do. The timeout of the set element ends the drop on time;
+	// a systemd timer can elapse a minute late.
+	project("  - cmd:\n      command: |\n        nft add table inet block\n        nft add set inet block ssh '{ type inet_service; timeout 60s; elements = { 22 }; }'\n        nft add chain inet block input '{ type filter hook input priority -10; }'\n        nft add rule inet block input tcp dport @ssh ct state new drop\n" +
 		firewall + "        - tcp: [22, 443]\n")
 	r = lab.Winch(t, dir, "apply", "--yes")
 	if r.Code != 1 || !strings.Contains(r.Stderr, "failed: firewall: no new SSH connection works: ") || !strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
