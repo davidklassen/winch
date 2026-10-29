@@ -35,6 +35,26 @@ func TestHostnameValidate(t *testing.T) {
 }
 
 // spec: Modules/hostname and timezone
+func TestStaticHostname(t *testing.T) {
+	tests := []struct {
+		data, want string
+	}{
+		{"mail\n", "mail"},
+		{"mail", "mail"},
+		{"  mail  \n", "mail"},
+		{"# Hetzner Online GmbH\nmail\n", "mail"},
+		{"\n#a\n  # b\n\nmail\nother\n", "mail"},
+		{"# only a comment\n", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := staticHostname([]byte(tt.data)); got != tt.want {
+			t.Errorf("staticHostname(%q) = %q, want %q", tt.data, got, tt.want)
+		}
+	}
+}
+
+// spec: Modules/hostname and timezone
 func TestTimezoneValidate(t *testing.T) {
 	for _, ok := range []string{"UTC", "Etc/UTC", "Europe/Berlin", "America/Argentina/Buenos_Aires", "Etc/GMT+5", "Etc/GMT-14"} {
 		if err := (&Timezone{Name: ok}).Validate(); err != nil {
