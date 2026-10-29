@@ -35,6 +35,9 @@ func TestCmdValidate(t *testing.T) {
 		{"Debian user", "command: x\nuser: Debian-exim\n", ""},
 		{"bad user", "command: x\nuser: \"a b\"\n", `t.yaml:2:7: user: "a b" is not a user name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
 		{"numeric user", "command: x\nuser: \"1000\"\n", `t.yaml:2:7: user: "1000" is not a user name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
+		{"unless", "command: make install\nunless: test -x /usr/local/bin/app\nuser: deploy\n", ""},
+		{"empty unless", "command: x\nunless: \"\"\n", `t.yaml:2:9: unless: must not be empty`},
+		{"creates and unless", "command: x\ncreates: /x\nunless: \"true\"\n", `t.yaml:3:9: unless: a cmd has at most one of creates and unless`},
 		{"unknown key", "command: x\ncreate: /x\n", `t.yaml:2:1: unknown key "create"; did you mean "creates"?`},
 	}
 	for _, tt := range tests {
@@ -88,6 +91,49 @@ func TestCmdCheck(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := (&Cmd{Command: command, Creates: tt.creates}).Check(t.Context(), &State{}, func(string) {})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != tt.want.Status || got.Action != tt.want.Action || got.Deferred {
+				t.Errorf("check = %+v, want %+v", got, tt.want)
+			}
+			if _, err := os.Stat(ran); err == nil {
+				t.Error("the check ran the command")
+			}
+		})
+	}
+}
+
+// spec: Modules (the command rules); Modules/cmd
+func TestCmdUnless(t *testing.T) {
+	dir := t.TempDir()
+	ran := filepath.Join(dir, "ran")
+	tests := []struct {
+		name    string
+		unless  string
+		timeout int
+		want    Result
+		wantErr string
+	}{
+		{"exit 0", "true", 0, Result{Status: OK}, ""},
+		{"another exit status", "exit 3", 0, Result{Status: Change, Action: Modify}, ""},
+		{"a failed line", "false\ntrue", 0, Result{Status: Change, Action: Modify}, ""},
+		{"in /", `test "$(pwd)" = /`, 0, Result{Status: OK}, ""},
+		{"the step timeout", "sleep 5", 1, Result{}, "unless: sleep 5: no result after 1s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Cmd{Command: "touch " + ran, Unless: &tt.unless, Dir: dir}
+			if tt.timeout != 0 {
+				c.Timeout = &tt.timeout
+			}
+			got, err := c.Check(t.Context(), &State{}, func(string) {})
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("check error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
