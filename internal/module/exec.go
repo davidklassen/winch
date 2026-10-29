@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -72,7 +74,7 @@ func Shell(ctx context.Context, command string) error {
 // ShellLimit is Shell with the time limit limit. After the limit, the command
 // gets SIGTERM, and SIGKILL when it still runs after killDelay.
 func ShellLimit(ctx context.Context, command string, limit, killDelay time.Duration) error {
-	return shellLimit(ctx, command, "/", nil, limit, killDelay)
+	return shellLimit(ctx, command, "/", nil, nil, limit, killDelay)
 }
 
 // runAs is the user that a command runs as, with the IDs of its groups.
@@ -81,27 +83,46 @@ type runAs struct {
 	groups []uint32
 }
 
-// shellLimit is ShellLimit in dir, and as the user as when it is not nil.
-func shellLimit(ctx context.Context, command, dir string, as *runAs, limit, killDelay time.Duration) error {
+// shellLimit is ShellLimit in dir, with env, and as the user as when it is
+// not nil.
+func shellLimit(ctx context.Context, command, dir string, env []string, as *runAs, limit, killDelay time.Duration) error {
 	// The error shows only the end of the output.
 	out := &tailBuffer{max: 64 << 10}
-	if err := shell(ctx, "-ec", command, dir, as, limit, killDelay, out); err != nil {
+	if err := shell(ctx, "-ec", command, dir, env, as, limit, killDelay, out); err != nil {
 		return failure(command, err, string(out.tail()))
 	}
 	return nil
 }
 
-// shell runs command in dir, with its output in out. With as,
-// it runs as that user, with the user's HOME, USER, and LOGNAME.
-func shell(ctx context.Context, options, command, dir string, as *runAs, limit, killDelay time.Duration, out *tailBuffer) error {
+// shell runs command in dir, with env added to the environment, and with its
+// output in out. With as, it runs as that user, with the user's HOME, USER,
+// and LOGNAME.
+//
+// sh reads the command from a pipe on fd 3, as every local user can read
+// the arguments of a process. A script file does not work for a user other
+// than root: the file would have to be readable by that user.
+func shell(ctx context.Context, options, command, dir string, env []string, as *runAs, limit, killDelay time.Duration, out *tailBuffer) error {
 	ctx, cancel := context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", options, command)
+	r, w, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	go func() {
+		// A command that ends before it reads the script makes the write
+		// fail once r is closed.
+		_, _ = io.WriteString(w, command)
+		w.Close()
+	}()
+	cmd := exec.CommandContext(ctx, "sh", options, `eval "$(cat <&3)" 3<&-`)
+	cmd.ExtraFiles = []*os.File{r}
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = out, out
+	cmd.Env = append(cmd.Environ(), env...)
 	if as != nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: as.user.uid, Gid: as.user.gid, Groups: as.groups}}
-		cmd.Env = append(cmd.Environ(), "HOME="+as.user.home, "USER="+as.user.name, "LOGNAME="+as.user.name)
+		cmd.Env = append(cmd.Env, "HOME="+as.user.home, "USER="+as.user.name, "LOGNAME="+as.user.name)
 	}
 	return wait(ctx, cmd, killDelay)
 }
@@ -187,7 +208,7 @@ func Exec(ctx context.Context, command string) (ExecResult, error) {
 // results; the time limit is an error.
 func execLimit(ctx context.Context, command string, limit, killDelay time.Duration) (ExecResult, error) {
 	out := &tailBuffer{max: 1 << 20}
-	err := shell(ctx, "-c", command, "/", nil, limit, killDelay, out)
+	err := shell(ctx, "-c", command, "/", nil, nil, limit, killDelay, out)
 	tail := out.tail()
 	if err != nil && !errors.As(err, new(*exec.ExitError)) {
 		return ExecResult{}, failure(command, err, string(tail))

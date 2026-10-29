@@ -379,7 +379,7 @@ func (c *Certbot) Apply(ctx context.Context, _ func(string)) error {
 				env = []string{"RENEWED_LINEAGE=" + path.Join(letsencrypt, "live", c.Name), "RENEWED_DOMAINS=" + strings.Join(c.Domains, " ")}
 			}
 			if command != nil {
-				if _, err := run(ctx, env, "sh", "-ec", *command); err != nil {
+				if err := shellLimit(ctx, *command, "/", env, nil, commandLimit, KillDelay); err != nil {
 					errs = append(errs, fmt.Errorf("%s: %w", hook, err))
 					continue
 				}

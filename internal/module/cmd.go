@@ -95,7 +95,7 @@ func (c *Cmd) Apply(ctx context.Context, _ func(string)) error {
 	if c.Timeout != nil {
 		limit = time.Duration(*c.Timeout) * time.Second
 	}
-	err := shellLimit(ctx, c.Command, cmp.Or(c.Dir, "/"), as, limit, KillDelay)
+	err := shellLimit(ctx, c.Command, cmp.Or(c.Dir, "/"), nil, as, limit, KillDelay)
 	// exec names sh, not the directory, when the user cannot enter it.
 	if pe, ok := errors.AsType[*fs.PathError](err); ok && pe.Op == "fork/exec" && c.Dir != "" {
 		return fmt.Errorf("dir %s: %w", c.Dir, pe.Err)
