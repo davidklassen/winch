@@ -1,6 +1,7 @@
 package secret
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"net/url"
@@ -16,23 +17,28 @@ type Filter struct {
 	mu sync.Mutex
 	// values holds each value and its encoded forms.
 	values map[string]bool
+	// plain holds the lines of plain project text, without the white space
+	// around them.
+	plain map[string]bool
 }
 
 func NewFilter() *Filter {
-	return &Filter{values: map[string]bool{}}
+	return &Filter{values: map[string]bool{}, plain: map[string]bool{}}
 }
 
 // Add adds a secret value: the value and each of its lines, without the
 // white space around them, in plain and JSON-escaped form, and as the output
 // prints it, also JSON-escaped. It adds the base64 and URL-encoded forms of
 // both the trimmed and the exact text. It skips text shorter than 4
-// characters, and true and false.
+// characters, and true and false. It skips a line of a multi-line value that
+// is a line of plain project text.
 func (f *Filter) Add(value string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	multi := strings.Contains(strings.TrimSpace(value), "\n")
 	for _, exact := range append([]string{value}, strings.Split(value, "\n")...) {
 		v := strings.TrimSpace(exact)
-		if utf8.RuneCountInString(v) < 4 || v == "true" || v == "false" {
+		if utf8.RuneCountInString(v) < 4 || v == "true" || v == "false" || multi && f.plain[v] {
 			continue
 		}
 		for _, s := range []string{v, Printable(v), PrintableLines(v)} {
@@ -185,4 +191,14 @@ func PrintableLines(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// Plain adds the lines of plain project text. A line of a multi-line value
+// that is also such a line does not count by itself. Call Plain before Add.
+func (f *Filter) Plain(text []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for line := range bytes.Lines(text) {
+		f.plain[string(bytes.TrimSpace(line))] = true
+	}
 }

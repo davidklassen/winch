@@ -130,6 +130,39 @@ func TestFilter(t *testing.T) {
 }
 
 // spec: Variables/Secrets in output (text filter)
+func TestFilterPlainLines(t *testing.T) {
+	wg := "[Interface]\nPrivateKey = wg-private-key-1\n\n[Peer]\nPublicKey = wg-public-key-2\nAllowedIPs = 10.0.0.2/32"
+	tests := []struct {
+		name  string
+		plain string
+		value string
+		in    string
+		want  string
+	}{
+		{"common line shows", "[Peer]\nPublicKey = {{ .vars.key }}\n", wg, " [Peer]\n-PublicKey = old\n+PublicKey = new", " [Peer]\n-PublicKey = old\n+PublicKey = new"},
+		{"key line stays hidden", "[Peer]\n", wg, "+PrivateKey = wg-private-key-1", "+(secret)"},
+		{"line without a common line stays hidden", "[Peer]\n", wg, "x AllowedIPs = 10.0.0.2/32", "x (secret)"},
+		{"whole value stays hidden", "[Interface]\n[Peer]\n", wg, "x " + wg + " y", "x (secret)\n(secret)\n\n(secret)\n(secret)\n(secret) y"},
+		{"common line with white space", "env:\n  NODE_ENV=production\n", "NODE_ENV=production\nAPI_TOKEN=tok-123456", "NODE_ENV=production API_TOKEN=tok-123456", "NODE_ENV=production (secret)"},
+		{"base64 of a common line shows", "[Peer]\n", wg, "W1BlZXJd", "W1BlZXJd"},
+		{"url form of a common line shows", "[Peer]\n", wg, "%5BPeer%5D", "%5BPeer%5D"},
+		{"part of a plain line stays hidden", "PrivateKey = wg-private-key-1 is an example\n", wg, "PrivateKey = wg-private-key-1", "(secret)"},
+		{"one-line value in plain text stays hidden", "admin-user\n", "admin-user", "login admin-user", "login (secret)"},
+		{"one-line value with a newline stays hidden", "admin-user\n", "admin-user\n", "login admin-user", "login (secret)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := NewFilter()
+			f.Plain([]byte(tt.plain))
+			f.Add(tt.value)
+			if got := f.Text(tt.in); got != tt.want {
+				t.Errorf("Text(%q)\n got %q\nwant %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Variables/Secrets in output (text filter)
 func TestFilterManyValues(t *testing.T) {
 	f := NewFilter()
 	var values []string

@@ -238,11 +238,15 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 			return nil, err
 		}
 	}
-	if err := l.unsealAll(ctx, keys); err != nil {
+	plain := func([]byte) {}
+	if len(l.sealed) > 0 {
+		plain = keys.Filter.Plain
+	}
+	warnings, err := scanProject(dir, plain)
+	if err != nil {
 		return nil, err
 	}
-	warnings, err := scanProject(dir)
-	if err != nil {
+	if err := l.unsealAll(ctx, keys); err != nil {
 		return nil, err
 	}
 	secretWarnings, err := l.secretChecks(invs, []*Pipeline{pl})
@@ -351,7 +355,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err := l.checkNames(sets); err != nil {
 		return nil, err
 	}
-	warnings, err := scanProject(dir)
+	warnings, err := scanProject(dir, func([]byte) {})
 	if err != nil {
 		return nil, err
 	}
