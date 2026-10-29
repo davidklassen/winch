@@ -165,6 +165,60 @@ func TestRebootMaintenance(t *testing.T) {
 	}
 }
 
+// spec: Modules/reboot (winch connects again after a failed connection or a
+// pam_nologin refusal; a refused key or host key fails the step at once)
+func TestRebootRetry(t *testing.T) {
+	tests := []struct {
+		name, stdout, stderr string
+		code                 int
+		retry                bool
+	}{
+		{"refused connection", "", "ssh: connect to host web1 port 22: Connection refused", 255, true},
+		{"closed", "", closed, 255, true},
+		{"nologin", "", "System is booting up. Unprivileged users are not permitted to log in yet. Please come back later. For technical details, see pam_nologin(8).\n\n" + closed, 255, true},
+		{"nologin, log level error", "", "", 255, true},
+		{"refused key", "", "admin@web1: Permission denied (publickey).", 255, false},
+		{"refused key on the jump host", "", "admin@bastion: Permission denied (publickey).\nConnection closed by UNKNOWN port 65535", 255, false},
+		{"too many keys", "", "Received disconnect from 192.0.2.10 port 22:2: Too many authentication failures\nDisconnected from 192.0.2.10 port 22", 255, false},
+		{"host key", "", "Host key verification failed.", 255, false},
+		{"connection lost after the login", "have", "Connection to web1 closed by remote host.", 255, true},
+		{"missing sudo", "", "winch: the login user needs passwordless sudo", 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			t.Setenv("REBOOT_STATE", filepath.Join(t.TempDir(), "state"))
+			s, err := Open(context.Background(), Config{
+				Host:       "web1",
+				Address:    "web1",
+				Dir:        t.TempDir(),
+				Binaries:   []helperbin.Binary{helperbin.New("arm64", []byte(rebootHelper))},
+				Hello:      protocol.Hello{Run: "r1"},
+				Progress:   plain(&bytes.Buffer{}),
+				RetryDelay: 10 * time.Millisecond,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			failed := failOnce(t, tt.stdout, tt.stderr, tt.code)
+			_, err = s.Reboot(context.Background(), time.Minute)
+			if tt.retry {
+				if err != nil {
+					t.Errorf("Reboot = %v, want a retry that works", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.stderr[strings.LastIndex(tt.stderr, "\n")+1:]) {
+				t.Errorf("Reboot = %v, want the failure of ssh", err)
+			}
+			if _, err := os.Stat(failed + ".again"); err == nil {
+				t.Error("ssh started again after the failure")
+			}
+		})
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (gap: the batch mode of the
 // run's sessions)
 func TestAccessWithoutBatch(t *testing.T) {

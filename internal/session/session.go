@@ -150,8 +150,8 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, retry, err := dial(ctx, cfg)
-	if retry {
+	s, exit, err := dial(ctx, cfg)
+	if !exit.started && Dropped(exit.code, exit.stderr) {
 		select {
 		case <-ctx.Done():
 			return nil, err
@@ -211,8 +211,17 @@ func argv(cfg Config) []string {
 	return append(args, "--", cfg.Host)
 }
 
-// dial reports whether the host closed the connection before the handshake.
-func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
+// sshExit is how ssh ended after a failed dial.
+type sshExit struct {
+	code   int
+	stderr string
+	// started is true when the script on the host printed its first line.
+	started bool
+}
+
+// dial starts ssh and the helper. When it fails after ssh started, it also
+// returns how ssh ended.
+func dial(ctx context.Context, cfg Config) (*Session, sshExit, error) {
 	dir := cfg.Dir
 	if dir == "" {
 		dir = StateDir
@@ -224,11 +233,11 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, args...)...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, false, err
+		return nil, sshExit{}, err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, false, err
+		return nil, sshExit{}, err
 	}
 	s := &Session{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout), stderr: &limitedBuffer{max: 64 << 10}, host: cfg.Host, progress: cfg.Progress, cfg: cfg, ctx: ctx}
 	cmd.Stderr = s.stderr
@@ -240,7 +249,7 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 	}
 	if err := cmd.Start(); err != nil {
 		resume()
-		return nil, false, fmt.Errorf("start ssh: %w", err)
+		return nil, sshExit{}, fmt.Errorf("start ssh: %w", err)
 	}
 	line, err := s.stdout.ReadString('\n')
 	resume()
@@ -249,15 +258,17 @@ func dial(ctx context.Context, cfg Config) (*Session, bool, error) {
 		if s.cmd.ProcessState.ExitCode() == 255 {
 			err = unreachable{hint(cfg, err)}
 		}
-		return nil, s.dropped(), err
+		return nil, s.exit(), err
 	}
 	if err := s.start(cfg, strings.TrimSpace(line)); err != nil {
 		// ssh can block on a full pipe, or the host can print without end.
 		_ = cmd.Process.Kill()
 		s.Close()
-		return nil, false, err
+		exit := s.exit()
+		exit.started = true
+		return nil, exit, err
 	}
-	return s, false, nil
+	return s, sshExit{}, nil
 }
 
 // hint adds to err, an error of ssh in batch mode, how to answer the question
@@ -283,16 +294,15 @@ func hint(cfg Config, err error) error {
 	return fmt.Errorf("%w (in batch mode ssh asks nothing; run %q once)", err, cmd+" "+cfg.Host)
 }
 
-// dropped reports whether ssh failed because the host closed or reset the
-// connection before the handshake. Each line of the error output must say so.
-// Another line, such as a refused login on a jump host before the close of
-// the proxy, means that the host did more than drop the connection.
-func (s *Session) dropped() bool {
-	return Dropped(s.cmd.ProcessState.ExitCode(), s.stderr.String())
+func (s *Session) exit() sshExit {
+	return sshExit{code: s.cmd.ProcessState.ExitCode(), stderr: s.stderr.String()}
 }
 
 // Dropped reports whether ssh exited with code and stderr after the host
-// closed or reset the connection before the SSH handshake.
+// closed or reset the connection before the SSH handshake. Each line of the
+// error output must say so. Another line, such as a refused login on a jump
+// host before the close of the proxy, means that the host did more than drop
+// the connection.
 func Dropped(code int, stderr string) bool {
 	out := strings.TrimSpace(stderr)
 	if code != 255 || out == "" {
@@ -514,8 +524,11 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 		if time.Now().After(deadline) {
 			return protocol.Boot{}, fmt.Errorf("the host did not come back within %s: %w", wait, last)
 		}
-		n, _, err := dial(s.ctx, cfg)
+		n, exit, err := dial(s.ctx, cfg)
 		if err != nil {
+			if refused(exit.stderr) {
+				return protocol.Boot{}, fmt.Errorf("connect after the reboot: %w", err)
+			}
 			last = err
 			continue
 		}
@@ -537,6 +550,17 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 		}
 		return b, nil
 	}
+}
+
+// refused reports whether the error output of ssh shows a refused login or
+// host key. Another try fails the same way, and OpenSSH's PerSourcePenalties
+// count each refused login. A pam_nologin refusal while the host boots shows
+// no such line: ssh prints the text of /run/nologin, or nothing at log level
+// ERROR, and "Connection closed".
+func refused(stderr string) bool {
+	return strings.Contains(stderr, "Permission denied (") ||
+		strings.Contains(stderr, "Too many authentication failures") ||
+		strings.Contains(stderr, "Host key verification failed.")
 }
 
 func (cfg Config) retryDelay() time.Duration {
