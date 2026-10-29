@@ -1,7 +1,10 @@
 package integration
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/module"
@@ -181,18 +184,40 @@ func TestReboot(t *testing.T) {
 		t.Errorf("plan after the reboot: exit %d", r.Code)
 	}
 
-	// A pending reboot and no other change.
-	vm.MustRun(t, "touch /run/reboot-required")
+	// A pending reboot and no other change. The boot holds /run/nologin for
+	// 20 seconds after sshd starts, so the login fails at first. At log
+	// level INFO, ssh prints the text of /run/nologin and "Connection
+	// closed".
+	conf := filepath.Join(lab.Dir, "hosts", vm.Name+".conf")
+	data, err := os.ReadFile(conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lab.WriteHost(vm.Name, string(data)+"  LogLevel INFO\n"); err != nil {
+		t.Fatal(err)
+	}
+	restore := sync.OnceFunc(func() {
+		if _, err := lab.WriteHost(vm.Name, string(data)); err != nil {
+			t.Error(err)
+		}
+		vm.MustRun(t, "systemctl disable wt-slow-boot")
+	})
+	t.Cleanup(restore)
+	vm.MustRun(t, `printf '[Unit]\nBefore=systemd-user-sessions.service\n[Service]\nType=oneshot\nExecStart=/bin/sleep 20\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/wt-slow-boot.service && systemctl enable wt-slow-boot && touch /run/reboot-required`)
 	before = boot()
 	r = lab.Winch(t, dir, "plan", "site")
 	if r.Code != 0 || !strings.Contains(r.Stdout, "~ reboot if required\n") || strings.Contains(r.Stdout, "hostname") {
 		t.Fatalf("plan with only a pending reboot: exit %d", r.Code)
 	}
 	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
-		t.Fatalf("apply: exit %d", r.Code)
+		t.Fatalf("apply with /run/nologin at the boot: exit %d", r.Code)
 	}
+	restore()
 	if boot() == before {
 		t.Error("the boot ID did not change")
+	}
+	if out := vm.MustRun(t, "journalctl -b -o cat --grep 'by PAM account configuration' || true"); !strings.Contains(out, "Access denied for user admin by PAM account configuration") {
+		t.Errorf("sshd refused no login while the host booted: %q", out)
 	}
 
 	// The host boots a kernel older than the newest one in /boot.
