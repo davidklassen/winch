@@ -139,12 +139,16 @@ func TestLockoutKeys(t *testing.T) {
 	}
 }
 
+// sshdUp waits until sshd answers again. A reload makes sshd execute itself
+// again, and a login in that moment gets a connection reset.
+const sshdUp = `timeout 10 sh -c 'until ssh-keyscan -T 1 127.0.0.1 >/dev/null 2>&1; do sleep 0.1; done'`
+
 // spec: Running a pipeline/Lockout protection; Modules/user and group (a
 // groups change that only adds groups to the login user)
 func TestLockoutGroups(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "groups")
-	vm.MustRun(t, "groupadd wtok && groupadd wtdeny && echo 'DenyGroups wtdeny' > /etc/ssh/sshd_config.d/wt.conf && systemctl reload ssh")
+	vm.MustRun(t, "groupadd wtok && groupadd wtdeny && echo 'DenyGroups wtdeny' > /etc/ssh/sshd_config.d/wt.conf && systemctl reload ssh && "+sshdUp)
 	files := map[string]string{
 		"winch.yaml":            "name: demo\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  groups: {}\n",
