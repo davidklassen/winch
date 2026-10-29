@@ -479,41 +479,64 @@ func computedError(v any) error {
 }
 
 func computedMessage(name, host string) error {
-	return fmt.Errorf("vars.%s of host %s is an !expr or !tpl default; match() gives only inventory values and plain defaults", name, host)
+	return computedDefault{name, host}
+}
+
+// computedDefault is a read of a computed default of a host from match().
+type computedDefault struct{ name, host string }
+
+func (c computedDefault) Error() string {
+	return fmt.Sprintf("vars.%s of host %s is an !expr or !tpl default; match() gives only inventory values and plain defaults", c.name, c.host)
 }
 
 // withoutComputed returns a copy of v without the map entries that hold a
-// marker, so that a template that reads one fails.
-func withoutComputed(v any) any {
+// marker, so that a template that reads one fails. found is true when v holds
+// a marker.
+func withoutComputed(v any) (out any, found bool) {
 	switch v := v.(type) {
 	case map[string]any:
 		m := make(map[string]any, len(v))
 		for k, x := range v {
-			if s, ok := x.(string); !ok || !strings.HasPrefix(s, computedMark) {
-				m[k] = withoutComputed(x)
+			if s, ok := x.(string); ok && strings.HasPrefix(s, computedMark) {
+				found = true
+				continue
 			}
+			var f bool
+			m[k], f = withoutComputed(x)
+			found = found || f
 		}
-		return m
+		return m, found
 	case []any:
 		l := make([]any, len(v))
 		for i, x := range v {
-			l[i] = withoutComputed(x)
+			var f bool
+			l[i], f = withoutComputed(x)
+			found = found || f
 		}
-		return l
+		return l, found
 	}
-	return v
+	return v, false
 }
 
 var missingKeyRe = regexp.MustCompile(`map has no entry for key "([a-z0-9_]+)"`)
 
 // render executes t with the data of e. A read of a computed default of a
-// match() host fails as a missing key. When a second run with the markers
-// prints the marker of that variable, the error names the default and the
-// host instead.
+// match() host fails as a missing key. get gives nothing for a missing key,
+// so when the data holds markers, a second run with the markers fails where
+// get reads one. When the second run prints the marker of a missing key, the
+// error names the default and the host instead.
 func (e *Env) render(t *template.Template) (string, error) {
 	data := e.templateData()
+	stripped, found := withoutComputed(data)
 	var b strings.Builder
-	err := t.Execute(&b, withoutComputed(data))
+	err := t.Execute(&b, stripped)
+	var full strings.Builder
+	if found {
+		var cd computedDefault
+		if ferr := t.Execute(&full, data); errors.As(ferr, &cd) {
+			return "", ferr
+		}
+	}
 	if err == nil {
 		return b.String(), nil
 	}
@@ -527,8 +550,6 @@ func (e *Env) render(t *template.Template) (string, error) {
 	if m == nil {
 		return "", err
 	}
-	var full strings.Builder
-	_ = t.Execute(&full, data)
 	_, rest, ok := strings.Cut(full.String(), computedMark+m[1]+"\x00")
 	if !ok {
 		return "", err

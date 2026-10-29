@@ -240,6 +240,9 @@ func TestLoadVars(t *testing.T) {
 		{name: "default-tpl-index-vars", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ index .vars \"domain\" }}'", 1),
 		}},
+		{name: "default-tpl-get-vars", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ get .vars \"domain\" }}'", 1),
+		}},
 		{name: "arg-vars-item", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "path: !tpl /etc/web/{{ .item }}.conf", "path: !expr '\"/etc/web/\" + vars[item]'", 1),
 		}},
@@ -610,6 +613,26 @@ func TestSQLQuote(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// spec: Templates and expressions/Template functions
+func TestGet(t *testing.T) {
+	const vars = "  peers:\n    - {name: a}\n    - {name: b, endpoint: \"192.0.2.2:51820\"}\n  l: [a]\n"
+	tests := []struct{ name, text, want string }{
+		{"optional key", `{{ range .vars.peers }}{{ .name }}{{ with get . "endpoint" }} {{ . }}{{ end }};{{ end }}`, "a;b 192.0.2.2:51820;"},
+		{"missing key prints null", `{{ range .vars.peers }}{{ get . "endpoint" }}{{ end }}`,
+			`error: recipes/r/recipe.yaml:4:16: content: get . "endpoint": the value is null`},
+		{"not a map", `{{ get .vars.l "endpoint" }}`,
+			`error: recipes/r/recipe.yaml:4:16: content: get .vars.l "endpoint": error calling get: get: a list is not a map`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evalOne(t, vars, "  - file:\n      path: /a\n      content: !tpl '"+tt.text+"'\n", nil)
+			if got != tt.want {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+		})
 	}
 }
 
