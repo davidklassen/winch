@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/module"
@@ -378,10 +379,21 @@ func TestFileModule(t *testing.T) {
 			Want:  module.Result{Status: module.OK},
 		},
 		{
-			Name:      "without content fails on a missing file",
-			Args:      &module.File{Path: "/tmp/w/sub/f", Mode: "0640"},
-			WantErr:   "/tmp/w/sub/f does not exist",
-			Unchanged: `[ ! -e /tmp/w/sub ]`,
+			Name:         "without content a missing file is a change, and apply fails",
+			Args:         &module.File{Path: "/tmp/w/sub/f", Mode: "0640"},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"/tmp/w/sub/f does not exist yet"}},
+			Unchanged:    `[ ! -e /tmp/w/sub ]`,
+			WantApplyErr: "/tmp/w/sub/f does not exist; a file step without content does not create it",
+			After:        `[ ! -e /tmp/w/sub ]`,
+			Fix:          "mkdir /tmp/w/sub && touch /tmp/w/sub/f",
+		},
+		{
+			Name:         "without content a missing file in an existing directory is a change, and apply fails",
+			Args:         &module.File{Path: "/tmp/w/f", Owner: "admin"},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"/tmp/w/f does not exist yet"}},
+			WantApplyErr: "/tmp/w/f does not exist; a file step without content does not create it",
+			After:        `[ ! -e /tmp/w/f ]`,
+			Fix:          "touch /tmp/w/f",
 		},
 		{
 			Name:    "without content fails on a symbolic link",
@@ -413,5 +425,43 @@ func TestFileModule(t *testing.T) {
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory " + oddDir + " (owner root, group root, mode 0755)", attrs}, Old: new("")},
 			After: "[ -f " + vmtest.Quote(oddDir+"/f $x") + " ] && [ ! -e /tmp/pwn ]",
 		},
+	})
+}
+
+// spec: Modules/file, dir, link
+func TestFileWithoutContentAfterPkg(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "fileattrs")
+	const file = "      - file: {path: /etc/valkey/valkey.conf, mode: \"0600\"}\n"
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: fileattrs\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  fileattrs: {}\n",
+		"pipelines/alone.yaml":  "stages:\n  - name: valkey\n    hosts: all\n    steps:\n" + file,
+		"pipelines/site.yaml":   "stages:\n  - name: valkey\n    hosts: all\n    steps:\n      - pkg: {name: valkey-server}\n" + file,
+	})
+	t.Run("without the package it plans, and apply fails and names the file", func(t *testing.T) {
+		r := lab.Winch(t, dir, "plan", "alone")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "/etc/valkey/valkey.conf does not exist yet") {
+			t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+		r = lab.Winch(t, dir, "apply", "alone", "--yes")
+		if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, "/etc/valkey/valkey.conf does not exist; a file step without content does not create it") {
+			t.Errorf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+	t.Run("after the package it plans, applies, and converges", func(t *testing.T) {
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "/etc/valkey/valkey.conf does not exist yet") {
+			t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "fileattrs: valkey: ~ file /etc/valkey/valkey.conf\n") {
+			t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+		vm.MustRun(t, `[ "$(stat -c '%a' /etc/valkey/valkey.conf)" = 600 ]`)
+		r = lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !unchanged(r.Stdout, 1) {
+			t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
 	})
 }
