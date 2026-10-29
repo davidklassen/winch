@@ -190,6 +190,12 @@ var orderCases = []orderCase{
       - group:
           name: docker
 `), nil, "s: group docker: an earlier step needs it: s: user bob; move this step before it"},
+	{"a user before a group in its add_groups", steps(`      - user:
+          name: bob
+          add_groups: [docker]
+      - group:
+          name: docker
+`), nil, "s: group docker: an earlier step needs it: s: user bob; move this step before it"},
 	{"a dir before its owner", steps(`      - dir:
           path: /srv/d
           owner: alice

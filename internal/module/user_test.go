@@ -109,12 +109,18 @@ func TestUserValidate(t *testing.T) {
 		{"groups a string", "name: a\ngroups: sudo\n", `t.yaml:2:9: groups: expected a list, got the string "sudo"`},
 		{"bad group in groups", "name: a\ngroups: [sudo, \"-A\"]\n", `t.yaml:2:9: groups: "-A" is not a group name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
 		{"repeated group", "name: a\ngroups: [sudo, docker, sudo]\n", `t.yaml:2:9: groups: element 3 repeats element 1`},
+		{"add_groups", "name: a\nadd_groups: [docker]\n", ""},
+		{"bad group in add_groups", "name: a\nadd_groups: [\"-A\"]\n", `t.yaml:2:13: add_groups: "-A" is not a group name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
+		{"repeated group in add_groups", "name: a\nadd_groups: [docker, docker]\n", `t.yaml:2:13: add_groups: element 2 repeats element 1`},
+		{"groups and add_groups", "name: a\ngroups: [sudo]\nadd_groups: [docker]\n", `t.yaml:3:13: add_groups: a step takes groups or add_groups, not both`},
+		{"no groups and add_groups", "name: a\ngroups: []\nadd_groups: []\n", `t.yaml:3:13: add_groups: a step takes groups or add_groups, not both`},
 		{"password", "name: a\npassword: $y$j9T$abc$def\n", ""},
 		{"locked password", "name: a\npassword: '!$6$abc$def'\n", ""},
 		{"comment", "name: a\ncomment: Alice Smith,,,\n", ""},
 		{"comment with a colon", "name: a\ncomment: \"a:b\"\n", `t.yaml:2:10: comment: must not have ":"`},
 		{"comment with a newline", "name: a\ncomment: \"a\\nb\"\n", `t.yaml:2:10: comment: has a control character`},
 		{"absent with groups", "name: a\nabsent: true\ngroups: []\n", `t.yaml:3:9: groups: absent: true takes no groups`},
+		{"absent with add_groups", "name: a\nabsent: true\nadd_groups: []\n", `t.yaml:3:13: add_groups: absent: true takes no add_groups`},
 		{"absent with password", "name: a\nabsent: true\npassword: $6$a$b\n", `t.yaml:3:11: password: absent: true takes no password`},
 		{"absent with comment", "name: a\nabsent: true\ncomment: a\n", `t.yaml:3:10: comment: absent: true takes no comment`},
 	}
@@ -299,6 +305,9 @@ func TestUserCheckLogin(t *testing.T) {
 		{"no groups", User{Name: "admin", Groups: &[]string{}}, 1000, "admin is the login user of this session; log in as another user to change its groups", false},
 		{"groups of another user", User{Name: "admin", Groups: &[]string{}}, 0, "", false},
 		{"add a group to another user", User{Name: "admin", Groups: &[]string{"sudo", "docker", "adm"}}, 0, "", false},
+		{"add_groups", User{Name: "admin", AddGroups: &[]string{"adm"}}, 1000, "", true},
+		{"add_groups that it has", User{Name: "admin", AddGroups: &[]string{"sudo"}}, 1000, "", false},
+		{"add_groups to another user", User{Name: "admin", AddGroups: &[]string{"adm"}}, 0, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -321,18 +330,20 @@ func TestUserCheckLogin(t *testing.T) {
 func TestUserUndo(t *testing.T) {
 	a := accounts{users: []passwdEntry{{name: "admin", uid: 1000}}, groups: []groupEntry{{name: "sudo", members: []string{"admin"}}, {name: "docker"}}}
 	tests := []struct {
-		name   string
-		have   []groupEntry
-		groups []string
-		want   string
+		name string
+		have []groupEntry
+		user User
+		want string
 	}{
-		{"back to the old groups", a.groups, []string{"sudo", "docker"}, `{"name":"admin","groups":["sudo"]}`},
-		{"back to no groups", []groupEntry{{name: "docker"}}, []string{"docker"}, `{"name":"admin","groups":[]}`},
-		{"no change", a.groups, []string{"sudo"}, "null"},
+		{"back to the old groups", a.groups, User{Name: "admin", Groups: &[]string{"sudo", "docker"}}, `{"name":"admin","groups":["sudo"]}`},
+		{"back to no groups", []groupEntry{{name: "docker"}}, User{Name: "admin", Groups: &[]string{"docker"}}, `{"name":"admin","groups":[]}`},
+		{"no change", a.groups, User{Name: "admin", Groups: &[]string{"sudo"}}, "null"},
+		{"add_groups", a.groups, User{Name: "admin", AddGroups: &[]string{"docker"}}, `{"name":"admin","groups":["sudo"]}`},
+		{"add_groups without a change", a.groups, User{Name: "admin", AddGroups: &[]string{"sudo"}}, "null"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			u := User{Name: "admin", Groups: &tt.groups}
+			u := tt.user
 			if err := u.checkLogin(accounts{users: a.users, groups: tt.have}, a.users[0], 1000); err != nil {
 				t.Fatal(err)
 			}
@@ -445,6 +456,34 @@ func TestUserCheckNewSystemHome(t *testing.T) {
 	}
 	if !slices.Contains(u.account, "-M") || slices.Contains(u.account, "-m") || u.mkHome != home {
 		t.Errorf("account = %q, mkHome = %q; want useradd -M and mkHome %s", u.account, u.mkHome, home)
+	}
+}
+
+// spec: Modules/user and group
+func TestUserCheckExistingGroups(t *testing.T) {
+	alice := passwdEntry{name: "alice", uid: 1000, gid: 1000, home: noHome}
+	a := accounts{users: []passwdEntry{alice}, groups: []groupEntry{{name: "alice", gid: 1000}, {name: "adm", gid: 4, members: []string{"alice"}}, {name: "wtgrp", gid: 1001}}}
+	tests := []struct {
+		name    string
+		user    User
+		changes []string
+		account []string
+	}{
+		{"add_groups", User{Name: "alice", AddGroups: &[]string{"wtgrp", "adm"}}, []string{"add to group wtgrp"}, []string{"usermod", "-a", "-G", "wtgrp", "alice"}},
+		{"add_groups that it has", User{Name: "alice", AddGroups: &[]string{"adm"}}, nil, nil},
+		{"no add_groups", User{Name: "alice", AddGroups: &[]string{}}, nil, nil},
+		{"groups", User{Name: "alice", Groups: &[]string{"wtgrp"}}, []string{"add to group wtgrp", "remove from group adm"}, []string{"usermod", "-G", "wtgrp", "alice"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, _, _, err := tt.user.checkExisting(a, alice)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(res.Changes, tt.changes) || !slices.Equal(tt.user.account, tt.account) {
+				t.Errorf("changes = %q, account = %q; want %q, %q", res.Changes, tt.user.account, tt.changes, tt.account)
+			}
+		})
 	}
 }
 

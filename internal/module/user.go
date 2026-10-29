@@ -29,6 +29,7 @@ type User struct {
 	Home           string         `yaml:"home" json:"home,omitempty"`
 	Shell          string         `yaml:"shell" json:"shell,omitempty"`
 	Groups         *[]string      `yaml:"groups" json:"groups,omitempty"`
+	AddGroups      *[]string      `yaml:"add_groups" json:"add_groups,omitempty"`
 	Password       string         `yaml:"password" json:"password,omitempty"`
 	Comment        string         `yaml:"comment" json:"comment,omitempty"`
 	AuthorizedKeys *[]string      `yaml:"authorized_keys" json:"authorized_keys,omitempty"`
@@ -71,7 +72,7 @@ func (u *User) Validate() error {
 		return err
 	}
 	if u.Absent {
-		return absentTakesNone(arg{"uid", u.UID != ""}, arg{"group", u.Group != ""}, arg{"system", u.System}, arg{"home", u.Home != ""}, arg{"shell", u.Shell != ""}, arg{"groups", u.Groups != nil}, arg{"password", u.Password != ""}, arg{"comment", u.Comment != ""}, arg{"authorized_keys", u.AuthorizedKeys != nil})
+		return absentTakesNone(arg{"uid", u.UID != ""}, arg{"group", u.Group != ""}, arg{"system", u.System}, arg{"home", u.Home != ""}, arg{"shell", u.Shell != ""}, arg{"groups", u.Groups != nil}, arg{"add_groups", u.AddGroups != nil}, arg{"password", u.Password != ""}, arg{"comment", u.Comment != ""}, arg{"authorized_keys", u.AuthorizedKeys != nil})
 	}
 	if err := checkID("uid", u.UID); err != nil {
 		return err
@@ -96,14 +97,21 @@ func (u *User) Validate() error {
 			return err
 		}
 	}
-	if u.Groups != nil {
+	field, groups := "groups", u.Groups
+	if u.AddGroups != nil {
+		if u.Groups != nil {
+			return &yamlx.FieldError{Field: "add_groups", Msg: "a step takes groups or add_groups, not both"}
+		}
+		field, groups = "add_groups", u.AddGroups
+	}
+	if groups != nil {
 		seen := map[string]int{}
-		for i, g := range *u.Groups {
-			if err := checkAccountName("groups", "group", g); err != nil {
+		for i, g := range *groups {
+			if err := checkAccountName(field, "group", g); err != nil {
 				return err
 			}
 			if j, ok := seen[g]; ok {
-				return &yamlx.FieldError{Field: "groups", Msg: fmt.Sprintf("element %d repeats element %d", i+1, j+1)}
+				return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf("element %d repeats element %d", i+1, j+1)}
 			}
 			seen[g] = i
 		}
@@ -235,7 +243,7 @@ func (u *User) checkLogin(a accounts, cur passwdEntry, login uint32) error {
 	case u.Groups != nil && slices.ContainsFunc(have, func(g string) bool { return !slices.Contains(*u.Groups, g) }):
 		field = "groups"
 	default:
-		if u.Groups != nil && len(*u.Groups) > len(have) {
+		if want := cmp.Or(u.Groups, u.AddGroups); want != nil && slices.ContainsFunc(*want, func(g string) bool { return !slices.Contains(have, g) }) {
 			old := append([]string{}, have...)
 			u.loginGroups = &old
 		}
@@ -380,15 +388,15 @@ func (u *User) checkNew(a accounts) (Result, string, string, error) {
 	}
 	changes = append(changes, "shell "+shell+note)
 	args = append(args, "-s", shell)
-	if u.Groups != nil && len(*u.Groups) > 0 {
-		names := slices.Clone(*u.Groups)
+	if groups := cmp.Or(u.Groups, u.AddGroups); groups != nil && len(*groups) > 0 {
+		names := slices.Clone(*groups)
 		for i, g := range names {
 			if _, ok := a.group(g); !ok {
 				names[i] += " (does not exist yet)"
 			}
 		}
 		changes = append(changes, "groups "+strings.Join(names, ", "))
-		args = append(args, "-G", strings.Join(*u.Groups, ","))
+		args = append(args, "-G", strings.Join(*groups, ","))
 	}
 	if u.Comment != "" {
 		changes = append(changes, fmt.Sprintf("comment %q", u.Comment))
@@ -449,26 +457,34 @@ func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, strin
 		changes = append(changes, "shell "+cur.shell+" → "+u.Shell+note)
 		args = append(args, "-s", u.Shell)
 	}
-	if u.Groups != nil {
+	if want := cmp.Or(u.Groups, u.AddGroups); want != nil {
 		have := a.groupsOf(u.Name)
-		want := slices.Sorted(slices.Values(*u.Groups))
-		if !slices.Equal(have, want) {
-			for _, g := range *u.Groups {
-				if slices.Contains(have, g) {
-					continue
-				}
-				line := "add to group " + g
-				if _, ok := a.group(g); !ok {
-					line += " (does not exist yet)"
-				}
-				changes = append(changes, line)
+		n := len(changes)
+		var add []string
+		for _, g := range *want {
+			if slices.Contains(have, g) {
+				continue
 			}
+			add = append(add, g)
+			line := "add to group " + g
+			if _, ok := a.group(g); !ok {
+				line += " (does not exist yet)"
+			}
+			changes = append(changes, line)
+		}
+		if u.Groups != nil {
 			for _, g := range have {
-				if !slices.Contains(want, g) {
+				if !slices.Contains(*u.Groups, g) {
 					changes = append(changes, "remove from group "+g)
 				}
 			}
+		}
+		switch {
+		case len(changes) == n:
+		case u.Groups != nil:
 			args = append(args, "-G", strings.Join(*u.Groups, ","))
+		default:
+			args = append(args, "-a", "-G", strings.Join(add, ","))
 		}
 	}
 	if u.Comment != "" && u.Comment != cur.comment {

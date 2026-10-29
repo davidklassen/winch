@@ -3,6 +3,7 @@ package run
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -472,8 +473,8 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
 	case *module.User:
 		needs = []string{"group " + string(m.Group)}
-		if m.Groups != nil {
-			for _, g := range *m.Groups {
+		if groups := cmp.Or(m.Groups, m.AddGroups); groups != nil {
+			for _, g := range *groups {
 				needs = append(needs, "group "+g)
 			}
 		}
