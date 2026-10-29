@@ -17,7 +17,7 @@ import (
 
 // funcs replaces the built-in index, which gives the zero value for a missing
 // map key.
-var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": title, "quote": quote, "sqlquote": sqlquote}
+var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": title, "quote": quote, "sqlquote": sqlquote, "get": get}
 
 // tmplFile is a parsed template file of a recipe.
 type tmplFile struct {
@@ -344,6 +344,18 @@ func index(item any, keys ...any) (any, error) {
 		return nil, nil
 	}
 	return v.Interface(), nil
+}
+
+// get reads a key that a map may leave out. A missing key gives nil.
+func get(m any, key string) (any, error) {
+	mm, ok := m.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("get: %s is not a map", describeValue(m))
+	}
+	if err := computedError(mm[key]); err != nil {
+		return nil, err
+	}
+	return mm[key], nil
 }
 
 func listArg(name string, l any) (reflect.Value, error) {
