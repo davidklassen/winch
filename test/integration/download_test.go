@@ -89,7 +89,7 @@ func TestDownloadModule(t *testing.T) {
 		{name: "../evil", typ: tar.TypeReg, mode: 0o644, body: "x\n"},
 	})
 	urlLate := lab.Serve(t, "download/late.tar.gz", late)
-	unpackRecord := sha(tgz) + " /tmp/w/opt"
+	unpackRecord := sha(tgz) + ":root:root /tmp/w/opt"
 	unpacked := "mkdir -p /var/lib/winch/downloads && echo '" + unpackRecord + "' > " + record
 	extracted := unpacked + " && mkdir /tmp/w/opt && curl -sf " + urlTgz + " | tar -C /tmp/w/opt -xzf -"
 	unpackLine := "unpack into /tmp/w/opt (owner root, group root)"
@@ -136,7 +136,7 @@ func TestDownloadModule(t *testing.T) {
 	t.Run("a failed unpack stays a change", func(t *testing.T) {
 		ctx := t.Context()
 		s := vm.Session(t)
-		vm.MustRun(t, reset+"\n"+extracted+" && sed -i 's/^[0-9a-f]* /"+sha(v1)+" /' "+record+" && rm /tmp/w/opt/app/bin/tool && mkdir /tmp/w/opt/app/bin/tool")
+		vm.MustRun(t, reset+"\n"+extracted+" && sed -i 's/^[0-9a-f]*:/"+sha(v1)+":/' "+record+" && rm /tmp/w/opt/app/bin/tool && mkdir /tmp/w/opt/app/bin/tool")
 		args := &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt", Owner: "admin"}
 		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, protocol.Guard{}); err == nil || !strings.Contains(err.Error(), "unpack "+urlTgz+" into /tmp/w/opt") {
 			t.Fatalf("apply over a directory at a file entry = %v, want an unpack error", err)
@@ -289,7 +289,7 @@ func TestDownloadModule(t *testing.T) {
 			After: `cd /tmp/w/sub/opt && [ "$(ls -A /tmp/w/sub)" = opt ]` +
 				` && [ "$(stat -c '%U %G %a' . app app/bin app/bin/tool app/README)" = "$(printf '%s\n' 'admin root 755' 'admin root 755' 'admin root 755' 'admin root 755' 'admin root 644')" ]` +
 				` && [ "$(app/latest)" = tool ] && [ "$(readlink app/latest)" = bin/tool ] && [ "$(stat -c '%U' app/latest)" = admin ]` +
-				` && [ app/hard -ef app/README ] && grep -qx '` + sha(tgz) + ` /tmp/w/sub/opt' ` + record,
+				` && [ app/hard -ef app/README ] && grep -qx '` + sha(tgz) + `:admin:root /tmp/w/sub/opt' ` + record,
 		},
 		{
 			Name:  "unpack over an older tree",
@@ -338,6 +338,21 @@ func TestDownloadModule(t *testing.T) {
 			After: `[ "$(/tmp/w/opt/app/latest)" = tool ]`,
 		},
 		{
+			Name:      "a new owner unpacks again",
+			Setup:     extracted,
+			Args:      &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt", Owner: "admin"},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (new owner)", "unpack into /tmp/w/opt (owner admin, group root)"}},
+			Unchanged: `[ "$(stat -c %U /tmp/w/opt/app/bin/tool)" != admin ]`,
+			After:     `[ "$(stat -c %U /tmp/w/opt/app/bin/tool)" = admin ] && grep -qx '` + sha(tgz) + `:admin:root /tmp/w/opt' ` + record,
+		},
+		{
+			Name:  "a new group unpacks again",
+			Setup: extracted,
+			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt", Group: "adm"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (new group)", "unpack into /tmp/w/opt (owner root, group adm)"}},
+			After: `[ "$(stat -c %G /tmp/w/opt/app/bin/tool)" = adm ] && grep -qx '` + sha(tgz) + `:root:adm /tmp/w/opt' ` + record,
+		},
+		{
 			Name:  "the check reads no tree",
 			Setup: extracted + " && echo changed > /tmp/w/opt/app/README && rm /tmp/w/opt/app/bin/tool",
 			Args:  &module.Download{URL: missing, SHA256: sha(tgz), Unpack: "/tmp/w/opt"},
@@ -348,7 +363,7 @@ func TestDownloadModule(t *testing.T) {
 			Setup: extracted + " && mkdir /tmp/w/opt2 && echo '" + sha(v1) + " /tmp/w/other' >> " + record,
 			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt2"},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", "unpack into /tmp/w/opt2 (owner root, group root)"}},
-			After: `[ "$(/tmp/w/opt2/app/latest)" = tool ] && [ "$(cat ` + record + `)" = "$(printf '%s\n' '` + unpackRecord + `' '` + sha(v1) + ` /tmp/w/other' '` + sha(tgz) + ` /tmp/w/opt2')" ]`,
+			After: `[ "$(/tmp/w/opt2/app/latest)" = tool ] && [ "$(cat ` + record + `)" = "$(printf '%s\n' '` + unpackRecord + `' '` + sha(v1) + ` /tmp/w/other' '` + sha(tgz) + `:root:root /tmp/w/opt2')" ]`,
 		},
 		{
 			Name:      "a new checksum unpacks the new archive",
@@ -356,7 +371,7 @@ func TestDownloadModule(t *testing.T) {
 			Args:      &module.Download{URL: urlTgz2, SHA256: sha(tgz2), Unpack: "/tmp/w/opt"},
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz2 + " (new sha256)", unpackLine}},
 			Unchanged: `[ "$(/tmp/w/opt/app/bin/tool)" = tool ]`,
-			After:     `[ "$(/tmp/w/opt/app/bin/tool)" = tool2 ] && grep -qx '` + sha(tgz2) + ` /tmp/w/opt' ` + record + ` && [ "$(ls -A /tmp/w)" = opt ]`,
+			After:     `[ "$(/tmp/w/opt/app/bin/tool)" = tool2 ] && grep -qx '` + sha(tgz2) + `:root:root /tmp/w/opt' ` + record + ` && [ "$(ls -A /tmp/w)" = opt ]`,
 		},
 		{
 			Name:         "a wrong checksum unpacks nothing",

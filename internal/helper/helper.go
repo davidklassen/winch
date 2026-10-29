@@ -237,7 +237,7 @@ func deleteOld(bin, self string) error {
 // step checks a step. With apply, it then records the handlers that the step
 // notifies and its then, and makes the changes the check found, or runs a
 // deferred step. When the changes fail, it removes the records that it added.
-// After a successful unpack, it records the checksum of the archive.
+// After a successful unpack, it records the checksum, owner, and group.
 func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, loginUser *module.Login, handlers, thens, downloads, certbotHooks records, rb *rollbacks, note func(string)) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
@@ -364,7 +364,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		rb.running = &guarded{handlers: notified, thens: thenLines}
 	}
 	if unpack {
-		return out, record(downloads, d.SHA256, d.Unpack)
+		return out, record(downloads, d.Record(), d.Unpack)
 	}
 	return out, nil
 }

@@ -39,7 +39,7 @@ type Download struct {
 	Group  yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
 	Mode   string         `yaml:"mode" json:"mode,omitempty"`
 
-	// Recorded is the checksum at the last successful unpack into Unpack, or
+	// Recorded is the Record of the last successful unpack into Unpack, or
 	// "".
 	Recorded string `json:"-"`
 }
@@ -160,8 +160,8 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 	return res, nil
 }
 
-// checkUnpack compares the recorded checksum with the step's. It reads no
-// archive and no tree.
+// checkUnpack compares the record of the last unpack with the step. It reads
+// no archive and no tree.
 func (d *Download) checkUnpack(owner, group string) (Result, error) {
 	parent, missing, err := openParent(d.Unpack)
 	if err != nil {
@@ -178,14 +178,31 @@ func (d *Download) checkUnpack(owner, group string) (Result, error) {
 		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), "download "+d.URL, unpack)}, nil
 	case !fi.IsDir():
 		return Result{}, fmt.Errorf("%s is %s, not a directory", d.Unpack, kind(fi))
-	case d.Recorded != d.SHA256:
-		why := "new sha256"
-		if d.Recorded == "" {
-			why = "no record of an earlier download"
-		}
-		return Result{Status: Change, Action: Modify, Changes: []string{"download " + d.URL + " (" + why + ")", unpack}}, nil
 	}
-	return Result{Status: OK}, nil
+	rec := strings.SplitN(d.Recorded, ":", 3)
+	var why string
+	switch {
+	case d.Recorded == "":
+		why = "no record of an earlier download"
+	case len(rec) != 3 || rec[0] != d.SHA256:
+		why = "new sha256"
+	case rec[1] != owner && rec[2] != group:
+		why = "new owner and group"
+	case rec[1] != owner:
+		why = "new owner"
+	case rec[2] != group:
+		why = "new group"
+	default:
+		return Result{Status: OK}, nil
+	}
+	return Result{Status: Change, Action: Modify, Changes: []string{"download " + d.URL + " (" + why + ")", unpack}}, nil
+}
+
+// Record is what the helper records after a successful unpack:
+// <sha256>:<owner>:<group>.
+func (d *Download) Record() string {
+	owner, group, _, _ := attrs(d.Owner, d.Group, "", "0644")
+	return d.SHA256 + ":" + owner + ":" + group
 }
 
 // same reports whether the file name in dir has the step's checksum.

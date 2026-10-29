@@ -13,7 +13,7 @@ import (
 
 // records is a file of records of a project, one per line: the pending
 // handlers as <recipe>.<handler>, the pending then records as JSON, or the
-// checksums of unpacks as <sha256> <unpack directory>.
+// unpacks as <sha256>:<owner>:<group> <unpack directory>.
 type records struct {
 	dir     string
 	project string
