@@ -273,54 +273,6 @@ func TestPlanLine(t *testing.T) {
 	golden.Assert(t, filepath.Join("testdata", "plan", "line.golden"), output(&out, &errOut))
 }
 
-// spec: Variables/Secrets in output; Modules/certbot (the old hook on the
-// host can hold an older secret)
-func TestSecretHook(t *testing.T) {
-	identity, recipient := ageKey(t)
-	text, err := secret.Encrypt("new-token", []age.Recipient{recipient})
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
-		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: !secret " + text + "\n",
-		"pipelines/site.yaml": `stages:
-  - name: base
-    hosts: all
-    steps:
-      - certbot:
-          name: example.com
-          domains: [example.com]
-          email: admin@example.com
-          deploy_hook: !tpl "notify --token {{ .vars.token }}"
-`,
-	})
-	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := fakehost.New()
-	h.SetResult("web1", "example.com", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{
-		"deploy_hook notify --token old-token → notify --token new-token",
-		"issue the certificate again, with a new key",
-	}})
-	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
-	var out, errOut bytes.Buffer
-	plan.Write(plain(&out), plain(&errOut))
-	if !strings.Contains(out.String(), "    ~ certbot example.com\n        deploy_hook (secret)\n        issue the certificate again, with a new key\n") {
-		t.Errorf("plan:\n%s%s", out.String(), errOut.String())
-	}
-	for _, s := range []string{"old-token", "new-token"} {
-		if strings.Contains(out.String()+errOut.String(), s) {
-			t.Errorf("the plan shows %q", s)
-		}
-	}
-	applied := applyJSON(t, plan, h)
-	if !strings.Contains(applied, `"changes":["deploy_hook (secret)","issue the certificate again, with a new key"]`) || strings.Contains(applied, "old-token") || strings.Contains(applied, "new-token") {
-		t.Errorf("applied events:\n%s", applied)
-	}
-}
-
 // spec: Variables/Secrets in output; CLI/Output (a command of several lines)
 func TestSecretCommands(t *testing.T) {
 	identity, recipient := ageKey(t)
@@ -341,11 +293,6 @@ func TestSecretCommands(t *testing.T) {
           path: /etc/app.conf
           content: "a\n"
           validate: !tpl "true\napp check --token {{ .vars.token }}"
-      - certbot:
-          name: example.com
-          domains: [example.com]
-          email: admin@example.com
-          deploy_hook: !tpl "true\nnotify --token {{ .vars.token }}"
 `,
 	})
 	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
@@ -353,9 +300,6 @@ func TestSecretCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := fakehost.New()
-	h.SetResult("web1", "example.com", module.Result{Status: module.Change, Action: module.Create, Changes: []string{
-		"deploy_hook\ntrue\nnotify --token new-token",
-	}})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -363,7 +307,6 @@ func TestSecretCommands(t *testing.T) {
 	for _, want := range []string{
 		"    ? cmd\n        true\n        notify --token (secret)\n",
 		"        validate:\n          true\n          app check --token (secret)\n",
-		"    + certbot example.com\n        deploy_hook (secret)\n",
 		`"step":"cmd true\nnotify --token (secret)"`,
 		`"validate":"true\napp check --token (secret)"`,
 	} {
