@@ -1,0 +1,8 @@
+stdout:
+{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"dir /etc/nginx/conf.d","module":"dir","status":"change","action":"change","changes":["remove file /etc/nginx/conf.d/x.conf"]}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"change"}
+{"type":"applied","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"dir /etc/nginx/conf.d","module":"dir","status":"change","action":"change","changes":["remove file /etc/nginx/conf.d/x.conf"]}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"apply","host":"web1","status":"changed"}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":1,"unchanged":0,"unknown":0,"failed":0},"apply":{"hosts":1,"changed":1,"unchanged":0,"failed":0},"hash":"3c9c99ceb507d37c","exit_code":0}
+stderr:

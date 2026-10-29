@@ -167,6 +167,15 @@ func (h *Hosts) SetResult(host, name string, res module.Result) {
 	h.results[host+" "+name] = res
 }
 
+// result returns a copy of the result that SetResult stored for key. The run
+// masks changes in place, which must not change the stored result. The caller
+// holds mu.
+func (h *Hosts) result(key string) (module.Result, bool) {
+	res, ok := h.results[key]
+	res.Changes = slices.Clone(res.Changes)
+	return res, ok
+}
+
 // SetUser makes the user name exist on a host.
 func (h *Hosts) SetUser(host, name string) {
 	h.mu.Lock()
@@ -414,7 +423,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	case *module.Hostname, *module.Timezone, *module.Certbot, *module.Firewall:
 		c.hosts.mu.Lock()
 		defer c.hosts.mu.Unlock()
-		if res, ok := c.hosts.results[c.host+" "+m.Main()]; ok {
+		if res, ok := c.hosts.result(c.host + " " + m.Main()); ok {
 			return res, nil
 		}
 		return module.Result{Status: module.OK}, nil
@@ -438,7 +447,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if d, ok := m.(*module.Download); ok {
 		c.hosts.mu.Lock()
 		defer c.hosts.mu.Unlock()
-		if res, ok := c.hosts.results[c.host+" "+d.Path]; ok {
+		if res, ok := c.hosts.result(c.host + " " + d.Path); ok {
 			return res, nil
 		}
 		return module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + d.URL}}, nil
@@ -449,7 +458,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if l, ok := m.(*module.Line); ok {
 		c.hosts.mu.Lock()
 		defer c.hosts.mu.Unlock()
-		if res, ok := c.hosts.results[c.host+" "+l.Match]; ok {
+		if res, ok := c.hosts.result(c.host + " " + l.Match); ok {
 			return res, nil
 		}
 		return module.Result{Status: module.OK}, nil
@@ -463,7 +472,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if sv, ok := m.(*module.Service); ok {
 		c.hosts.mu.Lock()
 		c.hosts.ServiceNewFile = append(c.hosts.ServiceNewFile, sv.Name+": "+string(sv.NewFile))
-		res, ok := c.hosts.results[c.host+" "+sv.Name]
+		res, ok := c.hosts.result(c.host + " " + sv.Name)
 		c.hosts.mu.Unlock()
 		if ok {
 			return res, nil
@@ -524,7 +533,7 @@ func (c *Conn) checkDir(d *module.Dir) module.Result {
 	if d.Purge {
 		c.hosts.DirKeep[c.host+" "+d.Path] = d.Keep
 	}
-	if res, ok := c.hosts.results[c.host+" "+d.Path]; ok {
+	if res, ok := c.hosts.result(c.host + " " + d.Path); ok {
 		c.hosts.mu.Unlock()
 		return res
 	}

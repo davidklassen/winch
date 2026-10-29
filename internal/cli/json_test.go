@@ -11,6 +11,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/vmtest"
@@ -119,6 +120,16 @@ func TestJSON(t *testing.T) {
 				"recipes/app/recipe.yaml": "steps:\n  - file:\n      path: /etc/app\n      content: \"a\\n\"\n",
 			})
 		}, args: []string{"apply", "site", "--json"}},
+		{name: "apply-changes", dir: func(t *testing.T) string {
+			return vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: test\n",
+				"inventories/test.yaml": "hosts:\n  web1: {}\n",
+				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - dir:\n          path: /etc/nginx/conf.d\n          purge: true\n",
+			})
+		}, setup: func(h *fakehost.Hosts) {
+			h.SetResult("web1", "/etc/nginx/conf.d", module.Result{Status: module.Change, Action: module.Modify,
+				Changes: []string{"remove file /etc/nginx/conf.d/x.conf"}})
+		}, args: []string{"apply", "site", "--json", "--yes"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

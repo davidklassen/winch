@@ -507,6 +507,10 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	}
 	ev.Status, ev.Action = string(res.Status), string(res.Action)
 	ev.Link = secret.Printable(res.Link)
+	maskOldSecrets(p.Step, &res)
+	for _, c := range res.Changes {
+		ev.Changes = append(ev.Changes, secret.Printable(c))
+	}
 	a.rep.Step(ev)
 	if res.Status == module.Change {
 		for _, n := range p.Notify {
