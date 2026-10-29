@@ -128,9 +128,9 @@ func (u *User) Validate() error {
 		case err != nil:
 			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is not a key: %s", i+1, err)}
 		case key.typ == "ssh-dss":
-			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is an ssh-dss key; Debian 13's sshd rejects ssh-dss keys", i+1)}
+			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is an ssh-dss key; sshd rejects ssh-dss keys", i+1)}
 		case key.typ == "ssh-rsa" && key.rsaBits < 1024:
-			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is a %d-bit RSA key; Debian 13's sshd rejects RSA keys under 1024 bits", i+1, key.rsaBits)}
+			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is a %d-bit RSA key; sshd rejects RSA keys under 1024 bits", i+1, key.rsaBits)}
 		}
 		if j, ok := seen[string(key.blob)]; ok {
 			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d has the key of element %d", i+1, j+1)}
