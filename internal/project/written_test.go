@@ -1,7 +1,6 @@
 package project
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -70,6 +69,12 @@ groups:
           path: /opt/b
           content: b
         when: !expr 'facts.os.version == "12"'
+      - download:
+          url: https://example.com/c.tgz
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+          path: /opt/c.tgz
+          unpack: /opt/c
+        when: !expr 'facts.os.version == "12"'
 `,
 	"recipes/app/recipe.yaml": `steps:
   - file:
@@ -89,14 +94,16 @@ handlers:
 }
 
 // spec: Modules/file, dir, link (dir purge: a step for this host in any
-// pipeline writes the path; a skipped stage counts; when and absent do not)
+// pipeline writes the path; a skipped stage counts; when and absent do not;
+// download its unpack directory with everything in it)
 func TestWritten(t *testing.T) {
 	tests := []struct {
-		host string
-		want string
+		host  string
+		paths string
+		trees string
 	}{
-		{"web1", "/etc/x/a /etc/x/done /etc/x/handler /etc/x/l1 /etc/x/l2 /home/deploy /opt/a /opt/a.tgz /srv/app/conf"},
-		{"db1", "/etc/x/a /etc/x/db /etc/x/db-handler /etc/x/done /etc/x/handler /etc/x/l1 /etc/x/l2 /srv/app/conf"},
+		{"web1", "/etc/x/a /etc/x/done /etc/x/handler /etc/x/l1 /etc/x/l2 /home/deploy /opt/a /opt/a.tgz /srv/app/conf", "/opt/a"},
+		{"db1", "/etc/x/a /etc/x/db /etc/x/db-handler /etc/x/done /etc/x/handler /etc/x/l1 /etc/x/l2 /srv/app/conf", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {
@@ -117,8 +124,11 @@ func TestWritten(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(strings.Join(got, " "), tt.want) {
-				t.Errorf("got  %s\nwant %s", strings.Join(got, " "), tt.want)
+			if paths := strings.Join(got.Paths, " "); paths != tt.paths {
+				t.Errorf("got  %s\nwant %s", paths, tt.paths)
+			}
+			if trees := strings.Join(got.Trees, " "); trees != tt.trees {
+				t.Errorf("trees %q, want %q", trees, tt.trees)
 			}
 		})
 	}
