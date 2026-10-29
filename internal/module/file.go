@@ -396,11 +396,11 @@ func (f *File) wanted(hc *hostContent) (owner, group string, mode uint32, known 
 }
 
 // checkAttrs checks a step without content: only the owner, group, and mode
-// it gives, of a file that exists.
+// it gives.
 func (f *File) checkAttrs(dir *os.Root, name string, fi fs.FileInfo, exists bool) (Result, error) {
 	switch {
 	case !exists:
-		return Result{}, fmt.Errorf("%s does not exist; a file step without content does not create it", f.Path)
+		return Result{Status: Change, Action: Modify, Changes: []string{f.Path + " does not exist yet"}}, nil
 	case !fi.Mode().IsRegular():
 		return Result{}, fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
 	}
@@ -432,16 +432,18 @@ func (f *File) attrsOr(fi fs.FileInfo) (string, string, uint32, error) {
 }
 
 func (f *File) applyAttrs(name string) error {
-	dir, err := openDir(f.Path)
+	dir, missing, err := openParent(f.Path)
 	if err != nil {
 		return err
 	}
 	defer dir.Close()
-	fi, err := dir.Lstat(name)
-	if err != nil {
+	fi, exists, err := lstat(dir, name, missing)
+	switch {
+	case err != nil:
 		return err
-	}
-	if !fi.Mode().IsRegular() {
+	case !exists:
+		return fmt.Errorf("%s does not exist; a file step without content does not create it", f.Path)
+	case !fi.Mode().IsRegular():
 		return fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
 	}
 	r, err := openSame(dir, name, fi)
