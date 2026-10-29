@@ -195,7 +195,11 @@ func PrintableLines(s string) string {
 
 // Plain adds the lines of plain project text. A line of a multi-line value
 // that is also such a line does not count by itself. Call Plain before Add.
+// It skips binary data, which has a NUL byte.
 func (f *Filter) Plain(text []byte) {
+	if bytes.IndexByte(text, 0) >= 0 {
+		return
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for line := range bytes.Lines(text) {

@@ -146,6 +146,7 @@ func TestFilterPlainLines(t *testing.T) {
 		{"common line with white space", "env:\n  NODE_ENV=production\n", "NODE_ENV=production\nAPI_TOKEN=tok-123456", "NODE_ENV=production API_TOKEN=tok-123456", "NODE_ENV=production (secret)"},
 		{"base64 of a common line shows", "[Peer]\n", wg, "W1BlZXJd", "W1BlZXJd"},
 		{"url form of a common line shows", "[Peer]\n", wg, "%5BPeer%5D", "%5BPeer%5D"},
+		{"line of binary data stays hidden", "\x00\n[Peer]\n", wg, " [Peer]", " (secret)"},
 		{"part of a plain line stays hidden", "PrivateKey = wg-private-key-1 is an example\n", wg, "PrivateKey = wg-private-key-1", "(secret)"},
 		{"one-line value in plain text stays hidden", "admin-user\n", "admin-user", "login admin-user", "login (secret)"},
 		{"one-line value with a newline stays hidden", "admin-user\n", "admin-user\n", "login admin-user", "login (secret)"},
