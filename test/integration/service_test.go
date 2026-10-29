@@ -25,7 +25,8 @@ ExecStart=/bin/sleep infinity
 U
 cat > /etc/systemd/system/winch-crash.service <<'U'
 [Service]
-ExecStart=/bin/false
+Type=forking
+ExecStart=/bin/true
 Restart=always
 RestartSec=1h
 U
@@ -147,7 +148,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl unmask --runtime winch-vendor; if [ -d /etc/systemd/system/winch-slowstop.service.d ]; then rm -r /etc/systemd/system/winch-slowstop.service.d; systemctl daemon-reload; fi; if [ -d /etc/systemd/system/winch-test.service.d ]; then rm -r /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; if [ -e /etc/systemd/system/winch-nope.service ]; then systemctl disable --now winch-nope; rm /etc/systemd/system/winch-nope.service; systemctl daemon-reload; fi; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service winch-lost.service winch-cond.service winch-slowstop.service; rm -f /tmp/boom /tmp/winch-cond; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service winch-noexec.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
+	reset := "systemctl unmask --runtime winch-vendor; systemctl reset-failed winch-crash winch-quick; if [ -d /etc/systemd/system/winch-crash.service.d ] || [ -d /etc/systemd/system/winch-quick.service.d ] || [ -d /etc/systemd/system/winch-slowstop.service.d ] || [ -d /etc/systemd/system/winch-test.service.d ]; then rm -rf /etc/systemd/system/winch-crash.service.d /etc/systemd/system/winch-quick.service.d /etc/systemd/system/winch-slowstop.service.d /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; if [ -e /etc/systemd/system/winch-nope.service ]; then systemctl disable --now winch-nope; rm /etc/systemd/system/winch-nope.service; systemctl daemon-reload; fi; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service winch-lost.service winch-cond.service winch-slowstop.service; rm -f /tmp/boom /tmp/winch-cond; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service winch-noexec.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -189,12 +190,13 @@ printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service
 			After: `systemctl show -P LimitNOFILE winch-test | grep -qx 12345`,
 		},
 		{
-			Name:       "a unit that waits to restart after a crash is not running",
-			Setup:      "systemctl start winch-crash\n" + waitCrash + "\nsystemctl show -P InvocationID winch-crash > /tmp/inv",
-			Args:       &module.Service{Name: "winch-crash", Running: new(true)},
-			Want:       change("start"),
-			After:      waitCrash + ` && [ "$(systemctl show -P InvocationID winch-crash)" != "$(cat /tmp/inv)" ]`,
-			NoConverge: true,
+			Name:         "a start that leaves the unit waiting to restart fails",
+			Setup:        "systemctl start winch-crash\n" + waitCrash + "\nsystemctl show -P InvocationID winch-crash > /tmp/inv",
+			Args:         &module.Service{Name: "winch-crash", Running: new(true)},
+			Want:         change("start"),
+			WantApplyErr: "winch-crash.service is not running after its start: activating (auto-restart)\n",
+			After:        waitCrash + ` && [ "$(systemctl show -P InvocationID winch-crash)" != "$(cat /tmp/inv)" ]`,
+			Fix:          "mkdir /etc/systemd/system/winch-crash.service.d && printf '[Service]\\nRemainAfterExit=yes\\n' > /etc/systemd/system/winch-crash.service.d/up.conf && systemctl daemon-reload",
 		},
 		{
 			Name:  "stop a unit that waits to restart after a crash",
@@ -563,10 +565,11 @@ systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
 			Fix:          "touch /tmp/winch-cond",
 		},
 		{
-			Name:       "a unit that ends at once after its start is ok",
-			Args:       &module.Service{Name: "winch-quick", Running: new(true)},
-			Want:       change("start"),
-			NoConverge: true,
+			Name:         "a start that leaves the unit inactive fails",
+			Args:         &module.Service{Name: "winch-quick", Running: new(true)},
+			Want:         change("start"),
+			WantApplyErr: "winch-quick.service is not running after its start: inactive (dead)\nStarting winch-quick.service...\n",
+			Fix:          "mkdir /etc/systemd/system/winch-quick.service.d && printf '[Service]\\nRemainAfterExit=yes\\n' > /etc/systemd/system/winch-quick.service.d/up.conf && systemctl daemon-reload",
 		},
 		{
 			Name:    "enable a unit with only Also= fails and names its units",
