@@ -139,6 +139,69 @@ func TestLockoutKeys(t *testing.T) {
 	}
 }
 
+// sshdUp waits until sshd answers again. A reload makes sshd execute itself
+// again, and a login in that moment gets a connection reset.
+const sshdUp = `timeout 10 sh -c 'until ssh-keyscan -T 1 127.0.0.1 >/dev/null 2>&1; do sleep 0.1; done'`
+
+// spec: Running a pipeline/Lockout protection; Modules/user and group (a
+// groups change that only adds groups to the login user)
+func TestLockoutGroups(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "groups")
+	vm.MustRun(t, "groupadd wtok && groupadd wtdeny && echo 'DenyGroups wtdeny' > /etc/ssh/sshd_config.d/wt.conf && systemctl reload ssh && "+sshdUp)
+	files := map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  groups: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: admin\n",
+	}
+
+	// A group that sshd denies: the step rolls back.
+	files["recipes/admin/recipe.yaml"] = "steps:\n  - user:\n      name: admin\n      groups: [admin, wtdeny]\n"
+	dir := vmtest.WriteProject(t, files)
+	groupsState := "id -nG admin; sha256sum /etc/group /etc/gshadow"
+	before := vm.MustRun(t, groupsState)
+	r := lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "changes the groups of the login user admin") {
+		t.Fatalf("plan: exit %d", r.Code)
+	}
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "groups: admin: failed: user admin: no new SSH connection works: ") ||
+		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+		t.Fatalf("apply: exit %d", r.Code)
+	}
+	if got := vm.MustRun(t, groupsState); got != before {
+		t.Errorf("the groups after the rollback:\n%s\nwant\n%s", got, before)
+	}
+
+	// A rollback of the recipe's sshd change keeps the groups that the
+	// recipe's other steps created and added.
+	files["recipes/admin/recipe.yaml"] = `steps:
+  - user:
+      name: admin
+      groups: [admin, wtok]
+  - group:
+      name: wtnew
+  - file:
+      path: /etc/ssh/sshd_config.d/port.conf
+      content: "Port 2222\n"
+    notify: restart
+handlers:
+  restart:
+    - service:
+        name: ssh
+        restarted: true
+      confirm_access: true
+`
+	dir = vmtest.WriteProject(t, files)
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "no new SSH connection works: ") || strings.Contains(r.Stderr, "the rollback failed") {
+		t.Fatalf("apply with sshd on port 2222: exit %d", r.Code)
+	}
+	if got := vm.MustRun(t, "id -nG admin; getent group wtnew | cut -d: -f1; test ! -e /etc/ssh/sshd_config.d/port.conf"); got != "admin wtok\nwtnew\n" {
+		t.Errorf("the groups after the rollback of sshd: %q", got)
+	}
+}
+
 const sshPortRecipe = `vars:
   sshd_ports: [22, 2222]
 steps:

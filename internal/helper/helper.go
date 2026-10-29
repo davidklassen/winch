@@ -382,6 +382,15 @@ func resumed(params json.RawMessage) bool {
 // undo step; another guarded step puts back only what it saved.
 func startTimer(rb *rollbacks, g protocol.Guard, m module.Module, saved, all []module.Saved) (time.Time, error) {
 	j := job{Deadline: time.Now().Add(TimerTime), Restore: saved}
+	if u, ok := m.(*module.User); ok {
+		if un := u.Undo(); un != nil {
+			args, err := json.Marshal(un)
+			if err != nil {
+				return time.Time{}, err
+			}
+			j.Undo = &undo{Module: "user", Args: args}
+		}
+	}
 	if g.Confirm {
 		j.Restore = all
 		if sv, ok := m.(*module.Service); ok {

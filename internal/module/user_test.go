@@ -3,6 +3,7 @@ package module
 import (
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
@@ -272,24 +273,32 @@ func TestKeyChanges(t *testing.T) {
 // spec: Modules/user and group
 func TestUserCheckLogin(t *testing.T) {
 	admin := passwdEntry{name: "admin", uid: 1000, gid: 1000, home: "/home/admin", shell: "/bin/bash"}
-	a := accounts{users: []passwdEntry{admin}, groups: []groupEntry{{name: "sudo", gid: 27, members: []string{"admin"}}, {name: "adm", gid: 4}, {name: "docker", gid: 990, members: []string{"bob", "admin"}}}}
+	a := accounts{users: []passwdEntry{admin}, groups: []groupEntry{{name: "admin", gid: 1000}, {name: "sudo", gid: 27, members: []string{"admin"}}, {name: "adm", gid: 4}, {name: "docker", gid: 990, members: []string{"bob", "admin"}}}}
 	tests := []struct {
 		name  string
 		user  User
 		login uint32
 		want  string
+		// groups is whether the step adds groups to the login user.
+		groups bool
 	}{
-		{"same fields", User{Name: "admin", UID: "1000", Home: "/home/admin", Shell: "/bin/bash"}, 1000, ""},
-		{"uid", User{Name: "admin", UID: "2000"}, 1000, "admin is the login user of this session; log in as another user to change its uid"},
-		{"shell", User{Name: "admin", Shell: "/usr/sbin/nologin"}, 1000, "admin is the login user of this session; log in as another user to change its shell"},
-		{"home", User{Name: "admin", Home: "/srv/admin"}, 1000, "admin is the login user of this session; log in as another user to change its home"},
-		{"uid of another user", User{Name: "admin", UID: "2000"}, 0, ""},
-		{"shell of another user", User{Name: "admin", Shell: "/usr/sbin/nologin"}, 0, ""},
-		{"home of another user", User{Name: "admin", Home: "/srv/admin"}, 0, ""},
-		{"same groups", User{Name: "admin", Groups: &[]string{"sudo", "docker"}}, 1000, ""},
-		{"groups", User{Name: "admin", Groups: &[]string{"sudo", "docker", "adm"}}, 1000, "admin is the login user of this session; log in as another user to change its groups"},
-		{"no groups", User{Name: "admin", Groups: &[]string{}}, 1000, "admin is the login user of this session; log in as another user to change its groups"},
-		{"groups of another user", User{Name: "admin", Groups: &[]string{}}, 0, ""},
+		{"same fields", User{Name: "admin", UID: "1000", Home: "/home/admin", Shell: "/bin/bash"}, 1000, "", false},
+		{"uid", User{Name: "admin", UID: "2000"}, 1000, "admin is the login user of this session; log in as another user to change its uid", false},
+		{"shell", User{Name: "admin", Shell: "/usr/sbin/nologin"}, 1000, "admin is the login user of this session; log in as another user to change its shell", false},
+		{"home", User{Name: "admin", Home: "/srv/admin"}, 1000, "admin is the login user of this session; log in as another user to change its home", false},
+		{"group", User{Name: "admin", Group: "sudo"}, 1000, "admin is the login user of this session; log in as another user to change its group", false},
+		{"a new group", User{Name: "admin", Group: "staff"}, 1000, "admin is the login user of this session; log in as another user to change its group", false},
+		{"same group by gid", User{Name: "admin", Group: "1000"}, 1000, "", false},
+		{"group of another user", User{Name: "admin", Group: "sudo"}, 0, "", false},
+		{"uid of another user", User{Name: "admin", UID: "2000"}, 0, "", false},
+		{"shell of another user", User{Name: "admin", Shell: "/usr/sbin/nologin"}, 0, "", false},
+		{"home of another user", User{Name: "admin", Home: "/srv/admin"}, 0, "", false},
+		{"same groups", User{Name: "admin", Groups: &[]string{"sudo", "docker"}}, 1000, "", false},
+		{"add a group", User{Name: "admin", Groups: &[]string{"sudo", "docker", "adm"}}, 1000, "", true},
+		{"remove a group", User{Name: "admin", Groups: &[]string{"docker", "adm"}}, 1000, "admin is the login user of this session; log in as another user to change its groups", false},
+		{"no groups", User{Name: "admin", Groups: &[]string{}}, 1000, "admin is the login user of this session; log in as another user to change its groups", false},
+		{"groups of another user", User{Name: "admin", Groups: &[]string{}}, 0, "", false},
+		{"add a group to another user", User{Name: "admin", Groups: &[]string{"sudo", "docker", "adm"}}, 0, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -299,6 +308,40 @@ func TestUserCheckLogin(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("checkLogin() = %q, want %q", got, tt.want)
+			}
+			if got := tt.user.loginGroups != nil; got != tt.groups {
+				t.Errorf("loginGroups set = %t, want %t", got, tt.groups)
+			}
+		})
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a groups change of the login
+// user)
+func TestUserUndo(t *testing.T) {
+	a := accounts{users: []passwdEntry{{name: "admin", uid: 1000}}, groups: []groupEntry{{name: "sudo", members: []string{"admin"}}, {name: "docker"}}}
+	tests := []struct {
+		name   string
+		have   []groupEntry
+		groups []string
+		want   string
+	}{
+		{"back to the old groups", a.groups, []string{"sudo", "docker"}, `{"name":"admin","groups":["sudo"]}`},
+		{"back to no groups", []groupEntry{{name: "docker"}}, []string{"docker"}, `{"name":"admin","groups":[]}`},
+		{"no change", a.groups, []string{"sudo"}, "null"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := User{Name: "admin", Groups: &tt.groups}
+			if err := u.checkLogin(accounts{users: a.users, groups: tt.have}, a.users[0], 1000); err != nil {
+				t.Fatal(err)
+			}
+			got, err := json.Marshal(u.Undo())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("Undo = %s, want %s", got, tt.want)
 			}
 		})
 	}
