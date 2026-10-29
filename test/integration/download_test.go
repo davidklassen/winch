@@ -246,11 +246,11 @@ func TestDownloadModule(t *testing.T) {
 			After: `[ "$(cat /tmp/w/f)" = "version 1" ] && [ ! -e ` + record + ` ]`,
 		},
 		{
-			Name:  "an unpack directory without a record unpacks again and keeps its owner and mode",
+			Name:  "an unpack directory without a record unpacks again and keeps its mode",
 			Setup: "mkdir -m 0750 /tmp/w/opt && chown nobody:nogroup /tmp/w/opt",
 			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt"},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", unpackLine, "remove its content: 0 files, 0 directories"}},
-			After: `[ "$(/tmp/w/opt/app/latest)" = tool ] && [ "$(ls -A /tmp/w)" = opt ] && [ "$(stat -c '%U %G %a' /tmp/w/opt)" = "nobody nogroup 750" ]`,
+			After: `[ "$(/tmp/w/opt/app/latest)" = tool ] && [ "$(ls -A /tmp/w)" = opt ] && [ "$(stat -c '%U %G %a' /tmp/w/opt)" = "root root 750" ]`,
 		},
 		{
 			Name:      "a new checksum downloads again",
@@ -324,7 +324,7 @@ func TestDownloadModule(t *testing.T) {
 			Setup: "mkdir -p /tmp/w/opt/app && echo old > /tmp/w/opt/app/bin && echo old > /tmp/w/opt/old && ln -s nowhere /tmp/w/opt/app/latest && chown -R nobody:nogroup /tmp/w/opt",
 			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt"},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", unpackLine, "remove its content: 3 files, 1 directory"}},
-			After: `[ "$(/tmp/w/opt/app/latest)" = tool ] && [ "$(stat -c '%U %G' /tmp/w/opt /tmp/w/opt/app)" = "$(printf '%s\n' 'nobody nogroup' 'root root')" ] && [ "$(ls -A /tmp/w)" = opt ]` +
+			After: `[ "$(/tmp/w/opt/app/latest)" = tool ] && [ "$(stat -c '%U %G' /tmp/w/opt /tmp/w/opt/app)" = "$(printf '%s\n' 'root root' 'root root')" ] && [ "$(ls -A /tmp/w)" = opt ]` +
 				` && [ "$(cd /tmp/w/opt && find . | LC_ALL=C sort | tr '\n' ' ')" = ". ./app ./app/README ./app/bin ./app/bin/tool ./app/hard ./app/latest " ]`,
 		},
 		{
@@ -406,14 +406,14 @@ func TestDownloadModule(t *testing.T) {
 			Args:      &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt", Owner: "admin"},
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (new owner)", "unpack into /tmp/w/opt (owner admin, group root)"}},
 			Unchanged: `[ "$(stat -c %U /tmp/w/opt/app/bin/tool)" != admin ]`,
-			After:     `[ "$(stat -c %U /tmp/w/opt /tmp/w/opt/app/bin/tool)" = "$(printf '%s\n' nobody admin)" ] && grep -qx '` + sha(tgz) + `:admin:root /tmp/w/opt' ` + record,
+			After:     `[ "$(stat -c %U /tmp/w/opt /tmp/w/opt/app/bin/tool)" = "$(printf '%s\n' admin admin)" ] && grep -qx '` + sha(tgz) + `:admin:root /tmp/w/opt' ` + record,
 		},
 		{
 			Name:  "a new group unpacks again",
 			Setup: extracted,
 			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt", Group: "adm"},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (new group)", "unpack into /tmp/w/opt (owner root, group adm)"}},
-			After: `[ "$(stat -c %G /tmp/w/opt/app/bin/tool)" = adm ] && grep -qx '` + sha(tgz) + `:root:adm /tmp/w/opt' ` + record,
+			After: `[ "$(stat -c %G /tmp/w/opt /tmp/w/opt/app/bin/tool)" = "$(printf '%s\n' adm adm)" ] && grep -qx '` + sha(tgz) + `:root:adm /tmp/w/opt' ` + record,
 		},
 		{
 			Name:  "the check reads no tree",
@@ -587,7 +587,6 @@ func TestDownloadUnpackDirStep(t *testing.T) {
     steps:
       - dir:
           path: /opt/winch-test/app
-          owner: nobody
           mode: "0750"
       - download:
           url: ` + url + `
@@ -604,8 +603,8 @@ func TestDownloadUnpackDirStep(t *testing.T) {
 			t.Errorf("plan after apply: exit %d, stdout %q", r.Code, r.Stdout)
 		}
 	}
-	if out := vm.MustRun(t, "/opt/winch-test/app/bin/tool && stat -c '%U %a' /opt/winch-test/app"); out != "v2\nnobody 750\n" {
-		t.Errorf("tool output and the unpack directory = %q, want v2 and nobody 750", out)
+	if out := vm.MustRun(t, "/opt/winch-test/app/bin/tool && stat -c '%U %a' /opt/winch-test/app"); out != "v2\nroot 750\n" {
+		t.Errorf("tool output and the unpack directory = %q, want v2 and root 750", out)
 	}
 }
 

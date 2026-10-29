@@ -292,8 +292,8 @@ func (d *Download) Apply(ctx context.Context, note func(string)) error {
 // applyUnpack downloads the archive to a temporary file next to the unpack
 // directory and checks every entry. It unpacks the archive into a new
 // directory with the owner uid and the group gid. The new directory takes the
-// owner, group, and mode of an existing unpack directory. It swaps the two
-// directories and removes the old tree.
+// mode of an existing unpack directory. It swaps the two directories and
+// removes the old tree.
 func (d *Download) applyUnpack(ctx context.Context, uid, gid uint32, note func(string)) error {
 	parent, missing, err := openParent(d.Unpack)
 	if err != nil {
@@ -334,13 +334,12 @@ func (d *Download) applyUnpack(ctx context.Context, uid, gid uint32, note func(s
 	if exists && !fi.IsDir() {
 		return fmt.Errorf("%s is %s, not a directory", d.Unpack, kind(fi))
 	}
-	dirUID, dirGID, dirMode := uid, gid, uint32(0o755)
-	// A dir step can set the owner and mode of the unpack directory.
+	mode := uint32(0o755)
+	// A dir step can set the mode of the unpack directory.
 	if exists {
-		st := fi.Sys().(*syscall.Stat_t)
-		dirUID, dirGID, dirMode = st.Uid, st.Gid, uint32(st.Mode)&0o7777
+		mode = uint32(fi.Sys().(*syscall.Stat_t).Mode) & 0o7777
 	}
-	root, err := mkdir(sub, newName, dirUID, dirGID, dirMode)
+	root, err := mkdir(sub, newName, uid, gid, mode)
 	if err != nil {
 		return err
 	}
