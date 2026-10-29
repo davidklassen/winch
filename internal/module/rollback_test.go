@@ -362,7 +362,7 @@ func TestTouches(t *testing.T) {
 		{&Dir{Path: "/home", Recurse: true}, []Touch{{"/home", true}}},
 		{&Link{Path: "/etc/l"}, []Touch{{"/etc/l", true}}},
 		{&Line{Path: "/etc/x"}, []Touch{{"/etc/x", true}}},
-		{&Download{Unpack: "/opt/a"}, []Touch{{"/opt/a", false}}},
+		{&Download{Unpack: "/opt/a"}, []Touch{{"/opt/a", true}}},
 		{&User{Name: "deploy", mkHome: "/home/deploy"}, []Touch{{"/home/deploy", false}}},
 		{u, []Touch{{"/home/admin/.ssh", false}, {"/home/admin/.ssh/authorized_keys", true}}},
 		{&Hostname{Name: "mail"}, []Touch{{"/etc/hostname", true}}},
