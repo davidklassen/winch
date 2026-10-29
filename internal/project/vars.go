@@ -478,6 +478,26 @@ func computedError(v any) error {
 	return computedMessage(name, host)
 }
 
+// computedIn returns the error for the first marker of a computed default in
+// v.
+func computedIn(v any) error {
+	switch v := v.(type) {
+	case map[string]any:
+		for _, k := range slices.Sorted(maps.Keys(v)) {
+			if err := computedIn(v[k]); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, x := range v {
+			if err := computedIn(x); err != nil {
+				return err
+			}
+		}
+	}
+	return computedError(v)
+}
+
 func computedMessage(name, host string) error {
 	return computedDefault{name, host}
 }

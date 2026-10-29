@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/module"
@@ -217,7 +219,10 @@ func TestLoadVars(t *testing.T) {
 			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !expr $env.vars.domain", 1),
 		}},
 		{name: "when-whole-host", files: map[string]string{
-			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'toJSON(host) != \"\"'", 1),
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'json(host) != \"\"'", 1),
+		}},
+		{name: "to-json", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr 'toJSON(vars.mail_server) != \"\"'", 1),
 		}},
 		{name: "default-tpl-dot", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ . }}'", 1),
@@ -617,6 +622,55 @@ func TestSQLQuote(t *testing.T) {
 }
 
 // spec: Templates and expressions/Template functions
+func TestJSON(t *testing.T) {
+	tests := []struct{ value, want string }{
+		{`""`, `""`},
+		{`plain`, `"plain"`},
+		{`'say "hi"'`, `"say \"hi\""`},
+		{`'a\b'`, `"a\\b"`},
+		{`"a\nb\r\tc"`, `"a\nb\r\tc"`},
+		{`"\x01\x1f\x7f\u0085"`, `"\u0001\u001f\u007f\u0085"`},
+		{`"\u2028\u2029"`, `"\u2028\u2029"`},
+		{`"\uFFFE\uFFFF"`, `"\ufffe\uffff"`},
+		{`grüße 日本`, `"grüße 日本"`},
+		{`"<a&b> it's / ok"`, `"<a&b> it's / ok"`},
+		{`80`, `80`},
+		{`8.5`, `8.5`},
+		{`true`, `true`},
+		{`[a, 1, "x\"y", [], {}]`, `["a",1,"x\"y",[],{}]`},
+		{`{b: [1, 2], a: {"k\n": "v\\"}, "ü": null}`, `{"a":{"k\n":"v\\"},"b":[1,2],"ü":null}`},
+	}
+	for _, tt := range tests {
+		vars := "  v: " + tt.value + "\n"
+		var want any
+		if err := yaml.Unmarshal([]byte(tt.value), &want); err != nil {
+			t.Fatal(err)
+		}
+		for kind, content := range map[string]string{
+			"tpl":  `!tpl "{{ json .vars.v }}"`,
+			"expr": `!expr json(vars.v)`,
+		} {
+			t.Run(fmt.Sprintf("%s %s", kind, tt.value), func(t *testing.T) {
+				got := evalOne(t, vars, "  - file:\n      path: /a\n      content: "+content+"\n", nil)
+				if got != tt.want {
+					t.Fatalf("got  %s\nwant %s", got, tt.want)
+				}
+				var fromJSON, fromYAML any
+				if err := json.Unmarshal([]byte(got), &fromJSON); err != nil {
+					t.Fatalf("not JSON: %v", err)
+				}
+				if err := yaml.Unmarshal([]byte(got), &fromYAML); err != nil {
+					t.Fatalf("not YAML: %v", err)
+				}
+				if !reflect.DeepEqual(fromYAML, want) {
+					t.Errorf("YAML reads %#v, want %#v", fromYAML, want)
+				}
+			})
+		}
+	}
+}
+
+// spec: Templates and expressions/Template functions
 func TestGet(t *testing.T) {
 	const vars = "  peers:\n    - {name: a}\n    - {name: b, endpoint: \"192.0.2.2:51820\"}\n  l: [a]\n"
 	tests := []struct{ name, text, want string }{
@@ -696,6 +750,8 @@ func TestEvalErrors(t *testing.T) {
 			want: "error: recipes/r/recipe.yaml:4:16: content: quote: the integer 80 is not a string\n | quote(vars.i)\n | ^"},
 		{name: "sqlquote of a number", step: "  - file:\n      path: /a\n      content: !expr sqlquote(vars.i)\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: sqlquote: the integer 80 is not a string\n | sqlquote(vars.i)\n | ^"},
+		{name: "json of infinity", vars: "  inf: .inf\n", step: "  - file:\n      path: /a\n      content: !expr json(vars.inf)\n",
+			want: "error: recipes/r/recipe.yaml:4:16: content: json: unsupported value: +Inf\n | json(vars.inf)\n | ^"},
 		{name: "default fails", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n",
 			want: "error: winch.yaml:15:8: variable \"bad\": invalid operation: int + string\n | 1 + vars.s\n | ..^"},
 		{name: "when fails before a default", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n    when: !expr 'vars.l[5] == \"x\"'\n",

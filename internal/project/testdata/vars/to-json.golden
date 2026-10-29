@@ -1,0 +1,3 @@
+recipes/web/recipe.yaml:15:11: unknown name "toJSON"
+ | toJSON(vars.mail_server) != ""
+ | ^

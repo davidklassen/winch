@@ -1,6 +1,8 @@
 package project
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -17,7 +19,7 @@ import (
 
 // funcs replaces the built-in index, which gives the zero value for a missing
 // map key.
-var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": title, "quote": quote, "sqlquote": sqlquote, "get": get}
+var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": title, "quote": quote, "sqlquote": sqlquote, "json": toJSON, "get": get}
 
 // tmplFile is a parsed template file of a recipe.
 type tmplFile struct {
@@ -416,6 +418,29 @@ var sqlEscapes = strings.NewReplacer(`\`, `\\`, "'", "''")
 
 func sqlquote(s string) string {
 	return "'" + sqlEscapes.Replace(s) + "'"
+}
+
+// jsonEscapes escapes the characters that encoding/json keeps and YAML does
+// not allow unescaped: control characters and U+FFFE and U+FFFF.
+var jsonEscapes = func() *strings.Replacer {
+	pairs := []string{"\ufffe", `\ufffe`, "\uffff", `\uffff`}
+	for r := rune(0x7f); r <= 0x9f; r++ {
+		pairs = append(pairs, string(r), fmt.Sprintf(`\u%04x`, r))
+	}
+	return strings.NewReplacer(pairs...)
+}()
+
+func toJSON(v any) (string, error) {
+	if err := computedIn(v); err != nil {
+		return "", err
+	}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return "", err
+	}
+	return jsonEscapes.Replace(strings.TrimSuffix(b.String(), "\n")), nil
 }
 
 var templateErrRe = regexp.MustCompile(`(?s)^(\d+)(?::(\d+))?: (?:executing "(?:[^"\\]|\\.)*" at <(.*?)>: )?(.*)$`)
