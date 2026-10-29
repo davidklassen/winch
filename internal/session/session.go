@@ -442,27 +442,41 @@ func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *m
 	return res, err
 }
 
-// accessCommand works only for a login that can still use sudo without a
-// password, when the login user is not root.
-const accessCommand = `if [ "$(id -u)" -eq 0 ]; then exit 0; fi; exec sudo -n true`
+const accessMarker = "winch-access"
+
+// accessCommand runs the marker the way the session start runs its script, so
+// it proves what the next session needs.
+var accessCommand = command("echo " + accessMarker)
 
 // Access opens a new SSH connection to the host, without a connection that
 // the SSH config shares, and runs a command that needs the login and sudo.
+// Like the session start, it fails when the login prints to stdout.
 func (s *Session) Access(ctx context.Context) error {
 	cfg := s.cfg
 	cfg.fresh = true
 	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, append(argv(cfg), accessCommand)...)...)
-	var out limitedBuffer
-	out.max = 4 << 10
-	cmd.Stdout, cmd.Stderr = &out, &out
+	stdout, stderr := &limitedBuffer{max: 4 << 10}, &limitedBuffer{max: 4 << 10}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(out.String()); msg != "" {
+		// nologin prints its refusal on stdout.
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = strings.TrimSpace(stdout.String())
+		}
+		if msg != "" {
 			return fmt.Errorf("%w: %s", err, msg)
 		}
 		return err
 	}
-	return nil
+	extra, ok := strings.CutSuffix(stdout.String(), accessMarker+"\n")
+	switch {
+	case ok && extra == "":
+		return nil
+	case !ok && strings.TrimSpace(extra) == "":
+		return errors.New("the login did not run winch's command")
+	}
+	return fmt.Errorf("the login shell printed %q; remove it from the shell startup files, such as ~/.bashrc", strings.TrimSpace(extra))
 }
 
 // Confirm stops the rollback timer on the host.

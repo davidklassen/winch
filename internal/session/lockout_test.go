@@ -15,7 +15,8 @@ import (
 )
 
 // spec: Running a pipeline/Lockout protection (a second SSH connection runs
-// true; sudo -n true for a login user other than root)
+// a marker; through sudo -n for a login user other than root, in the form of
+// the session start)
 func TestAccess(t *testing.T) {
 	s := &Session{cfg: Config{Host: "web1", Address: "192.0.2.1", User: "admin", Batch: true}}
 	tests := []struct {
@@ -24,7 +25,7 @@ func TestAccess(t *testing.T) {
 		wantErr         string
 	}{
 		{"root", "0", "#!/bin/sh\nexit 1\n", "", ""},
-		{"sudo works", "1000", goodSudo, "-n true\n", ""},
+		{"sudo works", "1000", goodSudo, "-n true\n-n sh\n", ""},
 		{"sudo fails", "1000", "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n", "", "sudo: a password is required"},
 	}
 	for _, tt := range tests {
@@ -176,5 +177,57 @@ func TestAccessWithoutBatch(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(argsFile); strings.Contains(string(data), "BatchMode") {
 		t.Errorf("an access check without batch mode passes %q", data)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the check passes when stdout
+// holds only the marker)
+func TestAccessLoginShellText(t *testing.T) {
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	for _, uid := range []string{"0", "1000"} {
+		t.Run(uid, func(t *testing.T) {
+			fakeBin(t, "aarch64", uid, goodSudo)
+			t.Setenv("SSH_BANNER", "Welcome")
+			err := s.Access(context.Background())
+			want := `the login shell printed "Welcome"; remove it from the shell startup files, such as ~/.bashrc`
+			if err == nil || err.Error() != want {
+				t.Errorf("Access = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (stderr, such as sudo's
+// unable to resolve host, does not fail the check)
+func TestAccessStderr(t *testing.T) {
+	fakeBin(t, "aarch64", "1000", "#!/bin/sh\necho 'sudo: unable to resolve host web1' >&2\nshift\nexec \"$@\"\n")
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	if err := s.Access(context.Background()); err != nil {
+		t.Errorf("Access = %v", err)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (gap: a refusal on stdout,
+// such as from nologin, names the reason)
+func TestAccessRefusalOnStdout(t *testing.T) {
+	fakeBin(t, "aarch64", "1000", goodSudo)
+	t.Setenv("SSH_FAIL_ONCE", filepath.Join(t.TempDir(), "failed"))
+	t.Setenv("SSH_FAIL_OUT", "This account is currently not available.")
+	t.Setenv("SSH_FAIL_CODE", "1")
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	err := s.Access(context.Background())
+	if want := "exit status 1: This account is currently not available."; err == nil || err.Error() != want {
+		t.Errorf("Access = %v, want %q", err, want)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (gap: a login that does not
+// run the command, such as ForceCommand internal-sftp, fails the check)
+func TestAccessNoOutput(t *testing.T) {
+	fakeBin(t, "aarch64", "1000", "#!/bin/sh\nexit 0\n")
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	err := s.Access(context.Background())
+	if want := "the login did not run winch's command"; err == nil || err.Error() != want {
+		t.Errorf("Access = %v, want %q", err, want)
 	}
 }
