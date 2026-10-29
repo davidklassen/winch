@@ -36,8 +36,9 @@ type Conn interface {
 	Pending(ctx context.Context) (protocol.Pending, error)
 	Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
 	// Apply records the handlers in notify and then on the host before it
-	// changes something. It guards the step against a lockout as guard says.
-	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard) (module.Result, error)
+	// changes something, and the record check of an assert that fails. It
+	// guards the step against a lockout as guard says.
+	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard) (module.Result, error)
 	// Access opens a second SSH connection and runs a command that needs the
 	// login and sudo.
 	Access(ctx context.Context) error
@@ -49,9 +50,13 @@ type Conn interface {
 	Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error)
 	// Handled removes the record of a handler that succeeded.
 	Handled(ctx context.Context, handler string) error
+	// Pend records a pending health gate or assert.
+	Pend(ctx context.Context, c protocol.Check) error
+	// Passed removes the record of a health gate or assert.
+	Passed(ctx context.Context, c protocol.Check) error
 	// Command runs the command of a then, and then removes its record.
 	Command(ctx context.Context, command string, then protocol.Then) error
-	// Health runs a health gate.
+	// Health runs a health gate, and then removes its record.
 	Health(ctx context.Context, h protocol.Health) error
 	Exec(ctx context.Context, command string) (module.ExecResult, error)
 	Close() error
@@ -102,8 +107,11 @@ type Plan struct {
 	// Destinations are the destinations of the hosts, as their sessions
 	// reported them.
 	Destinations map[string]protocol.Destination
-	hash         string
-	opts         Options
+	// gone are the records of each host for gates and asserts that the
+	// pipeline no longer has.
+	gone map[string][]protocol.Check
+	hash string
+	opts Options
 }
 
 type StagePlan struct {
@@ -115,6 +123,9 @@ type StagePlan struct {
 type HostPlan struct {
 	Host  project.Host
 	Steps []Planned
+	// PendingHealth is true when the health gate of the stage is pending on
+	// the host.
+	PendingHealth bool
 }
 
 // Planned is a module step for one host, or a slot for a handler. In is the
@@ -140,6 +151,11 @@ type Planned struct {
 	// ThenRuns is true on the last element of a step whose then the plan
 	// expects to run: an element changes, or the then is pending.
 	ThenRuns bool
+	// Check is the record of an assert step, or nil.
+	Check *protocol.Check
+	// PendingAssert is true on an assert step whose record is pending on the
+	// host.
+	PendingAssert bool
 	// Address is the scope, the number of the step in its list, and the loop
 	// index: nginx#3[0]. A slot has the full name of its handler.
 	Address string
@@ -155,18 +171,18 @@ type Slot struct {
 }
 
 // shows reports whether the plan shows p as something that apply changes or
-// runs: a change, an unknown step, a handler, or a then.
+// runs: a change, an unknown step, a handler, a then, or a pending assert.
 func (p Planned) shows() bool {
-	return p.Result.Status == module.Change || p.Result.Status == module.Unknown || p.Handler != nil && p.Handler.Runs || p.ThenRuns
+	return p.Result.Status == module.Change || p.Result.Status == module.Unknown || p.Handler != nil && p.Handler.Runs || p.ThenRuns || p.PendingAssert
 }
 
 func (h HostPlan) changes() bool {
-	return slices.ContainsFunc(h.Steps, Planned.shows)
+	return h.PendingHealth || slices.ContainsFunc(h.Steps, Planned.shows)
 }
 
 // known reports whether the plan shows a line other than an unknown step.
 func (h HostPlan) known() bool {
-	return slices.ContainsFunc(h.Steps, func(p Planned) bool {
+	return h.PendingHealth || slices.ContainsFunc(h.Steps, func(p Planned) bool {
 		return p.shows() && (p.Result.Status != module.Unknown || p.PendingThen)
 	})
 }
@@ -190,6 +206,8 @@ type hostRun struct {
 	notified map[string]bool
 	// thens are the pending then records that no step matched yet.
 	thens map[protocol.Then]bool
+	// checks are the pending gates and asserts.
+	checks map[protocol.Check]bool
 	// pending are the records that the host reported at the first contact.
 	pending *protocol.Pending
 	// conn is the session with the host, open across its stages.
@@ -303,7 +321,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, needs: map[string]string{}, units: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, thens: map[protocol.Then]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, units: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -330,13 +348,16 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 				plan.Failed[h.Name] = errs[i]
 				continue
 			}
-			sp.Hosts = append(sp.Hosts, HostPlan{Host: h, Steps: steps[i]})
+			gate := protocol.Check{Pipeline: stage.Pipeline, Stage: stage.Name}
+			sp.Hosts = append(sp.Hosts, HostPlan{Host: h, Steps: steps[i], PendingHealth: stage.Health != nil && runs[h.Name].checks[gate]})
 		}
 		plan.Stages = append(plan.Stages, sp)
 	}
+	plan.gone = map[string][]protocol.Check{}
 	for name, hr := range runs {
 		if hr.pending != nil {
 			plan.Pending[name] = *hr.pending
+			plan.gone[name] = goneChecks(p.Pipeline, hr.pending.Checks)
 		}
 		plan.Destinations[name] = hr.dest
 	}
@@ -373,6 +394,9 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		for _, t := range pending.Then {
 			hr.thens[t] = true
 		}
+		for _, c := range pending.Checks {
+			hr.checks[c] = true
+		}
 	}
 	steps, err := evaluate(stage, hr)
 	if err != nil {
@@ -390,6 +414,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 						s.Steps[j].PendingThen = true
 						delete(hr.thens, *hs.Then)
 					}
+					s.Steps[j].PendingAssert = hs.Check != nil && hr.checks[*hs.Check]
 				}
 			}
 			continue
@@ -422,6 +447,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
 		hr.trackUnits(p.Step.Args, steps[i].Result, where)
 		maskOldSecrets(p.Step, &steps[i].Result)
+		steps[i].PendingAssert = p.Check != nil && hr.checks[*p.Check]
 		if steps[i].Result.Status != module.OK {
 			changed = true
 			for _, n := range p.Notify {
@@ -854,9 +880,9 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 				late[h] = true
 			}
 		}
-		then := thenRecord(steps, place)
+		then, check := thenRecord(steps, place), checkRecord(st, place)
 		for i, s := range steps {
-			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify, Then: then, Address: address(addr, st, i)})
+			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify, Then: then, Check: check, Address: address(addr, st, i)})
 		}
 		return nil
 	}
@@ -966,9 +992,9 @@ func handlerSlot(h *project.Handler, env *project.Env, in *project.Step, hr *hos
 		}
 		addr := fmt.Sprintf("%s#%d", h.FullName(), j+1)
 		place.Step = j + 1
-		then := thenRecord(steps, place)
+		then, check := thenRecord(steps, place), checkRecord(hs, place)
 		for i, s := range steps {
-			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1, Then: then, Address: address(addr, hs, i)})
+			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1, Then: then, Check: check, Address: address(addr, hs, i)})
 		}
 	}
 	return slot, nil
@@ -1007,6 +1033,70 @@ func thenRecord(steps []project.Step, place protocol.Then) *protocol.Then {
 		place.Main = hex.EncodeToString(sum[:])
 	}
 	return &place
+}
+
+// checkRecord is the record of the assert step st at place, or nil for
+// another step.
+func checkRecord(st project.Step, place protocol.Then) *protocol.Check {
+	if st.Module != "assert" {
+		return nil
+	}
+	return &protocol.Check{Recipe: place.Recipe, Pipeline: place.Pipeline, Stage: place.Stage, Handler: place.Handler, Step: place.Step}
+}
+
+// goneChecks returns the records of gates and asserts that pl no longer has:
+// the gate of a stage without health, and an assert whose place holds no
+// assert step. A record of another pipeline, or of a recipe that pl does not
+// run, stays.
+func goneChecks(pl *project.Pipeline, records []protocol.Check) []protocol.Check {
+	recipes := map[string]*project.Recipe{}
+	for _, stage := range pl.Stages {
+		for _, st := range stage.Steps {
+			if st.Recipe != nil {
+				recipes[st.Recipe.Name] = st.Recipe
+			}
+		}
+	}
+	var gone []protocol.Check
+	for _, c := range records {
+		var steps []project.Step
+		var handlers []*project.Handler
+		switch {
+		case c.Recipe != "":
+			r := recipes[c.Recipe]
+			if r == nil {
+				continue
+			}
+			steps, handlers = r.Steps, r.Handlers
+		case c.Pipeline == pl.Name:
+			i := slices.IndexFunc(pl.Stages, func(s project.Stage) bool { return s.Name == c.Stage })
+			if i < 0 {
+				gone = append(gone, c)
+				continue
+			}
+			if c.Step == 0 {
+				if pl.Stages[i].Health == nil {
+					gone = append(gone, c)
+				}
+				continue
+			}
+			steps, handlers = pl.Stages[i].Steps, pl.Stages[i].Handlers
+		default:
+			continue
+		}
+		if c.Handler != "" {
+			i := slices.IndexFunc(handlers, func(h *project.Handler) bool { return h.Name == c.Handler })
+			if i < 0 {
+				gone = append(gone, c)
+				continue
+			}
+			steps = handlers[i].Steps
+		}
+		if c.Step < 1 || c.Step > len(steps) || steps[c.Step-1].Module != "assert" {
+			gone = append(gone, c)
+		}
+	}
+	return gone
 }
 
 // label is the text of a step in JSON events, with each line of a command of

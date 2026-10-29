@@ -433,8 +433,8 @@ func (s *Session) Check(ctx context.Context, name string, m module.Module, st *m
 
 // Apply checks a step again, makes its changes, and updates st. It sends the
 // content only when the helper must write it.
-func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard) (module.Result, error) {
-	step := protocol.Step{Module: name, State: *st, Notify: notify, Then: then, Guard: guard}
+func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard) (module.Result, error) {
+	step := protocol.Step{Module: name, State: *st, Notify: notify, Then: then, Check: check, Guard: guard}
 	res, err := s.step("apply", withoutContent(m), step, st)
 	if errors.Is(err, errNeedContent) {
 		return s.step("apply", m, step, st)
@@ -556,13 +556,23 @@ func (s *Session) Handled(ctx context.Context, handler string) error {
 	return s.call("handled", protocol.Handled{Name: handler}, nil)
 }
 
+// Pend records a pending health gate or assert on the host.
+func (s *Session) Pend(ctx context.Context, c protocol.Check) error {
+	return s.call("pend", c, nil)
+}
+
+// Passed removes the record of a health gate or assert.
+func (s *Session) Passed(ctx context.Context, c protocol.Check) error {
+	return s.call("passed", c, nil)
+}
+
 // Command runs the command of a then as root on the host, and then removes
 // its record.
 func (s *Session) Command(ctx context.Context, command string, then protocol.Then) error {
 	return s.call("command", protocol.Command{Command: command, Then: then}, nil)
 }
 
-// Health runs a health gate on the host.
+// Health runs a health gate on the host, and then removes its record.
 func (s *Session) Health(ctx context.Context, h protocol.Health) error {
 	return s.call("health", h, nil)
 }

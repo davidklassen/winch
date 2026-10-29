@@ -82,6 +82,9 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 				if p.Handler != nil {
 					markLine(b, indent, "!", " handler "+p.Handler.Handler.FullName()+"\n")
 					for _, hs := range p.Handler.Steps {
+						if hs.PendingAssert {
+							writeStep(b, indent+"    ", hs)
+						}
 						if hs.PendingThen {
 							markLine(b, indent+"    ", "!", " then:"+command(hs.Step.ShownThen(), indent+"        ")+"\n")
 						}
@@ -89,7 +92,7 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 					continue
 				}
 				if p.Result.Status != module.OK || p.Result.Deferred {
-					writeStep(b, indent, p.Step, p.Result)
+					writeStep(b, indent, p)
 				}
 				switch {
 				case p.PendingThen:
@@ -99,7 +102,11 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 				}
 			}
 			if h := sp.Stage.Health; h != nil && hp.changes() {
-				markLine(b, "    ", "*", " health:"+command(h.Command, "        ")+"\n")
+				mark := "*"
+				if hp.PendingHealth {
+					mark = "!"
+				}
+				markLine(b, "    ", mark, " health:"+command(h.Command, "        ")+"\n")
 			}
 		}
 	}
@@ -225,11 +232,14 @@ func linkNote(link string) string {
 	return " (link to " + secret.Printable(link) + ")"
 }
 
-func writeStep(t *color.Text, indent string, st project.Step, res module.Result) {
+func writeStep(t *color.Text, indent string, p Planned) {
+	st, res := p.Step, p.Result
 	mark := marks[res.Action]
 	switch {
 	case res.Status == module.Unknown:
 		mark = "?"
+	case p.PendingAssert:
+		mark = "!"
 	case res.Deferred:
 		mark = "*"
 	}

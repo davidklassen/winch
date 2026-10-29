@@ -11,13 +11,21 @@ import (
 	"github.com/davidklassen/winch/internal/protocol"
 )
 
-// runHealth decodes the params of health and runs the gate.
-func runHealth(ctx context.Context, params json.RawMessage) error {
+// runHealth decodes the params of health, runs the gate, and removes its
+// record when it passes.
+func runHealth(ctx context.Context, params json.RawMessage, checks records) error {
 	var h protocol.Health
 	if err := json.Unmarshal(params, &h); err != nil {
 		return fmt.Errorf("decode health: %w", err)
 	}
-	return health(ctx, h, time.Second, module.KillDelay)
+	if err := health(ctx, h, time.Second, module.KillDelay); err != nil {
+		return err
+	}
+	line, err := json.Marshal(h.Check)
+	if err != nil {
+		return err
+	}
+	return checks.remove(string(line))
 }
 
 // health runs the command of a gate until it exits 0, and then until it has

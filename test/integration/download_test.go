@@ -138,7 +138,7 @@ func TestDownloadModule(t *testing.T) {
 		s := vm.Session(t)
 		vm.MustRun(t, reset+"\n"+extracted+" && sed -i 's/^[0-9a-f]*:/"+sha(v1)+":/' "+record+" && rm /tmp/w/opt/app/bin/tool && mkdir /tmp/w/opt/app/bin/tool")
 		args := &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt", Owner: "admin"}
-		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, protocol.Guard{}); err == nil || !strings.Contains(err.Error(), "unpack "+urlTgz+" into /tmp/w/opt") {
+		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, nil, protocol.Guard{}); err == nil || !strings.Contains(err.Error(), "unpack "+urlTgz+" into /tmp/w/opt") {
 			t.Fatalf("apply over a directory at a file entry = %v, want an unpack error", err)
 		}
 		want := []string{"download " + urlTgz + " (no record of an earlier download)", "unpack into /tmp/w/opt (owner admin, group root)"}
@@ -147,7 +147,7 @@ func TestDownloadModule(t *testing.T) {
 			t.Fatalf("check after the failed apply = %+v, %v; want the changes %q", got, err, want)
 		}
 		vm.MustRun(t, "rmdir /tmp/w/opt/app/bin/tool")
-		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, protocol.Guard{}); err != nil {
+		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, nil, protocol.Guard{}); err != nil {
 			t.Fatalf("apply: %v", err)
 		}
 		if got, err := s.Check(ctx, "download", args, &module.State{}); err != nil || got.Status != module.OK {

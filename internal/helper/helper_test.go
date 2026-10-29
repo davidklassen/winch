@@ -762,3 +762,79 @@ func TestDownloadOKRecordsNothing(t *testing.T) {
 		t.Errorf("check after apply = %s %q, want ok", r.Result, r.Error)
 	}
 }
+
+// spec: Running a pipeline/Health gates; Modules/assert; Remote execution/State on the host
+func TestPendingChecks(t *testing.T) {
+	dir := t.TempDir()
+	c := start(t, dir, "")
+	h := hello("r1")
+	h.Project = "acme"
+	if r := c.call(t, "hello", h); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	gate := protocol.Check{Pipeline: "site", Stage: "base"}
+	assert := protocol.Check{Recipe: "mail", Step: 3}
+	for _, ch := range []protocol.Check{gate, assert, gate} {
+		if r := c.call(t, "pend", ch); r.Error != "" {
+			t.Fatal(r.Error)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "checks", "acme")); err != nil || string(data) != "{\"pipeline\":\"site\",\"stage\":\"base\"}\n{\"recipe\":\"mail\",\"step\":3}\n" {
+		t.Errorf("checks/acme = %q, %v", data, err)
+	}
+	if r := c.call(t, "passed", gate); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	r := c.call(t, "pending", nil)
+	var p protocol.Pending
+	if err := json.Unmarshal(r.Result, &p); err != nil || r.Error != "" {
+		t.Fatalf("pending: %v %s", err, r.Error)
+	}
+	if !slices.Equal(p.Checks, []protocol.Check{assert}) {
+		t.Errorf("pending checks = %v, want %v", p.Checks, []protocol.Check{assert})
+	}
+}
+
+// spec: Running a pipeline/Health gates; Modules/assert
+func TestChecksRunAgain(t *testing.T) {
+	dir := t.TempDir()
+	c := start(t, dir, "")
+	h := hello("r1")
+	h.Project = "acme"
+	if r := c.call(t, "hello", h); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	marker := filepath.Join(t.TempDir(), "open")
+	args, _ := json.Marshal(module.Assert{Command: "test -e " + marker, Message: "closed"})
+	assert := protocol.Check{Pipeline: "site", Stage: "base", Step: 2}
+	gate := protocol.Check{Pipeline: "site", Stage: "base"}
+	checks := func() []protocol.Check {
+		t.Helper()
+		var p protocol.Pending
+		if err := json.Unmarshal(c.call(t, "pending", nil).Result, &p); err != nil {
+			t.Fatal(err)
+		}
+		return p.Checks
+	}
+	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args, Check: &assert}); r.Error != "closed" {
+		t.Fatalf("failing assert: error %q", r.Error)
+	}
+	if r := c.call(t, "pend", gate); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if got, want := checks(), []protocol.Check{assert, gate}; !slices.Equal(got, want) {
+		t.Fatalf("records = %v, want %v", got, want)
+	}
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args, Check: &assert}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if r := c.call(t, "health", protocol.Health{Command: "true", Timeout: 5 * time.Second, Check: gate}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if got := checks(); len(got) != 0 {
+		t.Errorf("records after the assert and the gate passed = %v", got)
+	}
+}

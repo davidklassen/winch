@@ -16,6 +16,7 @@ import (
 	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -689,4 +690,82 @@ func TestPlanIndependentOfFinishOrder(t *testing.T) {
 		t.Errorf("reversed finish order:\n%+v\nwant\n%+v", last, first)
 	}
 	golden.Assert(t, filepath.Join("testdata", "plan", "finish-order.golden"), []byte(first.text+"json:\n"+first.json))
+}
+
+// spec: Running a pipeline/Health gates; CLI ("--exit-code")
+func TestPendingHealthGate(t *testing.T) {
+	p := manyProject(t, healthStage)
+	h := fakehost.New()
+	h.FailCommand("web1", "curl -sf http://localhost/")
+	if ok, got := applyAll(t, p, h); ok {
+		t.Fatalf("the first apply passed:\n%s", got)
+	}
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	if !plan.HasChanges() {
+		t.Error("a plan with only a pending gate has no changes")
+	}
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if want := "web1\n  base\n    ! health: curl -sf http://localhost/\n"; !strings.HasPrefix(out.String(), want) || !strings.Contains(out.String(), "3 hosts: 3 to change, 0 unchanged, 0 unknown\n") {
+		t.Errorf("plan does not show the pending gate:\n%s", out.String())
+	}
+	h.Trace = nil
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	if !slices.Contains(h.Trace, "health web1 curl -sf http://localhost/ 2s 30s") {
+		t.Errorf("the second apply did not run the gate on web1: %q", h.Trace)
+	}
+	if _, ok := h.File("web2", "/etc/motd"); ok || o.Failed["web2"] == nil {
+		t.Errorf("web2 started after the pending gate failed again: %v", o.Failed["web2"])
+	}
+	h.Fix("web1 curl -sf http://localhost/")
+	if ok, got := applyAll(t, p, h); !ok {
+		t.Fatalf("the apply after the fix failed:\n%s", got)
+	}
+	if _, ok := h.File("web3", "/etc/motd"); !ok {
+		t.Error("web3 did not run after the gate passed")
+	}
+	if plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{}); plan.HasChanges() {
+		t.Error("the gate is still pending after it passed")
+	}
+}
+
+// spec: Running a pipeline/Health gates ("the next host starts only after it passes")
+func TestPendingHealthGateGoesFirst(t *testing.T) {
+	for _, stage := range []string{
+		strings.Replace(healthStage, "parallelism: 1", "parallelism: 2", 1),
+		healthStage,
+	} {
+		p := manyProject(t, stage)
+		h := fakehost.New()
+		h.SetFile("web2", "/etc/motd", "hi\n")
+		h.SetFile("web3", "/etc/motd", "hi\n")
+		h.FailCommand("web3", "curl -sf http://localhost/")
+		h.Pend("web3", protocol.Check{Pipeline: "site", Stage: "base"})
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		var out, errOut bytes.Buffer
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+		if _, ok := h.File("web1", "/etc/motd"); ok || o.Failed["web1"] == nil {
+			t.Errorf("web1 changed while the pending gate of web3 failed: %v", o.Failed["web1"])
+		}
+	}
+}
+
+// spec: Running a pipeline/Health gates ("a gate that does not run because the host failed")
+func TestHealthGatePendingAfterAFailedStep(t *testing.T) {
+	p := manyProject(t, `  - name: base
+    hosts: web1
+    health:
+      command: curl -sf http://localhost/
+    steps:
+      - cmd:
+          command: make
+`)
+	h := fakehost.New()
+	h.FailCommand("web1", "make")
+	if ok, got := applyAll(t, p, h); ok {
+		t.Fatalf("apply passed:\n%s", got)
+	}
+	if got, want := h.ChecksOf("web1"), []protocol.Check{{Pipeline: "site", Stage: "base"}}; !slices.Equal(got, want) {
+		t.Errorf("records %v, want %v", got, want)
+	}
 }

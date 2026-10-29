@@ -66,8 +66,11 @@ type Step struct {
 	Notify []string `json:"notify,omitempty"`
 	// Then is the then of the step, which the helper records before an
 	// apply changes something.
-	Then  *Then `json:"then,omitempty"`
-	Guard Guard `json:"guard,omitzero"`
+	Then *Then `json:"then,omitempty"`
+	// Check is the record of an assert step. The helper adds it when the
+	// command fails, and removes it when the command exits 0.
+	Check *Check `json:"check,omitempty"`
+	Guard Guard  `json:"guard,omitzero"`
 }
 
 // Guard tells the helper how to guard an apply against a lockout. The helper
@@ -138,10 +141,21 @@ type Exec struct {
 	Command string `json:"command"`
 }
 
+// Check is a record of a pending health gate or assert: the place of its
+// stage or step, as a Then has it. Step is 0 for the gate of a stage.
+type Check struct {
+	Recipe   string `json:"recipe,omitempty"`
+	Pipeline string `json:"pipeline,omitempty"`
+	Stage    string `json:"stage,omitempty"`
+	Handler  string `json:"handler,omitempty"`
+	Step     int    `json:"step,omitempty"`
+}
+
 // Pending is the result of pending: the records of the project.
 type Pending struct {
 	Handlers []string `json:"handlers"`
 	Then     []Then   `json:"then"`
+	Checks   []Check  `json:"checks,omitempty"`
 }
 
 // Handled is the params of handled: the handler whose record the helper
@@ -158,8 +172,10 @@ type StepResult struct {
 
 // Health is the params of health: run Command until it exits 0, then keep
 // running it for Stable. The gate fails when it does not pass within Timeout.
+// The helper removes the record Check when the gate passes.
 type Health struct {
 	Command string        `json:"command"`
 	Stable  time.Duration `json:"stable"`
 	Timeout time.Duration `json:"timeout"`
+	Check   Check         `json:"check"`
 }
