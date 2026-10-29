@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/fstest"
 	"testing/synctest"
@@ -314,6 +316,19 @@ func TestExpectedWarnings(t *testing.T) {
 	}
 }
 
+// writeScript writes an executable file. A child that forks while the file is
+// open for writing holds the file open until its exec, and an exec of the file
+// in that time fails with ETXTBSY (Go issue 22315). The fork lock keeps forks
+// out while the file is open.
+func writeScript(t *testing.T, path, script string) {
+	t.Helper()
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // spec: roadmap: Testing/VMs
 func TestWaitBoot(t *testing.T) {
 	// cloud-init gives its errors only with --long, and the output must not
@@ -341,9 +356,7 @@ func TestWaitBoot(t *testing.T) {
 			if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(dir, "bin", "ssh"), []byte("#!/bin/sh\n"+c.ssh+"\n"), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			writeScript(t, filepath.Join(dir, "bin", "ssh"), "#!/bin/sh\n"+c.ssh+"\n")
 			vm := &VM{Name: "base", lab: &Lab{Dir: dir}, dir: dir}
 			ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
 			defer cancel()
@@ -397,9 +410,7 @@ func TestRunRetriesDroppedLogin(t *testing.T) {
 			if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(dir, "bin", "ssh"), []byte(ssh), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			writeScript(t, filepath.Join(dir, "bin", "ssh"), ssh)
 			vm := &VM{Name: "demo", lab: &Lab{Dir: dir}}
 			out, err := vm.Run(t.Context(), "true")
 			if c.ok && (err != nil || out != "ok\n") {
@@ -409,6 +420,55 @@ func TestRunRetriesDroppedLogin(t *testing.T) {
 			}
 			if got, _ := os.ReadFile(calls); bytes.Count(got, []byte("\n")) != c.calls {
 				t.Errorf("ssh ran %q, want %d times", got, c.calls)
+			}
+		})
+	}
+}
+
+// spec: roadmap: Testing/VMs
+func TestWatchdog(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		stop bool
+	}{
+		{name: "the test process ends", stop: false},
+		{name: "stop", stop: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			qemu := exec.Command("sleep", "30")
+			if err := qemu.Start(); err != nil {
+				t.Fatal(err)
+			}
+			exited := make(chan struct{})
+			go func() {
+				qemu.Wait() //nolint:errcheck // the test kills it
+				close(exited)
+			}()
+			defer func() {
+				qemu.Process.Kill() //nolint:errcheck // it may have exited
+				<-exited
+			}()
+			d, err := startWatchdog(qemu.Process.Pid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.stop {
+				d.stop()
+			} else {
+				// The kernel closes the pipe when the test process ends.
+				d.w.Close()
+				defer d.cmd.Wait() //nolint:errcheck // the watchdog exits after its kill
+			}
+			select {
+			case <-exited:
+				if c.stop {
+					t.Error("the watchdog killed the process after stop")
+				}
+			case <-time.After(2 * time.Second):
+				if !c.stop {
+					t.Error("the process runs 2s after the pipe closed")
+				}
 			}
 		})
 	}

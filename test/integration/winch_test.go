@@ -380,8 +380,11 @@ func TestWinch(t *testing.T) {
 
 	t.Run("host commands run in / with C.UTF-8, PATH, HOME, umask 022, and no sudo variables", func(t *testing.T) {
 		// The systemctl in /usr/local/sbin records the environment and the
-		// working directory that a module command gets from the helper.
-		const wrapper = "#!/bin/sh\n{ xargs -0 -n1 < /proc/$$/environ; echo cwd $(readlink /proc/$$/cwd); } > /root/module.env\nexec /usr/bin/systemctl \"$@\"\n"
+		// working directory that a module command gets from the helper. Other
+		// callers, such as root's user manager, must not overwrite the record.
+		const wrapper = "#!/bin/sh\ncase $(readlink /proc/$PPID/exe) in /var/lib/winch/bin/*)\n" +
+			"{ xargs -0 -n1 < /proc/$$/environ; echo cwd $(readlink /proc/$$/cwd); } > /root/module.env ;;\nesac\n" +
+			"exec /usr/bin/systemctl \"$@\"\n"
 		defer vm.MustRun(t, "rm -f /root/.ssh/authorized_keys /etc/sudoers.d/zz-path /usr/local/sbin/systemctl && "+
 			"sed -i '/^umask 077; export PATH/d' /home/admin/.bashrc /root/.bashrc")
 		// A sudoers without secure_path and with HOME in env_keep passes the
