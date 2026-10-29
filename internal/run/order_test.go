@@ -121,6 +121,25 @@ var orderCases = []orderCase{
 		h.SetPkgDeps("mailutils", "postfix")
 		h.SetPkg("web1", "mailutils", "postfix")
 	}, "s: pkg postfix: this step also removes mailutils, which s: pkg mailutils installs; the two steps undo each other on every run"},
+	{"a removal that takes a package that an earlier step installs in this run", steps(`      - pkg:
+          name: mailutils
+      - pkg:
+          name: postfix
+          absent: true
+`), func(h *fakehost.Hosts) {
+		h.SetPkgDeps("mailutils", "postfix")
+		h.SetPkg("web1", "postfix")
+	}, "s: pkg postfix: this step also removes mailutils, which s: pkg mailutils installs; the two steps undo each other on every run"},
+	{"a removal that takes a dependency of a package that an earlier step pulls in", steps(`      - pkg:
+          name: mailutils
+      - pkg:
+          name: libfoo
+          absent: true
+`), func(h *fakehost.Hosts) {
+		h.SetPkgDeps("mailutils", "postfix")
+		h.SetPkgDeps("postfix", "libfoo")
+		h.SetPkg("web1", "libfoo")
+	}, "s: pkg libfoo: this step also removes mailutils, which s: pkg mailutils installs; the two steps undo each other on every run"},
 	{"a removal that takes a package that a later step installs", steps(`      - pkg:
           name: postfix
           absent: true

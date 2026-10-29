@@ -236,12 +236,14 @@ type lineStep struct {
 
 // pkgStep is a checked pkg step. others are the other packages that it
 // installs or upgrades, or that it removes. installs are the packages that it
-// installs in this run.
+// installs in this run. unknown is set when the package index does not know
+// its other packages yet.
 type pkgStep struct {
 	where    string
 	pkg      *module.Pkg
 	others   []string
 	installs []string
+	unknown  bool
 }
 
 type startedBy struct {
@@ -398,7 +400,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		if err := hr.repo(&steps[i].Step, where); err != nil {
 			return nil, err
 		}
-		hr.removedPkgs(&steps[i].Step)
+		hr.earlierPkgs(&steps[i].Step)
 		if err := hr.same(p.Step, where); err != nil {
 			return nil, err
 		}
@@ -544,21 +546,27 @@ func (hr *hostRun) repo(st *project.Step, where string) error {
 	return nil
 }
 
-// removedPkgs gives a pkg step the packages that earlier absent pkg steps of
-// the host remove, with the packages that apt removes with them.
-func (hr *hostRun) removedPkgs(st *project.Step) {
+// earlierPkgs gives a pkg step the packages that earlier absent pkg steps of
+// the host remove. It gives an absent step also the packages that earlier
+// install steps install or upgrade. Both include the other packages that apt
+// changes with them. An install whose other packages are not known yet adds
+// nothing: its packages alone can miss their dependencies.
+func (hr *hostRun) earlierPkgs(st *project.Step) {
 	p, ok := st.Args.(*module.Pkg)
-	if !ok || p.Absent {
+	if !ok {
 		return
 	}
-	var removed []string
+	c := *p
 	for _, e := range hr.pkgs {
-		if e.pkg.Absent {
-			removed = slices.Concat(removed, e.pkg.Name, e.others)
+		switch {
+		case e.pkg.Absent:
+			c.Removed = slices.Concat(c.Removed, e.pkg.Name, e.others)
+		case p.Absent && !e.unknown:
+			c.Installed = slices.Concat(c.Installed, e.installs, e.others)
 		}
 	}
-	c := *p
-	c.Removed = removed
+	slices.Sort(c.Installed)
+	c.Installed = slices.Compact(c.Installed)
 	st.Args = &c
 }
 
@@ -675,6 +683,7 @@ func (hr *hostRun) packages(m module.Module, res module.Result, where string) er
 	case *module.Pkg:
 		cur := pkgStep{where: where, pkg: m}
 		cur.installs, cur.others = module.PkgPlan(res.Changes)
+		cur.unknown = slices.Contains(res.Changes, module.OthersUnknown)
 		self := cur
 		self.where = "this step"
 		for _, e := range hr.pkgs {

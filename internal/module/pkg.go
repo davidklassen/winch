@@ -25,6 +25,9 @@ type Pkg struct {
 	// Removed are the packages that earlier steps of the host remove. The
 	// run sets them.
 	Removed []string `json:"removed,omitempty"`
+	// Installed are the packages that earlier steps of the host install or
+	// upgrade. The run sets them for an absent step.
+	Installed []string `json:"installed,omitempty"`
 
 	// Check sets these for Apply.
 	refresh bool
@@ -197,7 +200,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	}
 	switch {
 	case slices.ContainsFunc(p.todo, func(n string) bool { return !known[n] }):
-		changes = append(changes, "other packages: known after the refresh")
+		changes = append(changes, OthersUnknown)
 	case len(p.todo) > 0 || len(p.configure) > 0:
 		others, err := p.others(ctx, note)
 		if err != nil {
@@ -212,6 +215,10 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 }
 
 const noRecommends = " (without recommended packages)"
+
+// OthersUnknown is the plan line of an install whose other packages the
+// package index does not know yet.
+const OthersUnknown = "other packages: known after the refresh"
 
 // PkgPlan reads the plan lines of a pkg change. installs are the packages
 // that the step installs or configures in this run, also as dependencies. A
@@ -325,13 +332,114 @@ func (p *Pkg) verb() string {
 }
 
 // dependents returns the other packages that apt removes with the step's
-// packages.
+// packages after the earlier steps. apt reads a copy of the dpkg status in
+// which p.Installed are installed and p.Removed are gone.
 func (p *Pkg) dependents(ctx context.Context, note func(string)) ([]string, error) {
-	out, err := p.simulate(ctx, note)
+	candidates, err := candidateStanzas(ctx, p.Installed)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := lockFiles(ctx, dpkgLocks, note)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	args := []string{"-s", "-q", p.verb()}
+	if candidates != "" {
+		status, err := writeStatus(candidates, p.Removed)
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(status)
+		args = append(args, "-o", "Dir::State::status="+status)
+	}
+	out, err := aptGet(ctx, append(args, p.todo...)...)
 	if err != nil {
 		return nil, err
 	}
 	return parseRemovals(out, p.todo), nil
+}
+
+// candidateStanzas returns the package stanzas of the candidate versions of
+// the names that the package index knows.
+func candidateStanzas(ctx context.Context, names []string) (string, error) {
+	_, _, known, err := showpkg(ctx, names)
+	if err != nil {
+		return "", err
+	}
+	var show []string
+	for _, n := range names {
+		if known[n] {
+			show = append(show, n)
+		}
+	}
+	if len(show) == 0 {
+		return "", nil
+	}
+	return run(ctx, nil, "apt-cache", append([]string{"show", "--no-all-versions"}, show...)...)
+}
+
+// writeStatus writes a copy of the dpkg status file with the candidates
+// installed and the removed packages gone, and returns its path.
+func writeStatus(candidates string, removed []string) (string, error) {
+	status, err := os.ReadFile("/var/lib/dpkg/status")
+	if err != nil {
+		return "", fmt.Errorf("read dpkg status: %w", err)
+	}
+	f, err := os.CreateTemp("", "winch-status-")
+	if err != nil {
+		return "", err
+	}
+	_, err = f.WriteString(installStanzas(string(status), candidates, removed))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("write dpkg status: %w", err)
+	}
+	return f.Name(), nil
+}
+
+// installStanzas returns the dpkg status with the package stanzas of
+// candidates as installed. They replace the stanzas of the same package and
+// architecture. The stanzas of the removed packages, as name or name:arch,
+// are left out.
+func installStanzas(status, candidates string, removed []string) string {
+	fields := func(stanza string) (name, arch string) {
+		s := stanzas(stanza)
+		if len(s) == 0 {
+			return "", ""
+		}
+		return s[0]["package"], s[0]["architecture"]
+	}
+	var added []string
+	keys := map[string]bool{}
+	for c := range strings.SplitSeq(candidates, "\n\n") {
+		if c = strings.TrimSpace(c); c == "" {
+			continue
+		}
+		var lines []string
+		for line := range strings.SplitSeq(c, "\n") {
+			if !strings.HasPrefix(line, "Status:") {
+				lines = append(lines, line)
+			}
+		}
+		added = append(added, strings.Join(append(lines, "Status: install ok installed"), "\n"))
+		name, arch := fields(c)
+		keys[name+":"+arch] = true
+	}
+	var kept []string
+	for st := range strings.SplitSeq(status, "\n\n") {
+		if st = strings.TrimSpace(st); st == "" {
+			continue
+		}
+		name, arch := fields(st)
+		if !keys[name+":"+arch] && !slices.Contains(removed, name) && !slices.Contains(removed, name+":"+arch) {
+			kept = append(kept, st)
+		}
+	}
+	return strings.Join(slices.Concat(kept, added), "\n\n") + "\n"
 }
 
 func parseRemovals(out string, own []string) []string {
