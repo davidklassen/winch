@@ -63,9 +63,24 @@ func (r *Reboot) Apply(ctx context.Context, _ func(string)) error { return nil }
 
 // RebootRequired reports whether the host waits for a reboot.
 func RebootRequired() (bool, error) {
-	release, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	running, err := runningKernel()
 	if err != nil {
 		return false, err
 	}
-	return facts.RebootRequired("/run/reboot-required", "/boot", strings.TrimSpace(string(release)))
+	return facts.RebootRequired("/run/reboot-required", "/boot", running)
+}
+
+// Kernels returns the running kernel and the newest kernel of its flavor.
+func Kernels() (string, string, error) {
+	running, err := runningKernel()
+	if err != nil {
+		return "", "", err
+	}
+	newest, err := facts.NewestKernel("/boot", running)
+	return running, newest, err
+}
+
+func runningKernel() (string, error) {
+	release, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	return strings.TrimSpace(string(release)), err
 }

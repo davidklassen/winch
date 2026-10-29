@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
 )
 
@@ -55,6 +56,10 @@ func booted(ctx context.Context, params json.RawMessage) (protocol.Boot, error) 
 		state = strings.TrimSpace(string(out))
 	}
 	res := protocol.Boot{State: state}
+	res.Kernel, res.Newest, err = module.Kernels()
+	if err != nil {
+		return res, fmt.Errorf("read the kernels: %w", err)
+	}
 	if state != "degraded" {
 		return res, nil
 	}

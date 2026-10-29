@@ -118,6 +118,26 @@ func TestRebootRequired(t *testing.T) {
 	}
 }
 
+// spec: Modules/reboot (the running and the newest kernel)
+func TestNewestKernel(t *testing.T) {
+	boot := t.TempDir()
+	for _, k := range []string{"6.12.43+deb13-arm64", "6.12.48+deb13-arm64", "6.12.45+deb13-arm64", "6.13.1+deb13-rt-arm64"} {
+		if err := os.WriteFile(boot+"/vmlinuz-"+k, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for release, want := range map[string]string{
+		"6.12.43+deb13-arm64":    "6.12.48+deb13-arm64",
+		"6.12.48+deb13-arm64":    "6.12.48+deb13-arm64",
+		"6.12.50+deb13-arm64":    "6.12.50+deb13-arm64",
+		"6.12.43+deb13-rt-arm64": "6.13.1+deb13-rt-arm64",
+	} {
+		if got, err := NewestKernel(boot, release); err != nil || got != want {
+			t.Errorf("NewestKernel(%q) = %q, %v; want %q", release, got, err, want)
+		}
+	}
+}
+
 func TestCompareVersions(t *testing.T) {
 	tests := []struct {
 		a, b string

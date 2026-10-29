@@ -98,9 +98,7 @@ func (f Facts) Map() map[string]any {
 }
 
 // RebootRequired reports whether the host waits for a reboot: the flag file
-// exists, or a kernel in boot is newer than the running release, of the same
-// flavor. A release such as 6.12.43+deb13-arm64 has the version 6.12.43+deb13
-// and the flavor arm64; Debian 12's 6.1.0-28-amd64 has the version 6.1.0-28.
+// exists, or a kernel in boot is newer than the running release.
 func RebootRequired(flag, boot, release string) (bool, error) {
 	_, err := os.Lstat(flag)
 	if err == nil {
@@ -109,24 +107,34 @@ func RebootRequired(flag, boot, release string) (bool, error) {
 	if !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
+	newest, err := NewestKernel(boot, release)
+	return newest != release, err
+}
+
+// NewestKernel returns the newest kernel in boot of the flavor of the running
+// release, or the release when none is newer. A release such as
+// 6.12.43+deb13-arm64 has the version 6.12.43+deb13 and the flavor arm64;
+// Debian 12's 6.1.0-28-amd64 has the version 6.1.0-28.
+func NewestKernel(boot, release string) (string, error) {
 	entries, err := os.ReadDir(boot)
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
+		return release, nil
 	}
 	if err != nil {
-		return false, err
+		return release, err
 	}
-	running, flavor := kernelVersion(release)
+	newest, flavor := kernelVersion(release)
+	name := release
 	for _, e := range entries {
 		k, ok := strings.CutPrefix(e.Name(), "vmlinuz-")
 		if !ok {
 			continue
 		}
-		if v, f := kernelVersion(k); f == flavor && compareVersions(v, running) > 0 {
-			return true, nil
+		if v, f := kernelVersion(k); f == flavor && compareVersions(v, newest) > 0 {
+			newest, name = v, k
 		}
 	}
-	return false, nil
+	return name, nil
 }
 
 // kernelVersion splits a kernel release into its version and its flavor: the

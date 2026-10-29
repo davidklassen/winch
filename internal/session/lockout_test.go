@@ -73,8 +73,8 @@ while read -r line; do
 done
 `
 
-// spec: Modules/reboot (reboot, wait until the helper answers again, read the
-// facts again); roadmap phase 16 (the reconnect passes ControlMaster=no and
+// spec: Modules/reboot (reboot, wait until the helper answers again);
+// roadmap phase 16 (the reconnect passes ControlMaster=no and
 // ControlPath=none; a degraded system does not fail the step)
 func TestReboot(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
@@ -108,11 +108,11 @@ func TestReboot(t *testing.T) {
 	if data, _ := os.ReadFile(argsFile); !strings.Contains(string(data), "\nControlMaster=no\n-o\nControlPath=none\n") {
 		t.Errorf("the reconnect passes %q", data)
 	}
-	if data, _ := os.ReadFile(state + ".facts"); string(data) != "3\n" {
-		t.Errorf("facts read on connections %q, want 3", data)
-	}
 	if _, err := s.Facts(context.Background()); err != nil {
 		t.Errorf("the session after the reboot: %v", err)
+	}
+	if data, _ := os.ReadFile(state + ".facts"); string(data) != "3\n" {
+		t.Errorf("facts read on connections %q, want 3", data)
 	}
 }
 
