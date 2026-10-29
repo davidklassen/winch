@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -428,7 +429,11 @@ func qemuArgs(arch, disk, dir string, p ports, online bool) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		return append([]string{bin, "-machine", "q35", "-accel", "tcg", "-cpu", "max"}, common...), nil
+		accel, cpu := "tcg", "max"
+		if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+			accel, cpu = "kvm", "host"
+		}
+		return append([]string{bin, "-machine", "q35", "-accel", accel, "-cpu", cpu}, common...), nil
 	}
 	return nil, fmt.Errorf("unknown architecture %q", arch)
 }

@@ -3,6 +3,8 @@ OS ?= debian-13
 PARALLEL ?= 4
 N ?= 1
 ONLINE ?=
+RUN ?=
+TIMEOUT ?= $(if $(value RUN),10m,30m)
 CACHE := $(HOME)/.cache/winch
 IMAGE := $(CACHE)/$(OS)-$(ARCH).qcow2
 IMAGE_URL.debian-13 := https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-$(ARCH).qcow2
@@ -30,7 +32,7 @@ test: helpers
 	go test -race ./...
 
 test-integration: build vm-image
-	$(VMENV) go test -count=1 -parallel $(PARALLEL) -timeout 30m ./test/...
+	$(VMENV) go test -count=1 -parallel $(PARALLEL) -timeout $(TIMEOUT) $(if $(value RUN),-run '$(value RUN)') ./test/...
 
 test-repo: build vm-image
 	$(VMENV) go run ./internal/vmtest/vmrun -refresh

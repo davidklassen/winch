@@ -194,7 +194,14 @@ func (vm *VM) save(ctx context.Context, path string) error {
 		}
 		switch st.Status {
 		case "completed":
-			return q.call("quit", nil, nil)
+			// QEMU on Linux can close the connection before it answers quit.
+			err := q.call("quit", nil, nil)
+			select {
+			case <-vm.exited:
+				return nil
+			case <-ctx.Done():
+				return errors.Join(err, fmt.Errorf("quit QEMU: %w", ctx.Err()))
+			}
 		case "failed", "cancelled":
 			return fmt.Errorf("save the VM: %s %s", st.Status, st.ErrorDesc)
 		}
