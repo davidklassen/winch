@@ -265,8 +265,9 @@ func addTree(tw *tar.Writer, dir *os.Root, name, rel string, fi fs.FileInfo) err
 }
 
 // Restore puts back the saved paths in reverse order, runs systemctl
-// daemon-reload when it put back a path in /etc/systemd, and loads the
-// firewall again when it put back its file. It restores every
+// daemon-reload when it put back a path in /etc/systemd, restarts an active
+// ssh.socket when it put back sshd's config, and loads the firewall again
+// when it put back its file. It restores every
 // path it can and returns the errors.
 func Restore(ctx context.Context, saved []Saved) error {
 	var errs []error
@@ -275,8 +276,20 @@ func Restore(ctx context.Context, saved []Saved) error {
 			errs = append(errs, fmt.Errorf("put back %s: %w", s.Path, err))
 		}
 	}
-	if reloads(saved) {
+	var socket bool
+	if slices.ContainsFunc(saved, func(s Saved) bool { return sshdConfig(s.Path) }) {
+		var err error
+		if socket, err = sshSocketUp(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if reloads(saved) || socket {
 		if _, err := run(ctx, nil, "systemctl", "daemon-reload"); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if socket {
+		if err := restartSSHSocket(ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -422,4 +435,48 @@ func extractEntry(dir *os.Root, h *tar.Header, r io.Reader) error {
 // restore of saved.
 func reloads(saved []Saved) bool {
 	return slices.ContainsFunc(saved, func(s Saved) bool { return strings.HasPrefix(s.Path, "/etc/systemd/") })
+}
+
+// SSHSocket reports whether a step that changes touches needs a restart of
+// ssh.socket: it changes sshd's config, and ssh.socket is active. The
+// sshd-socket-generator writes the Port and ListenAddress of sshd's config
+// into ssh.socket at daemon-reload. A socket that failed, for example on a
+// port that another program holds, counts as active.
+func SSHSocket(ctx context.Context, touches []Touch) (bool, error) {
+	if !slices.ContainsFunc(touches, func(t Touch) bool { return sshdConfig(t.Path) }) {
+		return false, nil
+	}
+	return sshSocketUp(ctx)
+}
+
+func sshSocketUp(ctx context.Context) (bool, error) {
+	u, err := showUnit(ctx, "ssh.socket")
+	if err != nil {
+		return false, err
+	}
+	return u.up() || u.active == "failed", nil
+}
+
+// RestartSSHSocket makes ssh.socket listen as sshd's config says.
+func RestartSSHSocket(ctx context.Context) error {
+	if _, err := run(ctx, nil, "systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	return restartSSHSocket(ctx)
+}
+
+func restartSSHSocket(ctx context.Context) error {
+	// A restart of ssh.socket starts ssh.service twice. A few restarts in a
+	// row, such as a change and its rollback, reach the start limit of
+	// ssh.service, 5 starts in 10 seconds. Then ssh.socket fails and closes
+	// every port. reset-failed resets the counter.
+	if _, err := run(ctx, nil, "systemctl", "reset-failed", "ssh.service", "ssh.socket"); err != nil {
+		return err
+	}
+	_, err := run(ctx, nil, "systemctl", "restart", "ssh.socket")
+	return err
+}
+
+func sshdConfig(p string) bool {
+	return p == "/etc/ssh/sshd_config" || p == "/etc/ssh/sshd_config.d" || strings.HasPrefix(p, "/etc/ssh/sshd_config.d/")
 }

@@ -408,3 +408,23 @@ func TestRollbackOrder(t *testing.T) {
 		t.Errorf("f after the restore: %q, want the first state", data)
 	}
 }
+
+// spec: Running a pipeline/Lockout protection (sshd from ssh.socket)
+func TestSSHDConfig(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/etc/ssh/sshd_config", true},
+		{"/etc/ssh/sshd_config.d", true},
+		{"/etc/ssh/sshd_config.d/port.conf", true},
+		{"/etc/ssh/ssh_config", false},
+		{"/etc/ssh/sshd_config.dpkg-old", false},
+		{"/etc/ssh/sshd_config.d.old/port.conf", false},
+	}
+	for _, tt := range tests {
+		if got := sshdConfig(tt.path); got != tt.want {
+			t.Errorf("sshdConfig(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}

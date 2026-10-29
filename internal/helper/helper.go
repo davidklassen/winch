@@ -272,10 +272,20 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		}
 	}
 	res, err := m.Check(ctx, &s.State, note)
+	var socket bool
 	if err == nil && res.Status == module.Change {
-		if line := module.Guard(module.Touches(m), loginUser); line != "" {
+		touches := module.Touches(m)
+		if line := module.Guard(touches, loginUser); line != "" {
 			res.Guard = true
 			res.Changes = append([]string{line}, res.Changes...)
+		}
+		socket, err = module.SSHSocket(ctx, touches)
+		if socket {
+			res.Changes = append(res.Changes, "daemon-reload", "restart ssh.socket")
+			if !res.Guard {
+				res.Guard = true
+				res.Changes = append([]string{"changes the ports of ssh.socket, which winch connects to"}, res.Changes...)
+			}
 		}
 	}
 	out := protocol.StepResult{Result: res, State: s.State}
@@ -328,6 +338,9 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		}
 	}
 	err = m.Apply(ctx, note)
+	if err == nil && socket {
+		err = module.RestartSSHSocket(ctx)
+	}
 	if isCertbot {
 		var recordErr error
 		if len(c.PendingHooks) == 0 {
