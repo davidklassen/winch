@@ -416,9 +416,18 @@ const accessPoll = 5 * time.Second
 
 // confirm checks the access with a second SSH connection, at most twice, and
 // not after shortly before the rollback timer ends after left. Then it stops
-// the timer, or asks the helper to put back the old files.
+// the timer, or asks the helper to put back the old files. A negative left
+// means that the step ended after the timer.
 func (a *hostApply) confirm(ctx context.Context, left time.Duration) error {
 	ctx = context.WithoutCancel(ctx)
+	if left < 0 {
+		// The timer may not have taken the job yet. The rollback also drops
+		// the records of the step.
+		if err := a.conn.Rollback(ctx); err != nil {
+			return fmt.Errorf("the rollback timer ended first; the rollback failed: %w", err)
+		}
+		return errors.New("the rollback timer ended first; the old files are back")
+	}
 	deadline := time.Now().Add(left - timerMargin)
 	err := a.conn.Access(ctx)
 	if err != nil && time.Now().Add(accessPoll).Before(deadline) {
@@ -508,7 +517,7 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 // checks the access. After a changed reboot step, it reboots the host.
 func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned, g protocol.Guard) (module.Result, error) {
 	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, g)
-	if err == nil && res.Timer > 0 {
+	if err == nil && res.Timer != 0 {
 		err = a.confirm(ctx, res.Timer)
 	}
 	if r, ok := p.Step.Args.(*module.Reboot); ok && err == nil && res.Status == module.Change {
