@@ -82,7 +82,9 @@ type Hosts struct {
 	noAccess, noAccessOnce map[string]bool
 	// timer is the time that a started rollback timer has left.
 	timer time.Duration
-	boots map[string]protocol.Boot
+	// rollbackErr is the error of every rollback.
+	rollbackErr error
+	boots       map[string]protocol.Boot
 	// dests holds the destinations that SetDestination set.
 	dests map[string]protocol.Destination
 }
@@ -142,6 +144,13 @@ func (h *Hosts) SetTimer(d time.Duration) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.timer = d
+}
+
+// FailRollback makes every rollback fail with err.
+func (h *Hosts) FailRollback(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.rollbackErr = err
 }
 
 // SetBoot sets what a reboot of host reports.
@@ -787,7 +796,9 @@ func (c *Conn) Confirm(ctx context.Context) error {
 
 func (c *Conn) Rollback(ctx context.Context) error {
 	c.log("rollback")
-	return nil
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	return c.hosts.rollbackErr
 }
 
 // Reboot boots the kernel of SetBoot. The host still needs a reboot when that

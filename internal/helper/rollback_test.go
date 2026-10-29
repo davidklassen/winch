@@ -197,6 +197,39 @@ func TestTimerFires(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (a guarded step that ends after
+// its rollback timer fails; the old files are back)
+func TestRollbackAfterTimer(t *testing.T) {
+	l := startLockout(t)
+	l.applyBoth(t)
+	data, err := os.ReadFile(l.job())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var j job
+	if err := json.Unmarshal(data, &j); err != nil {
+		t.Fatal(err)
+	}
+	j.Deadline = time.Now()
+	data, _ = json.Marshal(j)
+	if err := writeJob(l.job(), data); err != nil {
+		t.Fatal(err)
+	}
+	for start := time.Now(); content(t, l.a) != "old\n" || content(t, l.b) != "old\n"; {
+		if time.Since(start) > 10*time.Second {
+			t.Fatalf("the timer process did not put back the files: a %q, b %q", content(t, l.a), content(t, l.b))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if r := l.c.call(t, "rollback", nil); r.Error != "" {
+		t.Errorf("rollback after the timer: %q", r.Error)
+	}
+	p := pendingAll(t, l.c)
+	if want := []string{"ssh.reload"}; !slices.Equal(p.Handlers, want) || len(p.Then) != 0 {
+		t.Errorf("records after the rollback: %+v, want the handler %v", p, want)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection
 func TestRunTimer(t *testing.T) {
 	dir := t.TempDir()

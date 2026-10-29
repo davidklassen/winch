@@ -3,6 +3,7 @@ package run_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -431,5 +432,33 @@ func TestAccessSecondTry(t *testing.T) {
 	}
 	if want := []string{"access", "access", "confirm"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a guarded step that ends after
+// its rollback timer fails)
+func TestTimerEndedFirst(t *testing.T) {
+	h := fakehost.New()
+	h.SetTimer(-time.Second)
+	h.SetResult("web1", "mail", module.Result{Status: module.Change, Action: module.Modify, Guard: true})
+	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - hostname:\n          name: mail\n"})
+	out, o := applyWeb1(t, p, h)
+	if o.OK() {
+		t.Fatal("apply succeeded after the timer ended")
+	}
+	if want := []string{"rollback"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+	if want := "hostname mail: the rollback timer ended first; the old files are back"; !strings.Contains(out, want) {
+		t.Errorf("output:\n%s\nwant %q", out, want)
+	}
+
+	h = fakehost.New()
+	h.SetTimer(-time.Second)
+	h.FailRollback(errors.New("restore /etc/hostname: no space left on device"))
+	h.SetResult("web1", "mail", module.Result{Status: module.Change, Action: module.Modify, Guard: true})
+	out, _ = applyWeb1(t, p, h)
+	if want := "hostname mail: the rollback timer ended first; the rollback failed: restore /etc/hostname: no space left on device"; !strings.Contains(out, want) {
+		t.Errorf("output:\n%s\nwant %q", out, want)
 	}
 }

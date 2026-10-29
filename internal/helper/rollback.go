@@ -207,27 +207,23 @@ func (r *rollbacks) confirm() error {
 }
 
 // rollback ends the timer at once: it puts back the files and runs the undo
-// step.
+// step. When the timer took the job first, the files are back already.
 func (r *rollbacks) rollback(ctx context.Context) error {
 	r.running = nil
-	fired, err := fire(ctx, r.job())
-	if err == nil && !fired {
-		return errors.New("the rollback timer ended first; the old files are back")
-	}
-	return err
+	return fire(ctx, r.job())
 }
 
-// fire takes the job from the timer and runs it. It reports false when the
+// fire takes the job from the timer and runs it. It does nothing when the
 // job is gone: a confirm or the timer took it first.
-func fire(ctx context.Context, path string) (bool, error) {
+func fire(ctx context.Context, path string) error {
 	fired := path + ".fired"
 	if err := os.Rename(path, fired); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
+			return nil
 		}
-		return false, err
+		return err
 	}
-	return true, errors.Join(runJob(ctx, fired), os.Remove(fired))
+	return errors.Join(runJob(ctx, fired), os.Remove(fired))
 }
 
 // clear removes the stores of the project, except those of recipes and
@@ -284,8 +280,7 @@ func RunTimer(ctx context.Context, path string, poll time.Duration) error {
 			return err
 		}
 		if !time.Now().Before(j.Deadline) {
-			_, err := fire(ctx, path)
-			return err
+			return fire(ctx, path)
 		}
 		time.Sleep(poll)
 	}
