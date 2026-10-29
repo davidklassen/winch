@@ -519,8 +519,9 @@ func replaceFile(path string, data []byte) error {
 }
 
 // scanProject returns a warning for each private key or token in the
-// project files that is not a !secret.
-func scanProject(dir string) ([]*yamlx.Error, error) {
+// project files that is not a !secret. It calls plain with the text of each
+// file.
+func scanProject(dir string, plain func([]byte)) ([]*yamlx.Error, error) {
 	invs, err := list(dir, "inventories")
 	if err != nil {
 		return nil, err
@@ -571,6 +572,7 @@ func scanProject(dir string) ([]*yamlx.Error, error) {
 		if err != nil {
 			return nil, err
 		}
+		plain(data)
 		line, last, prev := 1, -1, 0
 		for _, f := range secret.Scan(data) {
 			line += bytes.Count(data[prev:f.Offset], []byte("\n"))

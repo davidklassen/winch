@@ -257,6 +257,29 @@ func TestSecretFilterLearns(t *testing.T) {
 	}
 }
 
+// spec: Variables/Secrets in output (text filter)
+func TestSecretFilterPlainLines(t *testing.T) {
+	k := newKey(t)
+	_, keys, err := loadSecrets(t, k, "", map[string]string{
+		"recipes/r/recipe.yaml": `vars:
+  r_wg: {{secret:[Interface]\nPrivateKey = wg-private-key-1\n[Peer]\nEndpoint = vpn.example.com:51820}}
+steps:
+  - file:
+      path: /etc/peer.conf
+      template: peer.tmpl
+`,
+		"recipes/r/templates/peer.tmpl": "[Peer]\nEndpoint = {{ .vars.r_wg }}\n",
+		"inventories/test.yaml":         secretProject["inventories/test.yaml"] + "        carol: |\n          [Interface]\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := "[Interface]\n[Peer]\nPrivateKey = wg-private-key-1\nEndpoint = vpn.example.com:51820"
+	if got, want := keys.Filter.Text(in), "[Interface]\n[Peer]\n(secret)\n(secret)"; got != want {
+		t.Errorf("filter: %q, want %q", got, want)
+	}
+}
+
 // spec: Variables/Secrets in output (two evaluations); CLI/Errors
 func TestSecretErrors(t *testing.T) {
 	tests := []struct {
