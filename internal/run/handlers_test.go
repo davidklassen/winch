@@ -221,8 +221,8 @@ func TestApplyHandlers(t *testing.T) {
 	// Three changed files run each handler of nginx once after nginx. The
 	// site's change reloads nginx again at the end of the stage.
 	want := map[string][]string{
-		"web1": {"nginx restart", "nginx reload", "command reindex", "nginx reload", "app restart"},
-		"web2": {"nginx restart", "nginx reload", "command reindex", "nginx reload"},
+		"web1": {"nginx restart", "nginx reload", "command reindex", "nginx reload", "app restart", "access"},
+		"web2": {"nginx restart", "nginx reload", "command reindex", "nginx reload", "access"},
 	}
 	for host, w := range want {
 		if !slices.Equal(h.Log[host], w) {
@@ -269,7 +269,7 @@ func TestHandlerFollowsApply(t *testing.T) {
 		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 			t.Fatal(errOut.String())
 		}
-		if want := []string{"nginx restart", "nginx reload"}; !slices.Equal(h.Log["web1"], want) {
+		if want := []string{"nginx restart", "nginx reload", "access"}; !slices.Equal(h.Log["web1"], want) {
 			t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 		}
 	})
@@ -298,7 +298,7 @@ func TestFailedHandlerStaysPending(t *testing.T) {
 	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
-	if want := []string{"nginx restart", "nginx reload", "command reindex", "nginx reload", "app restart"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"nginx restart", "nginx reload", "command reindex", "nginx reload", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if p := h.PendingOf("web1"); len(p) != 0 {
@@ -330,7 +330,7 @@ func TestThen(t *testing.T) {
 		if ok, got := applyAll(t, handlerProject(t), h); !ok {
 			t.Fatal(string(got))
 		}
-		if want := []string{"command reindex", "nginx reload", "app restart"}; !slices.Equal(h.Log["web1"], want) {
+		if want := []string{"command reindex", "nginx reload", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
 			t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 		}
 	})
@@ -341,7 +341,7 @@ func TestThen(t *testing.T) {
 		if ok, got := applyAll(t, handlerProject(t), h); !ok {
 			t.Fatal(string(got))
 		}
-		if want := []string{"nginx reload"}; !slices.Equal(h.Log["web1"], want) {
+		if want := []string{"nginx reload", "access"}; !slices.Equal(h.Log["web1"], want) {
 			t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 		}
 	})
@@ -386,7 +386,7 @@ func TestThen(t *testing.T) {
 		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 			t.Fatal(errOut.String())
 		}
-		if want := []string{"command reindex", "nginx reload", "command reindex", "app restart"}; !slices.Equal(h.Log["web1"], want) {
+		if want := []string{"command reindex", "nginx reload", "command reindex", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
 			t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 		}
 		if got := h.ThenOf("web1"); len(got) != 0 {
@@ -422,7 +422,7 @@ func TestThen(t *testing.T) {
 		if ok, got := applyAll(t, handlerProject(t, "vars.site_pages=[]"), h); !ok {
 			t.Fatal(string(got))
 		}
-		if want := []string{"nginx reload"}; !slices.Equal(h.Log["web1"], want) {
+		if want := []string{"nginx reload", "access"}; !slices.Equal(h.Log["web1"], want) {
 			t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 		}
 		if p := h.PendingOf("web1"); len(p) != 0 {
@@ -442,7 +442,7 @@ func TestApplyPendingOnly(t *testing.T) {
 	if ok, got := applyAll(t, handlerProject(t), h); !ok {
 		t.Fatal(string(got))
 	}
-	if want := []string{"nginx reload"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"nginx reload", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if p := h.PendingOf("web1"); len(p) != 0 {
@@ -474,7 +474,7 @@ func TestStageStepNotifiesEarlierRecipe(t *testing.T) {
 	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
-	if want := []string{"nginx reload"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"nginx reload", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 }
@@ -523,7 +523,7 @@ func TestPendingThen(t *testing.T) {
 		t.Fatal(errOut.String())
 	}
 	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-pending-then.golden"), output(&out, &errOut))
-	if want := []string{"command reindex", "command newaliases"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"command reindex", "command newaliases", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if len(h.Log["web2"]) != 0 {
@@ -557,7 +557,7 @@ func TestPendingThenOfAChangedStep(t *testing.T) {
 		t.Fatal(errOut.String())
 	}
 	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-pending-then-change.golden"), output(&out, &errOut))
-	if want := []string{"command reindex", "nginx reload", "app restart"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"command reindex", "nginx reload", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if got := h.ThenOf("web1"); len(got) != 0 {
@@ -589,7 +589,7 @@ func TestPendingThenOfAHandlerStep(t *testing.T) {
 		t.Fatal(errOut.String())
 	}
 	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-pending-then-handler.golden"), output(&out, &errOut))
-	if want := []string{"app restart", "app restart", "command app-check\napp-log\n"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"app restart", "app restart", "command app-check\napp-log\n", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if got := h.ThenOf("web1"); len(got) != 0 {
@@ -716,7 +716,7 @@ func TestFixedThenRuns(t *testing.T) {
 	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
-	if want := []string{"command postmapp /etc/postfix/virtual", "command postmap /etc/postfix/virtual"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"command postmapp /etc/postfix/virtual", "command postmap /etc/postfix/virtual", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if got := h.ThenOf("web1"); len(got) != 0 {
@@ -877,7 +877,7 @@ func TestStageHandlers(t *testing.T) {
 	}
 	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-stage-handlers.golden"), output(&out, &errOut))
 	// Two changed steps notify reload: it runs once, in declared order.
-	if want := []string{"app restart", "app reload", "access", "confirm", "command app-check", "cmd other-reload"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"app restart", "app reload", "access", "confirm", "command app-check", "cmd other-reload", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	// The last apply of the service app is the reload.
@@ -935,7 +935,7 @@ func TestStageHandlerStaysPending(t *testing.T) {
 	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
-	if want := []string{"cmd other-reload", "cmd other-reload"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"cmd other-reload", "cmd other-reload", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if got := h.PendingOf("web1"); len(got) != 0 {
@@ -1006,7 +1006,7 @@ func TestStageHandlerOfASkippedStage(t *testing.T) {
 	if want := []string{"site\tweb\treload"}; !slices.Equal(h.PendingOf("web1"), want) {
 		t.Errorf("pending = %q, want %q", h.PendingOf("web1"), want)
 	}
-	if len(h.Log["web1"]) != 0 {
-		t.Errorf("web1 ran %q, want nothing", h.Log["web1"])
+	if want := []string{"access"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 }

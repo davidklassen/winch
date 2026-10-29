@@ -133,7 +133,7 @@ func TestRunRestarted(t *testing.T) {
 	for _, action := range []string{"restart", "reload"} {
 		h := fakehost.New()
 		r := winch(t, dir, h, false, "", "run", "web1", "service", "name=nginx", action+"ed=true", "--yes")
-		if r.code != exitOK || !slices.Equal(h.Log["web1"], []string{"nginx " + action}) {
+		if r.code != exitOK || !slices.Equal(h.Log["web1"], []string{"nginx " + action, "access"}) {
 			t.Errorf("%sed: exit %d, log %q, stderr %q", action, r.code, h.Log["web1"], r.err)
 		}
 	}

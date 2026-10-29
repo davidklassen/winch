@@ -68,8 +68,8 @@ func TestApplyCmd(t *testing.T) {
 	}
 	// web3 has only the assert: no change, so apply skips it.
 	want := map[string][]string{
-		"web1": {"assert systemctl is-active nginx", "cmd apt-get clean"},
-		"web2": {"assert systemctl is-active nginx", "cmd make install"},
+		"web1": {"assert systemctl is-active nginx", "cmd apt-get clean", "access"},
+		"web2": {"assert systemctl is-active nginx", "cmd make install", "access"},
 	}
 	for _, host := range []string{"web1", "web2", "web3"} {
 		if !slices.Equal(h.Log[host], want[host]) {
@@ -123,7 +123,7 @@ handlers:
 	if ok, got := applyAll(t, p, h); !ok {
 		t.Fatalf("apply failed:\n%s", got)
 	}
-	if want := []string{"cmd app migrate", "command echo done", "app restart"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"cmd app migrate", "command echo done", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if p := h.PendingOf("web1"); len(p) != 0 {
@@ -155,7 +155,7 @@ func TestApplyOnlyUnknown(t *testing.T) {
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: uptime\n",
 	}
 	h := fakehost.New()
-	if ok, got := applyAll(t, loadFiles(t, files), h); !ok || !slices.Equal(h.Log["web1"], []string{"cmd uptime"}) {
+	if ok, got := applyAll(t, loadFiles(t, files), h); !ok || !slices.Equal(h.Log["web1"], []string{"cmd uptime", "access"}) {
 		t.Errorf("apply ran %q:\n%s", h.Log["web1"], got)
 	}
 }

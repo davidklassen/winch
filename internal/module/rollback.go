@@ -99,10 +99,16 @@ func LookupLogin(uid uint32) (*Login, error) {
 func (l *Login) Name() string { return l.entry.name }
 
 // Guard returns the plan line of a step whose change can lock out the login
-// user: it changes the user's authorized_keys, a directory on its path in
-// the home, or the sudo rules of a login user other than root. It returns ""
-// for another step, and for an unknown login user.
+// user: it changes the PAM rules, the user's authorized_keys, a directory on
+// its path in the home, or the sudo rules of a login user other than root.
+// It returns "" for another step. An unknown login user has no keys or sudo
+// rules to guard.
 func Guard(touches []Touch, login *Login) string {
+	for _, t := range touches {
+		if t.Path == pamDir || strings.HasPrefix(t.Path, pamDir+"/") {
+			return "changes the PAM rules, which every login reads"
+		}
+	}
 	if login == nil {
 		return ""
 	}
@@ -128,7 +134,10 @@ func guard(touches []Touch, u passwdEntry) string {
 	return ""
 }
 
-const sudoersDir = "/etc/sudoers.d"
+const (
+	sudoersDir = "/etc/sudoers.d"
+	pamDir     = "/etc/pam.d"
+)
 
 // Saved is the state of a path before a step changed it. A restore removes a
 // Missing path, puts back the owner, group, and mode of a Dir, or replaces

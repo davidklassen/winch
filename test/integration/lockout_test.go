@@ -355,3 +355,66 @@ func TestLockoutSSHPort(t *testing.T) {
 	}
 	listens(t, "22 2222")
 }
+
+// spec: Running a pipeline/Lockout protection (a change of /etc/pam.d)
+func TestLockoutPAM(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "pam")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  pam: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/pam.d/common-account
+          content: "account requisite pam_deny.so\n"
+`,
+	})
+	before := vm.MustRun(t, "stat -c '%U %G %a' /etc/pam.d/common-account; cat /etc/pam.d/common-account")
+	r := lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "changes the PAM rules, which every login reads") {
+		t.Fatalf("plan: exit %d", r.Code)
+	}
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "pam: base: failed: file /etc/pam.d/common-account: no new SSH connection works: ") ||
+		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+		t.Fatalf("apply: exit %d", r.Code)
+	}
+	if got := vm.MustRun(t, "stat -c '%U %G %a' /etc/pam.d/common-account; cat /etc/pam.d/common-account"); got != before {
+		t.Errorf("common-account after the rollback:\n%s\nwant\n%s", got, before)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the access check after the
+// run)
+func TestLockoutAfterRun(t *testing.T) {
+	t.Parallel()
+	lab.StartVM(t, "after-run")
+	// The then drops new SSH connections and keeps the session. The timeout
+	// of the set element lets the VM answer again after 60 seconds.
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  after-run: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - pkg:
+          name: nftables
+      - file:
+          path: /etc/motd
+          content: "hi\n"
+        then: |
+          nft add table inet block
+          nft add set inet block ssh '{ type inet_service; timeout 60s; elements = { 22 }; }'
+          nft add chain inet block input '{ type filter hook input priority -10; }'
+          nft add rule inet block input tcp dport @ssh ct state new drop
+`,
+	})
+	r := lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "after-run: failed: winch lost access after the run: ") {
+		t.Errorf("apply: exit %d", r.Code)
+	}
+}

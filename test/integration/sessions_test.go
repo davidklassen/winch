@@ -55,8 +55,8 @@ func TestOneHandshakePerHost(t *testing.T) {
 		t.Fatalf("apply: exit %d", r.Code)
 	}
 	for i, vm := range vms {
-		if n := logins(vm) - before[i]; n != 2 {
-			t.Errorf("%s: %d handshakes, want 2: one in plan, one in apply", vm.Name, n)
+		if n := logins(vm) - before[i]; n != 3 {
+			t.Errorf("%s: %d handshakes, want 3: one in plan, one in apply, one for the access check after the run", vm.Name, n)
 		}
 	}
 }
