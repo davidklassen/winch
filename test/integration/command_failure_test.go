@@ -52,7 +52,7 @@ func TestProjectCommandFailure(t *testing.T) {
 func TestCertbotCommandFailure(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "hook-failure")
-	vm.MustRun(t, pebbleSetup)
+	startPebble(t, vm)
 	for _, hook := range []string{"pre_hook", "post_hook", "deploy_hook"} {
 		t.Run(hook, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{
@@ -78,7 +78,7 @@ func TestCertbotCommandFailure(t *testing.T) {
 func TestCertbotHookShell(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "hook-shell")
-	vm.MustRun(t, pebbleSetup)
+	startPebble(t, vm)
 	hooks := ""
 	for _, hook := range []string{"pre_hook", "post_hook", "deploy_hook"} {
 		hooks += fmt.Sprintf("          %s: |\n            if true; then\n              printf \"it's literal: $HOME\\n\" >> /root/%s\n            fi\n", hook, hook)

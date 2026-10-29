@@ -2,6 +2,7 @@ package vmtest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -34,7 +35,27 @@ func (l *Lab) StartVM(t *testing.T, name string) *VM {
 	}
 	t.Logf("vm %s is ready after %s", name, time.Since(start).Round(time.Millisecond))
 	t.Cleanup(vm.Stop)
+	vm.LogOnFailure(t, "journalctl -n 200 --no-pager")
 	return vm
+}
+
+// LogOnFailure logs the output of command, run as root on the VM, when the
+// test fails. Cleanups run in reverse order, so the VM still runs.
+func (vm *VM) LogOnFailure(t *testing.T, command string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		out, err := vm.Run(ctx, command)
+		if err != nil {
+			t.Logf("%s: %v", command, err)
+			return
+		}
+		t.Logf("%s:\n%s", command, out)
+	})
 }
 
 // MustRun runs a command as root on the VM and fails the test on an error.

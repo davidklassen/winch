@@ -43,4 +43,13 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-utils netcat-openbsd
-      - run: make test-integration ARCH=amd64 OS=${{ matrix.os }}
+      - run: make test-integration ARCH=amd64 OS=${{ matrix.os }} VERBOSE=1
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vm-logs-${{ matrix.os }}
+          path: |
+            /tmp/winch-it-*/vms/*/console.log
+            /tmp/winch-it-*/vms/*/qemu.log
+          retention-days: 7
+          if-no-files-found: ignore
