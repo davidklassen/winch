@@ -1,8 +1,8 @@
 // Package fakehost is a test double for hosts: it keeps files, packages,
 // answers, and facts in memory and checks and applies file, dir, pkg,
 // service, user, group, and debconf steps against them. It keeps pending
-// handlers and then records, and runs commands, cmd steps, and asserts as
-// records.
+// handlers, then records, health gates, and asserts. It runs commands, cmd
+// steps, and asserts as records.
 package fakehost
 
 import (
@@ -38,6 +38,7 @@ type Hosts struct {
 	facts      map[string]facts.Facts
 	pending    map[string][]string
 	thens      map[string][]protocol.Then
+	checks     map[string][]protocol.Check
 	failCmd    map[string]bool
 	// Log lists the service actions and the commands per host, in order.
 	Log map[string][]string
@@ -103,6 +104,7 @@ func New() *Hosts {
 		facts:        map[string]facts.Facts{},
 		pending:      map[string][]string{},
 		thens:        map[string][]protocol.Then{},
+		checks:       map[string][]protocol.Check{},
 		failCmd:      map[string]bool{},
 		Log:          map[string][]string{},
 		results:      map[string]module.Result{},
@@ -222,6 +224,20 @@ func (h *Hosts) ThenOf(host string) []protocol.Then {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.thens[host])
+}
+
+// Pend records a pending health gate or assert on a host.
+func (h *Hosts) Pend(host string, c protocol.Check) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.checks[host] = append(h.checks[host], c)
+}
+
+// ChecksOf returns the pending health gates and asserts of a host.
+func (h *Hosts) ChecksOf(host string) []protocol.Check {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.checks[host])
 }
 
 func (h *Hosts) FailCommand(host, command string) { h.failCmd[host+" "+command] = true }
@@ -640,8 +656,8 @@ func serviceAction(s *module.Service) string {
 
 // Apply starts a rollback timer that ends at once for a changed step with
 // confirm_access, or a result with Guard.
-func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard) (module.Result, error) {
-	res, err := c.apply(ctx, name, m, st, notify, then)
+func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard) (module.Result, error) {
+	res, err := c.apply(ctx, name, m, st, notify, then, check)
 	c.hosts.mu.Lock()
 	c.hosts.Guards[c.host+" "+m.Main()] = guard
 	c.hosts.mu.Unlock()
@@ -653,7 +669,7 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 	return res, err
 }
 
-func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
+func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check) (module.Result, error) {
 	if c.hosts.OnApply != nil {
 		c.hosts.OnApply(c.host, m.Main())
 	}
@@ -669,7 +685,14 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 		c.hosts.mu.Lock()
 		defer c.hosts.mu.Unlock()
 		c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "assert "+a.Command)
-		if c.hosts.failCmd[c.host+" "+a.Command] {
+		failed := c.hosts.failCmd[c.host+" "+a.Command]
+		if check != nil {
+			c.hosts.checks[c.host] = slices.DeleteFunc(c.hosts.checks[c.host], func(k protocol.Check) bool { return k == *check })
+			if failed {
+				c.hosts.checks[c.host] = append(c.hosts.checks[c.host], *check)
+			}
+		}
+		if failed {
 			return module.Result{}, errors.New(a.Message)
 		}
 		return res, nil
@@ -829,7 +852,23 @@ func (c *Conn) Facts(ctx context.Context) (facts.Facts, error) {
 }
 
 func (c *Conn) Pending(ctx context.Context) (protocol.Pending, error) {
-	return protocol.Pending{Handlers: c.hosts.PendingOf(c.host), Then: c.hosts.ThenOf(c.host)}, nil
+	return protocol.Pending{Handlers: c.hosts.PendingOf(c.host), Then: c.hosts.ThenOf(c.host), Checks: c.hosts.ChecksOf(c.host)}, nil
+}
+
+func (c *Conn) Pend(ctx context.Context, check protocol.Check) error {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	if !slices.Contains(c.hosts.checks[c.host], check) {
+		c.hosts.checks[c.host] = append(c.hosts.checks[c.host], check)
+	}
+	return nil
+}
+
+func (c *Conn) Passed(ctx context.Context, check protocol.Check) error {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	c.hosts.checks[c.host] = slices.DeleteFunc(c.hosts.checks[c.host], func(k protocol.Check) bool { return k == check })
+	return nil
 }
 
 func (c *Conn) Handled(ctx context.Context, handler string) error {
@@ -853,7 +892,8 @@ func (c *Conn) Command(ctx context.Context, command string, then protocol.Then) 
 	return nil
 }
 
-// Health records the gate in Trace. A command that FailCommand names fails.
+// Health records the gate in Trace. A command that FailCommand names fails;
+// a gate that passes removes its record.
 func (c *Conn) Health(ctx context.Context, h protocol.Health) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
@@ -864,6 +904,7 @@ func (c *Conn) Health(ctx context.Context, h protocol.Health) error {
 	if c.hosts.failCmd[c.host+" "+h.Command] {
 		return fmt.Errorf("did not pass within %s: exit status 1", h.Timeout)
 	}
+	c.hosts.checks[c.host] = slices.DeleteFunc(c.hosts.checks[c.host], func(k protocol.Check) bool { return k == h.Check })
 	return nil
 }
 

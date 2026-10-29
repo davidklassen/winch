@@ -156,6 +156,12 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			if err != nil {
 				return nil, fmt.Errorf("failed: %w", err)
 			}
+			for _, gone := range plan.gone[h.Name] {
+				if err := c.Passed(context.WithoutCancel(ctx), gone); err != nil {
+					c.Close() //nolint:errcheck // the host fails already
+					return nil, fmt.Errorf("failed: %w", err)
+				}
+			}
 			a.conn = c
 		}
 		return a.conn, nil
@@ -187,17 +193,49 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 		}
 		changed := make([]bool, len(hps))
 		stage := sp.Stage
-		errs := rollout(ctx, stage.Name, hosts, stage.Parallelism, plan.opts, open, func(i int, _ Conn) error {
-			a := runs[hosts[i].Name]
-			var err error
-			changed[i], err = a.apply(ctx, stage, hps[i])
-			if err != nil || last[hosts[i].Name] == si {
-				if cerr := a.close(); err == nil && cerr != nil {
-					err = fmt.Errorf("failed: %w", cerr)
+		// With parallelism, the hosts with a pending gate run first, and the
+		// others start only after those gates pass.
+		var pending, others []int
+		for i, hp := range hps {
+			if stage.Parallelism > 0 && hp.PendingHealth {
+				pending = append(pending, i)
+			} else {
+				others = append(others, i)
+			}
+		}
+		errs := make([]error, len(hosts))
+		failed := ""
+		for _, group := range [][]int{pending, others} {
+			if failed != "" {
+				for _, i := range group {
+					errs[i] = fmt.Errorf("not started: %s failed in stage %s", failed, stage.Name)
+				}
+				continue
+			}
+			var gh []project.Host
+			for _, i := range group {
+				gh = append(gh, hosts[i])
+			}
+			ge := rollout(ctx, stage.Name, gh, stage.Parallelism, plan.opts, open, func(j int, _ Conn) error {
+				i := group[j]
+				a := runs[hosts[i].Name]
+				var err error
+				changed[i], err = a.apply(ctx, stage, hps[i])
+				if err != nil || last[hosts[i].Name] == si {
+					if cerr := a.close(); err == nil && cerr != nil {
+						err = fmt.Errorf("failed: %w", cerr)
+					}
+				}
+				return err
+			})
+			for j, err := range ge {
+				errs[group[j]] = err
+				// After an interrupt, rollout marks the other hosts itself.
+				if err != nil && !errors.Is(err, ErrInterrupted) && failed == "" {
+					failed = gh[j].Name
 				}
 			}
-			return err
-		})
+		}
 		for i, h := range hosts {
 			if err := errs[i]; err != nil {
 				runs[h.Name].close() //nolint:errcheck // the host failed already
@@ -268,6 +306,9 @@ type hostApply struct {
 	notified map[string]bool
 	// thens are the pending then records that no step ran yet.
 	thens map[protocol.Then]bool
+	// gate is the gate of the current stage while it is not recorded and
+	// will run after a change.
+	gate *protocol.Check
 	// conn is the session with the host, open across its stages.
 	conn Conn
 }
@@ -286,26 +327,49 @@ func (a *hostApply) close() error {
 // health gate when the plan or apply has a change in the stage. It reports
 // whether a step changed something.
 func (a *hostApply) apply(ctx context.Context, stage *project.Stage, hp HostPlan) (bool, error) {
+	gate := protocol.Check{Pipeline: stage.Pipeline, Stage: stage.Name}
+	a.gate = nil
+	if stage.Health != nil && !hp.PendingHealth {
+		a.gate = &gate
+		if hp.changes() {
+			if err := a.pendGate(ctx); err != nil {
+				return false, err
+			}
+		}
+	}
 	changed, err := a.steps(ctx, stage, "", hp.Steps)
 	if err != nil {
 		return changed, err
 	}
-	if stage.Health != nil && (changed || hp.changes()) {
-		if ctx.Err() != nil {
-			return changed, ErrInterrupted
-		}
-		return changed, a.health(ctx, stage)
+	if stage.Health == nil || !changed && !hp.changes() {
+		return changed, nil
 	}
-	return changed, nil
+	if ctx.Err() != nil {
+		return changed, ErrInterrupted
+	}
+	return changed, a.health(ctx, stage, gate)
+}
+
+// pendGate records the gate of the current stage, before the stage changes
+// something, so that a run that stops before the gate leaves it pending.
+func (a *hostApply) pendGate(ctx context.Context) error {
+	if a.gate == nil {
+		return nil
+	}
+	if err := a.conn.Pend(context.WithoutCancel(ctx), *a.gate); err != nil {
+		return fmt.Errorf("%s: failed: health: %w", a.gate.Stage, err)
+	}
+	a.gate = nil
+	return nil
 }
 
 // health runs the health gate of a stage.
-func (a *hostApply) health(ctx context.Context, stage *project.Stage) error {
+func (a *hostApply) health(ctx context.Context, stage *project.Stage, gate protocol.Check) error {
 	h := stage.Health
 	ev := healthEvent(a.host, stage)
 	a.progress.Busy(a.host, stage.Name+": health")
 	err := a.conn.Health(context.WithoutCancel(ctx), protocol.Health{Command: h.Command,
-		Stable: time.Duration(h.Stable) * time.Second, Timeout: time.Duration(h.Timeout) * time.Second})
+		Stable: time.Duration(h.Stable) * time.Second, Timeout: time.Duration(h.Timeout) * time.Second, Check: gate})
 	if err != nil {
 		ev.Status, ev.Error = "failed", err.Error()
 	}
@@ -516,7 +580,7 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 // command returns a change. After a step that started the rollback timer, it
 // checks the access. After a changed reboot step, it reboots the host.
 func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned, g protocol.Guard) (module.Result, error) {
-	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, g)
+	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, p.Check, g)
 	if err == nil && res.Timer != 0 {
 		err = a.confirm(ctx, res.Timer)
 	}
@@ -548,6 +612,9 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	if res.Status == module.Change {
 		for _, n := range p.Notify {
 			a.notified[n] = true
+		}
+		if err := a.pendGate(ctx); err != nil {
+			return res, err
 		}
 	}
 	return res, nil

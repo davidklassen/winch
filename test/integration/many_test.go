@@ -208,7 +208,25 @@ handlers:
 		if out := vms[1].MustRun(t, "cat /root/web"); out != "two\n" {
 			t.Errorf("many-b changed after the failed gate: /root/web = %q", out)
 		}
+		r = winch("plan", "site", "--set", "vars.web_text=three")
+		if !strings.Contains(r.Stdout, "many-a\n  web\n    ! health: test -e /root/healthy\n") {
+			t.Errorf("the next plan does not show the pending gate on many-a:\n%s", r.Stdout)
+		}
+		r = winch("apply", "site", "--yes", "--set", "vars.web_text=three")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "many-a: web: failed: health: test -e /root/healthy: did not pass within 5s") ||
+			!strings.Contains(r.Stderr, "many-b: not started: many-a failed in stage web") {
+			t.Errorf("apply with the pending gate: exit %d, stderr %q", r.Code, r.Stderr)
+		}
 		vms[0].MustRun(t, "touch /root/healthy")
+		if r := winch("apply", "site", "--yes", "--set", "vars.web_text=three"); r.Code != 0 {
+			t.Errorf("apply after the fix: exit %d, stderr %q", r.Code, r.Stderr)
+		}
+		if out := vms[1].MustRun(t, "cat /root/web"); out != "three\n" {
+			t.Errorf("many-b did not change after the gate passed: /root/web = %q", out)
+		}
+		if out := vms[0].MustRun(t, "cat /var/lib/winch/checks/many"); out != "" {
+			t.Errorf("records after the gate passed: %q", out)
+		}
 	})
 
 	t.Run("a health command that hangs fails at the timeout", func(t *testing.T) {

@@ -382,3 +382,93 @@ func TestPlanShowsUnless(t *testing.T) {
 		t.Errorf("the applied events have no %q:\n%s", want, out.String())
 	}
 }
+
+// spec: Modules/assert; CLI ("--exit-code")
+func TestPendingAssert(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: \"hi\\n\"\n      - assert:\n          command: probe 25\n          message: outbound port 25 is blocked\n",
+	}
+	h := fakehost.New()
+	p := loadFiles(t, files)
+	h.FailCommand("web1", "probe 25")
+	if ok, got := applyAll(t, p, h); ok {
+		t.Fatalf("the first apply passed:\n%s", got)
+	}
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	if !plan.HasChanges() {
+		t.Error("a plan with only a pending assert has no changes")
+	}
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if want := "web1\n  base\n    ! assert probe 25\n\n1 host: 1 to change"; !strings.HasPrefix(out.String(), want) {
+		t.Errorf("plan does not show the pending assert:\n%s", out.String())
+	}
+	h.Fix("web1 probe 25")
+	h.Log["web1"] = nil
+	if ok, got := applyAll(t, p, h); !ok || !slices.Equal(h.Log["web1"], []string{"assert probe 25"}) {
+		t.Errorf("apply ran %q:\n%s", h.Log["web1"], got)
+	}
+	if plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{}); plan.HasChanges() {
+		t.Error("the assert is still pending after it passed")
+	}
+}
+
+// spec: Modules/assert; Running a pipeline/Health gates
+func TestGoneChecks(t *testing.T) {
+	stage := "stages:\n  - name: base\n    hosts: all\n    health:\n      command: probe http\n    steps:\n      - file:\n          path: /etc/motd\n          content: \"hi\\n\"\n      - assert:\n          command: probe 25\n          message: outbound port 25 is blocked\n"
+	files := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   stage,
+	}
+	h := fakehost.New()
+	h.FailCommand("web1", "probe 25")
+	if ok, got := applyAll(t, loadFiles(t, files), h); ok {
+		t.Fatalf("the first apply passed:\n%s", got)
+	}
+	want := []protocol.Check{{Pipeline: "site", Stage: "base"}, {Pipeline: "site", Stage: "base", Step: 2}}
+	if got := h.ChecksOf("web1"); !slices.Equal(got, want) {
+		t.Fatalf("records %v, want %v", got, want)
+	}
+	files["pipelines/site.yaml"] = "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/issue\n          content: \"hi\\n\"\n"
+	if ok, got := applyAll(t, loadFiles(t, files), h); !ok {
+		t.Fatalf("apply failed:\n%s", got)
+	}
+	if got := h.ChecksOf("web1"); len(got) != 0 {
+		t.Errorf("records %v stay after their gate and assert are gone", got)
+	}
+}
+
+// spec: Modules/assert; Handlers
+func TestPendingAssertInAHandler(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
+		"recipes/app/recipe.yaml": `steps:
+  - file:
+      path: /etc/app.conf
+      content: "app\n"
+    notify: check
+handlers:
+  check:
+    - assert:
+        command: probe
+        message: app is down
+`,
+	}
+	h := fakehost.New()
+	p := loadFiles(t, files)
+	h.FailCommand("web1", "probe")
+	if ok, got := applyAll(t, p, h); ok {
+		t.Fatalf("the first apply passed:\n%s", got)
+	}
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if want := "      ! handler app.check\n          ! assert probe\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("plan does not show the pending assert under its handler:\n%s", out.String())
+	}
+}
