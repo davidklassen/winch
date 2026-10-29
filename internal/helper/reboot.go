@@ -3,12 +3,16 @@ package helper
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"syscall"
 
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
 )
 
@@ -55,6 +59,17 @@ func booted(ctx context.Context, params json.RawMessage) (protocol.Boot, error) 
 		state = strings.TrimSpace(string(out))
 	}
 	res := protocol.Boot{State: state}
+	res.Kernel, res.Newest, err = module.Kernels()
+	if err != nil {
+		return res, fmt.Errorf("read the kernels: %w", err)
+	}
+	pkgs, err := os.ReadFile("/run/reboot-required.pkgs")
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return res, err
+	}
+	res.Packages = strings.Fields(string(pkgs))
+	slices.Sort(res.Packages)
+	res.Packages = slices.Compact(res.Packages)
 	if state != "degraded" {
 		return res, nil
 	}

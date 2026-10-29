@@ -164,12 +164,22 @@ func TestRebootStep(t *testing.T) {
 		wantPlan   string
 		wantApply  string
 		wantLog    []string
+		wantErr    string
 		noConnect  bool
 	}{
 		{name: "always", ifRequired: "false", wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted)\n", wantLog: []string{"reboot 30s"}},
 		{name: "required", ifRequired: "true", required: true, wantPlan: "    ~ reboot if required\n", wantApply: "web1: base: ~ reboot if required (rebooted)\n", wantLog: []string{"reboot 30s"}},
 		{name: "degraded", ifRequired: "false", boot: &protocol.Boot{State: "degraded", Failed: []string{"a.service", "b.service"}},
 			wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted; degraded, failed units: a.service, b.service)\n", wantLog: []string{"reboot 30s"}},
+		{name: "still required", ifRequired: "true", required: true, boot: &protocol.Boot{State: "running", Kernel: "6.12.43+deb13-amd64", Newest: "99.0.0+deb13-amd64"},
+			wantPlan: "    ~ reboot if required\n", wantApply: "", wantLog: []string{"reboot 30s"},
+			wantErr: "base: failed: reboot if required: the host still needs a reboot after the reboot: running kernel 6.12.43+deb13-amd64, newest kernel 99.0.0+deb13-amd64"},
+		{name: "always, still required", ifRequired: "false", required: true, boot: &protocol.Boot{State: "running", Kernel: "6.12.43+deb13-amd64", Newest: "99.0.0+deb13-amd64"},
+			wantPlan: "    ~ reboot\n", wantApply: "", wantLog: []string{"reboot 30s"},
+			wantErr: "base: failed: reboot: the host still needs a reboot after the reboot: running kernel 6.12.43+deb13-amd64, newest kernel 99.0.0+deb13-amd64"},
+		{name: "still required by packages", ifRequired: "true", required: true, boot: &protocol.Boot{State: "running", Kernel: "6.12.43+deb13-amd64", Newest: "6.12.43+deb13-amd64", Packages: []string{"dbus", "libc6"}},
+			wantPlan: "    ~ reboot if required\n", wantApply: "", wantLog: []string{"reboot 30s"},
+			wantErr: "base: failed: reboot if required: the host still needs a reboot after the reboot: /run/reboot-required lists the packages dbus, libc6"},
 		{name: "maybe, with a change", ifRequired: "true", more: motd, wantPlan: "    * reboot if required\n", wantApply: "web1: base: + file /etc/motd\n"},
 		{name: "maybe, alone", ifRequired: "true", wantPlan: "0 to change, 1 unchanged", wantApply: "", noConnect: true},
 	}
@@ -193,8 +203,11 @@ func TestRebootStep(t *testing.T) {
 			if tt.noConnect && h.Connects["web1"] != connects {
 				t.Error("apply connected to a host whose plan has only * steps")
 			}
-			if !o.OK() {
+			if tt.wantErr == "" && !o.OK() {
 				t.Fatalf("apply failed: %v", o.Failed)
+			}
+			if got := fmt.Sprint(o.Failed); !strings.Contains(got, tt.wantErr) {
+				t.Fatalf("apply failed with %s, want %q", got, tt.wantErr)
 			}
 			var got string
 			for line := range strings.Lines(out.String()) {

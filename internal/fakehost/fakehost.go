@@ -790,18 +790,21 @@ func (c *Conn) Rollback(ctx context.Context) error {
 	return nil
 }
 
-// Reboot reads the facts again, as a session does.
+// Reboot boots the kernel of SetBoot. The host still needs a reboot when that
+// is not the newest one, or when packages ask for one.
 func (c *Conn) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error) {
 	c.log("reboot " + wait.String())
-	if _, err := c.Facts(ctx); err != nil {
-		return protocol.Boot{}, err
-	}
 	c.hosts.mu.Lock()
-	defer c.hosts.mu.Unlock()
-	if b, ok := c.hosts.boots[c.host]; ok {
-		return b, nil
+	b, ok := c.hosts.boots[c.host]
+	if !ok {
+		b = protocol.Boot{State: "running"}
 	}
-	return protocol.Boot{State: "running"}, nil
+	if f, ok := c.hosts.facts[c.host]; ok {
+		f.RebootRequired = b.Kernel != b.Newest || len(b.Packages) > 0
+		c.hosts.facts[c.host] = f
+	}
+	c.hosts.mu.Unlock()
+	return b, nil
 }
 
 func (c *Conn) Facts(ctx context.Context) (facts.Facts, error) {

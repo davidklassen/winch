@@ -478,7 +478,7 @@ func (s *Session) Rollback(ctx context.Context) error {
 
 // Reboot reboots the host, and connects again until the host has a new boot
 // ID, within wait. It then waits for the system to start, within the same
-// time, and reads the facts again.
+// time.
 func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error) {
 	deadline := time.Now().Add(wait)
 	var id string
@@ -521,8 +521,7 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 		if b.State != "running" && b.State != "degraded" {
 			return b, fmt.Errorf("the host did not start within %s: systemctl is-system-running says %s", wait, b.State)
 		}
-		_, err = s.Facts(ctx)
-		return b, err
+		return b, nil
 	}
 }
 

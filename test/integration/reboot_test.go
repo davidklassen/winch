@@ -148,4 +148,19 @@ func TestReboot(t *testing.T) {
 	if boot() == before {
 		t.Error("the boot ID did not change")
 	}
+
+	// The host boots a kernel older than the newest one in /boot.
+	running := strings.TrimSpace(vm.MustRun(t, "uname -r"))
+	newest := "99.0.0+deb13-" + running[strings.Index(running, "-")+1:]
+	vm.MustRun(t, "touch /boot/vmlinuz-"+newest)
+	defer vm.MustRun(t, "rm /boot/vmlinuz-"+newest)
+	before = boot()
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	want := "the host still needs a reboot after the reboot: running kernel " + running + ", newest kernel " + newest
+	if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
+		t.Errorf("apply with an old kernel: exit %d, want a failure with %q:\n%s%s", r.Code, want, r.Stdout, r.Stderr)
+	}
+	if boot() == before {
+		t.Error("the boot ID did not change")
+	}
 }

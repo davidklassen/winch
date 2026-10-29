@@ -433,12 +433,26 @@ func (a *hostApply) confirm(ctx context.Context, left time.Duration) error {
 	return fmt.Errorf("no new SSH connection works: %w; the old files are back", err)
 }
 
-// reboot reboots the host and waits until it is back. It returns the note of
-// the apply line.
+// reboot reboots the host, waits until it is back, and reads the facts again.
+// It returns the note of the apply line.
 func (a *hostApply) reboot(ctx context.Context, r *module.Reboot) (string, error) {
-	b, err := a.conn.Reboot(context.WithoutCancel(ctx), r.Wait())
+	ctx = context.WithoutCancel(ctx)
+	b, err := a.conn.Reboot(ctx, r.Wait())
 	if err != nil {
 		return "", err
+	}
+	f, err := a.conn.Facts(ctx)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case !f.RebootRequired:
+	case b.Kernel != b.Newest:
+		return "", fmt.Errorf("the host still needs a reboot after the reboot: running kernel %s, newest kernel %s", b.Kernel, b.Newest)
+	case len(b.Packages) > 0:
+		return "", fmt.Errorf("the host still needs a reboot after the reboot: /run/reboot-required lists the packages %s", strings.Join(b.Packages, ", "))
+	default:
+		return "", errors.New("the host still needs a reboot after the reboot: /run/reboot-required exists")
 	}
 	if len(b.Failed) > 0 {
 		return "rebooted; degraded, failed units: " + strings.Join(b.Failed, ", "), nil
