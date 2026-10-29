@@ -363,4 +363,22 @@ func TestPlanShowsUnless(t *testing.T) {
 	if !strings.Contains(out.String(), want) {
 		t.Errorf("the plan has no %q:\n%s%s", want, out.String(), errOut.String())
 	}
+	out.Reset()
+	plan.WriteJSON(run.NewEvents(plain(&out), func() time.Time { return time.Time{} }))
+	for _, want := range []string{
+		`"step":"cmd make install","module":"cmd","status":"change","action":"change","unless":"test -x /usr/local/bin/app"}`,
+		`"step":"cmd app migrate","module":"cmd","status":"change","action":"change","unless":"app status\napp check\n"}`,
+		`"step":"cmd apt-get clean","module":"cmd","status":"ok"}`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the planned events have no %q:\n%s", want, out.String())
+		}
+	}
+	out.Reset()
+	if !run.Apply(context.Background(), plan, h.Connector(), run.NewEvents(plain(&out), func() time.Time { return time.Time{} })).OK() {
+		t.Fatal(out.String())
+	}
+	if want := `"step":"cmd make install","module":"cmd","status":"change","action":"change","unless":"test -x /usr/local/bin/app"}`; !strings.Contains(out.String(), want) {
+		t.Errorf("the applied events have no %q:\n%s", want, out.String())
+	}
 }

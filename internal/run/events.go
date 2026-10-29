@@ -108,6 +108,7 @@ func writePlanned(e *Events, host string, stage *project.Stage, steps []Planned)
 			if p.Result.Validates {
 				ev.Validate = secret.PrintableLines(p.Step.ShownValidate())
 			}
+			ev.Unless = secret.PrintableLines(p.Step.ShownUnless())
 		}
 		if p.ThenRuns {
 			ev.Then, ev.ThenPending = secret.PrintableLines(p.Step.ShownThen()), p.PendingThen

@@ -43,6 +43,7 @@ type StepEvent struct {
 	Then    string   `json:"then,omitempty"`
 	// Validate is the validate command that apply runs.
 	Validate string `json:"validate,omitempty"`
+	Unless   string `json:"unless,omitempty"`
 	// ThenPending is true for a then that a run before left pending.
 	ThenPending bool   `json:"then_pending,omitempty"`
 	Error       string `json:"error,omitempty"`
@@ -515,6 +516,9 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	}
 	if res.Validates {
 		ev.Validate = secret.PrintableLines(p.Step.ShownValidate())
+	}
+	if res.Status == module.Change {
+		ev.Unless = secret.PrintableLines(p.Step.ShownUnless())
 	}
 	a.rep.Step(ev)
 	if res.Status == module.Change {

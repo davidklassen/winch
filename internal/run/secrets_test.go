@@ -314,6 +314,7 @@ func TestSecretCommands(t *testing.T) {
 		"    ~ cmd app login\n        unless: app ping --token (secret)\n",
 		`"step":"cmd true\nnotify --token (secret)"`,
 		`"validate":"true\napp check --token (secret)"`,
+		`"unless":"app ping --token (secret)"`,
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the plan has no %q:\n%s%s", want, out.String(), errOut.String())
