@@ -97,6 +97,14 @@ func TestCmdModule(t *testing.T) {
 			NoConverge: true,
 		},
 		{
+			Name:       "user, with the script out of the arguments",
+			Setup:      user,
+			Args:       &module.Cmd{Command: "ps -eo args > /tmp/winch-out; true # S3cretValue", User: "winchc"},
+			Want:       module.Result{Status: module.Unknown},
+			After:      `grep -q '^ps -eo args' /tmp/winch-out && ! grep -q 'S3cret[V]alue' /tmp/winch-out`,
+			NoConverge: true,
+		},
+		{
 			Name:       "dir",
 			Args:       &module.Cmd{Command: "pwd > /root/out", Dir: "/srv"},
 			Want:       module.Result{Status: module.Unknown},

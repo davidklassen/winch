@@ -159,13 +159,16 @@ type Step struct {
 	// tmplReads are the variables that the template file of the step reads
 	// by name. A computed file name reads those of all templates of the recipe.
 	tmplReads []string
-	// open is set for a file step whose mode lets others read the file.
-	open *openFile
+	// open is set for a file step whose mode lets others read the file. Its
+	// reads are those of the content.
+	open *readsAt
+	// hooks are the computed hooks of a certbot step.
+	hooks []readsAt
 }
 
-type openFile struct {
-	pos yamlx.Pos
-	// reads are the variables that the content of the file reads.
+// readsAt is the variables that the value at pos reads.
+type readsAt struct {
+	pos   yamlx.Pos
 	reads []string
 }
 
@@ -242,7 +245,11 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 	if err != nil {
 		return nil, err
 	}
-	warnings = slices.Concat(warnings, l.warnings, l.secretFileWarnings(invs, []*Pipeline{pl}))
+	secretWarnings, err := l.secretChecks(invs, []*Pipeline{pl})
+	if err != nil {
+		return nil, err
+	}
+	warnings = slices.Concat(warnings, l.warnings, secretWarnings)
 	warnings = append(warnings, purgeWarnings(invs, append([]*Pipeline{pl}, others...), []*Pipeline{pl})...)
 	setNames := map[string]bool{}
 	for _, v := range sets {
@@ -352,8 +359,12 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err != nil {
 		return nil, err
 	}
+	secretWarnings, err := l.secretChecks(invs, pls)
+	if err != nil {
+		return nil, err
+	}
 	yml, err := ymlFiles(dir)
-	return slices.Concat(warnings, l.warnings, l.secretFileWarnings(invs, pls), purgeWarnings(invs, pls, pls), stale, yml), err
+	return slices.Concat(warnings, l.warnings, secretWarnings, purgeWarnings(invs, pls, pls), stale, yml), err
 }
 
 // ymlFiles returns a warning for each .yml file in pipelines/ and in a recipe
@@ -1000,6 +1011,9 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 		st.tmplReads = r.templateReads(argsNode)
 		st.open = openContent(st, args.(*module.File), argsNode)
 	}
+	if st.Module == "certbot" {
+		st.hooks = hookReads(st, argsNode)
+	}
 	return st, nil
 }
 
@@ -1041,7 +1055,7 @@ func pathWarning(m module.Module, field string) string {
 
 // openContent returns the content reads of the file step st when its mode
 // lets others read the file, or nil.
-func openContent(st Step, f *module.File, n *yamlx.Node) *openFile {
+func openContent(st Step, f *module.File, n *yamlx.Node) *readsAt {
 	if f.Absent || !f.OthersRead() {
 		return nil
 	}
@@ -1068,15 +1082,36 @@ func openContent(st Step, f *module.File, n *yamlx.Node) *openFile {
 	if len(reads) == 0 {
 		return nil
 	}
-	return &openFile{pos, reads}
+	return &readsAt{pos, reads}
 }
 
-// secretFileWarnings returns a warning for each file step whose content
-// reads a secret variable and whose mode lets others read the file. The steps
+// hookReads returns the reads of each computed hook of the certbot step st.
+func hookReads(st Step, n *yamlx.Node) []readsAt {
+	if st.args == nil {
+		return nil
+	}
+	var out []readsAt
+	for _, p := range n.Pairs {
+		c := st.args.computed[p.Value]
+		if c == nil || !strings.HasSuffix(p.Key, "_hook") {
+			continue
+		}
+		reads := c.reads
+		if st.loop != nil {
+			reads = slices.Concat(reads, st.loop.reads())
+		}
+		out = append(out, readsAt{p.Value.Pos, reads})
+	}
+	return out
+}
+
+// secretChecks returns a warning for each file step whose content reads a
+// secret variable and whose mode lets others read the file, and an error for
+// each certbot hook that reads a secret variable. The steps
 // are those of the stages of pls and of every recipe. A variable is secret
 // when a value or a default holds a !secret, or when a default or a value of
 // a recipe step reads a secret variable.
-func (l *loader) secretFileWarnings(invs []*Inventory, pls []*Pipeline) []*yamlx.Error {
+func (l *loader) secretChecks(invs []*Inventory, pls []*Pipeline) ([]*yamlx.Error, error) {
 	secret := map[string]bool{}
 	for _, inv := range invs {
 		for _, h := range inv.Hosts {
@@ -1123,12 +1158,18 @@ func (l *loader) secretFileWarnings(invs []*Inventory, pls []*Pipeline) []*yamlx
 		}
 	}
 	var out []*yamlx.Error
+	var errs []error
 	for _, st := range steps {
 		if st.open != nil && slices.ContainsFunc(st.open.reads, isSecret) {
 			out = append(out, yamlx.Errorf(st.open.pos, "the file holds a secret and others can read it; set mode"))
 		}
+		for _, h := range st.hooks {
+			if slices.ContainsFunc(h.reads, isSecret) {
+				errs = append(errs, yamlx.Errorf(h.pos, "certbot stores its hooks in a file that other users can read"))
+			}
+		}
 	}
-	return out
+	return out, errors.Join(errs...)
 }
 
 // stepVars loads the vars of a recipe step: variables and their values, which

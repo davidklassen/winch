@@ -1005,20 +1005,7 @@ var marks = map[module.Action]string{module.Create: "+", module.Modify: "~", mod
 // maskOldSecrets masks the changes of a secret step that show the value on
 // the host. It can be an older secret, which the text filter does not know.
 func maskOldSecrets(s project.Step, res *module.Result) {
-	if !s.Secret {
-		return
-	}
-	switch s.Args.(type) {
-	case *module.Debconf:
-		if res.Status == module.Change {
-			res.Changes = []string{"answer (secret)"}
-		}
-	case *module.Certbot:
-		for j, c := range res.Changes {
-			key, _, _ := strings.Cut(c, " ")
-			if key, _, _ = strings.Cut(key, "\n"); strings.HasSuffix(key, "_hook") {
-				res.Changes[j] = key + " (secret)"
-			}
-		}
+	if _, ok := s.Args.(*module.Debconf); ok && s.Secret && res.Status == module.Change {
+		res.Changes = []string{"answer (secret)"}
 	}
 }

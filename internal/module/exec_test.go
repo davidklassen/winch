@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ func TestShell(t *testing.T) {
 	}{
 		{"ok", "true", ""},
 		{"failure without output", "exit 2", "exit 2: exit status 2"},
+		{"stops at the first failure", "false; echo after", "false; echo after: exit status 1"},
 		{"runs in /", `[ "$(pwd)" = / ]`, ""},
 		{"a background child keeps the output open", "sleep 15 &", ""},
 		{"failure", "seq 20; echo 'the cause' >&2; exit 3", "seq 20; echo 'the cause' >&2; exit 3: exit status 3: 12\n13\n14\n15\n16\n17\n18\n19\n20\nthe cause"},
@@ -43,6 +45,42 @@ func TestShell(t *testing.T) {
 			}
 		})
 	}
+}
+
+// spec: Secrets
+func TestShellScriptNotInArguments(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	// The PID keeps other processes with the test's text out.
+	secret := "S3cretValue" + strconv.Itoa(os.Getpid())
+	done := make(chan struct{})
+	// The duration tells the test's sleep from others. Two commands, so that
+	// sh does not exec sleep in its place.
+	sleep := "sleep 5." + strconv.Itoa(os.Getpid())
+	go func() {
+		// The cancel at the end fails the command.
+		_ = ShellLimit(ctx, sleep+"; true # "+secret, commandLimit, time.Second)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	for end := time.Now().Add(4 * time.Second); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		out, err := exec.Command("ps", "-A", "-o", "args=").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for line := range strings.Lines(string(out)) {
+			if strings.Contains(line, secret) {
+				t.Fatalf("a process has the script in its arguments: %s", line)
+			}
+		}
+		if strings.Contains(string(out), sleep) {
+			return
+		}
+	}
+	t.Fatal("the command did not start")
 }
 
 // limitRunners runs a command as a module command and as a project command,

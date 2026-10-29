@@ -473,6 +473,49 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 	}
 }
 
+// spec: Modules (commands)
+func TestLoadSecretCertbotHook(t *testing.T) {
+	const msg = "certbot stores its hooks in a file that other users can read"
+	for _, tt := range []struct {
+		name, hook string
+		files      map[string]string
+		want       string
+	}{
+		{"deploy_hook", `deploy_hook: !tpl "curl -u {{ .vars.pw }} x"`, nil, "recipes/r/recipe.yaml:6:20: " + msg},
+		{"pre_hook", `pre_hook: !expr '"echo " + vars.token'`, nil, "recipes/r/recipe.yaml:6:17: " + msg},
+		{"post_hook from a default that reads a secret", `post_hook: !expr '"echo " + vars.line'`, nil, "recipes/r/recipe.yaml:6:18: " + msg},
+		{"loop over secrets", "deploy_hook: !expr '\"echo \" + item'\n    loop: !expr values(vars.users)", nil, "recipes/r/recipe.yaml:6:20: " + msg},
+		{"stage step", "deploy_hook: x", map[string]string{
+			"pipelines/site.yaml": stage("      - recipe: r\n      - certbot:\n          name: b\n          domains: [b.example.com]\n          email: a@example.com\n          deploy_hook: !expr '\"echo \" + vars.pw'\n"),
+		}, "pipelines/site.yaml:10:24: " + msg},
+		{"no secret", `deploy_hook: !tpl "echo {{ .vars.short }}"`, nil, ""},
+		{"plain hook", "deploy_hook: systemctl reload nginx", nil, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			k := newKey(t)
+			step := "  - certbot:\n      name: a\n      domains: [a.example.com]\n      email: a@example.com\n      " + tt.hook + "\n"
+			all := with(secretProject, with(map[string]string{"recipes/r/recipe.yaml": recipe(step)}, tt.files))
+			all["winch.yaml"] = strings.Replace(all["winch.yaml"], "RECIPIENT", k.id.Recipient().String(), 1)
+			dir := writeProject(t, k.sealFiles(t, all))
+			_, err := Load(t.Context(), dir, "", "site", nil, k.keys())
+			if got := errText(err); got != tt.want {
+				t.Errorf("Load error = %q, want %q", got, tt.want)
+			}
+			_, err = Validate(dir, "", nil)
+			if got := errText(err); got != tt.want {
+				t.Errorf("Validate error = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
 func warningText(ws []*yamlx.Error) string {
 	var out []string
 	for _, w := range ws {
