@@ -15,7 +15,7 @@ import (
 func TestHostnameModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "hostname")
-	reset := "chattr -ia /etc/hostname; hostnamectl set-hostname base"
+	reset := "chattr -ia /etc/hostname; echo base > /etc/hostname && hostnamectl set-hostname base"
 	vmtest.RunCases(t, vm, "hostname", reset, []vmtest.Case{
 		{
 			Name:      "a new name",
@@ -34,6 +34,34 @@ func TestHostnameModule(t *testing.T) {
 			Setup: "hostname other",
 			Args:  &module.Hostname{Name: "wthost"},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"static name base → wthost", "running name other → wthost"}},
+			After: `[ "$(hostname)" = wthost ] && [ "$(cat /etc/hostname)" = wthost ]`,
+		},
+		{
+			Name:  "a comment above the name",
+			Setup: `printf '# provider comment\nbase\n' > /etc/hostname`,
+			Args:  &module.Hostname{Name: "base"},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:      "a comment above an old name",
+			Setup:     `printf '# provider comment\nbase\n' > /etc/hostname`,
+			Args:      &module.Hostname{Name: "wthost"},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"name base → wthost"}},
+			Unchanged: `[ "$(hostname)" = base ]`,
+			After:     `[ "$(hostname)" = wthost ] && [ "$(cat /etc/hostname)" = wthost ]`,
+		},
+		{
+			Name:  "no /etc/hostname",
+			Setup: "rm /etc/hostname",
+			Args:  &module.Hostname{Name: "wthost"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"static name (none) → wthost", "running name base → wthost"}},
+			After: `[ "$(hostname)" = wthost ] && [ "$(cat /etc/hostname)" = wthost ]`,
+		},
+		{
+			Name:  "only a comment in /etc/hostname",
+			Setup: `printf '# provider comment\n' > /etc/hostname`,
+			Args:  &module.Hostname{Name: "wthost"},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"static name (none) → wthost", "running name base → wthost"}},
 			After: `[ "$(hostname)" = wthost ] && [ "$(cat /etc/hostname)" = wthost ]`,
 		},
 		{

@@ -1,6 +1,7 @@
 package module
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -39,7 +40,7 @@ func (h *Hostname) Check(ctx context.Context, _ *State, _ func(string)) (Result,
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return Result{}, err
 	}
-	static := strings.TrimSpace(string(data))
+	static := staticHostname(data)
 	running, err := os.Hostname()
 	if err != nil {
 		return Result{}, err
@@ -52,7 +53,7 @@ func (h *Hostname) Check(ctx context.Context, _ *State, _ func(string)) (Result,
 		changes = []string{"name " + static + " → " + h.Name}
 	default:
 		if static != h.Name {
-			changes = append(changes, "static name "+static+" → "+h.Name)
+			changes = append(changes, "static name "+cmp.Or(static, "(none)")+" → "+h.Name)
 		}
 		if running != h.Name {
 			changes = append(changes, "running name "+running+" → "+h.Name)
@@ -69,4 +70,16 @@ func (h *Hostname) Check(ctx context.Context, _ *State, _ func(string)) (Result,
 func (h *Hostname) Apply(ctx context.Context, _ func(string)) error {
 	_, err := run(ctx, nil, "hostnamectl", "set-hostname", "--", h.Name)
 	return err
+}
+
+// staticHostname reads the name as systemd does: the first line that is
+// not empty and not a comment.
+func staticHostname(data []byte) string {
+	for line := range strings.Lines(string(data)) {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			return line
+		}
+	}
+	return ""
 }
