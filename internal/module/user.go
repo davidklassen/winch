@@ -43,6 +43,9 @@ type User struct {
 	keys     bool
 	// keyHome is the home of the keys that Apply writes.
 	keyHome string
+	// loginGroups holds the groups of the login user before a step that
+	// adds groups to it.
+	loginGroups *[]string
 }
 
 // hashRe matches a crypt hash, such as $y$… or $6$…, also locked with "!",
@@ -175,6 +178,12 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 	if err != nil {
 		return res, err
 	}
+	// sshd's AllowGroups, DenyGroups, and Match Group read the groups at the
+	// next login.
+	if u.loginGroups != nil {
+		res.Guard = true
+		res.Changes = append([]string{"changes the groups of the login user " + u.Name}, res.Changes...)
+	}
 	if u.AuthorizedKeys == nil {
 		if exists && cur.uid == st.LoginUID && strings.HasPrefix(u.Password, "!") {
 			err = u.checkSSHD(ctx, st.SSHConnection, a, cur, exists, home, group)
@@ -205,11 +214,13 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 }
 
 // checkLogin fails when the step changes a field of the login user that the
-// next session needs.
+// next session needs, or removes a group from the user. It sets loginGroups
+// when the step adds groups to the user.
 func (u *User) checkLogin(a accounts, cur passwdEntry, login uint32) error {
 	if cur.uid != login {
 		return nil
 	}
+	have := a.groupsOf(u.Name)
 	var field string
 	switch {
 	case u.UID != "" && u.uid() != cur.uid:
@@ -218,12 +229,25 @@ func (u *User) checkLogin(a accounts, cur passwdEntry, login uint32) error {
 		field = "shell"
 	case u.Home != "" && u.Home != cur.home:
 		field = "home"
-	case u.Groups != nil && !slices.Equal(a.groupsOf(u.Name), slices.Sorted(slices.Values(*u.Groups))):
+	case u.Groups != nil && slices.ContainsFunc(have, func(g string) bool { return !slices.Contains(*u.Groups, g) }):
 		field = "groups"
 	default:
+		if u.Groups != nil && len(*u.Groups) > len(have) {
+			old := append([]string{}, have...)
+			u.loginGroups = &old
+		}
 		return nil
 	}
 	return fmt.Errorf("%s is the login user of this session; log in as another user to change its %s", u.Name, field)
+}
+
+// Undo returns the step that removes the login user from the groups that a
+// checked step adds. It returns nil for another step.
+func (u *User) Undo() *User {
+	if u.loginGroups == nil {
+		return nil
+	}
+	return &User{Name: u.Name, Groups: u.loginGroups}
 }
 
 func (u *User) uid() uint32 {

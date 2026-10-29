@@ -53,6 +53,7 @@ sed -i '/^wtbob:/d' /etc/passwd /etc/shadow
 sed -i 's|:/home/admin/:|:/home/admin:|' /etc/passwd
 for g in wtalice wtbob wtsvc wtgrp wtnew wtother Debian-wt; do groupdel $g 2>/dev/null; done
 gpasswd -d admin wtalice 2>/dev/null
+gpasswd -d admin sudo 2>/dev/null
 chattr -R -ia /home/wtalice 2>/dev/null
 rm -rf /home/wtalice /home/wtbob /home/Debian-wt /srv/w /var/lib/wtsvc /opt/wt /root/.ssh /etc/ssh/sshd_config.d/wt.conf
 sed -i '/ one$/d' /home/admin/.ssh/authorized_keys
@@ -303,10 +304,18 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			Want:  module.Result{Status: module.OK},
 		},
 		{
-			Name:    "the groups of the login user",
-			Setup:   `groupadd wtgrp`,
-			Args:    &module.User{Name: "admin", Groups: &[]string{"wtgrp"}},
-			WantErr: "admin is the login user of this session; log in as another user to change its groups",
+			Name:  "add a group to the login user",
+			Setup: `groupadd wtgrp`,
+			Args:  &module.User{Name: "admin", Groups: &[]string{"admin", "wtgrp"}},
+			Want:  change("changes the groups of the login user admin", "add to group wtgrp"),
+			After: `[ "$(id -nG admin)" = "admin wtgrp" ]`,
+		},
+		{
+			Name:      "remove a group from the login user",
+			Setup:     `gpasswd -a admin sudo`,
+			Args:      &module.User{Name: "admin", Groups: &[]string{"admin"}},
+			WantErr:   "admin is the login user of this session; log in as another user to change its groups",
+			Unchanged: `[ "$(id -nG admin)" = "admin sudo" ]`,
 		},
 		{
 			Name:         "a group that does not exist yet in groups",

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -310,7 +311,8 @@ func runJob(ctx context.Context, path string) error {
 	if uerr := json.Unmarshal(j.Undo.Args, m); uerr != nil {
 		return errors.Join(err, uerr)
 	}
-	res, cerr := m.Check(ctx, &module.State{}, func(string) {})
+	// The timer has no session, so no login user: uid -1 is no user.
+	res, cerr := m.Check(ctx, &module.State{LoginUID: math.MaxUint32}, func(string) {})
 	if cerr == nil && res.Status != module.OK {
 		cerr = m.Apply(ctx, func(string) {})
 	}
