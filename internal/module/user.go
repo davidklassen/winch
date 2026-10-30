@@ -22,18 +22,18 @@ import (
 )
 
 type User struct {
-	Name           string         `yaml:"name,required" json:"name"`
-	UID            yamlx.ID       `yaml:"uid" json:"uid,omitempty"`
-	Group          yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
-	System         bool           `yaml:"system" json:"system,omitempty"`
-	Home           string         `yaml:"home" json:"home,omitempty"`
-	Shell          string         `yaml:"shell" json:"shell,omitempty"`
-	Groups         *[]string      `yaml:"groups" json:"groups,omitempty"`
-	AddGroups      *[]string      `yaml:"add_groups" json:"add_groups,omitempty"`
-	Password       string         `yaml:"password" json:"password,omitempty"`
-	Comment        string         `yaml:"comment" json:"comment,omitempty"`
-	AuthorizedKeys *[]string      `yaml:"authorized_keys" json:"authorized_keys,omitempty"`
-	Absent         bool           `yaml:"absent" json:"absent,omitempty"`
+	Name           string         `yaml:"name,required" json:"name" doc:"The user name."`
+	UID            yamlx.ID       `yaml:"uid" json:"uid,omitempty" doc:"The numeric user ID."`
+	Group          yamlx.NameOrID `yaml:"group" json:"group,omitempty" doc:"The primary group. Without group, a step that creates the user also creates a group with the name of the user." default:"<name>"`
+	System         bool           `yaml:"system" json:"system,omitempty" doc:"Create a system user. Its home is /nonexistent and its shell is /usr/sbin/nologin. It counts only when the step creates the user."`
+	Home           string         `yaml:"home" json:"home,omitempty" doc:"The home directory. The default counts only when the step creates the user, and a system user gets /nonexistent. A changed home is not moved." default:"/home/<name>"`
+	Shell          string         `yaml:"shell" json:"shell,omitempty" doc:"The login shell. The default counts only when the step creates the user, and a system user gets /usr/sbin/nologin." default:"/bin/sh"`
+	Groups         *[]string      `yaml:"groups" json:"groups,omitempty" doc:"The exact list of supplementary groups. A step has groups or add_groups."`
+	AddGroups      *[]string      `yaml:"add_groups" json:"add_groups,omitempty" doc:"Groups that the user joins. The user keeps its other groups. A step with only name and add_groups does not create the user: apply fails when the user does not exist."`
+	Password       string         `yaml:"password" json:"password,omitempty" doc:"A crypt hash, such as one from mkpasswd -m yescrypt, usually a !secret. ! or * alone locks the password. Without password, the password of a new user is locked."`
+	Comment        string         `yaml:"comment" json:"comment,omitempty" doc:"The full name or a description of the user."`
+	AuthorizedKeys *[]string      `yaml:"authorized_keys" json:"authorized_keys,omitempty" doc:"The exact list of SSH keys in ~/.ssh/authorized_keys."`
+	Absent         bool           `yaml:"absent" json:"absent,omitempty" doc:"Remove the user. Its home stays."`
 
 	// Check sets these for Apply: the useradd, usermod, or userdel command,
 	// the home to create for a user that exists, and whether to set the

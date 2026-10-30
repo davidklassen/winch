@@ -13,10 +13,10 @@ import (
 )
 
 type Group struct {
-	Name   string   `yaml:"name,required" json:"name"`
-	GID    yamlx.ID `yaml:"gid" json:"gid,omitempty"`
-	System bool     `yaml:"system" json:"system,omitempty"`
-	Absent bool     `yaml:"absent" json:"absent,omitempty"`
+	Name   string   `yaml:"name,required" json:"name" doc:"The group name."`
+	GID    yamlx.ID `yaml:"gid" json:"gid,omitempty" doc:"The numeric group ID."`
+	System bool     `yaml:"system" json:"system,omitempty" doc:"Create a system group. It counts only when the step creates the group."`
+	Absent bool     `yaml:"absent" json:"absent,omitempty" doc:"Remove the group."`
 
 	// Check sets the command for Apply.
 	todo []string

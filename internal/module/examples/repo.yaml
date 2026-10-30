@@ -1,0 +1,6 @@
+- repo:
+    name: nginx
+    url: https://nginx.org/packages/debian
+    suite: trixie
+    components: [nginx]
+    key: key.asc

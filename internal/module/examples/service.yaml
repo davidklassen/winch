@@ -1,0 +1,4 @@
+- service:
+    name: nginx
+    running: true
+    enabled: true

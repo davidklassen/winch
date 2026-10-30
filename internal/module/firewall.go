@@ -18,8 +18,8 @@ import (
 )
 
 type Firewall struct {
-	Allow  []Rule `yaml:"allow" json:"allow,omitempty"`
-	Absent bool   `yaml:"absent" json:"absent,omitempty"`
+	Allow  []Rule `yaml:"allow" json:"allow,omitempty" doc:"The rules of the traffic that the host accepts. The host drops other traffic to it. It always accepts established and related traffic, loopback, ICMP echo requests, the ICMPv6 types that IPv6 needs, and DHCP replies. It drops invalid packets."`
+	Absent bool   `yaml:"absent" json:"absent,omitempty" doc:"Remove the nftables table of winch, its file, and its unit."`
 	// What the check found to do.
 	data                                      []byte
 	writeFile, writeUnit, writeDropIn, enable bool
@@ -29,9 +29,9 @@ type Firewall struct {
 // Rule accepts traffic to its ports from the sources in From, or from every
 // source.
 type Rule struct {
-	TCP  yamlx.Ints    `yaml:"tcp" json:"tcp,omitempty"`
-	UDP  yamlx.Ints    `yaml:"udp" json:"udp,omitempty"`
-	From yamlx.Strings `yaml:"from" json:"from,omitempty"`
+	TCP  yamlx.Ints    `yaml:"tcp" json:"tcp,omitempty" doc:"A TCP port or a list of TCP ports. A rule has tcp or udp."`
+	UDP  yamlx.Ints    `yaml:"udp" json:"udp,omitempty" doc:"A UDP port or a list of UDP ports. A rule has tcp or udp."`
+	From yamlx.Strings `yaml:"from" json:"from,omitempty" doc:"An address or a network, or a list of them. IPv4 and IPv6 are allowed. Without from, the rule accepts every source."`
 }
 
 const (

@@ -1,0 +1,11 @@
+- unit:
+    name: app.service
+    content: |
+      [Unit]
+      Description=App
+
+      [Service]
+      ExecStart=/usr/local/bin/app
+
+      [Install]
+      WantedBy=multi-user.target

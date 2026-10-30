@@ -1,0 +1,4 @@
+- line:
+    path: /etc/sysctl.conf
+    match: ^#?net.ipv4.ip_forward=
+    line: net.ipv4.ip_forward=1

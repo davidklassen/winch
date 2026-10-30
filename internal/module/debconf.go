@@ -13,10 +13,10 @@ import (
 )
 
 type Debconf struct {
-	Package  string `yaml:"package,required" json:"package"`
-	Question string `yaml:"question,required" json:"question"`
-	Type     string `yaml:"type,required" json:"type"`
-	Value    string `yaml:"value,required" json:"value"`
+	Package  string `yaml:"package,required" json:"package" doc:"The package of the question."`
+	Question string `yaml:"question,required" json:"question" doc:"The debconf question, such as postfix/main_mailer_type."`
+	Type     string `yaml:"type,required" json:"type" doc:"The type of the question, such as string, boolean, or select."`
+	Value    string `yaml:"value,required" json:"value" doc:"The answer, as a string. Only the scripts of the package read it, so put the step before the pkg step that installs the package."`
 }
 
 func (d *Debconf) Main() string { return d.Question }

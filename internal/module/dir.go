@@ -17,16 +17,16 @@ import (
 )
 
 type Dir struct {
-	Path         string         `yaml:"path,required" json:"path"`
-	Owner        yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
-	Group        yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
-	Mode         string         `yaml:"mode" json:"mode,omitempty"`
+	Path         string         `yaml:"path,required" json:"path" doc:"The absolute path of the directory. The step follows a symbolic link to a directory."`
+	Owner        yamlx.NameOrID `yaml:"owner" json:"owner,omitempty" doc:"The owner of the directory, a user name or a numeric ID." default:"root"`
+	Group        yamlx.NameOrID `yaml:"group" json:"group,omitempty" doc:"The group of the directory, a group name or a numeric ID." default:"root"`
+	Mode         string         `yaml:"mode" json:"mode,omitempty" doc:"The mode of the directory, in octal, such as 0750. Quote it, or YAML reads it as a number." default:"0755"`
 	ModePos      yamlx.Pos      `json:"-"`
-	Recurse      bool           `yaml:"recurse" json:"recurse,omitempty"`
-	Absent       bool           `yaml:"absent" json:"absent,omitempty"`
-	Replace      bool           `yaml:"replace" json:"replace,omitempty"`
-	Purge        bool           `yaml:"purge" json:"purge,omitempty"`
-	KeepPatterns []string       `yaml:"keep" json:"keep_patterns,omitempty"`
+	Recurse      bool           `yaml:"recurse" json:"recurse,omitempty" doc:"Set owner and group on every entry of the tree. The mode stays the mode of the directory alone."`
+	Absent       bool           `yaml:"absent" json:"absent,omitempty" doc:"Remove the directory with its content."`
+	Replace      bool           `yaml:"replace" json:"replace,omitempty" doc:"Remove another kind of thing at path first, such as a file or a link."`
+	Purge        bool           `yaml:"purge" json:"purge,omitempty" doc:"Remove each direct entry that no package owns and no step for the host writes."`
+	KeepPatterns []string       `yaml:"keep" json:"keep_patterns,omitempty" doc:"Glob patterns of names that purge keeps, such as *.db. Needs purge."`
 	// Keep are the paths below Path that steps for the host write. The
 	// controller sets them.
 	Keep []string `json:"keep,omitempty"`

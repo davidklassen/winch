@@ -1,0 +1,5 @@
+- debconf:
+    package: postfix
+    question: postfix/main_mailer_type
+    type: select
+    value: Internet Site
