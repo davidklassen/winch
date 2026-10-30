@@ -25,11 +25,13 @@ Minimal project:
     winch plan
     winch apply
 
+    # winch writes /etc/motd on web1.example.com.
+
 Hosts:
   winch connects with the OpenSSH client and its SSH config. The login
   user is root, or has passwordless sudo. A host needs nothing else
-  installed: winch sends its helper binary to /var/lib/winch on the
-  host.
+  installed: winch sends a helper program to /var/lib/winch on the
+  host and runs it there. Run winch doc remote.
 
 When the project grows:
   Move the hosts into inventories, the steps into pipelines, and
@@ -88,7 +90,7 @@ Run "winch doc project.<key>" for the full text of a key.
 project.name: string, required
 
 Letters, digits, ., _, and -. It does not start with a dot. Hosts keep
-pending handlers and other records under it.
+pending handlers and other state of the project under this name.
 ==> winch doc project.inventory
 project.inventory: string
 
@@ -172,9 +174,9 @@ Groups and values:
   an error, unless the host sets that value too.
 
 SSH settings:
-  Every other SSH setting, such as the port or the key, comes from the
-  SSH config of the controller. Its Host blocks match the host name,
-  also when the host has an address.
+  Every other SSH setting, such as the port or the key, comes from your
+  SSH config. Its Host blocks match the host name, also when the host
+  has an address.
 
 Host patterns:
   Host patterns select hosts in the hosts of a stage, in --hosts, and
@@ -251,7 +253,7 @@ inventory.hosts.user: string
 
 SSH login user. Without it, the host takes the user of its groups, then
 of all, then of the SSH config. --user beats it. Every other SSH setting
-comes from the SSH config of the controller.
+comes from your SSH config.
 ==> winch doc inventory.hosts.vars
 inventory.hosts.vars: map
 
@@ -412,8 +414,9 @@ Keys:
 ==> winch doc pipeline.stages.health.command
 pipeline.stages.health.command: string, required
 
-Must exit 0. The helper runs it once per second until it exits 0, then
-keeps running it for stable seconds. A failed run starts the wait again.
+Must exit 0. winch runs it on the host once per second until it exits 0,
+then keeps running it for stable seconds. A failed run starts the wait
+again.
 ==> winch doc pipeline.stages.health.stable
 pipeline.stages.health.stable: integer, default 0
 
@@ -458,8 +461,9 @@ Keys:
 ==> winch doc pipeline.health.command
 pipeline.health.command: string, required
 
-Must exit 0. The helper runs it once per second until it exits 0, then
-keeps running it for stable seconds. A failed run starts the wait again.
+Must exit 0. winch runs it on the host once per second until it exits 0,
+then keeps running it for stable seconds. A failed run starts the wait
+again.
 ==> winch doc pipeline.health.stable
 pipeline.health.stable: integer, default 0
 
@@ -590,8 +594,7 @@ Computed values:
 Evaluation:
   On each host, winch evaluates when. When it is false, winch skips the
   step. Then winch evaluates loop, and the arguments for each element.
-  The helper checks the step on the host, and apply changes what
-  differs.
+  winch checks the step on the host, and apply changes what differs.
 
 Results:
   A step that runs a command counts as changed: a cmd, and a service
@@ -678,24 +681,24 @@ SSH check with rollback, for a service step. Only a service step can use
 it, in steps or in handlers. A firewall step gets the same check without
 it.
 
-Before the step, the helper keeps the old state of each path that the
-changed steps of the recipe wrote or removed in this run. It starts a
-60-second rollback timer in a process of its own.
+Before the step, winch keeps the old state of each path that the changed
+steps of the recipe wrote or removed in this run. It starts a 60-second
+rollback timer in a process of its own.
 
 After the step, winch opens a new SSH connection and runs a command,
 through sudo -n when the login user is not root. It tries twice, 5
 seconds apart.
 
-When both tries fail, the helper puts back the old files and runs
+When both tries fail, winch puts back the old files and runs
 daemon-reload after a unit file. It reverses a start or a stop of the
 step, and reloads or restarts the unit again. The host fails with the
 error "no new SSH connection works: <error>; the old files are back".
-When the session ends first, the helper rolls back at the session end.
-When the helper is gone, the timer does it.
+When the SSH connection ends first, winch rolls back as it ends. When
+the process of winch on the host is gone, the timer rolls back.
 
-When a run ends before a notified handler with confirm_access ran, the
-helper puts back the files of that handler at once. The next run applies
-the change again.
+When a run ends before a notified handler with confirm_access ran, winch
+puts back the files of that handler at once. The next run applies the
+change again.
 
 A rollback puts back files only. It does not undo a change of a user or
 a group.
@@ -722,6 +725,29 @@ Notifying a handler:
   same pipeline, on at least one host where the step runs. On a host
   where it does not run, winch drops the notification.
 
+    # winch.yaml
+    name: demo
+    hosts:
+      web1.example.com: {}
+    steps:
+      - recipe: nginx
+      - file:
+          path: /etc/nginx/conf.d/gzip.conf
+          content: "gzip on;\n"
+        notify: nginx.reload
+    recipes:
+      nginx:
+        steps:
+          - pkg:
+              name: nginx
+        handlers:
+          reload:
+            - service:
+                name: nginx
+                reloaded: true
+
+    # A change of gzip.conf reloads nginx once, at the end of the stage.
+
 When a handler runs:
   - A handler runs at most once per recipe run on a host. A handler of
     a stage runs at most once per stage run.
@@ -739,33 +765,11 @@ Handler steps:
   service.
 
 Pending handlers:
-  When a step notifies a handler, the helper records it on the host
-  before the step changes anything. The record goes when the handler
-  succeeds. When a run stops first, the handler stays pending. It runs
-  the next time its recipe or stage runs on that host. The plan shows
-  a handler that will run with "!".
-
-Example:
-  # winch.yaml
-  name: demo
-  hosts:
-    web1.example.com: {}
-  steps:
-    - recipe: nginx
-    - file:
-        path: /etc/nginx/conf.d/gzip.conf
-        content: "gzip on;\n"
-      notify: nginx.reload
-  recipes:
-    nginx:
-      steps:
-        - pkg:
-            name: nginx
-      handlers:
-        reload:
-          - service:
-              name: nginx
-              reloaded: true
+  When a step notifies a handler, winch marks the handler as pending on
+  the host before the step changes anything. The mark goes when the
+  handler succeeds. When a run stops first, the handler stays pending.
+  It runs the next time its recipe or stage runs on that host. The
+  plan shows a handler that will run with "!".
 ==> winch doc variables
 variables: named values for hosts, groups, and recipes
 
@@ -883,11 +887,11 @@ Quoting:
   with {{ needs quotes.
 
 When they run:
-  winch evaluates templates on the controller, during the plan. They
-  cannot read the result of a step. winch checks each one when it
-  loads the project: an unknown name or a syntax error is an error. An
-  error while winch evaluates one for a host fails that host. The
-  other hosts go on.
+  winch evaluates templates on the machine that runs winch, during the
+  plan. They cannot read the result of a step. winch checks each one
+  when it loads the project: an unknown name or a syntax error is an
+  error. An error while winch evaluates one for a host fails that
+  host. The other hosts go on.
 
 Functions:
   and       and x y: the first empty argument, or the last argument.
@@ -1116,11 +1120,12 @@ Quoting:
   that contains ": " or " #".
 
 When they run:
-  winch evaluates expressions on the controller, during the plan. They
-  cannot read the result of a step. winch checks each one when it
-  loads the project: an unknown name or a syntax error is an error. An
-  error while winch evaluates one for a host fails that host. The
-  other hosts go on. $env and now() are errors in every expression.
+  winch evaluates expressions on the machine that runs winch, during
+  the plan. They cannot read the result of a step. winch checks each
+  one when it loads the project: an unknown name or a syntax error is
+  an error. An error while winch evaluates one for a host fails that
+  host. The other hosts go on. $env and now() are errors in every
+  expression.
 
 Functions:
   abs            abs(n): the absolute value of the number n.
@@ -1562,6 +1567,24 @@ Reading a fact:
   {{ .facts.os.id }}. Facts are a fixed set. A read of an unknown fact
   is an error.
 
+    # winch.yaml
+    name: demo
+    hosts:
+      web1.example.com: {}
+    steps:
+      - recipe: base
+    recipes:
+      base:
+        require:
+          - !expr facts.os.id == "debian" and facts.os.version == "13"
+        steps:
+          - reboot:
+              if_required: true
+            when: !expr facts.reboot_required
+
+    # The plan fails a host that is not Debian 13. A host that needs a
+    # reboot reboots.
+
 When winch reads them:
   winch reads the facts once per host per run, before the first step,
   and again after a reboot. They describe the host before the run.
@@ -1573,22 +1596,6 @@ Keys:
   os.codename      string   -  release code name, such as trixie or noble
   os.arch          string   -  CPU architecture
   reboot_required  boolean  -  pending reboot
-
-Example:
-  # winch.yaml
-  name: demo
-  hosts:
-    web1.example.com: {}
-  steps:
-    - recipe: base
-  recipes:
-    base:
-      require:
-        - !expr facts.os.id == "debian" and facts.os.version == "13"
-      steps:
-        - reboot:
-            if_required: true
-          when: !expr facts.reboot_required
 
 Run "winch doc facts.<key>" for the full text of a key.
 ==> winch doc facts.os
@@ -1712,9 +1719,9 @@ them.
 Plan and apply:
   winch plan shows the changes and changes nothing. winch apply shows
   the same plan, asks, and then makes the changes. For each host, the
-  plan starts a session, reads the facts, evaluates the steps, checks
-  the requirements of the recipes, and asks the helper to check each
-  step. Apply checks each step again right before it changes it. The
+  plan connects to the host, reads the facts, evaluates the steps,
+  checks the requirements of the recipes, and checks each step on the
+  host. Apply checks each step again right before it changes it. The
   second check decides.
 
 Plan marks:
@@ -1727,11 +1734,11 @@ Plan marks:
 
 Plan hash:
   The last line of a plan is its hash, such as plan a3f9c2e1d07b4c58.
-  The hash covers the project name, the hosts with their SSH targets
-  and login users, the stages, the evaluated steps, the check results,
-  and the pending handlers and then commands. winch apply --check
-  <hash> applies only when the new plan has that hash, without the
-  question.
+  The hash covers the project name, the hosts with the host name and
+  port that ssh resolves for them and their login users, the stages,
+  the evaluated steps, the check results, and the pending handlers and
+  then commands. winch apply --check <hash> applies only when the new
+  plan has that hash, without the question.
 
 Without a terminal:
   apply without --yes or --check prints the plan and exits 5. Its last
@@ -1745,9 +1752,9 @@ What winch changes:
 
 Stopping and resuming:
   The first Ctrl-C lets the running step of each host finish, starts
-  no new step, and ends with the summary. A second Ctrl-C ends the
-  sessions. A new run is the resume: steps that already succeeded
-  check as ok, and pending handlers run.
+  no new step, and ends with the summary. A second Ctrl-C closes the
+  connections to the hosts. A new run is the resume: steps that already
+  succeeded check as ok, and pending handlers run.
 
 Access to the host:
   winch keeps its access to each host.
@@ -1766,9 +1773,9 @@ Access to the host:
     rolls back.
 
 Changing the SSH port:
-  The access check connects to the port in the controller's SSH
-  config. So a change of sshd's Port in one run always rolls back. Move
-  sshd to a new port in three runs:
+  The access check connects to the port in your SSH config. So a change
+  of sshd's Port in one run always rolls back. Move sshd to a new port
+  in three runs:
 
     1. Let sshd listen on the old and the new port.
     2. Change the port in the SSH config.
@@ -1959,8 +1966,8 @@ Working directory.
 ==> winch doc cmd.timeout
 cmd.timeout: integer, default 600
 
-Limit in seconds, also for unless. After it, the helper stops the
-command and the step fails.
+Limit in seconds, also for unless. After it, winch stops the command and
+the step fails.
 ==> winch doc debconf
 debconf: set a debconf answer
 
@@ -2208,9 +2215,9 @@ gives it. A step without content has no default.
 file.validate: string
 
 Check command for the new file. The command names the real path, or
-checks the whole config: nginx -t. The helper puts the new file in place
-and runs the command. When the command fails, the old file comes back
-and the step fails.
+checks the whole config: nginx -t. winch puts the new file in place and
+runs the command. When the command fails, the old file comes back and
+the step fails.
 ==> winch doc file.absent
 file.absent: boolean, default false
 
@@ -2230,8 +2237,9 @@ in a run.
 
 The step needs nft: install the package nftables in an earlier pkg step.
 
-Every change is guarded as a confirm_access step is. When no new SSH
-connection works after the new rules load, the old rules come back.
+Every change gets the SSH check and the rollback of confirm_access. When
+no new SSH connection works after the new rules load, the old rules come
+back.
 
 Keys:
   allow   list of maps  -      accepted traffic; the host drops the rest

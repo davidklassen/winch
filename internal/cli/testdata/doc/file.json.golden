@@ -100,7 +100,7 @@
       "default": "",
       "required": false,
       "line": "check command for the new file",
-      "text": "Check command for the new file. The command names the real path, or checks the whole config: nginx -t. The helper puts the new file in place and runs the command. When the command fails, the old file comes back and the step fails.",
+      "text": "Check command for the new file. The command names the real path, or checks the whole config: nginx -t. winch puts the new file in place and runs the command. When the command fails, the old file comes back and the step fails.",
       "keys": []
     },
     {

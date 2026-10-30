@@ -194,9 +194,9 @@ intersection, and "!" for exclusion. Each stage runs on the hosts in
 both its hosts and --hosts. The stages of --stages run in pipeline
 order.`,
 			"A --set value parses as YAML.",
-			`With a terminal, ssh can ask questions, and sessions start one at a
-time. Without one, or with --batch, ssh asks nothing, and sessions
-start in parallel.`,
+			`With a terminal, ssh can ask questions, and winch connects to the
+hosts one at a time. Without one, or with --batch, ssh asks nothing,
+and winch connects to them in parallel.`,
 			`With --exit-code, plan exits with code 2 when the plan has changes,
 unknown steps, pending handlers, a pending then, or a pending gate or
 assert.`,
@@ -239,11 +239,11 @@ intersection, and "!" for exclusion. Each stage runs on the hosts in
 both its hosts and --hosts. The stages of --stages run in pipeline
 order.`,
 			"A --set value parses as YAML.",
-			`With a terminal, ssh can ask questions, and sessions start one at a
-time. Without one, or with --batch, ssh asks nothing, and sessions
-start in parallel. The apply question stays.`,
+			`With a terminal, ssh can ask questions, and winch connects to the
+hosts one at a time. Without one, or with --batch, ssh asks nothing,
+and winch connects to them in parallel. The apply question stays.`,
 			`The first Ctrl-C lets the running step on each host finish and starts
-no new step. A second Ctrl-C ends the sessions at once.`,
+no new step. A second Ctrl-C closes the connections at once.`,
 		},
 		flags: []flagDoc{
 			inventoryFlag,
@@ -284,9 +284,9 @@ with code 5. Its last line is the command that applies the plan with
 its hash.`,
 			`--check replaces the question. When the new plan has another hash, run
 exits with code 6 and changes nothing.`,
-			`With a terminal, ssh can ask questions, and sessions start one at a
-time. Without one, or with --batch, ssh asks nothing, and sessions
-start in parallel. The apply question stays.`,
+			`With a terminal, ssh can ask questions, and winch connects to the
+hosts one at a time. Without one, or with --batch, ssh asks nothing,
+and winch connects to them in parallel. The apply question stays.`,
 		},
 		flags: []flagDoc{
 			inventoryFlag,
@@ -321,9 +321,9 @@ when the command fails on a host.`,
 			"With --json, each host gives one exec event with output and exit_code.",
 			`Ctrl-C stops the commands. Each host sends SIGINT to the command, and
 SIGKILL when it still runs after 10 seconds.`,
-			`With a terminal, ssh can ask questions, and sessions start one at a
-time. Without one, or with --batch, ssh asks nothing, and sessions
-start in parallel.`,
+			`With a terminal, ssh can ask questions, and winch connects to the
+hosts one at a time. Without one, or with --batch, ssh asks nothing,
+and winch connects to them in parallel.`,
 		},
 		flags: []flagDoc{
 			inventoryFlag,

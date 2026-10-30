@@ -34,9 +34,9 @@ its hash.
 --check replaces the question. When the new plan has another hash, run
 exits with code 6 and changes nothing.
 
-With a terminal, ssh can ask questions, and sessions start one at a
-time. Without one, or with --batch, ssh asks nothing, and sessions
-start in parallel. The apply question stays.
+With a terminal, ssh can ask questions, and winch connects to the
+hosts one at a time. Without one, or with --batch, ssh asks nothing,
+and winch connects to them in parallel. The apply question stays.
 
 Flags:
   --inventory <name>          inventory for the run

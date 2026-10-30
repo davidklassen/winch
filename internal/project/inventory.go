@@ -23,7 +23,7 @@ type Inventory struct {
 type Host struct {
 	Name     string      `yaml:",key"`
 	Address  string      `yaml:"address" line:"host name or IP for SSH" doc:"Host name or IP for SSH. Without it, the SSH config decides the host name. The Host blocks of the SSH config match the host name, also with address. A port goes in the SSH config. Two hosts cannot have the same address."`
-	User     string      `yaml:"user" line:"SSH login user" doc:"SSH login user. Without it, the host takes the user of its groups, then of all, then of the SSH config. --user beats it. Every other SSH setting comes from the SSH config of the controller."`
+	User     string      `yaml:"user" line:"SSH login user" doc:"SSH login user. Without it, the host takes the user of its groups, then of all, then of the SSH config. --user beats it. Every other SSH setting comes from your SSH config."`
 	VarsNode *yamlx.Node `yaml:"vars" type:"map" line:"variable values of the host" doc:"Variable values of the host. They beat the values of its groups."`
 	Pos      yamlx.Pos
 	// Groups are the groups of the host: all, then the others in file order.

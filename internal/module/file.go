@@ -41,7 +41,7 @@ type File struct {
 	Owner      yamlx.NameOrID `yaml:"owner" json:"owner,omitempty" doc:"A user name or a numeric ID. A step without content has no default." default:"root"`
 	Group      yamlx.NameOrID `yaml:"group" json:"group,omitempty" doc:"A group name or a numeric ID. A step without content has no default." default:"root"`
 	Mode       string         `yaml:"mode" json:"mode,omitempty" line:"octal, in quotes" doc:"Octal, in quotes: \"0640\". Without quotes, YAML reads it as a number. With stock, the package gives the default. With copy_from, the source gives it. A step without content has no default." default:"0644"`
-	Validation *string        `yaml:"validate" json:"validate,omitempty" line:"check command for the new file" doc:"Check command for the new file. The command names the real path, or checks the whole config: nginx -t. The helper puts the new file in place and runs the command. When the command fails, the old file comes back and the step fails."`
+	Validation *string        `yaml:"validate" json:"validate,omitempty" line:"check command for the new file" doc:"Check command for the new file. The command names the real path, or checks the whole config: nginx -t. winch puts the new file in place and runs the command. When the command fails, the old file comes back and the step fails."`
 	Absent     bool           `yaml:"absent" json:"absent,omitempty" doc:"Remove the file. A path of another kind fails the check."`
 	Replace    bool           `yaml:"replace" json:"replace,omitempty" line:"remove another kind of thing at path first" doc:"Remove another kind of thing at path first, such as a directory. Without it, such a thing fails the check."`
 }

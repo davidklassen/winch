@@ -227,7 +227,8 @@ func writeBlocks(out io.Writer, blocks []doc.Block) {
 				writeLines(out, in+marker, in+strings.Repeat(" ", len(marker)), item)
 			}
 		case doc.KindTable:
-			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+			var t strings.Builder
+			w := tabwriter.NewWriter(&t, 0, 0, 2, ' ', 0)
 			for _, row := range b.Rows {
 				// A line break in a cell continues the cell on a row of
 				// its own.
@@ -248,6 +249,9 @@ func writeBlocks(out io.Writer, blocks []doc.Block) {
 				}
 			}
 			w.Flush()
+			for line := range strings.Lines(t.String()) {
+				fmt.Fprintln(out, strings.TrimRight(line, " \n"))
+			}
 		}
 		prev = b
 	}
