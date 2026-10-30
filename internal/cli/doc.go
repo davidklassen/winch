@@ -66,11 +66,22 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	case isModule:
 		keys = d.Keys
 	default:
-		var names []string
+		var names, paths []string
 		for _, t := range ts {
 			names = append(names, t.Name)
+			if hasKeyPath(t.Keys, path) {
+				paths = append(paths, t.Name+"."+args[0])
+			}
 		}
-		printError(env.stderr, fmt.Sprintf("winch doc: unknown topic or module %q%s", name, yamlx.Suggest(name, append(names, module.Names()...))))
+		names = append(names, module.Names()...)
+		suggest := yamlx.Suggest(name, names)
+		if len(paths) > 0 {
+			if c := yamlx.Closest(args[0], names); c != "" {
+				paths = append([]string{c}, paths...)
+			}
+			suggest = yamlx.DidYouMean(paths...)
+		}
+		printError(env.stderr, fmt.Sprintf("winch doc: unknown topic or module %q%s", name, suggest))
 		return exitInvalid
 	}
 	if len(path) == 1 && i >= 0 {
@@ -121,6 +132,18 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 		writeKeys(env.stdout, k.Keys)
 	}
 	return exitOK
+}
+
+// hasKeyPath reports whether path names a key in keys, one part per level.
+func hasKeyPath(keys []doc.Key, path []string) bool {
+	for _, name := range path {
+		i := slices.IndexFunc(keys, func(k doc.Key) bool { return k.Name == name })
+		if i < 0 {
+			return false
+		}
+		keys = keys[i].Keys
+	}
+	return true
 }
 
 func writeIndex(out io.Writer, ts []doc.Topic) {

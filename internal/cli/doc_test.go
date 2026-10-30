@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -83,6 +84,13 @@ Keys:
   stable   integer  0         The seconds that the command must keep exiting 0.
   timeout  integer  60        The seconds that the gate has to pass.
 `},
+		{"pipeline.stages.parallelism", `pipeline.stages.parallelism: integer
+
+The maximum number of hosts that run the stage at the same time. Hosts
+start in inventory order. The next host starts when a host finishes the
+stage and its health gate passes. A failure stops new hosts from
+starting.
+`},
 		{"firewall.allow.from", `firewall.allow.from: string or list of strings
 
 An address or a network, or a list of them. IPv4 and IPv6 are allowed.
@@ -113,6 +121,11 @@ func TestDocInvalid(t *testing.T) {
 		{"unknown key", []string{"doc", "file.mdoe"}, `winch doc: file has no key "mdoe"; did you mean "mode"?`},
 		{"unknown key of a list element", []string{"doc", "firewall.allow.tpc"}, `winch doc: firewall.allow has no key "tpc"; did you mean "tcp"?`},
 		{"key of a key without keys", []string{"doc", "file.mode.x"}, `winch doc: file.mode has no key "x"`},
+		{"key path of a topic", []string{"doc", "stages.parallelism"}, `winch doc: unknown topic or module "stages"; did you mean "pipeline.stages.parallelism"?`},
+		{"key path of three topics", []string{"doc", "vars"}, `winch doc: unknown topic or module "vars"; did you mean "project.vars", "recipe.vars", or "step.vars"?`},
+		{"key path of two topics", []string{"doc", "name"}, `winch doc: unknown topic or module "name"; did you mean "project.name" or "step.name"?`},
+		{"topic name and key path", []string{"doc", "recipes"}, `winch doc: unknown topic or module "recipes"; did you mean "recipe" or "project.recipes"?`},
+		{"topic name and key paths", []string{"doc", "steps"}, `winch doc: unknown topic or module "steps"; did you mean "step", "project.steps", "pipeline.steps", or "recipe.steps"?`},
 		{"unknown module of a key", []string{"doc", "fiel.mode"}, `winch doc: unknown topic or module "fiel"; did you mean "file"?`},
 		{"two arguments", []string{"doc", "file", "dir"}, "winch: doc takes one topic, module, or key"},
 	}
@@ -123,6 +136,39 @@ func TestDocInvalid(t *testing.T) {
 				t.Errorf("exit %d, stdout %q, stderr %q, want %q", r.code, r.out, r.err, tt.want)
 			}
 		})
+	}
+}
+
+// spec: CLI
+func TestDocTopicKeyPaths(t *testing.T) {
+	dir, h := t.TempDir(), fakehost.New()
+	names := append(module.Names(), docTopics...)
+	checked := 0
+	for _, name := range docTopics {
+		r := winch(t, dir, h, false, "", "doc", name)
+		_, keys, ok := strings.Cut(r.out, "\nKeys:\n")
+		if !ok {
+			continue
+		}
+		keys, _, _ = strings.Cut(keys, "\n\n")
+		for line := range strings.Lines(keys) {
+			path := strings.Fields(line)[0]
+			arg := name + "." + path
+			r := winch(t, dir, h, false, "", "doc", arg)
+			if r.code != exitOK || !strings.HasPrefix(r.out, arg+": ") {
+				t.Errorf("winch doc %s: exit %d, stderr %q, stdout %q", arg, r.code, r.err, r.out)
+			}
+			if first, _, _ := strings.Cut(path, "."); !slices.Contains(names, first) {
+				r := winch(t, dir, h, false, "", "doc", path)
+				if !strings.Contains(r.err, strconv.Quote(arg)) {
+					t.Errorf("winch doc %s does not suggest %s: stderr %q", path, arg, r.err)
+				}
+			}
+			checked++
+		}
+	}
+	if checked == 0 {
+		t.Error("no topic page lists keys")
 	}
 }
 

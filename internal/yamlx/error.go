@@ -2,6 +2,7 @@ package yamlx
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -48,16 +49,38 @@ func (e *FieldError) Error() string {
 // Suggest returns `; did you mean "x"?` for the option closest to name, or ""
 // when no option is close.
 func Suggest(name string, options []string) string {
+	best := Closest(name, options)
+	if best == "" {
+		return ""
+	}
+	return DidYouMean(best)
+}
+
+// Closest returns the option closest to name, or "" when no option is close.
+func Closest(name string, options []string) string {
 	best, bestDist := "", len(name)/2+1
 	for _, o := range options {
 		if d := distance(name, o); d < bestDist {
 			best, bestDist = o, d
 		}
 	}
-	if best == "" {
-		return ""
+	return best
+}
+
+// DidYouMean returns `; did you mean "a", "b", or "c"?` for the options.
+func DidYouMean(options ...string) string {
+	q := make([]string, len(options))
+	for i, o := range options {
+		q[i] = strconv.Quote(o)
 	}
-	return fmt.Sprintf("; did you mean %q?", best)
+	last := len(q) - 1
+	switch last {
+	case 0:
+		return "; did you mean " + q[0] + "?"
+	case 1:
+		return "; did you mean " + q[0] + " or " + q[1] + "?"
+	}
+	return "; did you mean " + strings.Join(q[:last], ", ") + ", or " + q[last] + "?"
 }
 
 // distance is the edit distance of a and b, with a swap of two neighbors as
