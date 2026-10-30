@@ -374,6 +374,43 @@ func AddRecipient(dir, key string) (bool, error) {
 	return true, replaceFile(path, []byte(text))
 }
 
+// secretFiles returns the files that can hold a secret: the project file,
+// the inventories, and the recipes.
+func secretFiles(dir string, cfg *Config) ([]string, error) {
+	invs, err := list(dir, "inventories")
+	if err != nil {
+		return nil, err
+	}
+	recipes, err := recipeFiles(dir)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Concat([]string{cfg.file}, invs, recipes), nil
+}
+
+func HasSecrets(dir string) (bool, error) {
+	cfg, err := loadConfig(dir)
+	if err != nil {
+		return false, err
+	}
+	files, err := secretFiles(dir, cfg)
+	if err != nil {
+		return false, err
+	}
+	for _, file := range files {
+		n, err := parse(dir, file)
+		if err != nil {
+			return false, err
+		}
+		found := false
+		walkTags(n, func(t *yamlx.Node) { found = found || t.Tag == "!secret" })
+		if found {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Rekey encrypts every secret in winch.yaml, the inventories, and the recipes
 // again for the recipients in winch.yaml. It writes no file when a secret
 // fails. It returns the number of secrets and the files it rewrote.
@@ -386,15 +423,10 @@ func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, []st
 	if err != nil {
 		return 0, nil, err
 	}
-	invs, err := list(dir, "inventories")
+	files, err := secretFiles(dir, cfg)
 	if err != nil {
 		return 0, nil, err
 	}
-	recipes, err := recipeFiles(dir)
-	if err != nil {
-		return 0, nil, err
-	}
-	files := append(append([]string{cfg.file}, invs...), recipes...)
 	var ids []age.Identity
 	// next keeps one value that two places hold the same after rekey.
 	next := map[string]string{}
