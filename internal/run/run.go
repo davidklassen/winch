@@ -618,11 +618,17 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 }
 
 // dropCreated keeps in the missing user and dir of a cmd only those that no
-// earlier step creates.
+// earlier step creates, and in the missing tools only those whose package no
+// earlier pkg step installs.
 func (hr *hostRun) dropCreated(res *module.Result) {
 	res.Missing = slices.DeleteFunc(res.Missing, func(n string) bool {
 		d, ok := strings.CutPrefix(n, "dir ")
 		return hr.created[n] || ok && hr.dirs[d]
+	})
+	res.MissingTools = slices.DeleteFunc(res.MissingTools, func(t module.Tool) bool {
+		return slices.ContainsFunc(hr.pkgs, func(e pkgStep) bool {
+			return !e.pkg.Absent && (slices.Contains(e.pkg.Name, t.Package) || slices.Contains(e.others, t.Package))
+		})
 	})
 }
 

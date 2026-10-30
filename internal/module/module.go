@@ -24,6 +24,12 @@ const (
 	Unknown Status = "unknown"
 )
 
+// Tool is a program or a file of a package, such as nft of nftables.
+type Tool struct {
+	Name    string `json:"name"`
+	Package string `json:"package"`
+}
+
 type Action string
 
 const (
@@ -53,8 +59,11 @@ type Result struct {
 	MissingUnitFiles []string `json:"missing_unit_files,omitempty"`
 	// Missing are the user and the dir of a cmd that runs, as "user <name>"
 	// or "dir <path>", that do not exist on the host.
-	Missing  []string `json:"missing,omitempty"`
-	Deferred bool     `json:"deferred,omitempty"`
+	Missing []string `json:"missing,omitempty"`
+	// MissingTools are the programs and files that the step needs and the
+	// host lacks.
+	MissingTools []Tool `json:"missing_tools,omitempty"`
+	Deferred     bool   `json:"deferred,omitempty"`
 	// Validates is set on a change for which apply runs the validate command
 	// of the step.
 	Validates bool `json:"validates,omitempty"`
