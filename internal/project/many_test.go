@@ -534,6 +534,10 @@ func TestMatchComputedDefault(t *testing.T) {
 		{name: "get", content: `!expr 'string(get(match("mon")[0].vars, "role") == nil)'`, want: computed},
 		{name: "json", content: `!expr 'json(match("mon"))'`, want: computed},
 		{name: "template json", tmpl: "{{ json .vars.monit_peers }}", want: computed},
+		{name: "template printf", tmpl: "{{ printf \"%v\" .vars.monit_peers }}", want: computed},
+		{name: "template peer", tmpl: "{{ range .vars.monit_peers }}{{ . }}{{ end }}", want: computed},
+		{name: "template printf quoted", tmpl: "{{ printf \"%q\" .vars.monit_peers }}", want: computed},
+		{name: "template html", tmpl: "{{ range .vars.monit_peers }}{{ html . }}{{ end }}", want: computed},
 		{name: "values", content: `!expr 'string(len(filter(values(match("mon")[0].vars), # != "")))'`, want: computed},
 		{name: "toPairs", content: `!expr 'string(len(toPairs(match("mon")[0].vars)))'`, want: computed},
 		{name: "keys", content: `!expr 'join(keys(match("mon")[0].vars), ",")'`, want: `data="mail_server,monit_peers,role"`},
@@ -560,6 +564,64 @@ func TestMatchComputedDefault(t *testing.T) {
 			}
 			if got := evalSteps(t, p); !strings.Contains(got, tt.want) {
 				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Variables
+func TestPeerVarsByName(t *testing.T) {
+	const notByName = "recipes/monit/templates/peers.tmpl:1:%d: a read of vars names the variable, such as vars.nginx_port"
+	tests := []struct {
+		name string
+		tmpl string
+		want string
+	}{
+		{name: "json", tmpl: "{{ range .vars.monit_peers }}{{ json .vars }}{{ end }}", want: fmt.Sprintf(notByName, 38)},
+		{name: "printf", tmpl: "{{ range .vars.monit_peers }}{{ printf \"%v\" .vars }}{{ end }}", want: fmt.Sprintf(notByName, 45)},
+		{name: "range", tmpl: "{{ range .vars.monit_peers }}{{ range $k, $v := .vars }}{{ $k }}{{ end }}{{ end }}", want: fmt.Sprintf(notByName, 49)},
+		{name: "variable", tmpl: "{{ range $p := .vars.monit_peers }}{{ json $p.vars }}{{ end }}", want: fmt.Sprintf(notByName, 46)},
+		{name: "chain", tmpl: "{{ json (index .vars.monit_peers 0).vars }}", want: fmt.Sprintf(notByName, 36)},
+		{name: "get", tmpl: "{{ range .vars.monit_peers }}{{ json (get . \"vars\") }}{{ end }}", want: fmt.Sprintf(notByName, 45)},
+		{name: "index", tmpl: "{{ range .vars.monit_peers }}{{ json (index . \"vars\") }}{{ end }}", want: fmt.Sprintf(notByName, 47)},
+		{name: "get by a computed key", tmpl: "{{ range .vars.monit_peers }}{{ json (get .vars .name) }}{{ end }}", want: fmt.Sprintf(notByName, 43)},
+		{name: "defined template", tmpl: "{{ define \"p\" }}{{ json .vars }}{{ end }}{{ range .vars.monit_peers }}{{ template \"p\" . }}{{ end }}", want: fmt.Sprintf(notByName, 25)},
+		{name: "with", tmpl: "{{ range .vars.monit_peers }}{{ with .vars }}{{ .mail_server }}{{ end }}{{ end }}", want: fmt.Sprintf(notByName, 38)},
+		{name: "print", tmpl: "{{ range .vars.monit_peers }}{{ .vars }}{{ end }}", want: fmt.Sprintf(notByName, 33)},
+		{name: "top variable", tmpl: "{{ $h := index .vars.monit_peers 0 }}{{ json $h.vars }}", want: fmt.Sprintf(notByName, 48)},
+		{name: "get of a parenthesized map", tmpl: "{{ range .vars.monit_peers }}{{ get (.vars) \"mail_server\" }}{{ end }}", want: fmt.Sprintf(notByName, 38)},
+		{name: "by name", tmpl: "{{ range .vars.monit_peers }}{{ .vars.mail_server }}{{ end }}", want: `data="false"`},
+		{name: "index of vars by name", tmpl: "{{ range .vars.monit_peers }}{{ index . \"vars\" \"mail_server\" }}{{ end }}", want: `data="false"`},
+		{name: "variable named vars", tmpl: "{{ .vars.vars }}", want: `data="a"`},
+		{name: "index by name", tmpl: "{{ range .vars.monit_peers }}{{ index .vars \"mail_server\" }}{{ end }}", want: `data="false"`},
+		{name: "get by name", tmpl: "{{ range $p := .vars.monit_peers }}{{ get $p.vars \"mail_server\" }}{{ end }}", want: `data="false"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := with(matchFiles, map[string]string{
+				"winch.yaml":                         matchFiles["winch.yaml"] + "  vars: a\n",
+				"inventories/test.yaml":              "hosts:\n  mail.acme.com:\n    vars:\n      mail_server: true\n  monitor.acme.com: {}\ngroups:\n  mon:\n    hosts: [monitor.acme.com]\n",
+				"pipelines/site.yaml":                "stages:\n  - name: monit\n    hosts: mail.acme.com\n    steps:\n      - recipe: monit\n        vars:\n          monit_peers: !expr 'match(\"mon\")'\n",
+				"recipes/monit/recipe.yaml":          "vars:\n  monit_peers: []\nsteps:\n  - file:\n      path: /x\n      template: peers.tmpl\n",
+				"recipes/monit/templates/peers.tmpl": tt.tmpl,
+			})
+			dir := writeProject(t, files)
+			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+			_, verr := Validate(dir, "", nil)
+			var got, vgot string
+			if err != nil {
+				got = err.Error()
+			} else {
+				got = evalSteps(t, p)
+			}
+			if verr != nil {
+				vgot = verr.Error()
+			}
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+			if err != nil && !strings.Contains(vgot, tt.want) || err == nil && verr != nil {
+				t.Errorf("Validate error = %v, want the Load error %v", verr, err)
 			}
 		})
 	}

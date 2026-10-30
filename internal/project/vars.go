@@ -543,8 +543,10 @@ var missingKeyRe = regexp.MustCompile(`map has no entry for key "([a-z0-9_]+)"`)
 // render executes t with the data of e. A read of a computed default of a
 // match() host fails as a missing key. get gives nothing for a missing key,
 // so when the data holds markers, a second run with the markers fails where
-// get reads one. When the second run prints the marker of a missing key, the
-// error names the default and the host instead.
+// get reads one. A template that prints a whole host, in any encoding, gives
+// other output in the second run and fails too. When the second run prints
+// the marker of a missing key, the error names the default and the host
+// instead.
 func (e *Env) render(t *template.Template) (string, error) {
 	data := e.templateData()
 	stripped, found := withoutComputed(data)
@@ -558,6 +560,12 @@ func (e *Env) render(t *template.Template) (string, error) {
 		}
 	}
 	if err == nil {
+		if found && full.String() != b.String() {
+			if err := computedError(full.String()); err != nil {
+				return "", err
+			}
+			return "", computedIn(data)
+		}
 		return b.String(), nil
 	}
 	var ne nullError
