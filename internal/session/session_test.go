@@ -673,6 +673,50 @@ func TestOpenRetry(t *testing.T) {
 }
 
 // spec: Remote execution/Sessions
+func TestOpenRetrySilentClose(t *testing.T) {
+	// At log level ERROR, ssh prints nothing for a close after the banner,
+	// as while sshd executes itself again after a reload. At QUIET, it prints
+	// nothing for a refused login either.
+	tests := []struct {
+		name, level, stdout string
+		code                int
+		retry               bool
+	}{
+		{"error", "ERROR", "", 255, true},
+		{"quiet", "QUIET", "", 255, false},
+		{"fatal", "FATAL", "", 255, false},
+		{"info", "INFO", "", 255, false},
+		{"no output from the script", "ERROR", "", 1, false},
+		{"no output after have", "ERROR", "have", 255, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			t.Setenv("SSH_G", "hostname web1\nport 22\nloglevel "+tt.level)
+			failed := failOnce(t, tt.stdout, "", tt.code)
+			_, err := open(t, stateDir, []helperbin.Binary{recordingHelper("arm64")})
+			second, again := os.Stat(failed + ".again")
+			if !tt.retry {
+				if err == nil || again == nil {
+					t.Errorf("error = %v, second start: %v; want a failure without a retry", err, again)
+				}
+				return
+			}
+			if err != nil || again != nil {
+				t.Fatalf("error = %v, second start: %v; want a retry that works", err, again)
+			}
+			first, err := os.Stat(failed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gap := second.ModTime().Sub(first.ModTime()); gap < retryDelay {
+				t.Errorf("second start %s after the first, want at least %s", gap, retryDelay)
+			}
+		})
+	}
+}
+
+// spec: Remote execution/Sessions
 func TestOpenRetryCancelled(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
 	failed := failOnce(t, "", closed, 255)

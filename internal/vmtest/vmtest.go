@@ -479,9 +479,8 @@ func (vm *VM) Run(ctx context.Context, command string) (string, error) {
 		return before + after, started, err
 	}
 	out, started, err := ssh()
-	// The lab's LogLevel ERROR hides the message of a close after the
-	// banner, so ssh exits 255 with no output.
-	if exit, ok := errors.AsType[*exec.ExitError](err); ok && !started && (exit.ExitCode() == 255 && strings.TrimSpace(out) == "" || session.Dropped(exit.ExitCode(), out)) {
+	// The lab's ssh_config sets LogLevel ERROR.
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok && !started && session.Dropped(exit.ExitCode(), out, "ERROR") {
 		select {
 		case <-ctx.Done():
 		case <-time.After(2 * time.Second):
