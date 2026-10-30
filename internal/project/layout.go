@@ -52,21 +52,29 @@ func readLayout(dir string, cfg *Config) (layout, error) {
 	files, err := list(dir, "inventories")
 	errs = append(errs, err)
 	for _, f := range files {
-		ly.inventories = append(ly.inventories, part{name: strings.TrimSuffix(path.Base(f), ".yaml"), file: f})
+		errs = append(errs, addFile(&ly.inventories, strings.TrimSuffix(path.Base(f), path.Ext(f)), f, "inventory"))
 	}
 	files, err = list(dir, "pipelines")
 	errs = append(errs, err)
 	for _, f := range files {
-		ly.pipelines = append(ly.pipelines, part{name: strings.TrimSuffix(path.Base(f), ".yaml"), file: f})
+		errs = append(errs, addFile(&ly.pipelines, strings.TrimSuffix(path.Base(f), path.Ext(f)), f, "pipeline"))
+	}
+	files, err = recipeFiles(dir)
+	errs = append(errs, err)
+	for _, f := range files {
+		errs = append(errs, addFile(&ly.recipes, path.Base(path.Dir(f)), f, "recipe"))
 	}
 	entries, err := os.ReadDir(filepath.Join(dir, "recipes"))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		errs = append(errs, fmt.Errorf("read recipes: %w", err))
 	}
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && !slices.ContainsFunc(ly.recipes, func(p part) bool { return p.name == e.Name() }) {
 			ly.recipes = append(ly.recipes, part{name: e.Name(), file: "recipes/" + e.Name() + "/recipe.yaml"})
 		}
+	}
+	for _, parts := range [][]part{ly.inventories, ly.pipelines, ly.recipes} {
+		slices.SortFunc(parts, func(a, b part) int { return strings.Compare(a.name, b.name) })
 	}
 	errs = append(errs,
 		addKeys(&ly.inventories, cfg.Inventories, "inventories", "inventory"),
@@ -75,6 +83,16 @@ func readLayout(dir string, cfg *Config) (layout, error) {
 		addTop(&ly.inventories, cfg, "inventories", "hosts", "groups"),
 		addTop(&ly.pipelines, cfg, "pipelines", "steps", "handlers", "parallelism", "health"))
 	return ly, errors.Join(errs...)
+}
+
+// addFile adds the part name in file to parts. A second file for one name is
+// an error.
+func addFile(parts *[]part, name, file, kind string) error {
+	if i := slices.IndexFunc(*parts, func(p part) bool { return p.name == name }); i >= 0 {
+		return fmt.Errorf("%s %q is both %s and %s; keep one of the two", kind, name, (*parts)[i].file, file)
+	}
+	*parts = append(*parts, part{name: name, file: file})
+	return nil
 }
 
 // addTop makes the keys of winch.yaml in keys the only part, with the name of
@@ -114,8 +132,11 @@ func addKeys(parts *[]part, n *yamlx.Node, key, kind string) error {
 	var errs []error
 	for _, p := range n.Pairs {
 		if i := slices.IndexFunc(*parts, func(o part) bool { return o.name == p.Key }); i >= 0 {
-			// A recipe directory without recipe.yaml clashes too.
-			other := strings.TrimSuffix((*parts)[i].file, "recipe.yaml")
+			other := (*parts)[i].file
+			if kind == "recipe" {
+				// A recipe directory without a recipe file clashes too.
+				other = path.Dir(other) + "/"
+			}
 			errs = append(errs, yamlx.Errorf(p.KeyPos, "%s %q is also %s; keep one of the two", kind, p.Key, other))
 			continue
 		}
@@ -147,8 +168,9 @@ func (ly layout) inventory(name string) (part, error) {
 	if i := slices.IndexFunc(ly.inventories, func(p part) bool { return p.name == name }); i >= 0 {
 		return ly.inventories[i], nil
 	}
-	if strings.ContainsRune(name, '/') || strings.HasSuffix(name, ".yaml") {
-		return part{}, fmt.Errorf("unknown inventory %q; name an inventory without its directory and .yaml, such as %q", name, strings.TrimSuffix(path.Base(name), ".yaml"))
+	base := strings.TrimSuffix(strings.TrimSuffix(path.Base(name), ".yaml"), ".yml")
+	if strings.ContainsRune(name, '/') || base != path.Base(name) {
+		return part{}, fmt.Errorf("unknown inventory %q; name an inventory without its directory and extension, such as %q", name, base)
 	}
 	return part{}, fmt.Errorf("unknown inventory %q%s", name, yamlx.Suggest(name, partNames(ly.inventories)))
 }

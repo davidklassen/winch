@@ -1,0 +1,1 @@
+recipe "pkg" is both recipes/pkg/recipe.yaml and recipes/pkg/recipe.yml; keep one of the two

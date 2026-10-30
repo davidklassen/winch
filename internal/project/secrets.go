@@ -602,6 +602,10 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// A layout error can hide the inventory to write into.
+	if _, err := readLayout(dir, cfg); err != nil {
+		return "", err
+	}
 	// The reads of the parts that load are enough: a broken template in
 	// another recipe does not block a new secret. The load errors show only
 	// when the variable is not found, as they may hide its read.

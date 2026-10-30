@@ -172,7 +172,18 @@ func TestLoad(t *testing.T) {
 		{name: "host-name-quoted", files: map[string]string{"inventories/test.yaml": "hosts:\n  \"1234\": {}\n  web2: {}\ngroups:\n  db:\n    hosts: [\"1234\"]\n"}},
 		{name: "unknown-pipeline", pipeline: "sit"},
 		{name: "bad-pipeline-name", pipeline: "../winch"},
-		{name: "unknown-pipeline-yml", pipeline: "web", files: map[string]string{"pipelines/web.yml": stage("")}},
+		{name: "pipeline-yml", pipeline: "web", files: map[string]string{"pipelines/web.yml": stage("      - file:\n          path: /etc/motd\n          content: hi\n")}},
+		{name: "pipeline-yaml-and-yml", files: map[string]string{"pipelines/site.yml": stage("")}},
+		{name: "inventory-yml", files: map[string]string{
+			"winch.yaml":              "name: acme\ninventory: staging\n",
+			"inventories/staging.yml": "hosts:\n  web2: {}\n",
+		}},
+		{name: "inventory-yaml-and-yml", files: map[string]string{"inventories/test.yml": "hosts:\n  web2: {}\n"}},
+		{name: "inventory-key-and-yml", files: map[string]string{
+			"winch.yaml":            "name: acme\ninventory: test\ninventories:\n  test:\n    hosts: {}\n",
+			"inventories/test.yaml": "",
+			"inventories/test.yml":  "hosts: {}\n",
+		}},
 		{name: "duplicate-stage", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps: []\n  - name: a\n    hosts: all\n    steps: []\n"}},
 		{name: "pipeline-without-stages", files: map[string]string{"pipelines/site.yaml": "stages: []\n"}},
 		{name: "pipeline-steps", files: map[string]string{"pipelines/site.yaml": "steps:\n  - file:\n      path: /etc/motd\n      content: hi\n"}},
@@ -337,30 +348,39 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-// spec: CLI
-func TestValidateNamesYML(t *testing.T) {
+// spec: Project layout; CLI
+func TestValidateReadsYML(t *testing.T) {
 	dir := writeProject(t, map[string]string{
-		"pipelines/web.yml":           stage(""),
-		"recipes/nginx/recipe.yaml":   "steps: []\n",
+		"pipelines/web.yml":           stage("      - dir:\n          path: /srv/a\n          mode: \"0640\"\n"),
+		"recipes/nginx/recipe.yml":    "steps: []\n",
 		"recipes/nginx/vars.yml":      "vars: {}\n",
 		"recipes/nginx/files/a.yml":   "a: 1\n",
 		"recipes/nginx/templates.yml": "a: 1\n",
 	})
 	warnings, err := Validate(dir, "", nil)
+	want := `pipelines/web.yml:7:17: mode: owner and group can read the directory but not enter it; use "0750"`
+	if err != nil || len(warnings) != 1 || warnings[0].Error() != want {
+		t.Errorf("Validate = %v, %v; want [%s]", warnings, err, want)
+	}
+}
+
+// spec: Project layout
+func TestReadLayoutOrder(t *testing.T) {
+	dir := writeProject(t, map[string]string{
+		"pipelines/a-b.yaml":    stage(""),
+		"pipelines/a.yml":       stage(""),
+		"recipes/b/recipe.yaml": "steps: []\n",
+		"recipes/a/files/x":     "x",
+	})
+	ly, err := readLayout(dir, &Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []string
-	for _, w := range warnings {
-		got = append(got, w.Error())
+	if got, want := partNames(ly.pipelines), []string{"a", "a-b", "site"}; !slices.Equal(got, want) {
+		t.Errorf("pipelines %v, want %v", got, want)
 	}
-	want := []string{
-		"pipelines/web.yml:1:1: winch reads only .yaml files in pipelines/; rename it to web.yaml",
-		"recipes/nginx/templates.yml:1:1: winch reads only recipe.yaml in a recipe directory",
-		"recipes/nginx/vars.yml:1:1: winch reads only recipe.yaml in a recipe directory",
-	}
-	if !slices.Equal(got, want) {
-		t.Errorf("warnings\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	if got, want := partNames(ly.recipes), []string{"a", "b"}; !slices.Equal(got, want) {
+		t.Errorf("recipes %v, want %v", got, want)
 	}
 }
 
@@ -461,7 +481,10 @@ func TestLoadRecipes(t *testing.T) {
 		}},
 		{name: "recipe-yml", files: map[string]string{
 			"pipelines/site.yaml":      stage("      - recipe: empty\n"),
-			"recipes/empty/recipe.yml": "steps: []\n",
+			"recipes/empty/recipe.yml": "steps:\n  - pkg:\n      name: curl\n",
+		}},
+		{name: "recipe-yaml-and-yml", files: map[string]string{
+			"recipes/pkg/recipe.yml": "steps: []\n",
 		}},
 		{name: "recipe-unknown-key", files: map[string]string{
 			"recipes/nginx/recipe.yaml": "stpes: []\n",

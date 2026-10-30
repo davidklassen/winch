@@ -935,14 +935,14 @@ func TestRekeyEveryInventory(t *testing.T) {
 	dir := writeProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + next.id.Recipient().String() + "]\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + k.encrypt(t, "test-pw") + "\n",
-		"inventories/prod.yaml": "hosts:\n  web2:\n    vars:\n      pw: !secret " + k.encrypt(t, "prod-pw") + "\n",
+		"inventories/prod.yml":  "hosts:\n  web2:\n    vars:\n      pw: !secret " + k.encrypt(t, "prod-pw") + "\n",
 		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
 	n, files, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
-	if want := []string{"inventories/prod.yaml", "inventories/test.yaml"}; err != nil || n != 2 || !slices.Equal(files, want) {
+	if want := []string{"inventories/prod.yml", "inventories/test.yaml"}; err != nil || n != 2 || !slices.Equal(files, want) {
 		t.Fatalf("Rekey = %d secrets in %v, %v; want 2 in %v", n, files, err, want)
 	}
-	for name, plain := range map[string]string{"inventories/prod.yaml": "prod-pw", "inventories/test.yaml": "test-pw"} {
+	for name, plain := range map[string]string{"inventories/prod.yml": "prod-pw", "inventories/test.yaml": "test-pw"} {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatal(err)
@@ -1180,6 +1180,27 @@ func TestWriteSecretErrors(t *testing.T) {
 				t.Errorf("inventory changed:\n%s", data)
 			}
 		})
+	}
+}
+
+// spec: Variables/Secrets (winch secret generate); Project layout
+func TestWriteSecretTwoInventoryFiles(t *testing.T) {
+	k := newKey(t)
+	inv := "hosts:\n  web1:\n"
+	dir := writeProject(t, map[string]string{
+		"winch.yaml":            "name: acme\nrecipients:\n  - " + k.id.Recipient().String() + "\n",
+		"inventories/test.yaml": inv,
+		"inventories/test.yml":  inv,
+		"pipelines/site.yaml":   readsPipeline("pw"),
+	})
+	_, err := WriteSecret(dir, "", "", "pw", "hunter2")
+	if want := `inventory "test" is both inventories/test.yaml and inventories/test.yml; keep one of the two`; err == nil || err.Error() != want {
+		t.Errorf("err %v; want %q", err, want)
+	}
+	for _, name := range []string{"test.yaml", "test.yml"} {
+		if data, _ := os.ReadFile(filepath.Join(dir, "inventories", name)); string(data) != inv {
+			t.Errorf("%s changed:\n%s", name, data)
+		}
 	}
 }
 

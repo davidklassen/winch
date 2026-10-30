@@ -369,30 +369,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err != nil {
 		return nil, err
 	}
-	yml, err := ymlFiles(dir)
-	return slices.Concat(warnings, l.warnings, secretWarnings, purgeWarnings(invs, pls, pls), stale, yml), err
-}
-
-// ymlFiles returns a warning for each .yml file in pipelines/ and in a recipe
-// directory. winch reads neither.
-func ymlFiles(dir string) ([]*yamlx.Error, error) {
-	fsys := os.DirFS(dir)
-	pipelines, err := fs.Glob(fsys, "pipelines/*.yml")
-	if err != nil {
-		return nil, err
-	}
-	recipes, err := fs.Glob(fsys, "recipes/*/*.yml")
-	if err != nil {
-		return nil, err
-	}
-	var out []*yamlx.Error
-	for _, file := range pipelines {
-		out = append(out, yamlx.Errorf(yamlx.Pos{File: file, Line: 1, Col: 1}, "winch reads only .yaml files in pipelines/; rename it to %s.yaml", strings.TrimSuffix(path.Base(file), ".yml")))
-	}
-	for _, file := range recipes {
-		out = append(out, yamlx.Errorf(yamlx.Pos{File: file, Line: 1, Col: 1}, "winch reads only recipe.yaml in a recipe directory"))
-	}
-	return out, nil
+	return slices.Concat(warnings, l.warnings, secretWarnings, purgeWarnings(invs, pls, pls), stale), nil
 }
 
 type loader struct {
@@ -594,7 +571,7 @@ func notifyStage(st Step, s Stage, runs map[*Recipe]map[string]bool, pipeline st
 	return errors.Join(errs...)
 }
 
-// list returns the .yaml files in a directory of the project, relative to dir.
+// list returns the .yaml and .yml files in a directory of the project, relative to dir.
 func list(dir, sub string) ([]string, error) {
 	entries, err := os.ReadDir(filepath.Join(dir, sub))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -605,7 +582,7 @@ func list(dir, sub string) ([]string, error) {
 	}
 	var out []string
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".yaml") {
+		if ext := path.Ext(e.Name()); !e.IsDir() && (ext == ".yaml" || ext == ".yml") {
 			out = append(out, sub+"/"+e.Name())
 		}
 	}
@@ -715,10 +692,6 @@ func (l *loader) loadPipeline(name string) (*Pipeline, error) {
 	}
 	i := slices.IndexFunc(l.layout.pipelines, func(p part) bool { return p.name == name })
 	if i < 0 {
-		yml := "pipelines/" + name + ".yml"
-		if _, err := os.Stat(filepath.Join(l.dir, yml)); err == nil {
-			return nil, fmt.Errorf("unknown pipeline %q; winch reads only .yaml files: rename %s to %s.yaml", name, yml, name)
-		}
 		return nil, fmt.Errorf("unknown pipeline %q%s", name, yamlx.Suggest(name, partNames(l.layout.pipelines)))
 	}
 	return l.decodePipeline(l.layout.pipelines[i])

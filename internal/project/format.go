@@ -105,12 +105,18 @@ func stepRank(key string) int {
 	return slices.Index(stepFields, "recipe")
 }
 
-// recipeFiles returns the recipe.yaml file of each recipe, relative to dir.
+// recipeFiles returns the recipe.yaml and recipe.yml files of the recipes,
+// relative to dir.
 func recipeFiles(dir string) ([]string, error) {
-	paths, err := filepath.Glob(filepath.Join(dir, "recipes", "*", "recipe.yaml"))
-	if err != nil {
-		return nil, err
+	var paths []string
+	for _, base := range []string{"recipe.yaml", "recipe.yml"} {
+		found, err := filepath.Glob(filepath.Join(dir, "recipes", "*", base))
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, found...)
 	}
+	slices.Sort(paths)
 	var files []string
 	for _, p := range paths {
 		rel, err := filepath.Rel(dir, p)

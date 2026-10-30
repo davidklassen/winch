@@ -67,8 +67,8 @@ pipelines:
                     command: "true"
                 name: Y
 `,
-		"inventories/hosts.yaml": "hosts:\n    web1: {}\n    web2:\n        vars:\n            motd_text: hi\n",
-		"pipelines/short.yaml": `steps:
+		"inventories/hosts.yml": "hosts:\n    web1: {}\n    web2:\n        vars:\n            motd_text: hi\n",
+		"pipelines/short.yml": `steps:
 -   notify: z
     pkg:
         name: tree
@@ -94,7 +94,7 @@ handlers:
                 command: "true"
             name: Reload
 `,
-		"recipes/motd/recipe.yaml": `vars:
+		"recipes/motd/recipe.yml": `vars:
     motd_text: hello
 steps:
 -   notify: done
@@ -108,13 +108,12 @@ handlers:
         name: Done
 `,
 		"recipes/motd/files/data.yaml": "a:\n    b: 1\n",
-		"pipelines/old.yml":            "a:\n    b: 1\n",
 	}
 	dir := vmtest.WriteProject(t, files)
 	before := planOf(t, dir)
 
 	r := winch(t, dir, fakehost.New(), false, "", "fmt")
-	want := "inventories/hosts.yaml\npipelines/short.yaml\npipelines/site.yaml\nrecipes/motd/recipe.yaml\nwinch.yaml\n"
+	want := "inventories/hosts.yml\npipelines/short.yml\npipelines/site.yaml\nrecipes/motd/recipe.yml\nwinch.yaml\n"
 	if r.code != exitOK || r.out != want || r.err != "" {
 		t.Fatalf("fmt: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
@@ -155,8 +154,8 @@ pipelines:
           cmd:
             command: "true"
 `,
-		"inventories/hosts.yaml": "hosts:\n  web1: {}\n  web2:\n    vars:\n      motd_text: hi\n",
-		"pipelines/short.yaml": `steps:
+		"inventories/hosts.yml": "hosts:\n  web1: {}\n  web2:\n    vars:\n      motd_text: hi\n",
+		"pipelines/short.yml": `steps:
   - pkg:
       name: tree
     notify: z
@@ -182,7 +181,7 @@ handlers:
           cmd:
             command: "true"
 `,
-		"recipes/motd/recipe.yaml": `vars:
+		"recipes/motd/recipe.yml": `vars:
   motd_text: hello
 steps:
   - file:
@@ -196,7 +195,6 @@ handlers:
         command: "true"
 `,
 		"recipes/motd/files/data.yaml": files["recipes/motd/files/data.yaml"],
-		"pipelines/old.yml":            files["pipelines/old.yml"],
 	}
 	for name, want := range formatted {
 		if got := readFile(t, filepath.Join(dir, name)); got != want {
