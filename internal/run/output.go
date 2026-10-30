@@ -1,6 +1,7 @@
 package run
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/davidklassen/winch/internal/diff"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/secret"
 )
 
@@ -172,7 +174,28 @@ func (p *Plan) WriteNotes(out *color.Writer) {
 		for _, t := range p.goneThens[h.Name] {
 			fmt.Fprintf(out, "%s: a pending then of %s %s matches no step and will not run\n", h.Name, secret.Printable(t.Module), secret.Printable(strings.Join(t.Mains, ", ")))
 		}
+		for _, c := range p.gone[h.Name] {
+			fmt.Fprintf(out, "%s: %s and will not run\n", h.Name, secret.Printable(goneNote(c)))
+		}
 	}
+}
+
+// goneNote names the gate or assert of record c that the project no longer
+// has.
+func goneNote(c protocol.Check) string {
+	if c.Step == 0 {
+		return "a pending health gate of stage " + c.Stage + " matches no gate"
+	}
+	var place string
+	switch {
+	case c.Handler != "":
+		place = "handler " + cmp.Or(c.Recipe, c.Stage) + "." + c.Handler
+	case c.Recipe != "":
+		place = "recipe " + c.Recipe
+	default:
+		place = "stage " + c.Stage
+	}
+	return fmt.Sprintf("a pending assert of %s step %d matches no assert", place, c.Step)
 }
 
 var markStyles = map[string]color.Style{"+": color.Green, "-": color.Red, "~": color.Yellow, "!": color.Cyan, "*": color.Cyan}

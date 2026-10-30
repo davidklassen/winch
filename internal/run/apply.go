@@ -128,11 +128,12 @@ func (t text) Done(o *Outcome) {
 		len(o.Changed), o.Unchanged(), failures(len(o.Failed)))
 }
 
-// Apply applies every stage of a plan on the hosts with a change in the plan.
-// A stage can undo what an earlier stage does, so a stage without a change
-// runs too. Each step is checked again right before it is applied, and the
-// handlers follow what apply changes. The hosts of a stage run at the same
-// time, at most the stage's parallelism.
+// Apply applies every stage of a plan on the hosts with a change in the plan,
+// and only removes the gone records on the other hosts. A stage can undo what
+// an earlier stage does, so a stage without a change runs too. Each step is
+// checked again right before it is applied, and the handlers follow what apply
+// changes. The hosts of a stage run at the same time, at most the stage's
+// parallelism.
 func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outcome {
 	rep = &lockedReporter{rep: rep}
 	o := &Outcome{Hosts: len(plan.Hosts), Changed: map[string]bool{}, Failed: map[string]error{}}
@@ -147,26 +148,52 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 		}
 	}
+	// dial opens a session and removes the records of the host that the plan
+	// found gone.
+	dial := func(h project.Host) (Conn, error) {
+		plan.opts.progress().Busy(h.Name, "connecting")
+		c, err := connect(context.WithoutCancel(ctx), plan.Project, h)
+		if err != nil {
+			return nil, fmt.Errorf("failed: %w", err)
+		}
+		for _, gone := range plan.gone[h.Name] {
+			if err := c.Passed(context.WithoutCancel(ctx), gone); err != nil {
+				c.Close() //nolint:errcheck // the host fails already
+				return nil, fmt.Errorf("failed: %w", err)
+			}
+		}
+		for _, gone := range plan.goneThens[h.Name] {
+			if err := c.DropThen(context.WithoutCancel(ctx), gone); err != nil {
+				c.Close() //nolint:errcheck // the host fails already
+				return nil, fmt.Errorf("failed: %w", err)
+			}
+		}
+		return c, nil
+	}
+	var remove []project.Host
+	for _, h := range plan.Hosts {
+		if !toApply[h.Name] && plan.removes(h.Name) {
+			remove = append(remove, h)
+		}
+	}
+	for i, err := range rollout(ctx, "", remove, 0, plan.opts, dial, func(_ int, c Conn) error {
+		if err := c.Close(); err != nil {
+			return fmt.Errorf("failed: %w", err)
+		}
+		return nil
+	}) {
+		if err != nil {
+			o.Failed[remove[i].Name] = err
+			rep.Host(HostEvent{Phase: "apply", Host: remove[i].Name, Status: hostStatus(err), Error: err.Error()})
+		}
+	}
 	runs := map[string]*hostApply{}
 	open := func(h project.Host) (Conn, error) {
 		a := runs[h.Name]
 		if a.conn == nil {
-			a.progress.Busy(h.Name, "connecting")
-			c, err := connect(context.WithoutCancel(ctx), plan.Project, h)
+			c, err := dial(h)
 			if err != nil {
-				return nil, fmt.Errorf("failed: %w", err)
-			}
-			for _, gone := range plan.gone[h.Name] {
-				if err := c.Passed(context.WithoutCancel(ctx), gone); err != nil {
-					c.Close() //nolint:errcheck // the host fails already
-					return nil, fmt.Errorf("failed: %w", err)
-				}
-			}
-			for _, gone := range plan.goneThens[h.Name] {
-				if err := c.DropThen(context.WithoutCancel(ctx), gone); err != nil {
-					c.Close() //nolint:errcheck // the host fails already
-					return nil, fmt.Errorf("failed: %w", err)
-				}
+				return nil, err
 			}
 			a.conn = c
 		}
