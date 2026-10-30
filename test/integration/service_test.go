@@ -575,6 +575,20 @@ systemctl daemon-reload`,
 			NoConverge:   true,
 		},
 		{
+			// systemd cancels the reload job when the unit ends before its
+			// ExecReload ends, and systemctl fails.
+			Name: "reloaded on a unit that ends during its reload fails",
+			Setup: `systemctl start winch-test
+mkdir /etc/systemd/system/winch-test.service.d
+printf '[Service]\nExecReload=/bin/sh -c "kill $MAINPID; sleep 1"\n' > /etc/systemd/system/winch-test.service.d/reload.conf
+systemctl daemon-reload`,
+			Args:         &module.Service{Name: "winch-test", Reloaded: true},
+			Want:         change("reload"),
+			WantApplyErr: "winch-test.service is not running after its reload: ",
+			Fix:          "rm -r /etc/systemd/system/winch-test.service.d && systemctl daemon-reload",
+			NoConverge:   true,
+		},
+		{
 			Name:       "reloaded restarts a unit without ExecReload",
 			Setup:      `systemctl start winch-test && systemctl show -P InvocationID winch-test > /tmp/inv`,
 			Args:       &module.Service{Name: "winch-test", Reloaded: true},
@@ -708,6 +722,15 @@ systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
 			Args:         &module.Service{Name: "winch-boom", Reloaded: true},
 			Want:         change("reload"),
 			WantApplyErr: "\nboom on reload",
+			Fix:          "rm /tmp/boom",
+			NoConverge:   true,
+		},
+		{
+			Name:         "a failed reload of a unit that keeps running names the unit and the reload",
+			Setup:        `systemctl start winch-boom && echo boom on reload > /tmp/boom`,
+			Args:         &module.Service{Name: "winch-boom", Reloaded: true},
+			Want:         change("reload"),
+			WantApplyErr: "winch-boom.service did not reload: systemctl try-reload-or-restart: ",
 			Fix:          "rm /tmp/boom",
 			NoConverge:   true,
 		},

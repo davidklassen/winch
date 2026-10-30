@@ -345,7 +345,9 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 		if c != "daemon-reload" {
 			args = append(args, "--", s.Name)
 		}
-		if c == "start" || c == "try-restart" || c == "try-reload-or-restart" {
+		starts := c == "start" || c == "try-restart" || c == "try-reload-or-restart"
+		action := cmp.Or(planLabels[c], c)
+		if starts {
 			if err := resetFailed(ctx, s.Name); err != nil {
 				return err
 			}
@@ -359,18 +361,34 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 		}
 		_, err := run(ctx, nil, "systemctl", args...)
 		switch {
-		case err == nil && (c == "start" || (c == "try-restart" || c == "try-reload-or-restart") && s.up):
-			if err := checkStarted(ctx, s.Unit(), cmp.Or(planLabels[c], c)); err != nil {
+		case err == nil && starts && (c == "start" || s.up):
+			if err := checkStarted(ctx, s.Unit(), action); err != nil {
 				return err
 			}
 		case err == nil:
-		case c == "start", c == "stop", c == "try-restart", c == "try-reload-or-restart":
+		case starts:
+			return withJournal(ctx, s.Name, jobFailed(ctx, s.Unit(), action, err))
+		case c == "stop":
 			return withJournal(ctx, s.Name, err)
 		default:
 			return err
 		}
 	}
 	return nil
+}
+
+// jobFailed names unit and action in err, the failure of systemctl. systemd
+// cancels the job of a unit that ends during its reload, so the error also
+// names the state of a unit that is not running.
+func jobFailed(ctx context.Context, unit, action string, err error) error {
+	u, serr := showUnit(ctx, unit)
+	if serr != nil {
+		return errors.Join(err, serr)
+	}
+	if u.up() && !u.restarting() {
+		return fmt.Errorf("%s did not %s: %w", unit, action, err)
+	}
+	return fmt.Errorf("%s is not running after its %s: %s (%s)\n%w", unit, action, u.active, u.sub, err)
 }
 
 // resetFailed resets the start counter of unit, so that the start limit of
