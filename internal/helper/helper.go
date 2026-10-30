@@ -136,7 +136,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "apply":
 			result, err = step(ctx, req.Params, true, login, loginUser, handlers, thens, downloads, certbotHooks, checks, rb, note)
 		case req.Method == "confirm":
-			err = rb.confirm()
+			err = rb.confirm(ctx)
 		case req.Method == "rollback":
 			err = rollbackStep(ctx, rb, handlers, thens)
 		case req.Method == "reboot":

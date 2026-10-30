@@ -136,6 +136,10 @@ func TestConfirmStopsTheTimer(t *testing.T) {
 	if content(t, l.a) != "new\n" || content(t, l.b) != "new\n" {
 		t.Error("confirm put back old content")
 	}
+	// The end of the session asks for a rollback.
+	if r := l.c.call(t, "rollback", nil); r.Error != "" {
+		t.Errorf("a rollback after confirm: %s", r.Error)
+	}
 	if r := l.c.call(t, "confirm", nil); !strings.Contains(r.Error, "the rollback timer ended first") {
 		t.Errorf("a second confirm: %q", r.Error)
 	}
@@ -151,6 +155,10 @@ func TestRollbackNow(t *testing.T) {
 	}
 	if content(t, l.a) != "old\n" || content(t, l.b) != "old\n" {
 		t.Errorf("after the rollback: a %q, b %q; want old", content(t, l.a), content(t, l.b))
+	}
+	// The end of the session asks for a rollback again.
+	if r := l.c.call(t, "rollback", nil); r.Error != "" {
+		t.Errorf("a second rollback: %s", r.Error)
 	}
 	if _, err := os.Lstat(l.job()); !os.IsNotExist(err) {
 		t.Errorf("the timer job stays after the rollback: %v", err)
@@ -227,6 +235,47 @@ func TestRollbackAfterTimer(t *testing.T) {
 	p := pendingAll(t, l.c)
 	if want := []string{"ssh.reload"}; !slices.Equal(p.Handlers, want) || len(p.Then) != 0 {
 		t.Errorf("records after the rollback: %+v, want the handler %v", p, want)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the timer takes the job and its
+// undo step fails: the helper reports the rollback failure)
+func TestTimerRollbackFails(t *testing.T) {
+	for _, method := range []string{"rollback", "confirm"} {
+		t.Run(method, func(t *testing.T) {
+			l := startLockout(t)
+			l.applyBoth(t)
+			data, err := os.ReadFile(l.job())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var j job
+			if err := json.Unmarshal(data, &j); err != nil {
+				t.Fatal(err)
+			}
+			j.Deadline = time.Now()
+			j.Undo = &undo{Module: "file", Args: failingFileArgs(l.b)}
+			data, _ = json.Marshal(j)
+			if err := writeJob(l.job(), data); err != nil {
+				t.Fatal(err)
+			}
+			for start := time.Now(); ; time.Sleep(10 * time.Millisecond) {
+				if _, err := os.Lstat(l.job()); os.IsNotExist(err) {
+					break
+				}
+				if time.Since(start) > 10*time.Second {
+					t.Fatal("the timer process did not take the job")
+				}
+			}
+			r := l.c.call(t, method, nil)
+			want := "file " + l.b + ": validate: false"
+			if method == "confirm" {
+				want = "the rollback timer ended first; the rollback failed: " + want
+			}
+			if !strings.HasPrefix(r.Error, want) {
+				t.Errorf("%s after the timer: %q, want the rollback failure of the timer %q", method, r.Error, want)
+			}
+		})
 	}
 }
 
@@ -725,5 +774,54 @@ func TestEndKeepsTheHandlerWhenTheRestoreFails(t *testing.T) {
 	lines, err := records{dir: filepath.Join(l.dir, "handlers"), project: "acme"}.read()
 	if err != nil || !slices.Equal(lines, []string{"ssh.reload"}) {
 		t.Errorf("pending %q, %v; want ssh.reload", lines, err)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a timer that a confirm or the
+// helper's rollback stopped has ended before the next guarded step starts
+// one: an old timer must not take the next job)
+func TestStoppedTimerHasEnded(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"confirm", "rollback"} {
+		t.Run(method, func(t *testing.T) {
+			rb := &rollbacks{dir: t.TempDir(), project: "acme", self: self}
+			if err := rb.start(job{Deadline: time.Now().Add(time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+			timer := rb.timer
+			if method == "confirm" {
+				err = rb.confirm(t.Context())
+			} else {
+				err = rb.rollback(t.Context())
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-timer:
+			default:
+				t.Errorf("%s returned while the timer process still runs", method)
+			}
+		})
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a timer that ended without a
+// result: the helper reports neither the old files nor an earlier result)
+func TestTimerWithoutResult(t *testing.T) {
+	rb := &rollbacks{dir: t.TempDir(), project: "acme", self: "/usr/bin/true"}
+	write(t, result(rb.job()), "an earlier failure")
+	if err := rb.start(job{Deadline: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	// The timer took the job and ended before it wrote its result.
+	if err := os.Remove(rb.job()); err != nil {
+		t.Fatal(err)
+	}
+	if err := rb.rollback(t.Context()); err == nil || err.Error() != "the rollback timer ended without a result" {
+		t.Errorf("rollback: %v", err)
 	}
 }

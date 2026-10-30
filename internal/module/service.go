@@ -349,6 +349,13 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 			if err := resetFailed(ctx, s.Name); err != nil {
 				return err
 			}
+			// ssh.socket starts ssh.service, whose start limit closes the
+			// port of the socket.
+			if s.Unit() == "ssh.socket" {
+				if err := resetFailed(ctx, "ssh.service"); err != nil {
+					return err
+				}
+			}
 		}
 		_, err := run(ctx, nil, "systemctl", args...)
 		switch {

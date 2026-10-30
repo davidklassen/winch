@@ -3,6 +3,8 @@ package module
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -69,5 +71,29 @@ func TestUnloadedDropIn(t *testing.T) {
 				t.Errorf("unloadedDropIn = %v, %v; want %v", got, err, c.want)
 			}
 		})
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the start limit of ssh.service
+// cannot close the port); Modules/service and unit (reset-failed)
+func TestRestartSSHSocketResetsSSHService(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	script := "#!/bin/sh\necho \"$*\" >> " + log + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "systemctl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	s := &Service{Name: "ssh.socket", Restarted: true, todo: []string{"try-restart"}}
+	if err := s.Apply(t.Context(), func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if !slices.Contains(got, "reset-failed -- ssh.service") || !slices.Contains(got, "reset-failed -- ssh.socket") || got[len(got)-1] != "try-restart -- ssh.socket" {
+		t.Errorf("systemctl calls %q, want a reset of both SSH units before the restart", got)
 	}
 }
