@@ -375,7 +375,7 @@ func TestPendingHandlers(t *testing.T) {
 	if got, want := pending(t, c), []string{"nginx.reload", "nginx.restart"}; !slices.Equal(got, want) {
 		t.Fatalf("pending = %v, want %v", got, want)
 	}
-	if data, err := os.ReadFile(filepath.Join(dir, "handlers", "acme")); err != nil || string(data) != "nginx.reload\nnginx.restart\n" {
+	if data, err := os.ReadFile(filepath.Join(dir, "handlers", "acme")); err != nil || string(data) != "version 1\nnginx.reload\nnginx.restart\n" {
 		t.Errorf("handlers/acme = %q, %v", data, err)
 	}
 
@@ -468,7 +468,8 @@ func TestPendingThen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"recipe":"postfix","module":"file","mains":["1"]}
+	want := `version 1
+{"recipe":"postfix","module":"file","mains":["1"]}
 {"stage":"postfix","module":"file","mains":["2"]}
 {"recipe":"postfix","module":"file","mains":["3"]}
 `
@@ -511,7 +512,7 @@ func TestPendingStaysInTheStateDirectory(t *testing.T) {
 // spec: Handlers; Remote execution/State on the host
 func TestEmptyLinesInRecords(t *testing.T) {
 	dir := t.TempDir()
-	for sub, data := range map[string]string{"handlers": "nginx.reload\n\napp.restart\n", "then": "\n{\"recipe\":\"a\",\"module\":\"file\",\"mains\":[\"1\"]}\n"} {
+	for sub, data := range map[string]string{"handlers": "version 1\nnginx.reload\n\napp.restart\n", "then": "version 1\n\n{\"recipe\":\"a\",\"module\":\"file\",\"mains\":[\"1\"]}\n"} {
 		if err := os.Mkdir(filepath.Join(dir, sub), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -540,11 +541,20 @@ func TestDamagedState(t *testing.T) {
 		want  string
 	}{
 		{"truncated then record", func(t *testing.T, dir string) {
-			write(t, filepath.Join(dir, "then", "acme"), "{\"recipe\":\"a\",\"step\":1}\n\n{\"recipe\":\n")
-		}, "read the pending then records: DIR/then/acme:3: unexpected end of JSON input"},
+			write(t, filepath.Join(dir, "then", "acme"), "version 1\n{\"recipe\":\"a\",\"step\":1}\n\n{\"recipe\":\n")
+		}, "read the pending then records: DIR/then/acme:4: unexpected end of JSON input"},
 		{"then line that is not JSON", func(t *testing.T, dir string) {
-			write(t, filepath.Join(dir, "then", "acme"), "postmap /etc/postfix/virtual\n")
-		}, "read the pending then records: DIR/then/acme:1: invalid character 'p' looking for beginning of value"},
+			write(t, filepath.Join(dir, "then", "acme"), "version 1\npostmap /etc/postfix/virtual\n")
+		}, "read the pending then records: DIR/then/acme:2: invalid character 'p' looking for beginning of value"},
+		{"truncated check record", func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "checks", "acme"), "version 1\n{\"pipeline\":\n")
+		}, "read the pending health gates and asserts: DIR/checks/acme:2: unexpected end of JSON input"},
+		{"newer version", func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "handlers", "acme"), "version 2\napp.restart\n")
+		}, "upgrade winch to read DIR/handlers/acme"},
+		{"no version", func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "handlers", "acme"), "app.restart\n")
+		}, "read the pending handlers: DIR/handlers/acme: no format version"},
 		{"directory in place of the handlers", func(t *testing.T, dir string) {
 			mkdir(t, filepath.Join(dir, "handlers", "acme"))
 		}, "read the pending handlers: read DIR/handlers/acme: is a directory"},
@@ -788,7 +798,7 @@ func TestPendingChecks(t *testing.T) {
 			t.Fatal(r.Error)
 		}
 	}
-	if data, err := os.ReadFile(filepath.Join(dir, "checks", "acme")); err != nil || string(data) != "{\"pipeline\":\"site\",\"stage\":\"base\"}\n{\"recipe\":\"mail\",\"step\":3}\n" {
+	if data, err := os.ReadFile(filepath.Join(dir, "checks", "acme")); err != nil || string(data) != "version 1\n{\"pipeline\":\"site\",\"stage\":\"base\"}\n{\"recipe\":\"mail\",\"step\":3}\n" {
 		t.Errorf("checks/acme = %q, %v", data, err)
 	}
 	if r := c.call(t, "passed", gate); r.Error != "" {
@@ -852,7 +862,8 @@ func TestChecksRunAgain(t *testing.T) {
 func TestThenRecordsMatchAndDrop(t *testing.T) {
 	dir := t.TempDir()
 	// The second line is a record of an earlier format.
-	write(t, filepath.Join(dir, "then", "acme"), `{"recipe":"site","module":"file","mains":["/a","/b"]}
+	write(t, filepath.Join(dir, "then", "acme"), `version 1
+{"recipe":"site","module":"file","mains":["/a","/b"]}
 {"recipe":"old","step":2,"module":"file","main":"/x"}
 {"recipe":"site","module":"file","mains":["/c"]}
 `)

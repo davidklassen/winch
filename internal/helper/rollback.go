@@ -457,5 +457,5 @@ func runJob(ctx context.Context, path string) error {
 
 // writeJob writes the job of a timer through a rename.
 func writeJob(path string, data []byte) error {
-	return records{dir: filepath.Dir(path), project: filepath.Base(path), what: "rollback timer"}.write([]string{string(data)})
+	return writeFile(filepath.Dir(path), filepath.Base(path), "rollback timer", string(data)+"\n")
 }

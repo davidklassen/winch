@@ -115,7 +115,7 @@ func TestHandlers(t *testing.T) {
 			t.Errorf("winch-app started %s times, want %s", out, want)
 		}
 	}
-	const records = "cat /var/lib/winch/handlers/hdemo 2>/dev/null; true"
+	const records = "sed '/^version 1$/d' /var/lib/winch/handlers/hdemo 2>/dev/null; true"
 
 	t.Run("a notification is dropped on a host without the recipe", func(t *testing.T) {
 		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.conf_break=true")
@@ -204,7 +204,7 @@ func TestHandlers(t *testing.T) {
 		if r.Code != 1 || !strings.Contains(r.Stderr, "then: "+then+": exit status 3") {
 			t.Fatalf("apply: exit %d, want the then error\n%s", r.Code, r.Stderr)
 		}
-		if out := vm.MustRun(t, "cat /var/lib/winch/then/hdemo"); out == "" || strings.Contains(out, "then-failed") {
+		if out := vm.MustRun(t, "sed '/^version 1$/d' /var/lib/winch/then/hdemo"); out == "" || strings.Contains(out, "then-failed") {
 			t.Errorf("then record = %q, want a record without the command", out)
 		}
 		r = lab.Winch(t, dir, append([]string{"plan", "site"}, set...)...)
@@ -272,7 +272,7 @@ func TestHandlers(t *testing.T) {
 		if r.Code != 0 || !strings.Contains(r.Stdout, "! handler v.restart") || strings.Contains(r.Stdout, "reload") || strings.Contains(r.Stdout, "! then") {
 			t.Errorf("plan after the failed validate: exit %d, want only the handler of the first run\n%s", r.Code, r.Stdout)
 		}
-		if out := vm.MustRun(t, "cat /var/lib/winch/handlers/vdemo /var/lib/winch/then/vdemo"); out != "v.restart\n" {
+		if out := vm.MustRun(t, "sed '/^version 1$/d' /var/lib/winch/handlers/vdemo /var/lib/winch/then/vdemo"); out != "v.restart\n" {
 			t.Errorf("records = %q, want only v.restart", out)
 		}
 	})
@@ -305,7 +305,7 @@ func TestHandlers(t *testing.T) {
           path: /root/t/added
           content: "x\n"
 `
-		const record = "cat /var/lib/winch/then/tdemo 2>/dev/null; true"
+		const record = "sed '/^version 1$/d' /var/lib/winch/then/tdemo 2>/dev/null; true"
 		vm.MustRun(t, "mkdir -p /root/t")
 		fails := func(steps string) {
 			t.Helper()
@@ -422,7 +422,7 @@ func TestStageHandlers(t *testing.T) {
 		"inventories/test.yaml": "hosts:\n  stage-handlers: {}\n",
 		"pipelines/site.yaml":   stageHandlerPipeline,
 	})
-	const records = "cat /var/lib/winch/handlers/sdemo 2>/dev/null; true"
+	const records = "sed '/^version 1$/d' /var/lib/winch/handlers/sdemo 2>/dev/null; true"
 
 	t.Run("a handler with confirm_access reloads nftables", func(t *testing.T) {
 		r := lab.Winch(t, dir, "apply", "site", "--yes")
