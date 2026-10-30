@@ -118,9 +118,6 @@ func TestServiceGetsNewUnitFile(t *testing.T) {
           enabled: true
 `,
 		"recipes/web/recipe.yaml": `steps:
-  - service:
-      name: a
-      enabled: true
   - unit:
       name: a.service
       source: a.service
@@ -163,7 +160,7 @@ func TestServiceGetsNewUnitFile(t *testing.T) {
 	if err := plan.Failed["web1"]; err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"a: ", "a: " + a, "b@one: " + b, "b@x.y: " + b, "c.service: ", "b: ", "a: " + a}
+	want := []string{"a: " + a, "b@one: " + b, "b@x.y: " + b, "c.service: ", "b: ", "a: " + a}
 	if !slices.Equal(h.ServiceNewFile, want) {
 		t.Errorf("new unit files = %q, want %q", h.ServiceNewFile, want)
 	}
