@@ -159,7 +159,8 @@ func (p *Plan) WriteNotes(out *color.Writer) {
 					fmt.Fprintf(out, "%s: %s: unit file not found\n", host.Host.Name, secret.Printable(s.Unit()))
 				}
 				for _, m := range step.Result.Missing {
-					fmt.Fprintf(out, "%s: %s does not exist and no step creates it\n", host.Host.Name, secret.Printable(m))
+					kind, _, _ := strings.Cut(m, " ")
+					fmt.Fprintf(out, "%s: %s does not exist yet and no %s step creates it\n", host.Host.Name, secret.Printable(m), kind)
 				}
 			}
 		}
