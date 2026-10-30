@@ -562,6 +562,10 @@ func notifyHosts(pl *Pipeline) error {
 func notifyStage(st Step, s Stage, runs map[*Recipe]map[string]bool, pipeline string) error {
 	var errs []error
 	for _, n := range st.notifyNames {
+		if n.handler == nil {
+			// Its load error is reported.
+			continue
+		}
 		r := n.handler.Recipe
 		if r == nil || r == st.in {
 			continue
