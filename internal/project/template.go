@@ -27,6 +27,8 @@ type tmplFile struct {
 	// item is true when the template reads .item.
 	item  bool
 	reads []string
+	// values are the variables whose values it reads.
+	values []string
 }
 
 // parseTemplate parses the template text of file and checks the names it
@@ -45,17 +47,16 @@ func parseTemplate(file string, text []byte, sc scope) (*tmplFile, error) {
 		return nil, err
 	}
 	failNull(t)
-	return &tmplFile{t: t, item: c.item, reads: c.reads}, nil
+	return &tmplFile{t: t, item: c.item, reads: c.reads, values: c.values}, nil
 }
 
-// parseInline parses the text of a !tpl value at pos. It returns the
-// variables that the template reads.
-func parseInline(pos yamlx.Pos, text string, sc scope) (*template.Template, []string, error) {
+// parseInline parses the text of a !tpl value at pos.
+func parseInline(pos yamlx.Pos, text string, sc scope) (*tmplFile, error) {
 	t, err := template.New(pos.String()).Option("missingkey=error").Funcs(funcs).Parse(text)
 	if err != nil {
 		// A parse error names the template, which is the position here.
 		msg := strings.ReplaceAll(templateMessage(pos.String(), err), pos.String()+":", "line ")
-		return nil, nil, yamlx.Errorf(pos, "%s", msg)
+		return nil, yamlx.Errorf(pos, "%s", msg)
 	}
 	c := nameCheck{sc: sc, at: func(int) yamlx.Pos { return pos }}
 	c.check(t, pos.String())
@@ -63,10 +64,10 @@ func parseInline(pos yamlx.Pos, text string, sc scope) (*template.Template, []st
 		c.errs = append(c.errs, yamlx.Errorf(pos, "%s", sc.noItem))
 	}
 	if err := errors.Join(c.errs...); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	failNull(t)
-	return t, c.reads, nil
+	return &tmplFile{t: t, item: c.item, reads: c.reads, values: c.values}, nil
 }
 
 // names is a level of the names that a template can read. A nil *names allows
@@ -108,7 +109,12 @@ type nameCheck struct {
 	main  bool
 	item  bool
 	reads []string
-	errs  []error
+	// values are the variables whose values it reads. A range over only
+	// the keys of a map does not read its values.
+	values []string
+	errs   []error
+	// keys is true for the map of such a range.
+	keys bool
 	// byKey is true for the map of a get or index with a constant key: a
 	// read of a host's vars by name.
 	byKey bool
@@ -178,7 +184,9 @@ func (c *nameCheck) walk(n tparse.Node, top bool) {
 		c.walk(n.List, top)
 		c.walk(n.ElseList, top)
 	case *tparse.RangeNode:
+		c.keys = readsKeys(n)
 		c.walk(n.Pipe, top)
+		c.keys = false
 		c.walk(n.List, false)
 		c.walk(n.ElseList, top)
 	case *tparse.WithNode:
@@ -255,6 +263,9 @@ func (c *nameCheck) field(ident []string, dot, first int) {
 		}
 		if level == vars {
 			c.reads = append(c.reads, id)
+			if !c.keys {
+				c.values = append(c.values, id)
+			}
 			c.log(id, off)
 			c.peers(ident[i+1:], dot)
 			return
@@ -275,6 +286,51 @@ func (c *nameCheck) field(ident []string, dot, first int) {
 	if level == vars || level == c.top.sub["host"] {
 		c.notByName(first)
 	}
+}
+
+// readsKeys reports whether the range n reads only the keys of the map it
+// ranges over, as in range $k, $v := .vars.m where the body reads neither $v
+// nor dot. With =, $v keeps the last value after the range.
+func readsKeys(n *tparse.RangeNode) bool {
+	if n.Pipe.IsAssign || len(n.Pipe.Decl) != 2 || len(n.Pipe.Cmds) != 1 || len(n.Pipe.Cmds[0].Args) != 1 {
+		return false
+	}
+	switch n.Pipe.Cmds[0].Args[0].(type) {
+	case *tparse.FieldNode, *tparse.VariableNode:
+	default:
+		return false
+	}
+	return !readsValue(n.List, n.Pipe.Decl[1].Ident[0], true)
+}
+
+// readsValue reports whether n reads the variable v, or reads dot where dot
+// is true.
+func readsValue(n tparse.Node, v string, dot bool) bool {
+	switch n := n.(type) {
+	case *tparse.ListNode:
+		return n != nil && slices.ContainsFunc(n.Nodes, func(x tparse.Node) bool { return readsValue(x, v, dot) })
+	case *tparse.ActionNode:
+		return readsValue(n.Pipe, v, dot)
+	case *tparse.TemplateNode:
+		return n.Pipe != nil && readsValue(n.Pipe, v, dot)
+	case *tparse.PipeNode:
+		return slices.ContainsFunc(n.Cmds, func(x *tparse.CommandNode) bool { return readsValue(x, v, dot) })
+	case *tparse.CommandNode:
+		return slices.ContainsFunc(n.Args, func(x tparse.Node) bool { return readsValue(x, v, dot) })
+	case *tparse.ChainNode:
+		return readsValue(n.Node, v, dot)
+	case *tparse.IfNode:
+		return readsValue(n.Pipe, v, dot) || readsValue(n.List, v, dot) || readsValue(n.ElseList, v, dot)
+	case *tparse.RangeNode:
+		return readsValue(n.Pipe, v, dot) || readsValue(n.List, v, false) || readsValue(n.ElseList, v, dot)
+	case *tparse.WithNode:
+		return readsValue(n.Pipe, v, dot) || readsValue(n.List, v, false) || readsValue(n.ElseList, v, dot)
+	case *tparse.DotNode, *tparse.FieldNode:
+		return dot
+	case *tparse.VariableNode:
+		return n.Ident[0] == v
+	}
+	return false
 }
 
 // nullError is the error of an action that prints a null value. text is the
