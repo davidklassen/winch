@@ -1,0 +1,58 @@
+name: fuzz
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  targets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: make helpers
+      - id: list
+        run: |
+          # go test -list prints the names of a package before its ok line.
+          targets=$(go test -list '^Fuzz' ./... | awk -v module="$(go list -m)/" '
+            /^Fuzz/ { names[n++] = $1 }
+            /^ok/ { sub(module, "", $2); for (i = 0; i < n; i++) printf "{\"dir\":\"%s\",\"name\":\"%s\"}\n", $2, names[i]; n = 0 }
+          ' | jq -sc .)
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    needs: targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.targets.outputs.targets) }}
+    name: ${{ matrix.target.name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: make helpers
+      - run: go test ./${{ matrix.target.dir }} -run '^$' -fuzz '^${{ matrix.target.name }}$' -fuzztime 5m
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-${{ matrix.target.name }}
+          path: ${{ matrix.target.dir }}/testdata/fuzz/${{ matrix.target.name }}
+          retention-days: 30
+          if-no-files-found: ignore

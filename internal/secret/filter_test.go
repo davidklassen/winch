@@ -246,3 +246,37 @@ func TestFilterParts(t *testing.T) {
 		})
 	}
 }
+
+// spec: Variables/Secrets in output (text filter); CLI/Output
+func FuzzFilterParts(f *testing.F) {
+	f.Add("hunter2", "x ", " y", []byte{3, 4})
+	f.Add("line-one\nline-two", "x ", " y", []byte{5, 9, 12})
+	f.Add("abc\r\nxyz\r\n", "e: ", "", []byte{4})
+	f.Add("  padded-secret \n", "x", "y", []byte{2, 2, 7})
+	f.Add("pass\x07word", "echo ", "", []byte{6})
+	f.Add("(secret)abcd", "(sec", "ret)", []byte{1, 8})
+	f.Fuzz(func(t *testing.T, value, before, after string, cuts []byte) {
+		v := strings.TrimSpace(value)
+		if len([]rune(v)) < 4 || v == "true" || v == "false" || strings.Contains(Mark, v) || strings.Contains(v, "\x00") {
+			return
+		}
+		fl := NewFilter()
+		fl.Add(value)
+		s := before + value + after
+		var parts []string
+		last := 0
+		for _, c := range cuts {
+			at := max(last, int(c)%len(s))
+			parts = append(parts, s[last:at])
+			last = at
+		}
+		parts = append(parts, s[last:])
+		joined := strings.Join(fl.Parts(parts), "")
+		if text := fl.Text(s); joined != text {
+			t.Errorf("value %q in parts %q: the parts give %q, the whole text %q", value, parts, joined, text)
+		}
+		if out := strings.ReplaceAll(joined, Mark, "\x00"); strings.Contains(out, v) {
+			t.Errorf("value %q in parts %q: the output %q shows it", value, parts, out)
+		}
+	})
+}
