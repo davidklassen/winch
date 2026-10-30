@@ -998,13 +998,13 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 			return Step{}, yamlx.Errorf(p.Value.Pos, "%s: a step in a stage cannot use %s; use it in a recipe", p.Key, p.Key)
 		}
 	}
-	if f, ok := st.Args.(*module.File); ok {
+	if f, ok := args.(*module.File); ok {
 		var err error
 		if st.tmpl, err = r.content(f, st.loop != nil); err != nil {
 			return Step{}, err
 		}
 	}
-	if u, ok := st.Args.(*module.Unit); ok {
+	if u, ok := args.(*module.Unit); ok {
 		if err := r.unitContent(u); err != nil {
 			return Step{}, err
 		}

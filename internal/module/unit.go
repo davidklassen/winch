@@ -61,7 +61,7 @@ func (u *Unit) Validate() error {
 	case u.Source == "":
 		return &yamlx.FieldError{Field: "content", Msg: "a unit needs content or source"}
 	}
-	return checkRelative("source", u.Source)
+	return CheckRelative("source", u.Source)
 }
 
 func (u *Unit) Text() ([]byte, string) { return u.Data, notText(u.Data) }
