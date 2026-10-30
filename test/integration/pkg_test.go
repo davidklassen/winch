@@ -580,6 +580,10 @@ func TestPkgPlanRules(t *testing.T) {
 		"pipelines/swap.yaml": pipeline("      - pkg:\n          name: hello\n          absent: true\n      - pkg:\n          name: winch-conflict\n" + gone),
 		// winch-uses-fragile depends on winch-fragile.
 		"pipelines/unknown.yaml": pipeline("      - pkg:\n          name: [winch-uses-fragile, winch-nowhere]\n" + gone),
+		// winch-up-top depends on winch-up-deps.
+		"pipelines/top.yaml": pipeline(gone + "      - pkg:\n          name: winch-up-top\n"),
+		// winch-local depends on hello, and the package index does not know it.
+		"pipelines/cleanup.yaml": pipeline("      - pkg:\n          name: hello\n          absent: true\n      - pkg:\n          name: winch-local\n          absent: true\n"),
 	})
 	fails := func(name, pipeline, want string) {
 		t.Helper()
@@ -616,7 +620,10 @@ func TestPkgPlanRules(t *testing.T) {
 	}
 	plans("a removal after an install that replaces a removed package", "swap")
 	plans("a removal after an install with unknown dependencies", "unknown")
+	vm.MustRun(t, "mkdir -p /tmp/winch-local/DEBIAN && printf 'Package: winch-local\\nVersion: 1\\nArchitecture: all\\nMaintainer: winch\\nDepends: hello\\nDescription: test\\n' >/tmp/winch-local/DEBIAN/control && dpkg-deb -b /tmp/winch-local /tmp/winch-local.deb >/dev/null && dpkg -i /tmp/winch-local.deb >/dev/null")
+	plans("a removal of a package that an earlier removal takes and the index does not know", "cleanup")
 	vm.MustRun(t, "DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-up-deps >/dev/null")
 	fails("a removal that takes an installed package", "install", "s: pkg winch-up-new: this step also removes winch-up-deps, which s: pkg winch-up-deps installs"+undo)
 	fails("an installed package that a removal takes", "remove", "s: pkg winch-up-deps: s: pkg winch-up-new also removes winch-up-deps, which this step installs"+undo)
+	fails("an install that pulls back a package that an earlier removal takes", "top", "s: pkg winch-up-top: this step also installs winch-up-new, which s: pkg winch-up-new removes"+undo)
 }
