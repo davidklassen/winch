@@ -35,39 +35,40 @@ func (d *testDoc) Validate() error {
 	return nil
 }
 
+var decodeCases = []struct {
+	name string
+	yaml string
+}{
+	{"valid", "name: a\nenabled: true\ncount: 3\nmode: \"0644\"\nnote: hi\ntags: [x, y]\nhosts:\n  h2:\n    address: 10.0.0.2\n  h1: {}\n"},
+	{"empty-host", "name: a\nhosts:\n  h1:\n"},
+	{"unknown-key", "name: a\nenabeld: true\n"},
+	{"unknown-key-far", "name: a\nzzzz: 1\n"},
+	{"missing-key", "count: 1\n"},
+	{"duplicate-key", "name: a\nname: b\n"},
+	{"merge-key", "base: &b {count: 1}\nname: a\n<<: *b\n"},
+	{"alias", "name: &n shared\nmode: *n\n"},
+	{"yes-is-string", "name: a\nenabled: yes\n"},
+	{"on-is-string", "name: a\nenabled: on\n"},
+	{"True-is-string", "name: a\nenabled: True\n"},
+	{"leading-zero-decimal", "name: a\ncount: 010\n"},
+	{"octal", "name: a\ncount: 0o10\n"},
+	{"unquoted-mode", "name: a\nmode: 0644\n"},
+	{"quoted-number", "name: \"10\"\n"},
+	{"null-name", "name:\n"},
+	{"wrong-kind", "name: [a]\n"},
+	{"two-documents", "name: a\n---\nname: b\n"},
+	{"syntax", "name: a\n  bad: [\n"},
+	{"unknown-tag", "name: !$6$abc$def\n"},
+	{"validate", "name: a\ncount: -11\n"},
+	{"self-alias", "name: a\ntags: &t [*t]\n"},
+	{"hex", "name: a\ncount: 0x1f\n"},
+	{"signed", "name: a\ncount: -5\n"},
+	{"many-errors", "name: 1\nenabled: no\nfoo: 1\n"},
+}
+
 // spec: YAML
 func TestDecode(t *testing.T) {
-	tests := []struct {
-		name string
-		yaml string
-	}{
-		{"valid", "name: a\nenabled: true\ncount: 3\nmode: \"0644\"\nnote: hi\ntags: [x, y]\nhosts:\n  h2:\n    address: 10.0.0.2\n  h1: {}\n"},
-		{"empty-host", "name: a\nhosts:\n  h1:\n"},
-		{"unknown-key", "name: a\nenabeld: true\n"},
-		{"unknown-key-far", "name: a\nzzzz: 1\n"},
-		{"missing-key", "count: 1\n"},
-		{"duplicate-key", "name: a\nname: b\n"},
-		{"merge-key", "base: &b {count: 1}\nname: a\n<<: *b\n"},
-		{"alias", "name: &n shared\nmode: *n\n"},
-		{"yes-is-string", "name: a\nenabled: yes\n"},
-		{"on-is-string", "name: a\nenabled: on\n"},
-		{"True-is-string", "name: a\nenabled: True\n"},
-		{"leading-zero-decimal", "name: a\ncount: 010\n"},
-		{"octal", "name: a\ncount: 0o10\n"},
-		{"unquoted-mode", "name: a\nmode: 0644\n"},
-		{"quoted-number", "name: \"10\"\n"},
-		{"null-name", "name:\n"},
-		{"wrong-kind", "name: [a]\n"},
-		{"two-documents", "name: a\n---\nname: b\n"},
-		{"syntax", "name: a\n  bad: [\n"},
-		{"unknown-tag", "name: !$6$abc$def\n"},
-		{"validate", "name: a\ncount: -11\n"},
-		{"self-alias", "name: a\ntags: &t [*t]\n"},
-		{"hex", "name: a\ncount: 0x1f\n"},
-		{"signed", "name: a\ncount: -5\n"},
-		{"many-errors", "name: 1\nenabled: no\nfoo: 1\n"},
-	}
-	for _, tt := range tests {
+	for _, tt := range decodeCases {
 		t.Run(tt.name, func(t *testing.T) {
 			got := decodeString(tt.yaml)
 			golden.Assert(t, filepath.Join("testdata", tt.name+".golden"), []byte(got))
