@@ -1,9 +1,11 @@
 package integration
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
@@ -109,6 +111,10 @@ cat > /etc/systemd/system/winch-quick.service <<'U'
 Type=forking
 ExecStart=/bin/true
 U
+cat > /etc/systemd/system/winch-late.service <<'U'
+[Service]
+ExecStart=/bin/sh -c 'sleep 0.5; exit 1'
+U
 cat > /etc/systemd/system/winch-indirect.service <<'U'
 [Service]
 ExecStart=/bin/sleep infinity
@@ -137,6 +143,10 @@ const enableSSH = "systemctl enable -q ssh"
 
 const waitCrash = `timeout 10 sh -c 'until systemctl show -P SubState winch-crash | grep -qx auto-restart; do sleep 0.1; done'`
 
+const crashDropIn = `mkdir /etc/systemd/system/winch-test.service.d
+printf '[Service]\nExecStart=\nExecStart=/bin/sh -c "sleep 0.5; exit 1"\n' > /etc/systemd/system/winch-test.service.d/crash.conf
+systemctl daemon-reload`
+
 const noexecErr = `winch-noexec.service has the load state "bad-setting"
 winch-noexec.service: Service has no ExecStart=`
 
@@ -152,7 +162,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl unmask --runtime winch-vendor; systemctl reset-failed winch-crash winch-quick; if [ -d /etc/systemd/system/winch-crash.service.d ] || [ -d /etc/systemd/system/winch-quick.service.d ] || [ -d /etc/systemd/system/winch-slowstop.service.d ] || [ -d /etc/systemd/system/winch-test.service.d ]; then rm -rf /etc/systemd/system/winch-crash.service.d /etc/systemd/system/winch-quick.service.d /etc/systemd/system/winch-slowstop.service.d /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; if [ -e /etc/systemd/system/winch-nope.service ]; then systemctl disable --now winch-nope; rm /etc/systemd/system/winch-nope.service; systemctl daemon-reload; fi; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service winch-lost.service winch-cond.service winch-slowstop.service; rm -f /tmp/boom /tmp/winch-cond; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service winch-noexec.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
+	reset := "systemctl unmask --runtime winch-vendor; systemctl reset-failed winch-crash winch-quick winch-late; if [ -d /etc/systemd/system/winch-crash.service.d ] || [ -d /etc/systemd/system/winch-quick.service.d ] || [ -d /etc/systemd/system/winch-slowstop.service.d ] || [ -d /etc/systemd/system/winch-test.service.d ]; then rm -rf /etc/systemd/system/winch-crash.service.d /etc/systemd/system/winch-quick.service.d /etc/systemd/system/winch-slowstop.service.d /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; if [ -e /etc/systemd/system/winch-nope.service ]; then systemctl disable --now winch-nope; rm /etc/systemd/system/winch-nope.service; systemctl daemon-reload; fi; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service winch-lost.service winch-cond.service winch-slowstop.service winch-late.service; rm -f /tmp/boom /tmp/winch-cond; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service winch-noexec.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -162,6 +172,19 @@ func TestServiceModule(t *testing.T) {
 		_, err := vm.Session(t).Check(t.Context(), "service", &module.Service{Name: "winch-vendor", Running: new(true)}, &module.State{})
 		if want := `winch-vendor.service has the load state "masked"`; err == nil || err.Error() != want {
 			t.Errorf("check error = %v, want %q", err, want)
+		}
+	})
+	t.Run("a start of a unit that crashes soon after fails each time", func(t *testing.T) {
+		s := vm.Session(t)
+		args := &module.Service{Name: "winch-late", Running: new(true)}
+		for i := range 10 {
+			if _, err := s.Check(t.Context(), "service", args, &module.State{}); err != nil {
+				t.Fatalf("run %d: check: %v", i, err)
+			}
+			_, err := s.Apply(t.Context(), "service", args, &module.State{}, nil, nil, nil, protocol.Guard{})
+			if want := "winch-late.service is not running after its start: failed (failed)\n"; err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("run %d: apply error = %v, want %q", i, err, want)
+			}
 		}
 	})
 	vmtest.RunCases(t, vm, "service", reset, []vmtest.Case{
@@ -489,6 +512,47 @@ printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service
 			NoConverge: true,
 			// The second check needs daemon-reload again.
 			After: `grep -q '^Max open files  *12345 ' /proc/$(systemctl show -P MainPID winch-test)/limits && printf '[Service]\nLimitNOFILE=12346\n' > /etc/systemd/system/winch-test.service.d/limits.conf`,
+		},
+		{
+			Name:         "restarted on a unit whose new config crashes fails",
+			Setup:        "systemctl start winch-test\n" + crashDropIn,
+			Args:         &module.Service{Name: "winch-test", Restarted: true},
+			Want:         change("restart"),
+			WantApplyErr: "winch-test.service is not running after its restart: failed (failed)\n",
+			Fix:          "rm -r /etc/systemd/system/winch-test.service.d && systemctl daemon-reload",
+			NoConverge:   true,
+		},
+		{
+			Name:         "reloaded on a unit whose new config crashes fails",
+			Setup:        "systemctl start winch-test\n" + crashDropIn,
+			Args:         &module.Service{Name: "winch-test", Reloaded: true},
+			Want:         change("reload"),
+			WantApplyErr: "winch-test.service is not running after its reload: failed (failed)\n",
+			Fix:          "rm -r /etc/systemd/system/winch-test.service.d && systemctl daemon-reload",
+			NoConverge:   true,
+		},
+		{
+			Name: "restarted on a unit whose new config crashes and waits to restart fails",
+			Setup: "systemctl start winch-test\n" + crashDropIn + `
+printf '[Service]\nRestart=on-failure\nRestartSec=1h\n' > /etc/systemd/system/winch-test.service.d/restart.conf
+systemctl daemon-reload`,
+			Args:         &module.Service{Name: "winch-test", Restarted: true},
+			Want:         change("restart"),
+			WantApplyErr: "winch-test.service is not running after its restart: activating (auto-restart)\n",
+			Fix:          "rm -r /etc/systemd/system/winch-test.service.d && systemctl daemon-reload",
+			NoConverge:   true,
+		},
+		{
+			Name: "reloaded on a unit whose reload ends it fails",
+			Setup: `systemctl start winch-test
+mkdir /etc/systemd/system/winch-test.service.d
+printf '[Service]\nExecReload=/bin/kill $MAINPID\n' > /etc/systemd/system/winch-test.service.d/reload.conf
+systemctl daemon-reload`,
+			Args:         &module.Service{Name: "winch-test", Reloaded: true},
+			Want:         change("reload"),
+			WantApplyErr: "winch-test.service is not running after its reload: ",
+			Fix:          "rm -r /etc/systemd/system/winch-test.service.d && systemctl daemon-reload",
+			NoConverge:   true,
 		},
 		{
 			Name:       "reloaded restarts a unit without ExecReload",
