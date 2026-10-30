@@ -320,18 +320,22 @@ func recipients(cfg *Config) ([]age.Recipient, error) {
 // list, and keeps the comments and the layout of the file. It reports whether
 // it added key.
 func AddRecipient(dir, key string) (bool, error) {
-	path, err := filepath.EvalSymlinks(projectPath(dir, "winch.yaml"))
+	file, err := projectFile(dir)
+	if err != nil {
+		return false, err
+	}
+	path, err := filepath.EvalSymlinks(projectPath(dir, file))
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, fmt.Errorf("%w; run winch in the project directory", notFound("winch.yaml"))
+		return false, fmt.Errorf("%w; run winch in the project directory", notFound(file))
 	}
 	if err != nil {
 		return false, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false, fmt.Errorf("read winch.yaml: %w", err)
+		return false, fmt.Errorf("read %s: %w", file, err)
 	}
-	n, err := yamlx.Parse("winch.yaml", data)
+	n, err := yamlx.Parse(file, data)
 	if err != nil {
 		return false, err
 	}
@@ -363,9 +367,9 @@ func AddRecipient(dir, key string) (bool, error) {
 	// The edit assumes a block list of one-line items; a check of the result
 	// catches every other layout.
 	var after Config
-	if n, err := yamlx.Parse("winch.yaml", []byte(text)); err != nil || yamlx.Decode(n, &after) != nil ||
+	if n, err := yamlx.Parse(file, []byte(text)); err != nil || yamlx.Decode(n, &after) != nil ||
 		!slices.Equal(after.Recipients, append(cfg.Recipients, key)) {
-		return false, errors.New("cannot add the public key to recipients in winch.yaml; add it by hand")
+		return false, fmt.Errorf("cannot add the public key to recipients in %s; add it by hand", file)
 	}
 	return true, replaceFile(path, []byte(text))
 }
@@ -390,7 +394,7 @@ func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, []st
 	if err != nil {
 		return 0, nil, err
 	}
-	files := append(append([]string{"winch.yaml"}, invs...), recipes...)
+	files := append(append([]string{cfg.file}, invs...), recipes...)
 	var ids []age.Identity
 	// next keeps one value that two places hold the same after rekey.
 	next := map[string]string{}
@@ -521,7 +525,7 @@ func replaceFile(path string, data []byte) error {
 // scanProject returns a warning for each private key or token in the
 // project files that is not a !secret. It calls plain with the text of each
 // file.
-func scanProject(dir string, plain func([]byte)) ([]*yamlx.Error, error) {
+func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, error) {
 	invs, err := list(dir, "inventories")
 	if err != nil {
 		return nil, err
@@ -534,7 +538,7 @@ func scanProject(dir string, plain func([]byte)) ([]*yamlx.Error, error) {
 	if err != nil {
 		return nil, err
 	}
-	files := slices.Concat([]string{"winch.yaml"}, invs, pipelines, recipes)
+	files := slices.Concat([]string{project}, invs, pipelines, recipes)
 	for _, sub := range []string{"templates", "files"} {
 		roots, err := filepath.Glob(filepath.Join(dir, "recipes", "*", sub))
 		if err != nil {
@@ -626,7 +630,6 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	file, label := inv.file, inv.label("inventories")
 	var prefix []string
 	if inv.node != nil {
-		file = "winch.yaml"
 		if !inv.top {
 			prefix = []string{"inventories", inv.name}
 		}

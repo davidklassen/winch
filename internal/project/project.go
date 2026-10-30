@@ -64,6 +64,8 @@ type Config struct {
 	Parallelism *yamlx.Node `yaml:"parallelism"`
 	Health      *yamlx.Node `yaml:"health"`
 	root        *yamlx.Node
+	// file is winch.yaml or winch.yml.
+	file string
 }
 
 var projectNameRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
@@ -244,7 +246,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 	if len(l.sealed) > 0 {
 		plain = keys.Filter.Plain
 	}
-	warnings, err := scanProject(dir, plain)
+	warnings, err := scanProject(dir, cfg.file, plain)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +359,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err := l.checkNames(sets); err != nil {
 		return nil, err
 	}
-	warnings, err := scanProject(dir, func([]byte) {})
+	warnings, err := scanProject(dir, cfg.file, func([]byte) {})
 	if err != nil {
 		return nil, err
 	}
@@ -614,15 +616,36 @@ func (f notFound) Error() string        { return string(f) + ": no such file" }
 func (f notFound) Is(target error) bool { return target == fs.ErrNotExist }
 
 func loadConfig(dir string) (*Config, error) {
-	n, err := parse(dir, "winch.yaml")
+	file, err := projectFile(dir)
+	if err != nil {
+		return nil, err
+	}
+	n, err := parse(dir, file)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("%w; run winch in the project directory", err)
 	}
 	if err != nil {
 		return nil, err
 	}
-	cfg := Config{root: n}
+	cfg := Config{root: n, file: file}
 	return &cfg, yamlx.Decode(n, &cfg)
+}
+
+// projectFile returns the project file in dir: winch.yaml, or winch.yml when
+// only that one exists.
+func projectFile(dir string) (string, error) {
+	isFile := func(name string) bool {
+		info, err := os.Stat(projectPath(dir, name))
+		return err == nil && !info.IsDir()
+	}
+	yaml, yml := isFile("winch.yaml"), isFile("winch.yml")
+	switch {
+	case yaml && yml:
+		return "", errors.New("project file is both winch.yaml and winch.yml; keep one of the two")
+	case yml:
+		return "winch.yml", nil
+	}
+	return "winch.yaml", nil
 }
 
 // pipelineFile holds stages, or the fields of its one stage.

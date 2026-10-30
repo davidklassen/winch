@@ -17,7 +17,7 @@ import (
 // winch.yaml.
 type part struct {
 	name string
-	// file is relative to the project, or empty for a key.
+	// file is relative to the project. For a key, it is the project file.
 	file string
 	// node is the value of the key, and pos the position of the key, or nil
 	// for a file.
@@ -29,11 +29,8 @@ type part struct {
 
 // label names the part in messages.
 func (p part) label(kind string) string {
-	if p.top {
-		return "winch.yaml"
-	}
-	if p.node != nil {
-		return kind + "." + p.name + " of winch.yaml"
+	if p.node != nil && !p.top {
+		return kind + "." + p.name + " of " + p.file
 	}
 	return p.file
 }
@@ -77,9 +74,9 @@ func readLayout(dir string, cfg *Config) (layout, error) {
 		slices.SortFunc(parts, func(a, b part) int { return strings.Compare(a.name, b.name) })
 	}
 	errs = append(errs,
-		addKeys(&ly.inventories, cfg.Inventories, "inventories", "inventory"),
-		addKeys(&ly.pipelines, cfg.Pipelines, "pipelines", "pipeline"),
-		addKeys(&ly.recipes, cfg.Recipes, "recipes", "recipe"),
+		addKeys(&ly.inventories, cfg.Inventories, cfg.file, "inventories", "inventory"),
+		addKeys(&ly.pipelines, cfg.Pipelines, cfg.file, "pipelines", "pipeline"),
+		addKeys(&ly.recipes, cfg.Recipes, cfg.file, "recipes", "recipe"),
 		addTop(&ly.inventories, cfg, "inventories", "hosts", "groups"),
 		addTop(&ly.pipelines, cfg, "pipelines", "steps", "handlers", "parallelism", "health"))
 	return ly, errors.Join(errs...)
@@ -115,14 +112,14 @@ func addTop(parts *[]part, cfg *Config, kind string, keys ...string) error {
 	n.Pos = first.KeyPos
 	var err error
 	if len(*parts) > 0 {
-		err = yamlx.Errorf(first.KeyPos, "%s: the %s at the top of winch.yaml and %s are two %s; keep one of the two", first.Key, first.Key, (*parts)[0].label(kind), kind)
+		err = yamlx.Errorf(first.KeyPos, "%s: the %s at the top of %s and %s are two %s; keep one of the two", first.Key, first.Key, cfg.file, (*parts)[0].label(kind), kind)
 	}
-	*parts = []part{{name: cfg.Name, node: n, pos: first.KeyPos, top: true}}
+	*parts = []part{{name: cfg.Name, file: cfg.file, node: n, pos: first.KeyPos, top: true}}
 	return err
 }
 
-// addKeys adds the keys of n, the field key of winch.yaml, to parts.
-func addKeys(parts *[]part, n *yamlx.Node, key, kind string) error {
+// addKeys adds the keys of n, the field key of the project file, to parts.
+func addKeys(parts *[]part, n *yamlx.Node, file, key, kind string) error {
 	if n == nil || n.Kind == yamlx.Null {
 		return nil
 	}
@@ -140,7 +137,7 @@ func addKeys(parts *[]part, n *yamlx.Node, key, kind string) error {
 			errs = append(errs, yamlx.Errorf(p.KeyPos, "%s %q is also %s; keep one of the two", kind, p.Key, other))
 			continue
 		}
-		*parts = append(*parts, part{name: p.Key, node: p.Value, pos: p.KeyPos})
+		*parts = append(*parts, part{name: p.Key, file: file, node: p.Value, pos: p.KeyPos})
 	}
 	slices.SortFunc(*parts, func(a, b part) int { return strings.Compare(a.name, b.name) })
 	return errors.Join(errs...)

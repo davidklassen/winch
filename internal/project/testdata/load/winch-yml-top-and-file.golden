@@ -1,0 +1,1 @@
+winch.yml:2:1: hosts: the hosts at the top of winch.yml and inventories/test.yaml are two inventories; keep one of the two

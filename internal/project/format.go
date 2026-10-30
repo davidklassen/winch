@@ -57,10 +57,11 @@ func Format(dir string) ([]string, error) {
 	}
 
 	// fmt formats a winch.yaml with a schema error.
-	if cfg, err := loadConfig(dir); cfg == nil {
+	cfg, err := loadConfig(dir)
+	if cfg == nil {
 		return nil, err
 	}
-	format("winch.yaml", []string{"steps", "handlers.*", "pipelines.*.steps", "pipelines.*.handlers.*", "pipelines.*.stages.*.steps", "pipelines.*.stages.*.handlers.*", "recipes.*.steps", "recipes.*.handlers.*"})
+	format(cfg.file, []string{"steps", "handlers.*", "pipelines.*.steps", "pipelines.*.handlers.*", "pipelines.*.stages.*.steps", "pipelines.*.stages.*.handlers.*", "recipes.*.steps", "recipes.*.handlers.*"})
 	invs, err := list(dir, "inventories")
 	if err != nil {
 		return nil, err

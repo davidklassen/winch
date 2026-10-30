@@ -179,6 +179,19 @@ func TestLoad(t *testing.T) {
 			"inventories/staging.yml": "hosts:\n  web2: {}\n",
 		}},
 		{name: "inventory-yaml-and-yml", files: map[string]string{"inventories/test.yml": "hosts:\n  web2: {}\n"}},
+		{name: "winch-yml", files: map[string]string{"winch.yaml": "", "winch.yml": "name: acme\ninventory: test\n"}},
+		{name: "winch-yml-unknown-key", files: map[string]string{"winch.yaml": "", "winch.yml": "name: acme\ninventroy: test\n"}},
+		{name: "winch-yaml-and-yml", files: map[string]string{"winch.yml": "name: acme\n"}},
+		{name: "winch-yml-directory", files: map[string]string{"winch.yml/a": "a"}},
+		{name: "winch-yml-top", files: map[string]string{
+			"winch.yaml":            "",
+			"winch.yml":             "name: acme\nhosts:\n  web1: {}\n  web2: {}\n",
+			"inventories/test.yaml": "",
+		}},
+		{name: "winch-yml-top-and-file", files: map[string]string{
+			"winch.yaml": "",
+			"winch.yml":  "name: acme\nhosts:\n  web1: {}\n",
+		}},
 		{name: "inventory-key-and-yml", files: map[string]string{
 			"winch.yaml":            "name: acme\ninventory: test\ninventories:\n  test:\n    hosts: {}\n",
 			"inventories/test.yaml": "",
