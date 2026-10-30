@@ -11,8 +11,8 @@ import (
 var examples embed.FS
 
 type Doc struct {
-	Text, Example string
-	Keys          []doc.Key
+	Text, Body, Example string
+	Keys                []doc.Key
 }
 
 // Reference returns the reference of the module name.
@@ -22,5 +22,5 @@ func Reference(name string) (Doc, bool) {
 		return Doc{}, false
 	}
 	example, _ := examples.ReadFile("examples/" + name + ".yaml")
-	return Doc{Text: m.text, Example: string(example), Keys: doc.Keys(reflect.TypeOf(m.new()).Elem())}, true
+	return Doc{Text: m.text, Body: m.body, Example: string(example), Keys: doc.Keys(reflect.TypeOf(m.new()).Elem())}, true
 }

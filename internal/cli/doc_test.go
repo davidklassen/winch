@@ -24,12 +24,7 @@ func TestDoc(t *testing.T) {
 	}{
 		{"index", []string{"doc"}},
 		{"file", []string{"doc", "file"}},
-	}
-	for _, name := range docTopics {
-		tests = append(tests, struct {
-			name string
-			args []string
-		}{name, []string{"doc", name}})
+		{"unit", []string{"doc", "unit"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -43,7 +38,33 @@ func TestDoc(t *testing.T) {
 }
 
 // docTopics are the topics of winch doc, in index order.
-var docTopics = []string{"project", "inventory", "pipeline", "recipe", "step", "handlers", "values", "functions", "secrets", "lockout", "facts", "plan"}
+var docTopics = []string{"project", "inventory", "pipeline", "recipe", "step", "handlers", "variables", "templates", "expressions", "facts", "secrets", "workflow"}
+
+// spec: CLI
+func TestDocFunctions(t *testing.T) {
+	for _, topic := range project.Topics() {
+		if len(topic.Functions) == 0 {
+			continue
+		}
+		r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", topic.Name)
+		_, section, _ := strings.Cut(r.out, "\nFunctions:")
+		for _, f := range topic.Functions {
+			if !strings.Contains(section, "\n  "+f.Name+" ") {
+				t.Errorf("winch doc %s does not list the function %s", topic.Name, f.Name)
+			}
+		}
+	}
+}
+
+// spec: CLI
+func TestDocOldTopics(t *testing.T) {
+	for _, name := range []string{"values", "functions", "lockout", "plan"} {
+		r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", name)
+		if r.code != exitInvalid {
+			t.Errorf("winch doc %s: exit %d, want %d", name, r.code, exitInvalid)
+		}
+	}
+}
 
 // spec: CLI
 func TestDocKey(t *testing.T) {
@@ -54,8 +75,9 @@ The mode of the file, in octal, such as 0640. Quote it, or YAML reads it
 as a number. With stock, the package gives the default. With copy_from,
 the source gives it. A step without content has no default.
 `},
-		{"file.path", "file.path: string, required\n\nThe absolute path of the file.\n"},
-		{"file.content", "file.content: string\n\nThe content of the file, as a string. A step without content, template,\nsource, copy_from, or stock sets only the owner, group, and mode that it\ngives, with no defaults, of a file that exists.\n"},
+		{"templates.has", "templates.has: function\n\nhas list v: true when list contains v. In an expression, use v in list.\n"},
+		{"file.path", "file.path: string, required\n\nThe absolute path of the file. The step creates missing parent\ndirectories, owned by root with mode 0755.\n"},
+		{"file.content", "file.content: string\n\nThe content of the file, as a string. A step without content, template,\nsource, copy_from, or stock sets only the owner, group, and mode that it\ngives, with no defaults, of a file that exists. When that file is\nmissing, the plan says does not exist yet, and apply fails when it is\nstill missing.\n"},
 		{"firewall.allow", `firewall.allow: list of maps
 
 The rules of the traffic that the host accepts. The host drops other
@@ -117,7 +139,7 @@ func TestDocInvalid(t *testing.T) {
 		{"unknown module", []string{"doc", "fiel"}, `winch doc: unknown topic or module "fiel"; did you mean "file"?`},
 		{"unknown topic", []string{"doc", "projct"}, `winch doc: unknown topic or module "projct"; did you mean "project"?`},
 		{"unknown key of a topic", []string{"doc", "step.wen"}, `winch doc: step has no key "wen"; did you mean "when"?`},
-		{"key of a topic without keys", []string{"doc", "values.x"}, `winch doc: values has no key "x"`},
+		{"key of a topic without keys", []string{"doc", "workflow.x"}, `winch doc: workflow has no key "x"`},
 		{"unknown key", []string{"doc", "file.mdoe"}, `winch doc: file has no key "mdoe"; did you mean "mode"?`},
 		{"unknown key of a list element", []string{"doc", "firewall.allow.tpc"}, `winch doc: firewall.allow has no key "tpc"; did you mean "tcp"?`},
 		{"key of a key without keys", []string{"doc", "file.mode.x"}, `winch doc: file.mode has no key "x"`},

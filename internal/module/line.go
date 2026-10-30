@@ -18,7 +18,7 @@ import (
 )
 
 type Line struct {
-	Path       string  `yaml:"path,required" json:"path" doc:"The absolute path of the file."`
+	Path       string  `yaml:"path,required" json:"path" doc:"The absolute path of the file. A missing file is a change in the plan, since an earlier step can create it; apply fails when it is still missing."`
 	Line       string  `yaml:"line" json:"line,omitempty" doc:"The line that the file keeps. It replaces the one line that match finds, or goes at the end of the file."`
 	Match      string  `yaml:"match,required" json:"match" doc:"A regular expression that finds the line. More than one matching line fails the check."`
 	Validation *string `yaml:"validate" json:"validate,omitempty" doc:"A command that checks the new file, as for file. It runs with absent too."`

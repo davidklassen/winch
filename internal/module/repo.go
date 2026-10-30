@@ -25,7 +25,7 @@ type Repo struct {
 	URL        string        `yaml:"url,required" json:"url" doc:"The URL of the repository. It has no user name or password."`
 	Suite      string        `yaml:"suite,required" json:"suite" doc:"The suite, such as trixie. A flat suite ends in /."`
 	Components yamlx.Strings `yaml:"components" json:"components,omitempty" doc:"The components, such as main. They are required, except for a flat suite, which has none."`
-	Key        string        `yaml:"key" json:"-" doc:"An ASCII-armored OpenPGP public key in the recipe's files directory. A step has at most one of key and key_content."`
+	Key        string        `yaml:"key" json:"-" doc:"An ASCII-armored OpenPGP public key in the recipe's files directory. Download the vendor's key once and keep it in the project. A step has at most one of key and key_content."`
 	KeyPos     yamlx.Pos     `json:"-"`
 	KeyContent *string       `yaml:"key_content" json:"-" doc:"The text of an ASCII-armored OpenPGP public key. A step has at most one of key and key_content."`
 	// KeyContentPos is the position of key_content.

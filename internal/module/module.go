@@ -116,29 +116,29 @@ type WithContent interface {
 }
 
 var modules = map[string]struct {
-	new  func() Module
-	text string
+	new        func() Module
+	text, body string
 }{
-	"assert":   {func() Module { return new(Assert) }, "Fail the host during apply when a command fails."},
-	"certbot":  {func() Module { return new(Certbot) }, "Get a Let's Encrypt certificate with certbot."},
-	"cmd":      {func() Module { return new(Cmd) }, "Run a command."},
-	"debconf":  {func() Module { return new(Debconf) }, "Set an answer in the debconf database."},
-	"dir":      {func() Module { return new(Dir) }, "Manage a directory."},
-	"download": {func() Module { return new(Download) }, "Download a file or an archive and check its SHA-256."},
-	"file":     {func() Module { return new(File) }, "Write a file, or set the owner, group, and mode of a file."},
-	"firewall": {func() Module { return new(Firewall) }, "Filter the traffic that reaches the host."},
-	"group":    {func() Module { return new(Group) }, "Manage a group."},
-	"hostname": {func() Module { return new(Hostname) }, "Set the static host name."},
-	"line":     {func() Module { return new(Line) }, "Keep one line in a file that another program owns."},
-	"link":     {func() Module { return new(Link) }, "Manage a symbolic link."},
-	"pkg":      {func() Module { return new(Pkg) }, "Install or remove packages with apt."},
-	"reboot":   {func() Module { return new(Reboot) }, "Reboot the host and wait until it answers again."},
-	"repo":     {func() Module { return new(Repo) }, "Add an apt source and its key."},
-	"service":  {func() Module { return new(Service) }, "Start, stop, enable, or disable a systemd unit."},
-	"timezone": {func() Module { return new(Timezone) }, "Set the time zone."},
-	"unit":     {func() Module { return new(Unit) }, "Write a systemd unit file."},
-	"upgrade":  {func() Module { return new(Upgrade) }, "Install the pending package upgrades."},
-	"user":     {func() Module { return new(User) }, "Manage a user account."},
+	"assert":   {func() Module { return new(Assert) }, "stop a host when a check command fails", ""},
+	"certbot":  {func() Module { return new(Certbot) }, "get a Let's Encrypt certificate", "The step runs certbot certonly. Renewal stays with certbot's own timer."},
+	"cmd":      {func() Module { return new(Cmd) }, "run a command", "A secret in the command does not show in the process list of the host. A program that the command starts with the secret as an argument, such as psql -c, does show it."},
+	"debconf":  {func() Module { return new(Debconf) }, "set a debconf answer", ""},
+	"dir":      {func() Module { return new(Dir) }, "manage a directory", ""},
+	"download": {func() Module { return new(Download) }, "download a file or an archive", ""},
+	"file":     {func() Module { return new(File) }, "manage a file", ""},
+	"firewall": {func() Module { return new(Firewall) }, "filter incoming traffic", "The step owns the nftables table inet winch and changes no other table, so the rules of Docker, fail2ban, or /etc/nftables.conf stay. Its input chain filters traffic to the host. A host has at most one firewall step in a run. The step needs nft: install the package nftables first. Every change is guarded as a confirm_access step is: when no new SSH connection works after the new rules load, the old rules come back."},
+	"group":    {func() Module { return new(Group) }, "manage a group", ""},
+	"hostname": {func() Module { return new(Hostname) }, "set the host name", ""},
+	"line":     {func() Module { return new(Line) }, "manage one line in a file", ""},
+	"link":     {func() Module { return new(Link) }, "manage a symbolic link", ""},
+	"pkg":      {func() Module { return new(Pkg) }, "install or remove packages", "Before the first install of a run on a host, apply refreshes the package index. After a repo step changed something, the next pkg step refreshes it again."},
+	"reboot":   {func() Module { return new(Reboot) }, "reboot the host", ""},
+	"repo":     {func() Module { return new(Repo) }, "manage an apt source", ""},
+	"service":  {func() Module { return new(Service) }, "control a systemd unit", "With running: false, a missing unit file is ok, with the note <unit>: unit file not found. A service step with confirm_access: true checks that a new SSH connection works after the step, and rolls back when none does. Run winch doc step.confirm_access for more."},
+	"timezone": {func() Module { return new(Timezone) }, "set the time zone", ""},
+	"unit":     {func() Module { return new(Unit) }, "manage a systemd unit file", "A change of the file, also of its owner or mode, runs systemctl daemon-reload. It does not restart a running unit; a handler with restarted: true does."},
+	"upgrade":  {func() Module { return new(Upgrade) }, "upgrade the installed packages", "The step refreshes the package index, also during the plan, and checks for pending upgrades."},
+	"user":     {func() Module { return new(User) }, "manage a user account", ""},
 }
 
 // New returns empty arguments for the module name.

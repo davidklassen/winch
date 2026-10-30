@@ -1,8 +1,9 @@
-The stages of a pipeline: hosts, steps, and how they roll out.
+ordered stages that apply steps to hosts
 
-A pipeline is a file in pipelines/, such as pipelines/site.yaml, or a
-key in pipelines of winch.yaml. winch plan site and winch apply site
-run it.
+A pipeline is an ordered list of stages. Each stage applies its steps to
+a set of hosts. It is a file in pipelines/, such as
+pipelines/site.yaml, or a key in pipelines of winch.yaml. winch plan
+site and winch apply site run it.
 
 Most pipelines run the same steps on every host. Such a pipeline holds
 the steps directly, and is one stage with the name of the pipeline. A

@@ -1,10 +1,11 @@
-Values encrypted with age, and how winch hides them.
+encrypted values in the project
 
-A secret is one value encrypted with age for the recipients in
-winch.yaml. The !secret tag marks it, followed by the ciphertext in
-base64 on one line. A !secret stands only in a variable value: in the
-vars of an inventory, and in the defaults of winch.yaml and of
-recipes, at any depth of a list or a map.
+A secret is a value that the project keeps encrypted and winch never
+prints. It is encrypted with age for the recipients in winch.yaml. The
+!secret tag marks it, followed by the ciphertext in base64 on one line.
+A !secret stands only in a variable value: in the vars of an inventory,
+and in the defaults of winch.yaml and of recipes, at any depth of a list
+or a map.
 
     vars:
       monit_password: !secret YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB...
@@ -14,11 +15,12 @@ recipes, at any depth of a list or a map.
     winch secret encrypt               encrypt a value from stdin
     winch secret rekey                 encrypt all secrets for the current recipients
 
-winch secret init makes a key at ~/.config/winch/age.key, or at the
-path in WINCH_AGE_KEY. With WINCH_AGE_IDENTITY_CMD, it makes no key and
-adds the public key of the command's key. A new member runs it and sends the change for
-review. The new key can read the secrets after a member who can read
-them runs winch secret rekey.
+winch secret init makes a key at ~/.config/winch/age.key, or at the path
+in WINCH_AGE_KEY, only when no key is there. With
+WINCH_AGE_IDENTITY_CMD, it makes no key and adds the public key of the
+command's key. A new member runs it and sends the change for review. The
+new key can read the secrets after a member who can read them runs winch
+secret rekey.
 
 winch reads the age identity from the output of the command in
 WINCH_AGE_IDENTITY_CMD, such as op read op://infra/winch/key. Without

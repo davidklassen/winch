@@ -1,40 +1,41 @@
-winch configures Linux servers over SSH from a project of YAML files.
-Each step of a project uses a module, which checks and changes one kind of thing.
+Winch is a server configuration tool. It describes the desired state
+of your servers in declarative YAML and provides commands to manage
+that state.
 
 Topics:
-  project    The files of a project, and a minimal project to copy.
-  inventory  The hosts and groups, with their values, and host patterns.
-  pipeline   The stages of a pipeline: hosts, steps, and how they roll out.
-  recipe     A reusable unit: variables, requirements, steps, and handlers.
-  step       The keys of every step.
-  handlers   Steps that run after a step changed something.
-  values     Variables, templates, and expressions.
-  functions  The functions of templates and expressions.
-  secrets    Values encrypted with age, and how winch hides them.
-  lockout    confirm_access and the rollback that keeps winch's access.
-  facts      The read-only values about a host.
-  plan       Plan and apply, the plan hash, exit codes, and JSON output.
+  project      project files and directories
+  inventory    hosts and groups
+  pipeline     ordered stages that apply steps to hosts
+  recipe       reusable groups of steps
+  step         keys that every step has
+  handlers     steps that run after a change
+  variables    named values for hosts, groups, and recipes
+  templates    text with values filled in (!tpl)
+  expressions  computed values (!expr)
+  facts        values that winch reads from each host
+  secrets      encrypted values in the project
+  workflow     how to plan and apply changes
 
 Modules:
-  assert    Fail the host during apply when a command fails.
-  certbot   Get a Let's Encrypt certificate with certbot.
-  cmd       Run a command.
-  debconf   Set an answer in the debconf database.
-  dir       Manage a directory.
-  download  Download a file or an archive and check its SHA-256.
-  file      Write a file, or set the owner, group, and mode of a file.
-  firewall  Filter the traffic that reaches the host.
-  group     Manage a group.
-  hostname  Set the static host name.
-  line      Keep one line in a file that another program owns.
-  link      Manage a symbolic link.
-  pkg       Install or remove packages with apt.
-  reboot    Reboot the host and wait until it answers again.
-  repo      Add an apt source and its key.
-  service   Start, stop, enable, or disable a systemd unit.
-  timezone  Set the time zone.
-  unit      Write a systemd unit file.
-  upgrade   Install the pending package upgrades.
-  user      Manage a user account.
+  assert    stop a host when a check command fails
+  certbot   get a Let's Encrypt certificate
+  cmd       run a command
+  debconf   set a debconf answer
+  dir       manage a directory
+  download  download a file or an archive
+  file      manage a file
+  firewall  filter incoming traffic
+  group     manage a group
+  hostname  set the host name
+  line      manage one line in a file
+  link      manage a symbolic link
+  pkg       install or remove packages
+  reboot    reboot the host
+  repo      manage an apt source
+  service   control a systemd unit
+  timezone  set the time zone
+  unit      manage a systemd unit file
+  upgrade   upgrade the installed packages
+  user      manage a user account
 
 Run "winch doc <topic>" or "winch doc <module>" for more.

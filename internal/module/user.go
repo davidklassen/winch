@@ -26,7 +26,7 @@ type User struct {
 	UID            yamlx.ID       `yaml:"uid" json:"uid,omitempty" doc:"The numeric user ID."`
 	Group          yamlx.NameOrID `yaml:"group" json:"group,omitempty" doc:"The primary group. Without group, a step that creates the user also creates a group with the name of the user." default:"<name>"`
 	System         bool           `yaml:"system" json:"system,omitempty" doc:"Create a system user. Its home is /nonexistent and its shell is /usr/sbin/nologin. It counts only when the step creates the user."`
-	Home           string         `yaml:"home" json:"home,omitempty" doc:"The home directory. The default counts only when the step creates the user, and a system user gets /nonexistent. A changed home is not moved." default:"/home/<name>"`
+	Home           string         `yaml:"home" json:"home,omitempty" doc:"The home directory. The default counts only when the step creates the user, and a system user gets /nonexistent. The step creates a missing home directory, except /nonexistent. A changed home is not moved." default:"/home/<name>"`
 	Shell          string         `yaml:"shell" json:"shell,omitempty" doc:"The login shell. The default counts only when the step creates the user, and a system user gets /usr/sbin/nologin." default:"/bin/sh"`
 	Groups         *[]string      `yaml:"groups" json:"groups,omitempty" doc:"The exact list of supplementary groups. A step has groups or add_groups."`
 	AddGroups      *[]string      `yaml:"add_groups" json:"add_groups,omitempty" doc:"Groups that the user joins. The user keeps its other groups. A step with only name and add_groups does not create the user: apply fails when the user does not exist."`

@@ -3,7 +3,6 @@ package cli
 import (
 	"cmp"
 	"context"
-	_ "embed"
 	"fmt"
 	"io"
 	"slices"
@@ -11,7 +10,6 @@ import (
 	"text/tabwriter"
 
 	"github.com/davidklassen/winch/internal/doc"
-	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -26,27 +24,20 @@ const docHelp = `Examples:
   winch doc firewall.allow.tcp
 
 Show the reference: the index of topics and modules, a topic, the keys
-of one module with an example step, or the full text of one key.
+of one module with an example step, or the full text of one key or
+function.
 
 Usage: winch doc [<topic> | <module>][.<key>...]
 
 doc needs no project.
 `
 
-//go:embed plan.md
-var planTopic string
-
-// topics returns the topics of winch doc, in index order.
-func topics() []doc.Topic {
-	return append(project.Topics(), facts.Topic(), doc.NewTopic("plan", planTopic, nil))
-}
-
 func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	if len(args) > 1 {
 		printError(env.stderr, "winch: doc takes one topic, module, or key")
 		return exitInvalid
 	}
-	ts := topics()
+	ts := project.Topics()
 	if len(args) == 0 {
 		writeIndex(env.stdout, ts)
 		return exitOK
@@ -62,7 +53,7 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	}
 	switch {
 	case i >= 0:
-		keys = ts[i].Keys
+		keys = slices.Concat(ts[i].Keys, ts[i].Functions)
 	case isModule:
 		keys = d.Keys
 	default:
@@ -89,7 +80,11 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 		return exitOK
 	}
 	if len(path) == 1 {
-		fmt.Fprintf(env.stdout, "%s: %s\n\nKeys:\n", name, d.Text)
+		fmt.Fprintf(env.stdout, "%s: %s\n\n", name, d.Text)
+		if d.Body != "" {
+			fmt.Fprintf(env.stdout, "%s\n\n", wrap(d.Body, 72))
+		}
+		fmt.Fprintln(env.stdout, "Keys:")
 		writeKeys(env.stdout, d.Keys)
 		fmt.Fprintln(env.stdout, "\nExample:")
 		for line := range strings.Lines(d.Example) {
@@ -147,8 +142,9 @@ func hasKeyPath(keys []doc.Key, path []string) bool {
 }
 
 func writeIndex(out io.Writer, ts []doc.Topic) {
-	fmt.Fprint(out, `winch configures Linux servers over SSH from a project of YAML files.
-Each step of a project uses a module, which checks and changes one kind of thing.
+	fmt.Fprint(out, `Winch is a server configuration tool. It describes the desired state
+of your servers in declarative YAML and provides commands to manage
+that state.
 
 Topics:
 `)
@@ -168,9 +164,18 @@ Topics:
 }
 
 // writeTopic writes the text of t, then each of its keys with the keys of
-// their values, by their path.
+// their values, by their path, or its functions.
 func writeTopic(out io.Writer, t doc.Topic) {
 	fmt.Fprintf(out, "%s: %s\n\n%s", t.Name, t.Text, t.Body)
+	if len(t.Functions) > 0 {
+		fmt.Fprintln(out, "\nFunctions:")
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		for _, f := range t.Functions {
+			fmt.Fprintf(w, "  %s\t%s\n", f.Name, f.Summary())
+		}
+		w.Flush()
+		fmt.Fprintf(out, "\nRun \"winch doc %s.<function>\" for the full text of a function.\n", t.Name)
+	}
 	if len(t.Keys) == 0 {
 		return
 	}

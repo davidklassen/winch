@@ -1,7 +1,8 @@
-The files of a project, and a minimal project to copy.
+project files and directories
 
-A project is a directory. winch reads the project in the current
-directory:
+A project is a directory with a winch.yaml file and the inventories,
+pipelines, and recipes that it uses. winch reads the project in the
+current directory:
 
     winch.yaml               the project file
     inventories/
@@ -16,15 +17,18 @@ directory:
         files/tls.conf       the files of the recipe
 
 The project file is winch.yaml or winch.yml. An inventory, a pipeline,
-and a recipe file can end in .yaml or .yml too. The name of an inventory or a pipeline is its
-file name without the extension. Two files for one name are an error.
+and a recipe file can end in .yaml or .yml too. The name of an inventory
+or a pipeline is its file name without the extension. Two files for one
+name are an error.
 
 An inventory, a pipeline, or a recipe can also be a key in winch.yaml,
 under inventories, pipelines, or recipes. The value of the key is the
-content of the file. A name in both places is an error. A project with
-one inventory and one pipeline can put hosts and groups, and steps and
-handlers, at the top of winch.yaml. Then winch plan and winch apply take
-no pipeline name.
+content of the file. A name in both places is an error.
+
+hosts and groups at the top of winch.yaml are the only inventory of
+the project, with any number of pipelines. steps and handlers at the
+top of winch.yaml are the only pipeline of the project. Then winch plan
+and winch apply take no pipeline name.
 
 A minimal project to copy:
 
