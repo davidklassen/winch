@@ -5,15 +5,10 @@ helper program at the other end.
 
 What a host needs:
   - Debian 13, Ubuntu 24.04, or Ubuntu 26.04, on amd64 or arm64.
-    Another architecture fails the host.
-  - Login as root, or as a user with passwordless sudo. winch runs
-    sudo -n. When sudo fails, the error shows the message of sudo.
-  - A POSIX shell as the login shell. It prints nothing on stdout
-    before the command of winch starts.
-  - sh, id, uname, head, ls, and sha256sum.
-  - /var/lib/winch on a file system that allows running programs, not
-    one mounted noexec. When /var/lib/winch or its bin/ exists, root
-    owns it, and others cannot write to it.
+  - Login as root, or as a user with passwordless sudo.
+  - A POSIX login shell that prints nothing on stdout before winch
+    starts a command.
+  - /var/lib/winch/ on a file system that allows running programs.
 
   Nothing else needs to be installed. The machine that runs winch is
   Linux or macOS with the OpenSSH client.
@@ -77,17 +72,9 @@ When a connection fails:
   when no step failed. For an unknown host key, the error names the ssh
   command to run once. For a refused login, it names ssh-add.
 
-  When the host closes the connection before the SSH handshake, as a
-  busy sshd does at MaxStartups, winch tries once more after 2
-  seconds. Every other failure fails the host at once, so a retry
-  never counts as a second failed login.
-
-  These fail the host, but it is not unreachable:
-  - sudo needs a password, or the user may not use sudo.
-  - Another winch run holds the lock of the host. The error names
-    that run and the process ID of its helper. When the run is gone,
-    end that process.
-  - The session breaks after the start.
+  Only one winch run works on a host at a time. When another run holds
+  the host, the error names that run and the process ID of its helper.
+  When that run is gone, end the process.
 
 The session:
   A session is one ssh process with the helper at the other end. All
@@ -96,11 +83,9 @@ The session:
   more work, and at the apply question, which can wait for a long
   time. The access checks open their own connections.
 
-  At the start, a short script looks for the helper in
-  /var/lib/winch/bin/ by its SHA-256 hash. When the helper is missing,
-  winch sends it through the same session. The helper takes a lock, so
-  one host has one session at a time. It exits when the session ends
-  and leaves no process, except a confirm_access timer until it ends.
+  winch keeps the helper in /var/lib/winch/bin/ and sends it when it is
+  missing. The helper exits when the session ends and leaves no
+  process, except a confirm_access timer until it ends.
 
   The helpers for amd64 and arm64 are inside the winch binary. A winch
   built with go install has none: plan, apply, run, and exec fail
@@ -115,10 +100,9 @@ How commands run:
     HOME    /root
     umask   022
 
-  LANGUAGE and the variables that sudo adds are not set. The commands
-  of cmd, assert, unless, validate, then, health, and the certbot hooks
-  run through sh -e, with stdin from /dev/null. A command of several
-  lines stops at its first failed line.
+  The commands of cmd, assert, unless, validate, then, health, and the
+  certbot hooks run through sh -e, with stdin from /dev/null. A command
+  of several lines stops at its first failed line.
 
   A cmd with dir runs in that directory. A cmd with user runs as that
   user, with the home of that user as HOME. It starts no login
@@ -130,8 +114,7 @@ The time limit:
   step in seconds. The helper sends SIGTERM to the command and its
   child processes, and SIGKILL 10 seconds later to those that still
   run. The step fails, and the error shows the last 10 lines of
-  output. apt-get in pkg and upgrade has no time limit. A command that
-  exits while a child process keeps its output open succeeds.
+  output. apt-get in pkg and upgrade has no time limit.
 
   When the connection to winch ends, the helper lets the running
   command finish within its limit, and then exits. A package install
@@ -149,17 +132,12 @@ What winch leaves on the host:
     certbot-hooks/<project>  pending certbot hooks
     downloads/<project>      checksum, owner, and group of each unpack
     firewall.list            the firewall table after its last load
-    rollback/                old files for confirm_access, during a run
+    rollback/<project>/      old files for confirm_access, during a run
     reboot                   the boot ID and the error of a failed
                              reboot, until the next boot
     lock                     the session lock
 
-  The helper deletes each other file in bin/ that is older than 30
-  days. Each file in handlers/, then/, checks/, certbot-hooks/, and
-  downloads/ starts with its format version. A version newer than this
-  winch fails the host: upgrade winch to read <file>.
-
-  To remove winch from a host, delete /var/lib/winch. Pending
+  To remove winch from a host, delete /var/lib/winch/. Pending
   handlers, then commands, health gates, asserts, and certbot hooks
   are then lost. The next run of winch starts from the state of the
   host.
