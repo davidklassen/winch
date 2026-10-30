@@ -54,7 +54,8 @@ func TestAccess(t *testing.T) {
 
 // rebootHelper is a fake helper. The first connection answers reboot, the
 // second says that the host has not rebooted yet, and the third gives a
-// degraded system.
+// degraded system. With $REBOOT_ERROR, the third connection says that the
+// reboot command failed with it.
 const rebootHelper = `#!/bin/sh
 n=$(cat "$REBOOT_STATE" 2>/dev/null || echo 0)
 n=$((n+1))
@@ -66,7 +67,8 @@ while read -r line; do
   *'"method":"hello"'*) if [ $n -eq 1 ]; then echo "{\"id\":$id,\"result\":{}}"; else echo "{\"id\":$id,\"error\":\"a reconnect without resume\"}"; fi ;;
   *'"method":"reboot"'*) echo "{\"id\":$id,\"result\":\"boot-1\"}" ;;
   *'"method":"booted"'*'"old":"boot-1"'*)
-    if [ $n -le 2 ]; then echo "{\"id\":$id,\"result\":{\"same\":true}}"
+    if [ -n "$REBOOT_ERROR" ] && [ $n -gt 2 ]; then echo "{\"id\":$id,\"result\":{\"reboot_error\":\"$REBOOT_ERROR\"}}"
+    elif [ $n -le 2 ] || [ -n "$REBOOT_ERROR" ]; then echo "{\"id\":$id,\"result\":{\"same\":true}}"
     else echo "{\"id\":$id,\"result\":{\"state\":\"${BOOT_STATE:-degraded}\",\"failed\":[\"a.service\"]}}"; fi ;;
   *'"method":"facts"'*) echo "$n" >> "$REBOOT_STATE.facts"; echo "{\"id\":$id,\"result\":{\"os\":{\"id\":\"debian\"}}}" ;;
   *) echo "{\"id\":$id,\"error\":\"unexpected $line\"}" ;;
@@ -76,13 +78,61 @@ done
 
 // spec: Modules/reboot (reboot, wait until the helper answers again);
 // roadmap phase 16 (the reconnect passes ControlMaster=no and
-// ControlPath=none; a degraded system does not fail the step)
+// ControlPath=none; a degraded system does not fail the step);
+// Remote execution/Sessions (the connections after a reboot always use
+// BatchMode=yes)
 func TestReboot(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
 	state := filepath.Join(t.TempDir(), "state")
 	t.Setenv("REBOOT_STATE", state)
 	argsFile := filepath.Join(t.TempDir(), "args")
 	t.Setenv("SSH_ARGS", argsFile)
+	holds := 0
+	s, err := Open(context.Background(), Config{
+		Host:       "web1",
+		Address:    "web1",
+		Dir:        t.TempDir(),
+		Binaries:   []helperbin.Binary{helperbin.New("arm64", []byte(rebootHelper))},
+		Hello:      protocol.Hello{Run: "r1"},
+		Progress:   plain(&bytes.Buffer{}),
+		Hold:       func() func() { holds++; return func() {} },
+		RetryDelay: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if data, _ := os.ReadFile(argsFile); strings.Contains(string(data), "ControlPath=none") || strings.Contains(string(data), "BatchMode") {
+		t.Errorf("the first connection passes %q", data)
+	}
+	b, err := s.Reboot(context.Background(), time.Minute)
+	if err != nil {
+		t.Fatalf("Reboot: %v", err)
+	}
+	if b.State != "degraded" || !slices.Equal(b.Failed, []string{"a.service"}) {
+		t.Errorf("Reboot = %+v", b)
+	}
+	if data, _ := os.ReadFile(argsFile); !strings.Contains(string(data), "\nBatchMode=yes\n-o\nControlMaster=no\n-o\nControlPath=none\n") {
+		t.Errorf("the reconnect passes %q", data)
+	}
+	if holds != 1 {
+		t.Errorf("the progress held for %d logins, want only the first", holds)
+	}
+	if _, err := s.Facts(context.Background()); err != nil {
+		t.Errorf("the session after the reboot: %v", err)
+	}
+	if data, _ := os.ReadFile(state + ".facts"); string(data) != "3\n" {
+		t.Errorf("facts read on connections %q, want 3", data)
+	}
+}
+
+// spec: Modules/reboot (when the reboot command fails and the host answers
+// with the same boot ID, the step fails at once)
+func TestRebootCommandFailed(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	state := filepath.Join(t.TempDir(), "state")
+	t.Setenv("REBOOT_STATE", state)
+	t.Setenv("REBOOT_ERROR", "exit status 1: Unit reboot.target is masked.")
 	s, err := Open(context.Background(), Config{
 		Host:       "web1",
 		Address:    "web1",
@@ -96,24 +146,12 @@ func TestReboot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if data, _ := os.ReadFile(argsFile); strings.Contains(string(data), "ControlPath=none") {
-		t.Error("the first connection passes ControlPath=none")
+	_, err = s.Reboot(context.Background(), time.Minute)
+	if want := "the reboot command failed: exit status 1: Unit reboot.target is masked."; err == nil || err.Error() != want {
+		t.Errorf("Reboot = %v, want %q", err, want)
 	}
-	b, err := s.Reboot(context.Background(), time.Minute)
-	if err != nil {
-		t.Fatalf("Reboot: %v", err)
-	}
-	if b.State != "degraded" || !slices.Equal(b.Failed, []string{"a.service"}) {
-		t.Errorf("Reboot = %+v", b)
-	}
-	if data, _ := os.ReadFile(argsFile); !strings.Contains(string(data), "\nControlMaster=no\n-o\nControlPath=none\n") {
-		t.Errorf("the reconnect passes %q", data)
-	}
-	if _, err := s.Facts(context.Background()); err != nil {
-		t.Errorf("the session after the reboot: %v", err)
-	}
-	if data, _ := os.ReadFile(state + ".facts"); string(data) != "3\n" {
-		t.Errorf("facts read on connections %q, want 3", data)
+	if data, _ := os.ReadFile(state); string(data) != "3\n" {
+		t.Errorf("connections %q, want 3", data)
 	}
 }
 
@@ -219,8 +257,8 @@ func TestRebootRetry(t *testing.T) {
 	}
 }
 
-// spec: Running a pipeline/Lockout protection (gap: the batch mode of the
-// run's sessions)
+// spec: Remote execution/Sessions (the access check of lockout protection
+// always uses BatchMode=yes)
 func TestAccessWithoutBatch(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
 	argsFile := filepath.Join(t.TempDir(), "args")
@@ -229,8 +267,8 @@ func TestAccessWithoutBatch(t *testing.T) {
 	if err := s.Access(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(argsFile); strings.Contains(string(data), "BatchMode") {
-		t.Errorf("an access check without batch mode passes %q", data)
+	if data, _ := os.ReadFile(argsFile); !strings.Contains(string(data), "-o\nBatchMode=yes\n") {
+		t.Errorf("an access check of a run without batch mode passes %q", data)
 	}
 }
 
@@ -282,6 +320,18 @@ func TestAccessNoOutput(t *testing.T) {
 	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
 	err := s.Access(context.Background())
 	if want := "the login did not run winch's command"; err == nil || err.Error() != want {
+		t.Errorf("Access = %v, want %q", err, want)
+	}
+}
+
+// spec: Remote execution/Sessions (the access check always uses
+// BatchMode=yes; for a refused login, the error names ssh-add)
+func TestAccessBatchHint(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	failOnce(t, "", "admin@web1: Permission denied (publickey).", 255)
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	err := s.Access(context.Background())
+	if want := "exit status 255: admin@web1: Permission denied (publickey). (batch mode cannot type a key passphrase or a password; add the key to the agent with ssh-add)"; err == nil || err.Error() != want {
 		t.Errorf("Access = %v, want %q", err, want)
 	}
 }

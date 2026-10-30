@@ -140,11 +140,11 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "rollback":
 			err = rollbackStep(ctx, rb, handlers, thens)
 		case req.Method == "reboot":
-			result, err = reboot()
+			result, err = reboot(filepath.Join(dir, rebootRecord))
 			rebooting = err == nil
 		case req.Method == "booted":
 			var b protocol.Boot
-			b, err = booted(ctx, req.Params)
+			b, err = booted(ctx, req.Params, filepath.Join(dir, rebootRecord))
 			result, rebooting = b, b.Same
 		default:
 			err = fmt.Errorf("unknown method %q", req.Method)
