@@ -1,67 +1,112 @@
 remote: how winch reaches a host and runs there
 
-winch reaches each host over SSH and starts a helper there. All work on
-a host goes through the helper.
+winch works on a host through one SSH connection, the session, with a
+helper program at the other end.
 
-Sessions:
-  winch uses the OpenSSH client of the controller and its SSH config.
-  The address and user of the inventory override it, and --user
-  overrides those. A session is one ssh process with the helper at the
-  other end. It opens at the first work of its host and stays open
-  across stages. It closes when its host has no more work, and at the
-  apply question.
+What a host needs:
+  - Debian 13, Ubuntu 24.04, or Ubuntu 26.04, on amd64 or arm64.
+    Another architecture fails the host.
+  - Login as root, or as a user with passwordless sudo. winch runs
+    sudo -n. When sudo fails, the error shows the message of sudo.
+  - A POSIX shell as the login shell. It prints nothing on stdout
+    before the command of winch starts.
+  - sh, id, uname, head, ls, and sha256sum.
+  - /var/lib/winch on a file system that allows running programs, not
+    one mounted noexec. When /var/lib/winch or its bin/ exists, root
+    owns it, and others cannot write to it.
 
-  winch passes ConnectTimeout=15, ServerAliveInterval=15, and
-  ServerAliveCountMax=3, so a host that does not answer fails and does
-  not hang the run. It also passes RemoteCommand=none,
-  PermitLocalCommand=no, ClearAllForwardings=yes, ForwardAgent=no, and
-  ForwardX11=no, so the SSH config does not replace or add to the
-  command of winch.
+  Nothing else needs to be installed. The machine that runs winch is
+  Linux or macOS with the OpenSSH client.
 
-Questions from ssh:
-  With a terminal, ssh can ask for a new host key or a key passphrase.
-  Sessions then start one at a time in inventory order, so each
-  question belongs to one host. Without a terminal, or with --batch,
-  winch passes BatchMode=yes, and sessions start in parallel. A host
-  that needs a question is then unreachable. The access check and the
-  connections after a reboot always use BatchMode=yes.
+SSH settings:
+  winch runs your ssh, so ~/.ssh/config applies: Port, IdentityFile,
+  ProxyJump, and every other setting. Its Host blocks match the host
+  name of the inventory, also when the host has an address. The
+  address and the user of the inventory override the SSH config.
+  --user overrides both.
 
-Failed connections:
+    # ~/.ssh/config
+    Host *.acme.com
+      Port 2222
+      IdentityFile ~/.ssh/acme_ed25519
+
+    # inventories/production.yaml
+    hosts:
+      web1.acme.com:
+        address: 192.0.2.10
+        user: admin
+
+    # winch logs in to 192.0.2.10 on port 2222 as admin,
+    # with the key ~/.ssh/acme_ed25519.
+
+  winch also passes these options. They win over the SSH config:
+
+    ConnectTimeout=15        a host that does not answer fails
+    ServerAliveInterval=15   and does not hang the run
+    ServerAliveCountMax=3
+    RemoteCommand=none       the SSH config does not replace
+    PermitLocalCommand=no    or add to the command of winch
+    ClearAllForwardings=yes
+    ForwardAgent=no
+    ForwardX11=no
+
+Host keys and passphrases:
+  When stdin and stderr are terminals, ssh can ask for a new host key
+  or a key passphrase. Sessions then start one at a time, in inventory
+  order, so each question belongs to one host. After the start, hosts
+  run in parallel.
+
+  Without a terminal, or with --batch, winch passes BatchMode=yes and
+  sessions start in parallel. A host that needs a question is then
+  unreachable. Accept the host key and load the key into ssh-agent
+  first:
+
+    ssh -o HostName=192.0.2.10 -l admin web1.acme.com
+    ssh-add ~/.ssh/acme_ed25519
+    winch apply site --batch
+
+    # ssh asks no questions; the apply question stays.
+
+  The access checks and the connections after a reboot always use
+  BatchMode=yes. Run winch doc workflow for the access checks.
+
+When a connection fails:
+  A host is unreachable when ssh fails before the session starts: the
+  name does not resolve, the connection is refused or takes more than
+  15 seconds, or the host key or the login fails. winch then exits 4
+  when no step failed. For an unknown host key, the error names the ssh
+  command to run once. For a refused login, it names ssh-add.
+
   When the host closes the connection before the SSH handshake, as a
-  busy sshd does when it reaches MaxStartups, winch tries once more
-  after 2 seconds. Any other failure, such as a timeout, a refused
-  login, or a missing sudo, fails the host at once. So a retry never
-  counts as a second failed login.
+  busy sshd does at MaxStartups, winch tries once more after 2
+  seconds. Every other failure fails the host at once, so a retry
+  never counts as a second failed login.
 
-The login user:
-  The login user is root, or has passwordless sudo: winch starts the
-  helper as root, through sudo -n for another user. When sudo fails,
-  the error shows the message of sudo. The shell of the login user is
-  a POSIX shell, and prints nothing on stdout before the script of
-  winch starts.
+  These fail the host, but it is not unreachable:
+  - sudo needs a password, or the user may not use sudo.
+  - Another winch run holds the lock of the host. The error names
+    that run and the process ID of its helper. When the run is gone,
+    end that process.
+  - The session breaks after the start.
 
-The helper:
-  The helper is a static binary for linux/amd64 or linux/arm64. A short
-  script looks for it in /var/lib/winch/bin/ by its SHA-256 hash. When
-  it is missing, or its hash differs, winch sends it through the same
-  session. The helper deletes each other file in bin/ that is older
-  than 30 days.
+The session:
+  A session is one ssh process with the helper at the other end. All
+  work on a host goes through it. It opens at the first work of the
+  host and stays open across stages. It closes when the host has no
+  more work, and at the apply question, which can wait for a long
+  time. The access checks open their own connections.
 
-  A host needs sh, id, uname, head, ls, and sha256sum. /var/lib/winch
-  and its bin/ are owned by root, and others cannot write to them. The
-  file system of /var/lib/winch allows running programs: it is not
-  mounted noexec.
+  At the start, a short script looks for the helper in
+  /var/lib/winch/bin/ by its SHA-256 hash. When the helper is missing,
+  winch sends it through the same session. The helper takes a lock, so
+  one host has one session at a time. It exits when the session ends
+  and leaves no process, except a confirm_access timer until it ends.
 
-  A check of file content sends only its hash. Apply sends the content
-  when the hashes differ.
+  The helpers for amd64 and arm64 are inside the winch binary. A winch
+  built with go install has none: plan, apply, run, and exec fail
+  before they contact a host. Install a release.
 
-The lock:
-  The helper takes a lock in /var/lib/winch/. A second session on the
-  same host fails. The error names the run that holds the lock and the
-  process ID of its helper, so you can end a helper that its run left
-  behind.
-
-Commands on the host:
+How commands run:
   Every command on the host, also one that a module runs, such as
   apt-get or systemctl, runs as root in /, with this environment:
 
@@ -70,45 +115,51 @@ Commands on the host:
     HOME    /root
     umask   022
 
-  LANGUAGE and the variables that sudo adds are not set. A cmd with dir
-  runs in that directory. A cmd with user runs as that user, with the
-  home of that user as HOME. It starts no login session: PAM does not
-  run, so the login umask and limits of the user do not apply.
+  LANGUAGE and the variables that sudo adds are not set. The commands
+  of cmd, assert, unless, validate, then, health, and the certbot hooks
+  run through sh -e, with stdin from /dev/null. A command of several
+  lines stops at its first failed line.
+
+  A cmd with dir runs in that directory. A cmd with user runs as that
+  user, with the home of that user as HOME. It starts no login
+  session: PAM does not run, so the login umask and limits of the user
+  do not apply.
 
 The time limit:
   A command stops after 10 minutes, or after the timeout of a cmd
-  step. The helper sends SIGTERM to the command and its child
-  processes, and SIGKILL 10 seconds later to those that still run. The
-  step fails. apt-get in pkg and upgrade has no time limit.
+  step in seconds. The helper sends SIGTERM to the command and its
+  child processes, and SIGKILL 10 seconds later to those that still
+  run. The step fails, and the error shows the last 10 lines of
+  output. apt-get in pkg and upgrade has no time limit. A command that
+  exits while a child process keeps its output open succeeds.
 
-  When the controller goes away, the helper lets the running command
-  finish within its limit, and then exits. The command of winch exec
-  gets SIGINT, and SIGKILL after 10 seconds.
+  When the connection to winch ends, the helper lets the running
+  command finish within its limit, and then exits. A package install
+  is not cut off in the middle. winch exec is different: on Ctrl-C, or
+  when its session breaks, its command gets SIGINT, and SIGKILL after
+  10 seconds.
 
-State on the host:
-  bin/                     the helper
-  handlers/<project>       pending handlers
-  downloads/<project>      checksum, owner, and group of the last unpack
-  then/<project>           pending then commands
-  certbot-hooks/<project>  pending certbot hooks
-  checks/<project>         pending health gates and asserts
-  firewall.list            the firewall table after its last load
-  rollback/                old files for confirm_access, during a run
-  reboot                   the boot ID and the error of a failed reboot
-  lock                     the session lock
+What winch leaves on the host:
+  winch keeps its files in /var/lib/winch/:
 
-  These paths are in /var/lib/winch/. Each record file in handlers/,
-  downloads/, then/, certbot-hooks/, and checks/ starts with its format
-  version. A version newer than winch knows fails the host: upgrade
-  winch to read <file>.
+    bin/                     the helper
+    handlers/<project>       pending handlers
+    then/<project>           pending then commands
+    checks/<project>         pending health gates and asserts
+    certbot-hooks/<project>  pending certbot hooks
+    downloads/<project>      checksum, owner, and group of each unpack
+    firewall.list            the firewall table after its last load
+    rollback/                old files for confirm_access, during a run
+    reboot                   the boot ID and the error of a failed
+                             reboot, until the next boot
+    lock                     the session lock
 
-Example:
-  # ~/.ssh/config
-  Host *.acme.com
-    Port 2222
-    IdentityFile ~/.ssh/acme_ed25519
+  The helper deletes each other file in bin/ that is older than 30
+  days. Each file in handlers/, then/, checks/, certbot-hooks/, and
+  downloads/ starts with its format version. A version newer than this
+  winch fails the host: upgrade winch to read <file>.
 
-  # inventories/production.yaml
-  hosts:
-    web1.acme.com:
-      user: admin
+  To remove winch from a host, delete /var/lib/winch. Pending
+  handlers, then commands, health gates, asserts, and certbot hooks
+  are then lost. The next run of winch starts from the state of the
+  host.

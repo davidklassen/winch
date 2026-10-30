@@ -34,12 +34,12 @@ order.
 
 A --set value parses as YAML.
 
-With a terminal, ssh can ask questions, and sessions start one at a
-time. Without one, or with --batch, ssh asks nothing, and sessions
-start in parallel. The apply question stays.
+With a terminal, ssh can ask questions, and winch connects to the
+hosts one at a time. Without one, or with --batch, ssh asks nothing,
+and winch connects to them in parallel. The apply question stays.
 
 The first Ctrl-C lets the running step on each host finish and starts
-no new step. A second Ctrl-C ends the sessions at once.
+no new step. A second Ctrl-C closes the connections at once.
 
 Flags:
   --inventory <name>          inventory for the run

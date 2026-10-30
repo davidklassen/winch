@@ -23,7 +23,7 @@ type Cmd struct {
 	Unless  *string `yaml:"unless" json:"unless,omitempty" line:"check command; exit 0 skips the step" doc:"Check command; exit 0 skips the step. It runs at the check as root, in /, with the timeout of the step. user and dir do not apply to it. A step has at most one of creates and unless."`
 	User    string  `yaml:"user" json:"user,omitempty" line:"account that runs command" doc:"Account that runs command. Its home is HOME. The step starts no login session: PAM does not run, so the login umask and limits of the account do not apply, and the umask is 022." default:"root"`
 	Dir     string  `yaml:"dir" json:"dir,omitempty" line:"working directory" doc:"Working directory." default:"/"`
-	Timeout *int    `yaml:"timeout" json:"timeout,omitempty" line:"limit in seconds, also for unless" doc:"Limit in seconds, also for unless. After it, the helper stops the command and the step fails." default:"600"`
+	Timeout *int    `yaml:"timeout" json:"timeout,omitempty" line:"limit in seconds, also for unless" doc:"Limit in seconds, also for unless. After it, winch stops the command and the step fails." default:"600"`
 }
 
 func (c *Cmd) Main() string { return strings.TrimSuffix(c.Command, "\n") }

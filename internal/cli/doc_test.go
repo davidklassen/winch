@@ -131,24 +131,24 @@ SSH check with rollback, for a service step. Only a service step can use
 it, in steps or in handlers. A firewall step gets the same check without
 it.
 
-Before the step, the helper keeps the old state of each path that the
-changed steps of the recipe wrote or removed in this run. It starts a
-60-second rollback timer in a process of its own.
+Before the step, winch keeps the old state of each path that the changed
+steps of the recipe wrote or removed in this run. It starts a 60-second
+rollback timer in a process of its own.
 
 After the step, winch opens a new SSH connection and runs a command,
 through sudo -n when the login user is not root. It tries twice, 5
 seconds apart.
 
-When both tries fail, the helper puts back the old files and runs
+When both tries fail, winch puts back the old files and runs
 daemon-reload after a unit file. It reverses a start or a stop of the
 step, and reloads or restarts the unit again. The host fails with the
 error "no new SSH connection works: <error>; the old files are back".
-When the session ends first, the helper rolls back at the session end.
-When the helper is gone, the timer does it.
+When the SSH connection ends first, winch rolls back as it ends. When
+the process of winch on the host is gone, the timer rolls back.
 
-When a run ends before a notified handler with confirm_access ran, the
-helper puts back the files of that handler at once. The next run applies
-the change again.
+When a run ends before a notified handler with confirm_access ran, winch
+puts back the files of that handler at once. The next run applies the
+change again.
 
 A rollback puts back files only. It does not undo a change of a user or
 a group.
@@ -345,8 +345,10 @@ func TestDocTopicExamples(t *testing.T) {
 			lines := strings.Split(r.out, "\n")
 			for i := 0; i < len(lines); i++ {
 				indent := lines[i][:len(lines[i])-len(strings.TrimLeft(lines[i], " "))]
+				// A comment with a space states the result of an example. It
+				// names no file.
 				file, ok := strings.CutPrefix(lines[i], indent+"# ")
-				if indent == "" || !ok {
+				if indent == "" || !ok || strings.Contains(file, " ") {
 					continue
 				}
 				if _, ok := files[file]; ok {
@@ -556,10 +558,12 @@ func checkDocKeys(t *testing.T, dir string, h *fakehost.Hosts, keys []docJSONKey
 }
 
 // docBlockWords returns the words of the blocks before the example, with a
-// heading as it shows on the page.
-func docBlockWords(blocks []docJSONBlock) []string {
+// heading as it shows on the page. The JSON joins the lines of a table cell,
+// so the words of a table come from src, the blocks in the source, line by
+// line as the page shows them.
+func docBlockWords(blocks []docJSONBlock, src []doc.Block) []string {
 	var words []string
-	for _, b := range blocks {
+	for i, b := range blocks {
 		switch b.Type {
 		case "heading":
 			words = append(words, strings.Fields(b.Text+":")...)
@@ -575,9 +579,19 @@ func docBlockWords(blocks []docJSONBlock) []string {
 				words = append(words, strings.Fields(item)...)
 			}
 		case "table":
-			for _, row := range b.Rows {
-				for _, cell := range row {
-					words = append(words, strings.Fields(cell)...)
+			for _, row := range src[i].Rows {
+				lines := make([][]string, len(row))
+				n := 0
+				for c, cell := range row {
+					lines[c] = strings.Split(cell, "\n")
+					n = max(n, len(lines[c]))
+				}
+				for l := range n {
+					for c := range row {
+						if l < len(lines[c]) {
+							words = append(words, strings.Fields(lines[c][l])...)
+						}
+					}
 				}
 			}
 		}
@@ -619,6 +633,10 @@ func TestDocJSON(t *testing.T) {
 		t.Errorf("index modules %q, JSON %q", rows, moduleRows)
 	}
 
+	sources := map[string][]doc.Block{}
+	for _, tp := range project.Topics() {
+		sources[tp.Name] = tp.Blocks
+	}
 	for _, tp := range topics {
 		page := winch(t, dir, h, false, "", "doc", tp.Name).out
 		head := tp.Name + ": " + tp.Line + "\n\n"
@@ -640,7 +658,24 @@ func TestDocJSON(t *testing.T) {
 			}
 		}
 		body := docSection(page, head, "\nKeys:\n", "\nFunctions:\n", "\nExample:\n", "\nRun \"winch doc")
-		if got, want := strings.Fields(body), docBlockWords(blocks); !slices.Equal(got, want) {
+		src := sources[tp.Name]
+		for i, b := range blocks {
+			if b.Type != "table" {
+				continue
+			}
+			var rows [][]string
+			for _, row := range src[i].Rows {
+				var cells []string
+				for _, cell := range row {
+					cells = append(cells, oneLine(cell))
+				}
+				rows = append(rows, cells)
+			}
+			if !slices.EqualFunc(b.Rows, rows, slices.Equal) {
+				t.Errorf("winch doc %s: table %q, source %q", tp.Name, b.Rows, rows)
+			}
+		}
+		if got, want := strings.Fields(body), docBlockWords(blocks, src); !slices.Equal(got, want) {
 			t.Errorf("winch doc %s: body\n%s\nJSON\n%q", tp.Name, body, want)
 		}
 		if got := docSection(page, "\nExample:\n", "\nRun \"winch doc"); got != indentDoc(example) {

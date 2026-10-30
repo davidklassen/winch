@@ -28,9 +28,9 @@ order.
 
 A --set value parses as YAML.
 
-With a terminal, ssh can ask questions, and sessions start one at a
-time. Without one, or with --batch, ssh asks nothing, and sessions
-start in parallel.
+With a terminal, ssh can ask questions, and winch connects to the
+hosts one at a time. Without one, or with --batch, ssh asks nothing,
+and winch connects to them in parallel.
 
 With --exit-code, plan exits with code 2 when the plan has changes,
 unknown steps, pending handlers, a pending then, or a pending gate or

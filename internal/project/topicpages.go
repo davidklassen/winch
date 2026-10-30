@@ -26,12 +26,14 @@ steps:
 		doc.Code(`winch validate
 winch plan
 winch apply
+
+# winch writes /etc/motd on web1.example.com.
 `),
 		doc.Heading("Hosts"),
 		doc.Paragraph(`winch connects with the OpenSSH client and its SSH config. The login
 user is root, or has passwordless sudo. A host needs nothing else
-installed: winch sends its helper binary to /var/lib/winch on the
-host.`),
+installed: winch sends a helper program to /var/lib/winch on the
+host and runs it there. Run winch doc remote.`),
 		doc.Heading("When the project grows"),
 		doc.Paragraph(`Move the hosts into inventories, the steps into pipelines, and
 groups of steps into recipes:`),
@@ -88,9 +90,9 @@ value, and a group value beats a value of all. Two groups of one
 host that set different values for one variable, or for user, are
 an error, unless the host sets that value too.`),
 		doc.Heading("SSH settings"),
-		doc.Paragraph(`Every other SSH setting, such as the port or the key, comes from the
-SSH config of the controller. Its Host blocks match the host name,
-also when the host has an address.`),
+		doc.Paragraph(`Every other SSH setting, such as the port or the key, comes from your
+SSH config. Its Host blocks match the host name, also when the host
+has an address.`),
 		doc.Heading("Host patterns"),
 		doc.Paragraph(`Host patterns select hosts in the hosts of a stage, in --hosts, and
 in winch run and winch exec:`),
@@ -276,8 +278,7 @@ then. when takes an expression. loop takes a list or an expression.`),
 		doc.Heading("Evaluation"),
 		doc.Paragraph(`On each host, winch evaluates when. When it is false, winch skips the
 step. Then winch evaluates loop, and the arguments for each element.
-The helper checks the step on the host, and apply changes what
-differs.`),
+winch checks the step on the host, and apply changes what differs.`),
 		doc.Heading("Results"),
 		doc.Paragraph(`A step that runs a command counts as changed: a cmd, and a service
 with restarted or reloaded. When a step fails, its host stops. Other
@@ -327,29 +328,7 @@ letters, digits, and _.`),
 <recipe>.<handler> of another recipe. That recipe must run in the
 same pipeline, on at least one host where the step runs. On a host
 where it does not run, winch drops the notification.`),
-		doc.Heading("When a handler runs"),
-		doc.List(
-			`A handler runs at most once per recipe run on a host. A handler of
-a stage runs at most once per stage run.`,
-			`A handler runs after the last step of its recipe. When its recipe
-already ran on that host, it runs at the end of the current stage.`,
-			`A handler of a stage runs after the last step of the stage and
-after the recipe handlers at the end of the stage. It runs before
-the health gate.`,
-			`Handlers run in the order that the recipe or the stage declares
-them.`,
-		),
-		doc.Heading("Handler steps"),
-		doc.Paragraph(`A handler step can have when. It cannot use notify or run a recipe.
-Only a handler step and winch run can use restarted and reloaded of
-service.`),
-		doc.Heading("Pending handlers"),
-		doc.Paragraph(`When a step notifies a handler, the helper records it on the host
-before the step changes anything. The record goes when the handler
-succeeds. When a run stops first, the handler stays pending. It runs
-the next time its recipe or stage runs on that host. The plan shows
-a handler that will run with "!".`),
-		doc.Example(`# winch.yaml
+		doc.Code(`# winch.yaml
 name: demo
 hosts:
   web1.example.com: {}
@@ -369,7 +348,31 @@ recipes:
         - service:
             name: nginx
             reloaded: true
+
+# A change of gzip.conf reloads nginx once, at the end of the stage.
 `),
+		doc.Heading("When a handler runs"),
+		doc.List(
+			`A handler runs at most once per recipe run on a host. A handler of
+a stage runs at most once per stage run.`,
+			`A handler runs after the last step of its recipe. When its recipe
+already ran on that host, it runs at the end of the current stage.`,
+			`A handler of a stage runs after the last step of the stage and
+after the recipe handlers at the end of the stage. It runs before
+the health gate.`,
+			`Handlers run in the order that the recipe or the stage declares
+them.`,
+		),
+		doc.Heading("Handler steps"),
+		doc.Paragraph(`A handler step can have when. It cannot use notify or run a recipe.
+Only a handler step and winch run can use restarted and reloaded of
+service.`),
+		doc.Heading("Pending handlers"),
+		doc.Paragraph(`When a step notifies a handler, winch marks the handler as pending on
+the host before the step changes anything. The mark goes when the
+handler succeeds. When a run stops first, the handler stays pending.
+It runs the next time its recipe or stage runs on that host. The
+plan shows a handler that will run with "!".`),
 	},
 }
 
@@ -482,11 +485,11 @@ one word with quote. Quote a YAML value that starts with a quote, [,
 {, &, *, or !, or that contains ": " or " #". A template that starts
 with {{ needs quotes.`),
 		doc.Heading("When they run"),
-		doc.Paragraph(`winch evaluates templates on the controller, during the plan. They
-cannot read the result of a step. winch checks each one when it
-loads the project: an unknown name or a syntax error is an error. An
-error while winch evaluates one for a host fails that host. The
-other hosts go on.`),
+		doc.Paragraph(`winch evaluates templates on the machine that runs winch, during the
+plan. They cannot read the result of a step. winch checks each one
+when it loads the project: an unknown name or a syntax error is an
+error. An error while winch evaluates one for a host fails that
+host. The other hosts go on.`),
 		doc.Example(`# winch.yaml
 name: demo
 hosts:
@@ -558,11 +561,12 @@ null fails the host.`),
 		doc.Paragraph(`Quote a YAML value that starts with a quote, [, {, &, *, or !, or
 that contains ": " or " #".`),
 		doc.Heading("When they run"),
-		doc.Paragraph(`winch evaluates expressions on the controller, during the plan. They
-cannot read the result of a step. winch checks each one when it
-loads the project: an unknown name or a syntax error is an error. An
-error while winch evaluates one for a host fails that host. The
-other hosts go on. $env and now() are errors in every expression.`),
+		doc.Paragraph(`winch evaluates expressions on the machine that runs winch, during
+the plan. They cannot read the result of a step. winch checks each
+one when it loads the project: an unknown name or a syntax error is
+an error. An error while winch evaluates one for a host fails that
+host. The other hosts go on. $env and now() are errors in every
+expression.`),
 		doc.Example(`# winch.yaml
 name: demo
 hosts:
@@ -602,10 +606,7 @@ as the OS release.`),
 		doc.Paragraph(`Expressions read a fact as facts.os.id, and templates as
 {{ .facts.os.id }}. Facts are a fixed set. A read of an unknown fact
 is an error.`),
-		doc.Heading("When winch reads them"),
-		doc.Paragraph(`winch reads the facts once per host per run, before the first step,
-and again after a reboot. They describe the host before the run.`),
-		doc.Example(`# winch.yaml
+		doc.Code(`# winch.yaml
 name: demo
 hosts:
   web1.example.com: {}
@@ -619,7 +620,13 @@ recipes:
       - reboot:
           if_required: true
         when: !expr facts.reboot_required
+
+# The plan fails a host that is not Debian 13. A host that needs a
+# reboot reboots.
 `),
+		doc.Heading("When winch reads them"),
+		doc.Paragraph(`winch reads the facts once per host per run, before the first step,
+and again after a reboot. They describe the host before the run.`),
 	},
 }
 
@@ -708,9 +715,9 @@ them.`),
 		doc.Heading("Plan and apply"),
 		doc.Paragraph(`winch plan shows the changes and changes nothing. winch apply shows
 the same plan, asks, and then makes the changes. For each host, the
-plan starts a session, reads the facts, evaluates the steps, checks
-the requirements of the recipes, and asks the helper to check each
-step. Apply checks each step again right before it changes it. The
+plan connects to the host, reads the facts, evaluates the steps,
+checks the requirements of the recipes, and checks each step on the
+host. Apply checks each step again right before it changes it. The
 second check decides.`),
 		doc.Heading("Plan marks"),
 		doc.Table([][]string{
@@ -723,11 +730,11 @@ second check decides.`),
 		}),
 		doc.Heading("Plan hash"),
 		doc.Paragraph(`The last line of a plan is its hash, such as plan a3f9c2e1d07b4c58.
-The hash covers the project name, the hosts with their SSH targets
-and login users, the stages, the evaluated steps, the check results,
-and the pending handlers and then commands. winch apply --check
-<hash> applies only when the new plan has that hash, without the
-question.`),
+The hash covers the project name, the hosts with the host name and
+port that ssh resolves for them and their login users, the stages,
+the evaluated steps, the check results, and the pending handlers and
+then commands. winch apply --check <hash> applies only when the new
+plan has that hash, without the question.`),
 		doc.Heading("Without a terminal"),
 		doc.Paragraph(`apply without --yes or --check prints the plan and exits 5. Its last
 line is the command that applies that plan.`),
@@ -738,9 +745,9 @@ true. The plan fails a host when two steps manage the same path,
 package, unit, user, or group with different arguments.`),
 		doc.Heading("Stopping and resuming"),
 		doc.Paragraph(`The first Ctrl-C lets the running step of each host finish, starts
-no new step, and ends with the summary. A second Ctrl-C ends the
-sessions. A new run is the resume: steps that already succeeded
-check as ok, and pending handlers run.`),
+no new step, and ends with the summary. A second Ctrl-C closes the
+connections to the hosts. A new run is the resume: steps that already
+succeeded check as ok, and pending handlers run.`),
 		doc.Heading("Access to the host"),
 		doc.Paragraph(`winch keeps its access to each host.`),
 		doc.List(
@@ -759,9 +766,9 @@ the access once more. When it fails, the host fails, and nothing
 rolls back.`,
 		),
 		doc.Heading("Changing the SSH port"),
-		doc.Paragraph(`The access check connects to the port in the controller's SSH
-config. So a change of sshd's Port in one run always rolls back. Move
-sshd to a new port in three runs:`),
+		doc.Paragraph(`The access check connects to the port in your SSH config. So a change
+of sshd's Port in one run always rolls back. Move sshd to a new port
+in three runs:`),
 		doc.OrderedList(
 			`Let sshd listen on the old and the new port.`,
 			`Change the port in the SSH config.`,
@@ -805,58 +812,98 @@ var remoteTopic = doc.Topic{
 	Name: "remote",
 	Text: "how winch reaches a host and runs there",
 	Blocks: []doc.Block{
-		doc.Paragraph(`winch reaches each host over SSH and starts a helper there. All work on
-a host goes through the helper.`),
-		doc.Heading("Sessions"),
-		doc.Paragraph(`winch uses the OpenSSH client of the controller and its SSH config.
-The address and user of the inventory override it, and --user
-overrides those. A session is one ssh process with the helper at the
-other end. It opens at the first work of its host and stays open
-across stages. It closes when its host has no more work, and at the
-apply question.`),
-		doc.Paragraph(`winch passes ConnectTimeout=15, ServerAliveInterval=15, and
-ServerAliveCountMax=3, so a host that does not answer fails and does
-not hang the run. It also passes RemoteCommand=none,
-PermitLocalCommand=no, ClearAllForwardings=yes, ForwardAgent=no, and
-ForwardX11=no, so the SSH config does not replace or add to the
-command of winch.`),
-		doc.Heading("Questions from ssh"),
-		doc.Paragraph(`With a terminal, ssh can ask for a new host key or a key passphrase.
-Sessions then start one at a time in inventory order, so each
-question belongs to one host. Without a terminal, or with --batch,
-winch passes BatchMode=yes, and sessions start in parallel. A host
-that needs a question is then unreachable. The access check and the
-connections after a reboot always use BatchMode=yes.`),
-		doc.Heading("Failed connections"),
+		doc.Paragraph(`winch works on a host through one SSH connection, the session, with a
+helper program at the other end.`),
+		doc.Heading("What a host needs"),
+		doc.List(
+			`Debian 13, Ubuntu 24.04, or Ubuntu 26.04, on amd64 or arm64.
+Another architecture fails the host.`,
+			`Login as root, or as a user with passwordless sudo. winch runs
+sudo -n. When sudo fails, the error shows the message of sudo.`,
+			`A POSIX shell as the login shell. It prints nothing on stdout
+before the command of winch starts.`,
+			`sh, id, uname, head, ls, and sha256sum.`,
+			`/var/lib/winch on a file system that allows running programs, not
+one mounted noexec. When /var/lib/winch or its bin/ exists, root
+owns it, and others cannot write to it.`,
+		),
+		doc.Paragraph(`Nothing else needs to be installed. The machine that runs winch is
+Linux or macOS with the OpenSSH client.`),
+		doc.Heading("SSH settings"),
+		doc.Paragraph(`winch runs your ssh, so ~/.ssh/config applies: Port, IdentityFile,
+ProxyJump, and every other setting. Its Host blocks match the host
+name of the inventory, also when the host has an address. The
+address and the user of the inventory override the SSH config.
+--user overrides both.`),
+		doc.Code(`# ~/.ssh/config
+Host *.acme.com
+  Port 2222
+  IdentityFile ~/.ssh/acme_ed25519
+
+# inventories/production.yaml
+hosts:
+  web1.acme.com:
+    address: 192.0.2.10
+    user: admin
+
+# winch logs in to 192.0.2.10 on port 2222 as admin,
+# with the key ~/.ssh/acme_ed25519.
+`),
+		doc.Paragraph(`winch also passes these options. They win over the SSH config:`),
+		doc.Table([][]string{
+			{"ConnectTimeout=15\nServerAliveInterval=15\nServerAliveCountMax=3", "a host that does not answer fails\nand does not hang the run"},
+			{"RemoteCommand=none\nPermitLocalCommand=no\nClearAllForwardings=yes\nForwardAgent=no\nForwardX11=no", "the SSH config does not replace\nor add to the command of winch"},
+		}),
+		doc.Heading("Host keys and passphrases"),
+		doc.Paragraph(`When stdin and stderr are terminals, ssh can ask for a new host key
+or a key passphrase. Sessions then start one at a time, in inventory
+order, so each question belongs to one host. After the start, hosts
+run in parallel.`),
+		doc.Paragraph(`Without a terminal, or with --batch, winch passes BatchMode=yes and
+sessions start in parallel. A host that needs a question is then
+unreachable. Accept the host key and load the key into ssh-agent
+first:`),
+		doc.Code(`ssh -o HostName=192.0.2.10 -l admin web1.acme.com
+ssh-add ~/.ssh/acme_ed25519
+winch apply site --batch
+
+# ssh asks no questions; the apply question stays.
+`),
+		doc.Paragraph(`The access checks and the connections after a reboot always use
+BatchMode=yes. Run winch doc workflow for the access checks.`),
+		doc.Heading("When a connection fails"),
+		doc.Paragraph(`A host is unreachable when ssh fails before the session starts: the
+name does not resolve, the connection is refused or takes more than
+15 seconds, or the host key or the login fails. winch then exits 4
+when no step failed. For an unknown host key, the error names the ssh
+command to run once. For a refused login, it names ssh-add.`),
 		doc.Paragraph(`When the host closes the connection before the SSH handshake, as a
-busy sshd does when it reaches MaxStartups, winch tries once more
-after 2 seconds. Any other failure, such as a timeout, a refused
-login, or a missing sudo, fails the host at once. So a retry never
-counts as a second failed login.`),
-		doc.Heading("The login user"),
-		doc.Paragraph(`The login user is root, or has passwordless sudo: winch starts the
-helper as root, through sudo -n for another user. When sudo fails,
-the error shows the message of sudo. The shell of the login user is
-a POSIX shell, and prints nothing on stdout before the script of
-winch starts.`),
-		doc.Heading("The helper"),
-		doc.Paragraph(`The helper is a static binary for linux/amd64 or linux/arm64. A short
-script looks for it in /var/lib/winch/bin/ by its SHA-256 hash. When
-it is missing, or its hash differs, winch sends it through the same
-session. The helper deletes each other file in bin/ that is older
-than 30 days.`),
-		doc.Paragraph(`A host needs sh, id, uname, head, ls, and sha256sum. /var/lib/winch
-and its bin/ are owned by root, and others cannot write to them. The
-file system of /var/lib/winch allows running programs: it is not
-mounted noexec.`),
-		doc.Paragraph(`A check of file content sends only its hash. Apply sends the content
-when the hashes differ.`),
-		doc.Heading("The lock"),
-		doc.Paragraph(`The helper takes a lock in /var/lib/winch/. A second session on the
-same host fails. The error names the run that holds the lock and the
-process ID of its helper, so you can end a helper that its run left
-behind.`),
-		doc.Heading("Commands on the host"),
+busy sshd does at MaxStartups, winch tries once more after 2
+seconds. Every other failure fails the host at once, so a retry
+never counts as a second failed login.`),
+		doc.Paragraph(`These fail the host, but it is not unreachable:`),
+		doc.List(
+			`sudo needs a password, or the user may not use sudo.`,
+			`Another winch run holds the lock of the host. The error names
+that run and the process ID of its helper. When the run is gone,
+end that process.`,
+			`The session breaks after the start.`,
+		),
+		doc.Heading("The session"),
+		doc.Paragraph(`A session is one ssh process with the helper at the other end. All
+work on a host goes through it. It opens at the first work of the
+host and stays open across stages. It closes when the host has no
+more work, and at the apply question, which can wait for a long
+time. The access checks open their own connections.`),
+		doc.Paragraph(`At the start, a short script looks for the helper in
+/var/lib/winch/bin/ by its SHA-256 hash. When the helper is missing,
+winch sends it through the same session. The helper takes a lock, so
+one host has one session at a time. It exits when the session ends
+and leaves no process, except a confirm_access timer until it ends.`),
+		doc.Paragraph(`The helpers for amd64 and arm64 are inside the winch binary. A winch
+built with go install has none: plan, apply, run, and exec fail
+before they contact a host. Install a release.`),
+		doc.Heading("How commands run"),
 		doc.Paragraph(`Every command on the host, also one that a module runs, such as
 apt-get or systemctl, runs as root in /, with this environment:`),
 		doc.Table([][]string{
@@ -865,44 +912,47 @@ apt-get or systemctl, runs as root in /, with this environment:`),
 			{"HOME", "/root"},
 			{"umask", "022"},
 		}),
-		doc.Paragraph(`LANGUAGE and the variables that sudo adds are not set. A cmd with dir
-runs in that directory. A cmd with user runs as that user, with the
-home of that user as HOME. It starts no login session: PAM does not
-run, so the login umask and limits of the user do not apply.`),
+		doc.Paragraph(`LANGUAGE and the variables that sudo adds are not set. The commands
+of cmd, assert, unless, validate, then, health, and the certbot hooks
+run through sh -e, with stdin from /dev/null. A command of several
+lines stops at its first failed line.`),
+		doc.Paragraph(`A cmd with dir runs in that directory. A cmd with user runs as that
+user, with the home of that user as HOME. It starts no login
+session: PAM does not run, so the login umask and limits of the user
+do not apply.`),
 		doc.Heading("The time limit"),
 		doc.Paragraph(`A command stops after 10 minutes, or after the timeout of a cmd
-step. The helper sends SIGTERM to the command and its child
-processes, and SIGKILL 10 seconds later to those that still run. The
-step fails. apt-get in pkg and upgrade has no time limit.`),
-		doc.Paragraph(`When the controller goes away, the helper lets the running command
-finish within its limit, and then exits. The command of winch exec
-gets SIGINT, and SIGKILL after 10 seconds.`),
-		doc.Heading("State on the host"),
+step in seconds. The helper sends SIGTERM to the command and its
+child processes, and SIGKILL 10 seconds later to those that still
+run. The step fails, and the error shows the last 10 lines of
+output. apt-get in pkg and upgrade has no time limit. A command that
+exits while a child process keeps its output open succeeds.`),
+		doc.Paragraph(`When the connection to winch ends, the helper lets the running
+command finish within its limit, and then exits. A package install
+is not cut off in the middle. winch exec is different: on Ctrl-C, or
+when its session breaks, its command gets SIGINT, and SIGKILL after
+10 seconds.`),
+		doc.Heading("What winch leaves on the host"),
+		doc.Paragraph(`winch keeps its files in /var/lib/winch/:`),
 		doc.Table([][]string{
 			{"bin/", "the helper"},
 			{"handlers/<project>", "pending handlers"},
-			{"downloads/<project>", "checksum, owner, and group of the last unpack"},
 			{"then/<project>", "pending then commands"},
-			{"certbot-hooks/<project>", "pending certbot hooks"},
 			{"checks/<project>", "pending health gates and asserts"},
+			{"certbot-hooks/<project>", "pending certbot hooks"},
+			{"downloads/<project>", "checksum, owner, and group of each unpack"},
 			{"firewall.list", "the firewall table after its last load"},
 			{"rollback/", "old files for confirm_access, during a run"},
-			{"reboot", "the boot ID and the error of a failed reboot"},
+			{"reboot", "the boot ID and the error of a failed\nreboot, until the next boot"},
 			{"lock", "the session lock"},
 		}),
-		doc.Paragraph(`These paths are in /var/lib/winch/. Each record file in handlers/,
-downloads/, then/, certbot-hooks/, and checks/ starts with its format
-version. A version newer than winch knows fails the host: upgrade
-winch to read <file>.`),
-		doc.Example(`# ~/.ssh/config
-Host *.acme.com
-  Port 2222
-  IdentityFile ~/.ssh/acme_ed25519
-
-# inventories/production.yaml
-hosts:
-  web1.acme.com:
-    user: admin
-`),
+		doc.Paragraph(`The helper deletes each other file in bin/ that is older than 30
+days. Each file in handlers/, then/, checks/, certbot-hooks/, and
+downloads/ starts with its format version. A version newer than this
+winch fails the host: upgrade winch to read <file>.`),
+		doc.Paragraph(`To remove winch from a host, delete /var/lib/winch. Pending
+handlers, then commands, health gates, asserts, and certbot hooks
+are then lost. The next run of winch starts from the state of the
+host.`),
 	},
 }
