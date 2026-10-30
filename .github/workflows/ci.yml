@@ -22,6 +22,7 @@ jobs:
           version: v2.15.0
           install-only: true
       - run: make lint test
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
   integration:
     runs-on: ubuntu-24.04
