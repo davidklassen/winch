@@ -85,8 +85,11 @@ type hostEnv struct {
 
 // exprOptions add quote, sqlquote, and json, and replace keys, values, and toPairs, whose order
 // is random in expr, with versions in sorted key order. json replaces toJSON.
+// The optimizer is off here and for require: it folds map(filter(...)) into a
+// node that ast.Walk does not visit, and exprCheck would miss what is in it.
 var exprOptions = []expr.Option{
 	expr.Env(exprEnv{}),
+	expr.Optimize(false),
 	expr.DisableBuiltin("keys"),
 	expr.DisableBuiltin("values"),
 	expr.DisableBuiltin("toPairs"),

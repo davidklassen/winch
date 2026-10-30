@@ -1171,6 +1171,14 @@ func TestReadsDeclare(t *testing.T) {
 			"recipes/r/templates/t.tmpl": "{{ range .vars.peers }}{{ .vars.role }}{{ end }}{{ $p := index .vars.peers 0 }}{{ $p.vars.zone }}{{ (index .vars.peers 0).vars.rack }}\n",
 			"pipelines/site.yaml":        "stages:\n  - name: a\n    hosts: web1\n    steps:\n      - recipe: r\n        vars:\n          peers: !expr match(\"all\")\n",
 		}},
+		{name: "a peer read under filter of match", files: map[string]string{
+			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      peer_key: p1", 1),
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/p\n      content: !expr 'join(map(filter(match(\"all\"), .name != host.name), .vars.peer_key), \",\")'\n",
+		}},
+		{name: "a misspelled peer read under filter of match", files: map[string]string{
+			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      peer_key: p1", 1),
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/p\n      content: !expr 'join(map(filter(match(\"all\"), .name != host.name), .vars.peer_kye), \",\")'\n",
+		}, want: `recipes/r/recipe.yaml:14:16: unknown variable "peer_kye"; did you mean "peer_key"?`},
 		{name: "a value name with upper case", files: map[string]string{
 			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      Port: 1", 1),
 			"recipes/r/recipe.yaml": strings.Replace(r, "string(vars.port)", "string(vars.Port)", 1),

@@ -390,7 +390,7 @@ func compileRequire(n *yamlx.Node) (Require, error) {
 	if n.Tag != "!expr" || !ok {
 		return Require{}, yamlx.Errorf(n.Pos, `require: an item is an expression with the !expr tag, such as !expr 'facts.os.id == "debian"'`)
 	}
-	prog, err := expr.Compile(text, expr.Env(requireEnv{}), expr.AsBool())
+	prog, err := expr.Compile(text, expr.Env(requireEnv{}), expr.AsBool(), expr.Optimize(false))
 	if err != nil {
 		return Require{}, yamlx.Errorf(n.Pos, "require: %s", exprMessage(err, []string{"facts"}))
 	}
