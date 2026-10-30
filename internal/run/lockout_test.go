@@ -153,21 +153,24 @@ func rebootProject(t *testing.T, ifRequired string, more string) *project.Projec
 		"      - reboot:\n          if_required: " + ifRequired + "\n          timeout: 30\n"})
 }
 
-// spec: Modules/reboot; CLI/Output (marks); roadmap phase 16 (the apply line
-// says that the host rebooted and names the failed units)
+// spec: Modules/reboot (also when an earlier step of the run requires the
+// reboot, and in a handler); CLI/Output (marks); roadmap phase 16 (the apply
+// line says that the host rebooted and names the failed units)
 func TestRebootStep(t *testing.T) {
 	motd := "      - file:\n          path: /etc/motd\n          content: hi\n"
 	tests := []struct {
-		name       string
-		ifRequired string
-		more       string
-		required   bool
-		boot       *protocol.Boot
-		wantPlan   string
-		wantApply  string
-		wantLog    []string
-		wantErr    string
-		noConnect  bool
+		name          string
+		ifRequired    string
+		more          string
+		pipeline      string
+		required      bool
+		requiredAfter bool
+		boot          *protocol.Boot
+		wantPlan      string
+		wantApply     string
+		wantLog       []string
+		wantErr       string
+		noConnect     bool
 	}{
 		{name: "always", ifRequired: "false", wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "required", ifRequired: "true", required: true, wantPlan: "    ~ reboot if required\n", wantApply: "web1: base: ~ reboot if required (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
@@ -184,6 +187,10 @@ func TestRebootStep(t *testing.T) {
 			wantErr: "base: failed: reboot if required: the host still needs a reboot after the reboot: /run/reboot-required lists the packages dbus, libc6"},
 		{name: "maybe, with a change", ifRequired: "true", more: motd, wantPlan: "    * reboot if required\n", wantApply: "web1: base: + file /etc/motd\n", wantLog: []string{"access"}},
 		{name: "maybe, alone", ifRequired: "true", wantPlan: "0 to change, 1 unchanged", wantApply: "", noConnect: true},
+		{name: "an earlier step requires the reboot", ifRequired: "true", more: motd, requiredAfter: true, wantPlan: "    * reboot if required\n",
+			wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ reboot if required (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
+		{name: "a reboot in a handler", pipeline: motd + "        notify: restart\n    handlers:\n      restart:\n        - reboot:\n            if_required: false\n            timeout: 30\n",
+			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ handler base.restart: reboot (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -192,7 +199,19 @@ func TestRebootStep(t *testing.T) {
 			if tt.boot != nil {
 				h.SetBoot("web1", *tt.boot)
 			}
-			p := rebootProject(t, tt.ifRequired, tt.more)
+			if tt.requiredAfter {
+				h.OnApply = func(host, main string) {
+					if main == "/etc/motd" {
+						h.SetFacts(host, facts.Facts{OS: facts.OS{ID: "debian", Version: "13"}, RebootRequired: true})
+					}
+				}
+			}
+			var p *project.Project
+			if tt.pipeline != "" {
+				p = loadWeb1(t, map[string]string{"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.pipeline})
+			} else {
+				p = rebootProject(t, tt.ifRequired, tt.more)
+			}
 			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
 			plan.Write(plain(&out), plain(&errOut))

@@ -65,7 +65,8 @@ func run(m *testing.M) int {
 // $SSH_G, or prints $SSH_G_ERR on stderr and exits with 255 when that is
 // set. ssh sends itself SIGINT when $SSH_INT is set. It
 // writes its arguments to $SSH_ARGS when it is set, prints $SSH_BANNER and
-// the output of $SSH_BANNER_CMD when they are set, and runs its last argument
+// the output of $SSH_BANNER_CMD when they are set, runs $SSH_CHILD with its
+// stdout and stderr when it is set, and runs its last argument
 // with sh, on this machine. When $SSH_FAIL_ONCE is a missing file, ssh creates it and
 // fails once: it prints $SSH_FAIL_OUT on stdout when it is set, prints
 // $SSH_FAIL_ERR on stderr, and exits with $SSH_FAIL_CODE. A later start
@@ -81,7 +82,7 @@ func fakeSSH(bin string) error {
 			"[ -z \"$SSH_G_ERR\" ] || { printf '%s\\n' \"$SSH_G_ERR\" >&2; exit 255; }\nprintf '%s\\n' \"$SSH_G\"; exit\nfi\n" +
 			"[ -z \"$SSH_INT\" ] || kill -INT $$\n[ -z \"$SSH_FAIL_ONCE\" ] || [ ! -e \"$SSH_FAIL_ONCE\" ] || : > \"$SSH_FAIL_ONCE.again\"\n" +
 			"if [ -n \"$SSH_FAIL_ONCE\" ] && [ ! -e \"$SSH_FAIL_ONCE\" ]; then : > \"$SSH_FAIL_ONCE\"; [ -z \"$SSH_FAIL_OUT\" ] || printf '%s\\n' \"$SSH_FAIL_OUT\"; printf '%s\\n' \"$SSH_FAIL_ERR\" >&2; exit \"$SSH_FAIL_CODE\"; fi\n" +
-			"[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
+			"[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\n[ -z \"$SSH_CHILD\" ] || sh -c \"$SSH_CHILD\"\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
 		"uname": "#!/bin/sh\necho \"$FAKE_UNAME\"\n",
 		"id":    "#!/bin/sh\necho \"$FAKE_UID\"\n",
 		"sudo":  "#!/bin/sh\nexec sh -c \"$FAKE_SUDO\" sudo \"$@\"\n",

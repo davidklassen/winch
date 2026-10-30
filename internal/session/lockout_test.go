@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -152,6 +154,44 @@ func TestRebootCommandFailed(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(state); string(data) != "3\n" {
 		t.Errorf("connections %q, want 3", data)
+	}
+}
+
+// spec: Modules/reboot (gap: a child of ssh, such as the ssh of a ProxyJump,
+// keeps stdout and stderr open after the reboot ends the session)
+func TestRebootChildKeepsOutput(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	t.Setenv("REBOOT_STATE", filepath.Join(t.TempDir(), "state"))
+	pids := filepath.Join(t.TempDir(), "pids")
+	t.Setenv("SSH_CHILD", `sleep 600 & echo $! >> "`+pids+`"`)
+	t.Cleanup(func() {
+		data, _ := os.ReadFile(pids)
+		for _, f := range strings.Fields(string(data)) {
+			if pid, err := strconv.Atoi(f); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	s, err := Open(context.Background(), Config{
+		Host:       "web1",
+		Address:    "web1",
+		Dir:        t.TempDir(),
+		Binaries:   []helperbin.Binary{helperbin.New("arm64", []byte(rebootHelper))},
+		Hello:      protocol.Hello{Run: "r1"},
+		Progress:   plain(&bytes.Buffer{}),
+		RetryDelay: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	start := time.Now()
+	if _, err := s.Reboot(context.Background(), time.Minute); err != nil {
+		t.Fatalf("Reboot: %v", err)
+	}
+	// Each close waits up to the WaitDelay of ssh for the copy of stderr.
+	if d := time.Since(start); d > 20*time.Second {
+		t.Errorf("Reboot took %s: it waited for the child that keeps the output open", d)
 	}
 }
 

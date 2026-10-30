@@ -300,6 +300,42 @@ func TestCmdPipeline(t *testing.T) {
 	}
 }
 
+// daemonPipeline starts processes that outlive the session: one keeps the
+// output of its cmd open, and one runs in a session of its own.
+const daemonPipeline = `stages:
+  - name: s
+    hosts: all
+    steps:
+      - cmd:
+          command: sleep 601 &
+      - file:
+          path: /root/daemon.conf
+          content: "x\n"
+        then: setsid sleep 602 &
+`
+
+// spec: Remote execution/Helper (the lock; the helper exits when stdin
+// closes); Modules/cmd; Steps (then)
+func TestCmdDaemonLock(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "cmddaemon")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: cmds\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  cmddaemon: {}\n",
+		"pipelines/site.yaml":   daemonPipeline,
+	})
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d, stderr %q", r.Code, r.Stderr)
+	}
+	if out := vm.MustRun(t, "pgrep -cf '^sleep 60[12]$'"); out != "2\n" {
+		t.Fatalf("sleep processes after apply: %q, want the two that the run started", out)
+	}
+	vm.MustRun(t, "flock -n /var/lib/winch/lock true")
+	if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 {
+		t.Errorf("plan while the processes run: exit %d, stderr %q", r.Code, r.Stderr)
+	}
+}
+
 // winch-reconf writes its answer to /etc/winch-reconf in its postinst.
 const reconfRecipe = `vars:
   reconf_enabled: false

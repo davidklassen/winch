@@ -205,7 +205,7 @@ func TestLinkModule(t *testing.T) {
 		},
 		{
 			Name:    "a socket at path fails",
-			Setup:   mksock,
+			Setup:   mksock("/tmp/w/s"),
 			Args:    &module.Link{Path: "/tmp/w/s", Absent: true},
 			WantErr: "/tmp/w/s is a socket, not a symbolic link",
 		},

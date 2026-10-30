@@ -1,6 +1,7 @@
 package module
 
 import (
+	"archive/zip"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -134,5 +135,58 @@ func TestDownloadShortBody(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(filepath.Dir(p)); err != nil || len(entries) != 1 {
 		t.Errorf("directory = %v, %v; want only the old file", entries, err)
+	}
+}
+
+// spec: Modules/download (unpacked entries keep their modes from the archive
+// without write permission for group and others)
+func TestUnpackZipModes(t *testing.T) {
+	tests := []struct {
+		name    string
+		creator uint16
+		attrs   uint32
+		want    os.FileMode
+	}{
+		// A zip from Windows has only the MS-DOS attributes.
+		{"no Unix modes", 0, 0, 0o644},
+		// unzip also gives 0000: the archive says so.
+		{"a Unix creator with zero attributes", 3 << 8, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := os.Create(filepath.Join(t.TempDir(), "a.zip"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			zw := zip.NewWriter(f)
+			w, err := zw.CreateHeader(&zip.FileHeader{Name: "a.txt", CreatorVersion: tt.creator, ExternalAttrs: tt.attrs})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.Write([]byte("a\n")); err != nil {
+				t.Fatal(err)
+			}
+			if err := zw.Close(); err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			u := unpacker{root: root, path: dir, uid: uint32(os.Getuid()), gid: uint32(os.Getgid())}
+			if err := u.read(t.Context(), f, ".zip"); err != nil {
+				t.Fatal(err)
+			}
+			fi, err := os.Lstat(filepath.Join(dir, "a.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fi.Mode() != tt.want {
+				t.Errorf("mode %s, want %s", fi.Mode(), tt.want)
+			}
+		})
 	}
 }

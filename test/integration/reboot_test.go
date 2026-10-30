@@ -311,3 +311,41 @@ func TestRebootCommandFails(t *testing.T) {
 		t.Error("the host did not reboot")
 	}
 }
+
+// spec: Modules/reboot (with true, apply reboots when the host reports a
+// pending reboot at that moment; gap: a host with molly-guard reboots)
+func TestRebootRequiredInRun(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "rebootrun")
+	vm.MustRun(t, "apt-get update -q >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -q molly-guard >/dev/null")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  rebootrun: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - cmd:
+          command: touch /root/updated /run/reboot-required
+          creates: /root/updated
+      - reboot:
+          if_required: true
+          timeout: 120
+`,
+	})
+	r := lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "* reboot if required\n") {
+		t.Fatalf("plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+	before := vm.MustRun(t, "cat /proc/sys/kernel/random/boot_id")
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "rebootrun: base: ~ reboot if required (rebooted") {
+		t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	if vm.MustRun(t, "cat /proc/sys/kernel/random/boot_id") == before {
+		t.Error("the boot ID did not change")
+	}
+	if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("plan after the reboot: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+}

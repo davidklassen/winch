@@ -223,7 +223,7 @@ func TestFileModule(t *testing.T) {
 		},
 		{
 			Name:    "a socket at path fails",
-			Setup:   mksock,
+			Setup:   mksock("/tmp/w/s"),
 			Args:    &module.File{Path: "/tmp/w/s", Data: []byte("x\n")},
 			WantErr: "/tmp/w/s is a socket, not a file",
 		},

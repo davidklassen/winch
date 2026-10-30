@@ -508,6 +508,15 @@ func TestPkgModule(t *testing.T) {
 			WantApplyErr: "Unable to locate package winch-no-such-package",
 			FixArgs:      &module.Pkg{Name: []string{"hello"}},
 		},
+		{
+			Name:         "a dotted name is no regular expression",
+			State:        module.State{IndexFresh: true},
+			Args:         &module.Pkg{Name: []string{"lib.c6"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install lib.c6", later}},
+			WantState:    module.State{IndexFresh: true},
+			WantApplyErr: "Unable to locate package lib.c6",
+			FixArgs:      &module.Pkg{Name: []string{"hello"}},
+		},
 	})
 }
 

@@ -17,7 +17,9 @@ var lab *vmtest.Lab
 // that runs it creates /tmp/pwn: ${HOME%%r*} is "/".
 const oddDir = "/tmp/w/Grüße a b;$(touch ${HOME%%r*}tmp${HOME%%r*}pwn)'\"`*日本"
 
-const mksock = `python3 -c 'import socket; socket.socket(socket.AF_UNIX).bind("/tmp/w/s")'`
+func mksock(path string) string {
+	return `python3 -c 'import socket; socket.socket(socket.AF_UNIX).bind("` + path + `")'`
+}
 
 // release holds the values of a VM image that the tests compare with.
 type release struct {
