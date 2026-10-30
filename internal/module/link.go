@@ -14,7 +14,7 @@ import (
 )
 
 type Link struct {
-	Path       string  `yaml:"path,required" json:"path" doc:"The absolute path of the link."`
+	Path       string  `yaml:"path,required" json:"path" doc:"The absolute path of the link. The step creates missing parent directories, owned by root with mode 0755."`
 	Target     *string `yaml:"target" json:"target,omitempty" doc:"The path that the link points to. It can be relative, and it need not exist."`
 	Validation *string `yaml:"validate" json:"validate,omitempty" doc:"A command that checks the new link, as for file."`
 	Absent     bool    `yaml:"absent" json:"absent,omitempty" doc:"Remove the link."`

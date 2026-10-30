@@ -1,9 +1,10 @@
-A reusable unit: variables, requirements, steps, and handlers.
+reusable groups of steps
 
-A recipe is a directory in recipes/ with a recipe.yaml, and optional
-templates/ and files/ directories. Or it is a key in recipes of
-winch.yaml, without templates or files. A step runs a recipe with
-recipe: <name>.
+A recipe is a named group of steps that you can use again, with its own
+variables, templates, and files. It is a directory in recipes/
+with a recipe.yaml, and optional templates/ and files/ directories. Or
+it is a key in recipes of winch.yaml, without templates or files. A step
+runs a recipe with recipe: <name>.
 
 ```yaml
 # recipes/nginx/recipe.yaml
@@ -51,7 +52,7 @@ server {
 
 template reads from the templates/ directory of the recipe, and source
 from files/. Paths can name subdirectories. A template file uses the
-language of !tpl; run winch doc values.
+language of !tpl; run winch doc templates.
 
 A recipe name has lowercase letters, digits, and _. It can be the name
 of a module. winch loads every recipe for every command, also a recipe

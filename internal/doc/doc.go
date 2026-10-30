@@ -88,7 +88,7 @@ func typeName(t reflect.Type) string {
 // are the keys of the file or the map that it describes.
 type Topic struct {
 	Name, Text, Body string
-	Keys             []Key
+	Keys, Functions  []Key
 }
 
 // NewTopic makes the topic name from Markdown text: the first paragraph

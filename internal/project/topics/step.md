@@ -1,8 +1,10 @@
-The keys of every step.
+keys that every step has
 
-A step is a map. It has one module key, such as pkg or file, with the
-arguments of the module as a map. Or it has recipe with the name of a
-recipe. Run winch doc <module> for the arguments of a module.
+A step is one action on a host: a module with its arguments, or a
+recipe. It is a map. It has one module key, such as pkg or file,
+with the arguments of the module as a map. Or it has recipe with the
+name of a recipe. Run winch doc <module> for the arguments of a module.
+Any module argument can be a template or an expression, and so can then.
 
 ```yaml
 # winch.yaml

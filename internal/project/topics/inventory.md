@@ -1,6 +1,7 @@
-The hosts and groups, with their values, and host patterns.
+hosts and groups
 
-An inventory is a file in inventories/, such as
+An inventory lists the hosts that winch manages, puts them in groups,
+and gives them values. It is a file in inventories/, such as
 inventories/production.yaml, or a key in inventories of winch.yaml. It
 holds data and secrets, but no templates or expressions.
 

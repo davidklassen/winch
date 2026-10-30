@@ -1,4 +1,4 @@
-file: Write a file, or set the owner, group, and mode of a file.
+file: manage a file
 
 Keys:
   path       string      required  The absolute path of the file.

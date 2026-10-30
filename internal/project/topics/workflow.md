@@ -1,9 +1,10 @@
-Plan and apply, the plan hash, exit codes, and JSON output.
+how to plan and apply changes
 
-winch plan shows the changes and changes nothing. winch apply shows the
-same plan, asks, and then makes the changes. For each host, the plan
-starts a session, reads the facts, evaluates the steps, checks the
-requirements of the recipes, and asks the helper to check each step.
+A run of winch plans the changes, asks for approval, and then applies
+them. winch plan shows the changes and changes nothing. winch apply
+shows the same plan, asks, and then makes the changes. For each host,
+the plan starts a session, reads the facts, evaluates the steps, checks
+the requirements of the recipes, and asks the helper to check each step.
 Apply checks each step again right before it changes it; the second
 check decides.
 
@@ -28,6 +29,23 @@ The first Ctrl-C lets the running step of each host finish, starts no
 new step, and ends with the summary. A second Ctrl-C ends the sessions.
 A new run is the resume: steps that already succeeded check as ok, and
 pending handlers run.
+
+winch keeps its access to each host. A step that stops, disables,
+masks, or removes the SSH server fails: "this cuts off winch's access".
+A step that changes the login user's authorized_keys, ~/.ssh, home, or
+groups, or /etc/pam.d, or /etc/sudoers and /etc/sudoers.d when the
+login user is not root, gets the rollback of confirm_access without
+it; run winch doc step.confirm_access. So does a firewall step. The
+plan marks such a step. A step that changes sshd's config while
+ssh.socket is active, as on Ubuntu, restarts ssh.socket and gets the
+same protection. After the last step of a host that changed something,
+winch checks the access once more. When it fails, the host fails, and
+nothing rolls back.
+
+The access check connects to the port in the controller's SSH config,
+so a change of sshd's Port in one run always rolls back. Move sshd to a
+new port in three runs: let sshd listen on the old and the new port;
+change the port in the SSH config; remove the old port from sshd.
 
 Exit codes. When several apply, the first in the order 3, 1, 4, 6, 5,
 2, 0 wins.

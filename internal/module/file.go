@@ -26,8 +26,8 @@ import (
 )
 
 type File struct {
-	Path        string    `yaml:"path,required" json:"path" doc:"The absolute path of the file."`
-	Content     *string   `yaml:"content" json:"-" doc:"The content of the file, as a string. A step without content, template, source, copy_from, or stock sets only the owner, group, and mode that it gives, with no defaults, of a file that exists."`
+	Path        string    `yaml:"path,required" json:"path" doc:"The absolute path of the file. The step creates missing parent directories, owned by root with mode 0755."`
+	Content     *string   `yaml:"content" json:"-" doc:"The content of the file, as a string. A step without content, template, source, copy_from, or stock sets only the owner, group, and mode that it gives, with no defaults, of a file that exists. When that file is missing, the plan says does not exist yet, and apply fails when it is still missing."`
 	Template    string    `yaml:"template" json:"-" doc:"A template in the recipe's templates directory. Its output is the content."`
 	TemplatePos yamlx.Pos `json:"-"`
 	Source      string    `yaml:"source" json:"-" doc:"A file in the recipe's files directory. Its bytes are the content."`
@@ -41,7 +41,7 @@ type File struct {
 	Owner      yamlx.NameOrID `yaml:"owner" json:"owner,omitempty" doc:"The owner of the file, a user name or a numeric ID. A step without content has no default." default:"root"`
 	Group      yamlx.NameOrID `yaml:"group" json:"group,omitempty" doc:"The group of the file, a group name or a numeric ID. A step without content has no default." default:"root"`
 	Mode       string         `yaml:"mode" json:"mode,omitempty" doc:"The mode of the file, in octal, such as 0640. Quote it, or YAML reads it as a number. With stock, the package gives the default. With copy_from, the source gives it. A step without content has no default." default:"0644"`
-	Validation *string        `yaml:"validate" json:"validate,omitempty" doc:"A command that checks the new file. The helper puts the new file in place and runs the command. When the command fails, the old file comes back and the step fails."`
+	Validation *string        `yaml:"validate" json:"validate,omitempty" doc:"A command that checks the new file. The command names the real path, or checks the whole config: nginx -t. The helper puts the new file in place and runs the command. When the command fails, the old file comes back and the step fails."`
 	Absent     bool           `yaml:"absent" json:"absent,omitempty" doc:"Remove the file."`
 	Replace    bool           `yaml:"replace" json:"replace,omitempty" doc:"Remove another kind of thing at path first, such as a directory."`
 }

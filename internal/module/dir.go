@@ -17,7 +17,7 @@ import (
 )
 
 type Dir struct {
-	Path         string         `yaml:"path,required" json:"path" doc:"The absolute path of the directory. The step follows a symbolic link to a directory."`
+	Path         string         `yaml:"path,required" json:"path" doc:"The absolute path of the directory. The step follows a symbolic link to a directory. It creates missing parent directories, owned by root with mode 0755."`
 	Owner        yamlx.NameOrID `yaml:"owner" json:"owner,omitempty" doc:"The owner of the directory, a user name or a numeric ID." default:"root"`
 	Group        yamlx.NameOrID `yaml:"group" json:"group,omitempty" doc:"The group of the directory, a group name or a numeric ID." default:"root"`
 	Mode         string         `yaml:"mode" json:"mode,omitempty" doc:"The mode of the directory, in octal, such as 0750. Quote it, or YAML reads it as a number." default:"0755"`
