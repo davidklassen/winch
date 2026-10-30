@@ -32,7 +32,6 @@ mv "$1.tmp" "$1"
 
 // reboot starts the reboot in a process of its own, a second from now, so
 // the answer reaches the controller first. It returns the boot ID.
-// systemctl reboot does not ask as molly-guard's reboot does.
 func reboot(record string) (string, error) {
 	id, err := os.ReadFile(bootIDFile)
 	if err != nil {
