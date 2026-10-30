@@ -287,6 +287,14 @@ func TestPurgeModule(t *testing.T) {
 			After:     `[ -z "$(ls -A /tmp/w/d)" ] && [ -f /tmp/w/t/h ]`,
 		},
 		{
+			Name:      "removes a FIFO and a socket, also in a directory",
+			Setup:     `mkdir /tmp/w/d/sub && mkfifo /tmp/w/d/p /tmp/w/d/sub/q && ` + mksock("/tmp/w/d/s"),
+			Args:      &module.Dir{Path: "/tmp/w/d", Purge: true},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove named pipe /tmp/w/d/p", "remove socket /tmp/w/d/s", "remove directory /tmp/w/d/sub: 1 file, 0 directories"}},
+			Unchanged: `[ -p /tmp/w/d/p ] && [ -S /tmp/w/d/s ] && [ -p /tmp/w/d/sub/q ]`,
+			After:     `[ -z "$(ls -A /tmp/w/d)" ]`,
+		},
+		{
 			Name:  "keeps the parent of a written path, and names with a common prefix go",
 			Setup: `mkdir -p /tmp/w/d/sub /tmp/w/d/site2 && touch /tmp/w/d/site /tmp/w/d/site.bak /tmp/w/d/sub/a /tmp/w/d/sub/b`,
 			Args:  &module.Dir{Path: "/tmp/w/d", Purge: true, Keep: []string{"/tmp/w/d/site", "/tmp/w/d/sub/a"}},

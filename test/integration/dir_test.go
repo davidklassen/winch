@@ -120,6 +120,14 @@ func TestDirModule(t *testing.T) {
 			After:     `[ ! -e /tmp/w/d ]`,
 		},
 		{
+			Name:      "absent removes a FIFO and a socket in the tree",
+			Setup:     `mkdir -p /tmp/w/d/x && mkfifo /tmp/w/d/p && ` + mksock("/tmp/w/d/x/s"),
+			Args:      &module.Dir{Path: "/tmp/w/d", Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove its content: 2 files, 1 directory"}},
+			Unchanged: `[ -p /tmp/w/d/p ] && [ -S /tmp/w/d/x/s ]`,
+			After:     `[ ! -e /tmp/w/d ]`,
+		},
+		{
 			Name:  "absent removes an empty directory",
 			Setup: `mkdir /tmp/w/d`,
 			Args:  &module.Dir{Path: "/tmp/w/d", Absent: true},
@@ -336,7 +344,7 @@ func TestDirModule(t *testing.T) {
 		},
 		{
 			Name:    "a socket at path fails",
-			Setup:   mksock,
+			Setup:   mksock("/tmp/w/s"),
 			Args:    &module.Dir{Path: "/tmp/w/s", Absent: true},
 			WantErr: "/tmp/w/s is a socket, not a directory",
 		},
@@ -392,6 +400,14 @@ func TestDirModule(t *testing.T) {
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner root → admin", "group root → adm", "owner and group of its content: 3 files, 1 directory"}},
 			Unchanged: `[ -z "$(find /tmp/w/d ! -user root)" ]`,
 			After:     `[ -z "$(find /tmp/w/d ! -user admin -o ! -group adm)" ] && [ "$(stat -c '%U %G' /etc/passwd)" = "root root" ] && [ "$(stat -c '%a' /tmp/w/d /tmp/w/d/a /tmp/w/d/x | tr '\n' ' ')" = "755 600 755 " ]`,
+		},
+		{
+			Name:      "recurse sets owner and group of a FIFO and a socket",
+			Setup:     `mkdir -p /tmp/w/d/x && mkfifo /tmp/w/d/p && ` + mksock("/tmp/w/d/x/s"),
+			Args:      &module.Dir{Path: "/tmp/w/d", Owner: "admin", Group: "adm", Recurse: true},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner root → admin", "group root → adm", "owner and group of its content: 2 files, 1 directory"}},
+			Unchanged: `[ -z "$(find /tmp/w/d ! -user root)" ]`,
+			After:     `[ -z "$(find /tmp/w/d ! -user admin -o ! -group adm)" ] && [ -p /tmp/w/d/p ] && [ -S /tmp/w/d/x/s ]`,
 		},
 		{
 			Name:  "recurse counts only the entries that change",

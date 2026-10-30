@@ -39,3 +39,5 @@ python3-certbot-nginx
 python3-certbot-apache
 apache2
 pebble
+# The reboot test with molly-guard.
+molly-guard
