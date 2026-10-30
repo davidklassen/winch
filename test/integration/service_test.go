@@ -140,6 +140,10 @@ const waitCrash = `timeout 10 sh -c 'until systemctl show -P SubState winch-cras
 const noexecErr = `winch-noexec.service has the load state "bad-setting"
 winch-noexec.service: Service has no ExecStart=`
 
+// atStartLimit makes 5 starts of winch-test, the start limit of systemd in 10
+// seconds. The reset drops the starts of earlier cases.
+const atStartLimit = `systemctl reset-failed winch-test 2>/dev/null; systemctl start winch-test && for i in 1 2 3 4; do systemctl restart winch-test; done && systemctl show -P InvocationID winch-test > /tmp/inv`
+
 // oddUnit has the instance "a b;$(touch /tmp/pwn)", as systemd-escape writes it.
 const oddUnit = `winch-tpl@a\x20b\x3b\x24\x28touch\x20-tmp-pwn\x29`
 
@@ -437,6 +441,29 @@ printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service
 			NoConverge: true,
 			Unchanged:  `[ "$(systemctl show -P InvocationID winch-test)" = "$(cat /tmp/inv)" ]`,
 			After:      `systemctl is-active -q winch-test && [ "$(systemctl show -P InvocationID winch-test)" != "$(cat /tmp/inv)" ]`,
+		},
+		{
+			Name:       "restarted restarts a unit at the start limit",
+			Setup:      atStartLimit,
+			Args:       &module.Service{Name: "winch-test", Restarted: true},
+			Want:       change("restart"),
+			NoConverge: true,
+			After:      `systemctl is-active -q winch-test && [ "$(systemctl show -P InvocationID winch-test)" != "$(cat /tmp/inv)" ]`,
+		},
+		{
+			Name:       "reloaded restarts a unit at the start limit",
+			Setup:      atStartLimit,
+			Args:       &module.Service{Name: "winch-test", Reloaded: true},
+			Want:       change("reload"),
+			NoConverge: true,
+			After:      `systemctl is-active -q winch-test && [ "$(systemctl show -P InvocationID winch-test)" != "$(cat /tmp/inv)" ]`,
+		},
+		{
+			Name:  "start a unit that failed on the start limit",
+			Setup: `systemctl start winch-test; for i in 1 2 3 4 5; do systemctl restart winch-test 2>/dev/null || break; done; systemctl is-failed -q winch-test`,
+			Args:  &module.Service{Name: "winch-test", Running: new(true)},
+			Want:  change("start"),
+			After: `systemctl is-active -q winch-test`,
 		},
 		{
 			Name:       "restarted keeps a stopped unit stopped",

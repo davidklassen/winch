@@ -199,6 +199,8 @@ type VM struct {
 	cmd    *exec.Cmd
 	exited chan struct{}
 	watch  *watchdog
+	// forwards maps a guest port to its host port.
+	forwards map[int]int
 }
 
 // Start starts a VM from the snapshot and gives it the apt sources of the
@@ -345,14 +347,20 @@ func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, 
 	if err := vm.qmp.call("qmp_capabilities", nil, nil); err != nil {
 		return nil, fmt.Errorf("vm %s: %w", name, err)
 	}
-	sshPort, err := vm.qmp.sshPort()
-	if err != nil {
+	if vm.forwards, err = vm.qmp.forwards(); err != nil {
 		return nil, fmt.Errorf("vm %s: %w", name, err)
 	}
-	if _, err := l.WriteHost(name, fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port %d\n", name, sshPort)); err != nil {
+	if err := vm.UsePort(22); err != nil {
 		return nil, err
 	}
 	return vm, nil
+}
+
+// UsePort points the lab's SSH config for the VM at the host port that
+// forwards to guest port 22 or 2222.
+func (vm *VM) UsePort(guest int) error {
+	_, err := vm.lab.WriteHost(vm.Name, fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port %d\n", vm.Name, vm.forwards[guest]))
+	return err
 }
 
 // waitRunning waits until QEMU has loaded the saved machine, then starts it.
@@ -414,11 +422,12 @@ func tail(s string, n int) string {
 // repository.
 const diskSize = "8G"
 
-// qemuArgs returns the QEMU command of a VM. The SSH forward binds port 0,
-// so the kernel picks a free port. Offline, restrict=on cuts the VM off from
-// every address but the guestfwd to the lab's HTTP server.
+// qemuArgs returns the QEMU command of a VM. The forwards bind port 0, so the
+// kernel picks free ports. Guest port 2222 is for a test that moves sshd.
+// Offline, restrict=on cuts the VM off from every address but the guestfwd to
+// the lab's HTTP server.
 func qemuArgs(arch, disk, dir string, httpPort int, online bool) ([]string, error) {
-	netdev := fmt.Sprintf("user,id=net0,hostfwd=tcp:127.0.0.1:0-:22,guestfwd=tcp:%s:80-cmd:nc 127.0.0.1 %d", labAddr, httpPort)
+	netdev := fmt.Sprintf("user,id=net0,hostfwd=tcp:127.0.0.1:0-:22,hostfwd=tcp:127.0.0.1:0-:2222,guestfwd=tcp:%s:80-cmd:nc 127.0.0.1 %d", labAddr, httpPort)
 	if !online {
 		netdev += ",restrict=on"
 	}

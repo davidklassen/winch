@@ -285,7 +285,7 @@ handlers:
 `
 
 // spec: Running a pipeline/Lockout protection; Modules/service and unit
-// (sshd from ssh.socket)
+// (sshd from ssh.socket; move sshd to a new port in three runs)
 func TestLockoutSSHPort(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "ssh-port")
@@ -343,18 +343,87 @@ func TestLockoutSSHPort(t *testing.T) {
 		t.Errorf("second plan: exit %d", r.Code)
 	}
 
-	if !socket {
-		return
+	if socket {
+		// A port that another program holds: the restart of ssh.socket
+		// fails, and the rollback brings back the old ports.
+		vm.MustRun(t, "setsid -f python3 -c 'import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind((\"0.0.0.0\", 2223)); s.listen(); time.sleep(600)' >/dev/null 2>&1 </dev/null; sleep 1")
+		r = lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.sshd_ports=[22, 2223]")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "ssh-port: sshd: failed: file /etc/ssh/sshd_config.d/port.conf: systemctl restart: ") ||
+			!strings.HasSuffix(r.Stderr, "; the old files are back\n") {
+			t.Fatalf("apply with a taken port: exit %d", r.Code)
+		}
+		listens(t, "22 2222")
 	}
-	// A port that another program holds: the restart of ssh.socket fails,
-	// and the rollback brings back the old ports.
-	vm.MustRun(t, "setsid -f python3 -c 'import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind((\"0.0.0.0\", 2223)); s.listen(); time.sleep(600)' >/dev/null 2>&1 </dev/null; sleep 1")
-	r = lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.sshd_ports=[22, 2223]")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "ssh-port: sshd: failed: file /etc/ssh/sshd_config.d/port.conf: systemctl restart: ") ||
-		!strings.HasSuffix(r.Stderr, "; the old files are back\n") {
-		t.Fatalf("apply with a taken port: exit %d", r.Code)
+
+	// The SSH config names the new port: the old port goes.
+	if err := vm.UsePort(2222); err != nil {
+		t.Fatal(err)
 	}
-	listens(t, "22 2222")
+	if r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.sshd_ports=[2222]"); r.Code != 0 {
+		t.Fatalf("apply with only port 2222: exit %d", r.Code)
+	}
+	listens(t, "2222")
+	if r := lab.Winch(t, dir, "plan", "site", "--set", "vars.sshd_ports=[2222]"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("plan after the move: exit %d", r.Code)
+	}
+}
+
+const rollbackStartPipeline = `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/winch-rb.conf
+          content: !tpl "{{ .vars.conf }}\n"
+        notify: restart
+    handlers:
+      restart:
+        - service:
+            name: winch-rb
+            restarted: true
+          confirm_access: true
+`
+
+// spec: Running a pipeline/Lockout protection (the rollback reverses a
+// restart; a rollback that fails)
+func TestLockoutRollbackStart(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "rollback-start")
+	vm.MustRun(t, `printf '[Service]\nExecStartPre=/bin/sh -c "test -e /run/winch-rb && grep -qx ok /etc/winch-rb.conf"\nExecStart=/bin/sleep infinity\n' > /etc/systemd/system/winch-rb.service && echo ok > /etc/winch-rb.conf && touch /run/winch-rb && systemctl daemon-reload && systemctl start winch-rb`)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\nvars:\n  conf: ok\n",
+		"inventories/test.yaml": "hosts:\n  rollback-start: {}\n",
+		"pipelines/site.yaml":   rollbackStartPipeline,
+	})
+
+	// The restart fails; the rollback puts back the file and starts the unit.
+	r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.conf=bad")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "service winch-rb: ") ||
+		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+		t.Fatalf("apply with a bad config: exit %d", r.Code)
+	}
+	if got := vm.MustRun(t, "cat /etc/winch-rb.conf; systemctl is-active winch-rb || true"); got != "ok\nactive\n" {
+		t.Errorf("config and state after the rollback = %q, want %q", got, "ok\nactive\n")
+	}
+
+	// The start of the rollback fails too: the error says so.
+	vm.MustRun(t, "rm /run/winch-rb")
+	r = lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.conf=bad")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "; the rollback failed: service winch-rb: ") || strings.Contains(r.Stderr, "the old files are back") {
+		t.Fatalf("apply with a bad config and a unit that cannot start: exit %d", r.Code)
+	}
+	if got := vm.MustRun(t, "cat /etc/winch-rb.conf"); got != "ok\n" {
+		t.Errorf("config after the rollback = %q, want %q", got, "ok\n")
+	}
+
+	// A oneshot unit that runs its job is up, but no start keeps it running:
+	// the undo only restarts it.
+	vm.MustRun(t, `printf '[Service]\nType=oneshot\nExecStartPre=/bin/sh -c "grep -qx ok /etc/winch-rb.conf"\nExecStart=/bin/sleep 600\n' > /etc/systemd/system/winch-rb.service && touch /run/winch-rb && systemctl daemon-reload && systemctl reset-failed winch-rb; systemctl start --no-block winch-rb && timeout 10 sh -c 'until systemctl show -P SubState winch-rb | grep -qx start; do sleep 0.1; done'`)
+	r = lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.conf=bad")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "service winch-rb: ") ||
+		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+		t.Fatalf("apply with a bad config on a oneshot unit: exit %d", r.Code)
+	}
 }
 
 const pendingConfirmPipeline = `stages:

@@ -33,6 +33,8 @@ type Service struct {
 	todo    []string
 	links   []string
 	crashed bool
+	// up is whether the unit ran before the step and stays running.
+	up bool
 }
 
 func (s *Service) Main() string { return s.Name }
@@ -151,6 +153,8 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 			return Result{}, err
 		}
 	}
+	// A oneshot unit without RemainAfterExit is up only while its job runs.
+	s.up = u.up() && !u.restarting() && (!u.oneshot || u.remain)
 	if u.reload {
 		s.todo = append(s.todo, "daemon-reload")
 	}
@@ -295,7 +299,10 @@ func activeOrEnabled(ctx context.Context, units []string) ([]string, error) {
 
 // Undo returns the step that reverses what a checked step does to the running
 // unit: a stop for a start, a start for a stop, and the same step for a
-// restart or a reload. It returns nil for a step that does none of these.
+// restart or a reload. The undo of a restart or a reload of a running unit
+// also starts it: a failed restart leaves the unit stopped, and a restart
+// does nothing to a stopped unit. It returns nil for a step that does none of
+// these.
 func (s *Service) Undo() *Service {
 	switch {
 	case slices.Contains(s.todo, "start"):
@@ -305,7 +312,12 @@ func (s *Service) Undo() *Service {
 		yes := true
 		return &Service{Name: s.Name, Running: &yes}
 	case s.Restarted, s.Reloaded:
-		return &Service{Name: s.Name, Restarted: s.Restarted, Reloaded: s.Reloaded}
+		u := &Service{Name: s.Name, Restarted: s.Restarted, Reloaded: s.Reloaded}
+		if s.up {
+			yes := true
+			u.Running = &yes
+		}
+		return u
 	}
 	return nil
 }
@@ -333,6 +345,11 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 		if c != "daemon-reload" {
 			args = append(args, "--", s.Name)
 		}
+		if c == "start" || c == "try-restart" || c == "try-reload-or-restart" {
+			if err := resetFailed(ctx, s.Name); err != nil {
+				return err
+			}
+		}
 		_, err := run(ctx, nil, "systemctl", args...)
 		switch {
 		case err == nil && c == "start":
@@ -347,6 +364,17 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 		}
 	}
 	return nil
+}
+
+// resetFailed resets the start counter of unit, so that the start limit of
+// systemd cannot block a start that winch needs. A unit that systemd has not
+// loaded has no counter, and systemctl fails on it.
+func resetFailed(ctx context.Context, unit string) error {
+	_, err := run(ctx, nil, "systemctl", "reset-failed", "--", unit)
+	if err != nil && strings.Contains(err.Error(), " not loaded.") {
+		return nil
+	}
+	return err
 }
 
 // checkStarted fails when unit is not running after its start. systemctl

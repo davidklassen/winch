@@ -275,16 +275,31 @@ func (q *qmp) call(command string, args, result any) error {
 	}
 }
 
-// sshPort returns the host port of the VM's SSH forward.
-func (q *qmp) sshPort() (int, error) {
+// forwards returns the VM's forwards from guest port to host port. It fails
+// without the SSH forward.
+func (q *qmp) forwards() (map[int]int, error) {
 	var out string
 	if err := q.call("human-monitor-command", map[string]string{"command-line": "info usernet"}, &out); err != nil {
-		return 0, err
+		return nil, err
 	}
+	forwards := map[int]int{}
 	for line := range strings.Lines(out) {
-		if f := strings.Fields(line); len(f) > 3 && f[0] == "TCP[HOST_FORWARD]" {
-			return strconv.Atoi(f[3])
+		f := strings.Fields(line)
+		if len(f) < 6 || f[0] != "TCP[HOST_FORWARD]" {
+			continue
 		}
+		host, err := strconv.Atoi(f[3])
+		if err != nil {
+			return nil, err
+		}
+		guest, err := strconv.Atoi(f[5])
+		if err != nil {
+			return nil, err
+		}
+		forwards[guest] = host
 	}
-	return 0, fmt.Errorf("no SSH forward in info usernet: %s", out)
+	if forwards[22] == 0 {
+		return nil, fmt.Errorf("no SSH forward in info usernet: %s", out)
+	}
+	return forwards, nil
 }

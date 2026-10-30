@@ -261,18 +261,23 @@ func TestServiceUndo(t *testing.T) {
 		name string
 		s    Service
 		todo []string
+		up   bool
 		want *Service
 	}{
-		{"start", Service{Name: "nftables", Running: &yes, Enabled: &yes}, []string{"enable", "start"}, &Service{Name: "nftables", Running: &no}},
-		{"stop", Service{Name: "nftables", Running: &no}, []string{"stop"}, &Service{Name: "nftables", Running: &yes}},
-		{"restart", Service{Name: "ssh", Restarted: true}, []string{"try-restart"}, &Service{Name: "ssh", Restarted: true}},
-		{"reload", Service{Name: "ssh", Reloaded: true}, []string{"daemon-reload", "try-reload-or-restart"}, &Service{Name: "ssh", Reloaded: true}},
-		{"enable only", Service{Name: "nftables", Enabled: &yes}, []string{"enable"}, nil},
+		{"start", Service{Name: "nftables", Running: &yes, Enabled: &yes}, []string{"enable", "start"}, false, &Service{Name: "nftables", Running: &no}},
+		{"stop", Service{Name: "nftables", Running: &no}, []string{"stop"}, true, &Service{Name: "nftables", Running: &yes}},
+		{"restart of a stopped unit", Service{Name: "ssh", Restarted: true}, []string{"try-restart"}, false, &Service{Name: "ssh", Restarted: true}},
+		{"reload of a stopped unit", Service{Name: "ssh", Reloaded: true}, []string{"daemon-reload", "try-reload-or-restart"}, false, &Service{Name: "ssh", Reloaded: true}},
+		// A restart that fails leaves the unit stopped, and a restart of
+		// a stopped unit does nothing: the undo also starts it.
+		{"restart of a running unit", Service{Name: "ssh", Restarted: true}, []string{"try-restart"}, true, &Service{Name: "ssh", Restarted: true, Running: &yes}},
+		{"reload of a running unit", Service{Name: "ssh", Reloaded: true}, []string{"try-reload-or-restart"}, true, &Service{Name: "ssh", Reloaded: true, Running: &yes}},
+		{"enable only", Service{Name: "nftables", Enabled: &yes}, []string{"enable"}, false, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := tt.s
-			s.todo = tt.todo
+			s.todo, s.up = tt.todo, tt.up
 			got := s.Undo()
 			if (got == nil) != (tt.want == nil) {
 				t.Fatalf("Undo = %+v, want %+v", got, tt.want)
