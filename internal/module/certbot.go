@@ -273,8 +273,33 @@ func sameSet(a, b []string) bool {
 	return slices.Equal(slices.Compact(x), slices.Compact(y))
 }
 
-func (c *Certbot) Check(ctx context.Context, _ *State, note func(string)) (Result, error) {
-	return c.check(letsencrypt, note)
+func (c *Certbot) Check(_ context.Context, _ *State, note func(string)) (Result, error) {
+	res, err := c.check(letsencrypt, note)
+	if err != nil || !c.issue {
+		return res, err
+	}
+	res.MissingTools, err = c.missingTools()
+	return res, err
+}
+
+// missingTools returns certbot and the plugin of the authenticator when the
+// host lacks them.
+func (c *Certbot) missingTools() ([]Tool, error) {
+	var tools []Tool
+	if _, err := exec.LookPath("certbot"); err != nil {
+		tools = append(tools, Tool{Name: "certbot", Package: "certbot"})
+	}
+	if a := c.authenticator(); a == "nginx" || a == "apache" {
+		plugin := "/usr/lib/python3/dist-packages/certbot_" + a
+		_, err := os.Stat(plugin)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			tools = append(tools, Tool{Name: plugin, Package: "python3-certbot-" + a})
+		case err != nil:
+			return nil, err
+		}
+	}
+	return tools, nil
 }
 
 // check checks the step in the certbot directory dir.

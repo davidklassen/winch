@@ -2,6 +2,7 @@ package integration
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -54,7 +55,8 @@ func issue(args string) string {
 
 const keySum = "sha256sum /etc/letsencrypt/live/a.example.com/privkey.pem"
 
-const certbotReset = `rm -rf /etc/letsencrypt/accounts /etc/letsencrypt/live/* /etc/letsencrypt/archive/* /etc/letsencrypt/renewal/* /root/deployed /root/key.sum /root/hook-ok
+const certbotReset = `[ ! -e /usr/bin/certbot.off ] || mv /usr/bin/certbot.off /usr/bin/certbot
+rm -rf /etc/letsencrypt/accounts /etc/letsencrypt/live/* /etc/letsencrypt/archive/* /etc/letsencrypt/renewal/* /root/deployed /root/key.sum /root/hook-ok
 systemctl stop apache2
 systemctl start nginx
 md5sum /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/apache2/apache2.conf /etc/apache2/sites-enabled/* > /root/web.md5`
@@ -70,6 +72,32 @@ func sans(names string) string {
 func TestCertbotModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "certbot")
+	vm.MustRun(t, "! command -v certbot")
+	step := "  - certbot:\n      name: a.example.com\n      domains: [a.example.com]\n      email: admin@example.com\n"
+	for _, c := range []struct {
+		name, steps string
+		want        []string
+	}{
+		{"nginx without a pkg step", step, []string{
+			"certbot: certbot is missing and no pkg step installs certbot\n",
+			"certbot: /usr/lib/python3/dist-packages/certbot_nginx is missing and no pkg step installs python3-certbot-nginx\n",
+		}},
+		{"apache after a pkg step for certbot", "  - pkg:\n      name: certbot\n" + step + "      authenticator: apache\n", []string{
+			"certbot: /usr/lib/python3/dist-packages/certbot_apache is missing and no pkg step installs python3-certbot-apache\n",
+		}},
+		{"standalone after a pkg step for certbot", "  - pkg:\n      name: certbot\n" + step + "      authenticator: standalone\n", nil},
+		{"nginx after a pkg step for both packages", "  - pkg:\n      name: [certbot, python3-certbot-nginx]\n" + step, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: certs\nhosts:\n  certbot: {}\nsteps:\n" + c.steps})
+			r := lab.Winch(t, dir, "plan")
+			notes := slices.DeleteFunc(strings.SplitAfter(r.Stderr, "\n"), func(l string) bool { return !strings.Contains(l, "is missing and no pkg step") })
+			if r.Code != 0 || !slices.Equal(notes, c.want) {
+				t.Fatalf("plan: exit %d, stdout %q, notes %q, want %q", r.Code, r.Stdout, notes, c.want)
+			}
+		})
+	}
+
 	startPebble(t, vm)
 	ab := []string{"a.example.com", "b.example.com"}
 	deployed := "echo deployed >> /root/deployed"
@@ -124,6 +152,12 @@ func TestCertbotModule(t *testing.T) {
 			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com"},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"pre_hook true → (none)", "issue the certificate again, with a new key"}},
 			After: "! grep -q pre_hook /etc/letsencrypt/renewal/a.example.com.conf",
+		},
+		{
+			Name:  "a current certificate needs no certbot",
+			Setup: issue("--cert-name a.example.com -d a.example.com") + "mv /usr/bin/certbot /usr/bin/certbot.off",
+			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com"},
+			Want:  module.Result{Status: module.OK},
 		},
 		{
 			Name:    "a renewal file without its certificate",
