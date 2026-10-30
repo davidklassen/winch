@@ -1,0 +1,27 @@
+winch fmt: format the project files
+
+Examples:
+  # format winch.yaml, the inventories, the pipelines, and the recipes
+  winch fmt
+
+Usage:
+  winch fmt
+
+Fmt fixes the indentation and the step key order of the project files:
+winch.yaml, the inventories, the pipelines, and the recipes.
+
+It indents with two spaces, and indents list items under their key.
+
+It puts step keys in this order: name, the module or recipe key, vars,
+when, loop, then, confirm_access, notify. Steps in flow style keep
+their key order. A comment above a key that moves to the first place
+goes above the "-" of its step.
+
+It keeps comments, blank lines, quoting, anchors, flow style, and line
+ends. It writes a file only when the result decodes to the same values.
+It prints each file that it changes.
+
+When a file does not parse, or fmt cannot keep the layout of a file,
+fmt shows the error, exits with code 3, and changes no file.
+
+See: winch doc step

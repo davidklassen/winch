@@ -1,0 +1,46 @@
+winch exec: run a shell command on hosts
+
+Examples:
+  # show the uptime of every host
+  winch exec all -- uptime
+  # show the last 50 log lines of the app container on the web hosts
+  winch exec web -- docker logs app --tail 50
+  # check nginx on the web hosts without web3, as JSON
+  winch exec 'web & !web3' --json -- systemctl is-active nginx
+
+Usage:
+  winch exec <pattern> [flags] -- <command ...>
+
+Exec runs a shell command on the hosts of the pattern, in parallel, and
+shows its output. It makes no plan and asks no question.
+
+A host pattern is a group or a host, with "," for union, "&" for
+intersection, and "!" for exclusion.
+
+winch joins the words after -- with spaces and runs them through sh -c
+as root, in /.
+
+Each host shows one block: the host name, then the output. Hosts with
+the same output and exit code share one block. A command that exits
+non-zero adds "exit status N" to its block. winch exits with code 1
+when the command fails on a host.
+
+With --json, each host gives one exec event with output and exit_code.
+
+Ctrl-C stops the commands. Each host sends SIGINT to the command, and
+SIGKILL when it still runs after 10 seconds.
+
+With a terminal, ssh can ask questions, and sessions start one at a
+time. Without one, or with --batch, ssh asks nothing, and sessions
+start in parallel.
+
+Flags:
+  --inventory <name>          inventory for the run
+                              default: inventory in winch.yaml
+  --user [<host>=]<name>      SSH login user, for all hosts or one;
+                              repeatable
+                              default: from the inventory
+  --batch                     no questions from ssh
+  --json                      one exec event per host on stdout
+
+See: winch doc inventory, winch doc remote

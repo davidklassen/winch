@@ -87,24 +87,50 @@ func typeName(t reflect.Type) string {
 
 // Topic is a page of the reference. Text is its index line. Keys are the
 // keys of the file or the map that it describes. The page prints the keys
-// and the functions between Body and Example.
+// and the functions before an example block.
 type Topic struct {
-	Name, Text, Body, Example string
-	Keys, Functions           []Key
+	Name, Text      string
+	Blocks          []Block
+	Keys, Functions []Key
 }
 
-// NewTopic makes the topic name from its page: the first line is the index
-// line, and an "Example:" section ends the page. Example holds the section
-// without its heading and its indent.
-func NewTopic(name, page string, keys []Key) Topic {
-	text, body, _ := strings.Cut(page, "\n\n")
-	var b strings.Builder
-	if i := strings.Index(body, "\nExample:\n"); i >= 0 {
-		var example string
-		body, example = body[:i], body[i+len("\nExample:\n"):]
-		for line := range strings.Lines(example) {
-			b.WriteString(strings.TrimPrefix(line, "  "))
-		}
-	}
-	return Topic{Name: name, Text: text, Body: body, Example: b.String(), Keys: keys}
+// Group is a titled group of topics in the index.
+type Group struct {
+	Title  string
+	Topics []Topic
 }
+
+type Kind string
+
+const (
+	KindHeading   Kind = "heading"
+	KindParagraph Kind = "paragraph"
+	KindList      Kind = "list"
+	KindTable     Kind = "table"
+	KindCode      Kind = "code"
+	KindExample   Kind = "example"
+)
+
+// Block is a part of a topic page. The line breaks of Text, Items, and Rows
+// are the line breaks of the terminal.
+type Block struct {
+	Kind    Kind
+	Text    string
+	Ordered bool
+	Items   []string
+	Rows    [][]string
+}
+
+func Heading(text string) Block   { return Block{Kind: KindHeading, Text: text} }
+func Paragraph(text string) Block { return Block{Kind: KindParagraph, Text: text} }
+func List(items ...string) Block  { return Block{Kind: KindList, Items: items} }
+
+func OrderedList(items ...string) Block {
+	return Block{Kind: KindList, Ordered: true, Items: items}
+}
+
+func Table(rows [][]string) Block { return Block{Kind: KindTable, Rows: rows} }
+func Code(text string) Block      { return Block{Kind: KindCode, Text: text} }
+
+// Example is the example of a topic. It ends the page.
+func Example(text string) Block { return Block{Kind: KindExample, Text: text} }

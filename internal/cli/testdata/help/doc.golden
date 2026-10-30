@@ -1,0 +1,33 @@
+winch doc: show the reference
+
+Examples:
+  # list the topics and the modules
+  winch doc
+  # show a topic
+  winch doc project
+  # show one key of a topic
+  winch doc step.when
+  # show the keys of a module and an example step
+  winch doc file
+  # show the full text of one key
+  winch doc file.mode
+  # show a key of a list element
+  winch doc firewall.allow.tcp
+  # print the whole reference as JSON
+  winch doc --json
+
+Usage:
+  winch doc [<topic> | <module>][.<key>...]
+  winch doc --json
+
+Doc shows the reference: the index of topics and modules, a topic, the
+keys of one module with an example step, or the full text of one key
+or function.
+
+It needs no project. The text comes from the definitions that the load
+checks use, so it matches the installed version.
+
+An unknown module or key is an error with "did you mean".
+
+Flags:
+  --json                      whole reference as one JSON document

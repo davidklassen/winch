@@ -197,14 +197,32 @@ func TestExamples(t *testing.T) {
 
 // spec: CLI
 func TestHelp(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"plan", "--help"}, {"apply", "-h"}, {"validate", "--help"}, {"secret", "--help"}, {"secret", "encrypt", "--help"}, {"secret", "generate", "--help"}, {"secret", "rekey", "-h"}, {"fmt", "--help"}} {
-		r := winch(t, t.TempDir(), fakehost.New(), false, "", args...)
-		if r.code != exitOK {
-			t.Errorf("%v: exit %d", args, r.code)
-		}
-		if !strings.HasPrefix(r.out, "Examples:\n  winch ") {
-			t.Errorf("%v: help does not start with examples:\n%s", args, r.out)
-		}
+	tests := []struct {
+		golden string
+		args   []string
+	}{
+		{"winch", []string{"--help"}},
+		{"validate", []string{"validate", "--help"}},
+		{"fmt", []string{"fmt", "--help"}},
+		{"plan", []string{"plan", "--help"}},
+		{"apply", []string{"apply", "-h"}},
+		{"run", []string{"run", "--help"}},
+		{"exec", []string{"exec", "--help"}},
+		{"secret", []string{"secret", "--help"}},
+		{"secret-init", []string{"secret", "init", "--help"}},
+		{"secret-generate", []string{"secret", "generate", "--help"}},
+		{"secret-encrypt", []string{"secret", "encrypt", "--help"}},
+		{"secret-rekey", []string{"secret", "rekey", "-h"}},
+		{"doc", []string{"doc", "--help"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.golden, func(t *testing.T) {
+			r := winch(t, t.TempDir(), fakehost.New(), false, "", tt.args...)
+			if r.code != exitOK || r.err != "" {
+				t.Errorf("exit %d, stderr %q", r.code, r.err)
+			}
+			golden.Assert(t, filepath.Join("testdata", "help", tt.golden+".golden"), []byte(r.out))
+		})
 	}
 }
 
@@ -474,6 +492,52 @@ func TestLoadErrorPrintable(t *testing.T) {
 			js := winch(t, dir, fakehost.New(), false, "", "validate", "--json")
 			golden.Assert(t, filepath.Join("testdata", "printable", tt.name+".golden"),
 				[]byte("text:\n"+text.err+"json:\n"+js.out))
+		})
+	}
+}
+
+func TestCommandRuns(t *testing.T) {
+	for _, c := range commands {
+		if runs[c.name] == nil {
+			t.Errorf("command %q has no run function", c.name)
+		}
+	}
+	for _, c := range commands {
+		fs := flagSet(c, &flags{})
+		for _, f := range c.flags {
+			if fs.Lookup(strings.TrimPrefix(f.name, "--")) == nil {
+				t.Errorf("winch %s: the help lists %s, which does not parse", c.name, f.name)
+			}
+		}
+	}
+	if len(runs) != len(commands) {
+		t.Errorf("%d run functions for %d commands", len(runs), len(commands))
+	}
+}
+
+// spec: CLI
+func TestHelpOnError(t *testing.T) {
+	tests := []struct {
+		name   string
+		args   []string
+		lead   string
+		golden string
+	}{
+		{"no command", nil, "", "winch"},
+		{"unknown command", []string{"aply"}, "winch: unknown command \"aply\"; did you mean \"apply\"?\n\n", "winch"},
+		{"no secret command", []string{"secret"}, "", "secret"},
+		{"unknown secret command", []string{"secret", "nope"}, "winch: unknown secret command \"nope\"\n\n", "secret"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			help, err := os.ReadFile(filepath.Join("testdata", "help", tt.golden+".golden"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := winch(t, t.TempDir(), fakehost.New(), false, "", tt.args...)
+			if r.code != exitInvalid || r.out != "" || r.err != tt.lead+string(help) {
+				t.Errorf("exit %d, stdout %q, stderr\n%s\nwant\n%s%s", r.code, r.out, r.err, tt.lead, help)
+			}
 		})
 	}
 }

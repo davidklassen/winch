@@ -2,19 +2,24 @@ Winch is a server configuration tool. It describes the desired state
 of your servers in declarative YAML and provides commands to manage
 that state.
 
-Topics:
+Project files:
   project      project files and directories
   inventory    hosts and groups
   pipeline     ordered stages that apply steps to hosts
   recipe       reusable groups of steps
   step         keys that every step has
   handlers     steps that run after a change
+
+Values:
   variables    named values for hosts, groups, and recipes
   templates    text with values filled in (!tpl)
   expressions  computed values (!expr)
   facts        values that winch reads from each host
   secrets      encrypted values in the project
+
+Running:
   workflow     how to plan and apply changes
+  remote       how winch reaches a host and runs there
 
 Modules:
   assert    stop a host when a check command fails

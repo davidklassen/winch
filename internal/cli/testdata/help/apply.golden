@@ -1,0 +1,60 @@
+winch apply: show the changes, ask, then make them
+
+Examples:
+  # plan the pipeline site, ask, and make the changes
+  winch apply site
+  # apply on the test inventory without the question
+  winch apply site --inventory test --yes
+  # apply the stage mail on the mail hosts
+  winch apply site --hosts mail --stages mail
+  # apply only the plan that you checked before
+  winch apply site --check a3f9c2e1d07b4c58
+
+Usage:
+  winch apply [<pipeline>] [flags]
+
+Apply shows the plan of a pipeline, asks for approval, and then makes
+the changes.
+
+Leave out the pipeline name when the steps are at the top of
+winch.yaml.
+
+winch asks only when stdin and stderr are terminals. Without a
+terminal, and without --yes or --check, apply prints the plan and exits
+with code 5. Its last line is the command that applies the plan with
+its hash.
+
+--check replaces the question. When the new plan has another hash,
+apply exits with code 6 and changes nothing.
+
+A host pattern is a group or a host, with "," for union, "&" for
+intersection, and "!" for exclusion. Each stage runs on the hosts in
+both its hosts and --hosts. The stages of --stages run in pipeline
+order.
+
+A --set value parses as YAML.
+
+With a terminal, ssh can ask questions, and sessions start one at a
+time. Without one, or with --batch, ssh asks nothing, and sessions
+start in parallel. The apply question stays.
+
+The first Ctrl-C lets the running step on each host finish and starts
+no new step. A second Ctrl-C ends the sessions at once.
+
+Flags:
+  --inventory <name>          inventory for the run
+                              default: inventory in winch.yaml
+  --hosts <pattern>           only these hosts
+                              default: all
+  --stages <names>            only these stages, such as mail,monit
+                              default: all
+  --user [<host>=]<name>      SSH login user, for all hosts or one;
+                              repeatable
+                              default: from the inventory
+  --set vars.<name>=<value>   variable value; repeatable
+  --batch                     no questions from ssh
+  --yes                       no apply question
+  --check <hash>              plan hash that the apply needs
+  --json                      JSON events on stdout
+
+See: winch doc workflow, winch doc pipeline, winch doc inventory

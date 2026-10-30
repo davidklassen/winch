@@ -1,0 +1,28 @@
+Winch is a server configuration tool. It describes the desired state
+of your servers in declarative YAML and provides commands to manage
+that state.
+
+Examples:
+  # check the project without contacting a host
+  winch validate
+  # show the changes of the pipeline site on the test inventory
+  winch plan site --inventory test
+  # make those changes after a question
+  winch apply site --inventory test
+
+Usage:
+  winch <command> [arguments] [flags]
+
+Commands:
+  validate  check the project without contacting a host
+  fmt       format the project files
+  plan      show the changes and change nothing
+  apply     show the changes, ask, then make them
+  run       plan and apply one module step
+  exec      run a shell command on hosts
+  secret    manage secrets and the age key
+  doc       show the reference
+
+Run "winch <command> --help" for the arguments and flags of a command.
+
+See: winch doc

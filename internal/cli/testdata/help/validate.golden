@@ -1,0 +1,36 @@
+winch validate: check the project without contacting a host
+
+Examples:
+  # check the project
+  winch validate
+  # check the project with the inventory production
+  winch validate --inventory production
+  # check the project with a value for one variable
+  winch validate --set vars.release=1.4.2
+
+Usage:
+  winch validate [flags]
+
+Validate loads the project and checks it. It connects to no host.
+
+It checks the schemas, the names, the module arguments, the variable
+reads and values, the expressions, and the templates.
+
+It loads the inventory of --inventory, or of inventory in winch.yaml.
+Without both, it checks every inventory.
+
+It does not decrypt secrets and needs no age identity. It checks that
+each !secret is an age file. It warns about a secret whose number of
+recipients differs from the recipients list, and names winch secret
+rekey.
+
+A --set value parses as YAML. Quote a value that YAML would change:
+--set 'vars.php_version="8.0"'.
+
+Flags:
+  --inventory <name>          inventory to check
+                              default: inventory in winch.yaml, else all
+  --set vars.<name>=<value>   variable value; repeatable
+  --json                      JSON events on stdout
+
+See: winch doc project, winch doc variables

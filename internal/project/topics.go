@@ -1,18 +1,23 @@
 package project
 
 import (
-	"embed"
 	"reflect"
 
 	"github.com/davidklassen/winch/internal/doc"
 	"github.com/davidklassen/winch/internal/facts"
 )
 
-//go:embed topics
-var topics embed.FS
-
-// Topics returns the topic pages of winch doc, in index order.
+// Topics returns the topics of all groups, in index order.
 func Topics() []doc.Topic {
+	var ts []doc.Topic
+	for _, g := range Groups() {
+		ts = append(ts, g.Topics...)
+	}
+	return ts
+}
+
+// Groups returns the topics of winch doc in their groups, in index order.
+func Groups() []doc.Group {
 	factKeys := doc.Keys(reflect.TypeFor[facts.Facts]())
 	for i := range factKeys {
 		factKeys[i].Default = ""
@@ -29,17 +34,22 @@ func Topics() []doc.Topic {
 		"templates":   templateFunctions,
 		"expressions": expressionFunctions,
 	}
-	var out []doc.Topic
-	for _, name := range []string{"project", "inventory", "pipeline", "recipe", "step", "handlers", "variables", "templates", "expressions", "facts", "secrets", "workflow"} {
-		text, _ := topics.ReadFile("topics/" + name + ".txt")
-		t := doc.NewTopic(name, string(text), keys[name])
-		for _, f := range functions[name] {
-			f.Type = "function"
-			t.Functions = append(t.Functions, f)
-		}
-		out = append(out, t)
+	groups := []doc.Group{
+		{Title: "Project files", Topics: []doc.Topic{projectTopic, inventoryTopic, pipelineTopic, recipeTopic, stepTopic, handlersTopic}},
+		{Title: "Values", Topics: []doc.Topic{variablesTopic, templatesTopic, expressionsTopic, factsTopic, secretsTopic}},
+		{Title: "Running", Topics: []doc.Topic{workflowTopic, remoteTopic}},
 	}
-	return out
+	for _, g := range groups {
+		for i := range g.Topics {
+			t := &g.Topics[i]
+			t.Keys = keys[t.Name]
+			for _, f := range functions[t.Name] {
+				f.Type = "function"
+				t.Functions = append(t.Functions, f)
+			}
+		}
+	}
+	return groups
 }
 
 // templateFunctions are the functions of templates.

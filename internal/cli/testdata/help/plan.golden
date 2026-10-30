@@ -1,0 +1,54 @@
+winch plan: show the changes and change nothing
+
+Examples:
+  # show the changes of the pipeline site
+  winch plan site
+  # use the inventory production
+  winch plan site --inventory production
+  # plan with a value for one variable
+  winch plan site --set vars.nginx_port=8080
+  # plan two stages on the web hosts without web3
+  winch plan site --hosts 'web & !web3' --stages nginx,site
+  # exit with code 2 when apply would change something
+  winch plan site --exit-code
+
+Usage:
+  winch plan [<pipeline>] [flags]
+
+Plan shows the changes that winch apply would make, and the plan hash.
+It changes nothing.
+
+Leave out the pipeline name when the steps are at the top of
+winch.yaml.
+
+A host pattern is a group or a host, with "," for union, "&" for
+intersection, and "!" for exclusion. Each stage runs on the hosts in
+both its hosts and --hosts. The stages of --stages run in pipeline
+order.
+
+A --set value parses as YAML.
+
+With a terminal, ssh can ask questions, and sessions start one at a
+time. Without one, or with --batch, ssh asks nothing, and sessions
+start in parallel.
+
+With --exit-code, plan exits with code 2 when the plan has changes,
+unknown steps, pending handlers, a pending then, or a pending gate or
+assert.
+
+Flags:
+  --inventory <name>          inventory for the run
+                              default: inventory in winch.yaml
+  --hosts <pattern>           only these hosts
+                              default: all
+  --stages <names>            only these stages, such as mail,monit
+                              default: all
+  --user [<host>=]<name>      SSH login user, for all hosts or one;
+                              repeatable
+                              default: from the inventory
+  --set vars.<name>=<value>   variable value; repeatable
+  --batch                     no questions from ssh
+  --exit-code                 exit code 2 for a plan with changes
+  --json                      JSON events on stdout
+
+See: winch doc workflow, winch doc pipeline, winch doc inventory

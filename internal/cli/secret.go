@@ -10,96 +10,9 @@ import (
 	"github.com/davidklassen/winch/internal/secret"
 )
 
-const secretHelp = `Examples:
-  winch secret init
-  winch secret generate vars.monit_password
-  winch secret encrypt < dkim.key
-  openssl rand -hex 16 | winch secret encrypt
-  winch secret rekey
-
-Encrypt secrets with age for the recipients in winch.yaml.
-
-Usage: winch secret <command>
-
-Commands:
-  init      Make an age key, and add its public key to the recipients.
-  generate  Write a random password as a secret into the inventory.
-  encrypt   Encrypt a value from stdin, and print it as a !secret value.
-  rekey     Encrypt all secrets in the project again for the recipients.
-
-winch reads the age identity from the stdout of the command in
-WINCH_AGE_IDENTITY_CMD, which runs through sh -c. Without it, winch reads
-the file that WINCH_AGE_KEY names, or else ~/.config/winch/age.key. Both
-variables set is an error.
-`
-
-const initHelp = `Examples:
-  winch secret init
-  WINCH_AGE_KEY=~/keys/acme.key winch secret init
-
-Make an age key when there is none, print its public key, and add the public
-key to recipients in winch.yaml when it is not in the list.
-
-Usage: winch secret init
-
-The key is the file that WINCH_AGE_KEY names, or else ~/.config/winch/age.key.
-With WINCH_AGE_IDENTITY_CMD, init makes no key and reads the public key from
-the stdout of the command. Both variables set is an error.
-
-The new key can read the secrets only after a member who can read them runs
-winch secret rekey.
-`
-
-const generateHelp = `Examples:
-  winch secret generate vars.monit_password
-  winch secret generate vars.db_password --host db1.acme.com
-  winch secret generate vars.db_password --inventory production
-
-Make a random password of 32 letters and digits, encrypt it for the
-recipients in winch.yaml, and write it as a !secret value into the vars of
-the group all in the inventory. The file keeps its comments and layout.
-
-Usage: winch secret generate vars.<name> [flags]
-
-Something in the project must read the variable, and it must not be in
-those vars yet.
-
-Flags:
-  --inventory <name>            The inventory to write.
-  --host <name>                 Write into the vars of this host.
-`
-
-const encryptHelp = `Examples:
-  winch secret encrypt < dkim.key
-  openssl rand -hex 16 | winch secret encrypt
-
-Encrypt a value from stdin for the recipients in winch.yaml, and print it
-as a !secret value for a variable.
-
-Usage: winch secret encrypt
-
-A value of one line loses its trailing newline. A value of more lines
-stays as it is.
-`
-
-const rekeyHelp = `Examples:
-  winch secret rekey
-
-Encrypt all secrets in winch.yaml, the inventories, and the recipes again
-for the recipients in winch.yaml, and list the files it rewrote. Run it
-after a change of the recipients.
-
-Usage: winch secret rekey
-
-winch reads the age identity from the stdout of the command in
-WINCH_AGE_IDENTITY_CMD, which runs through sh -c. Without it, winch reads
-the file that WINCH_AGE_KEY names, or else ~/.config/winch/age.key. Both
-variables set is an error. When a secret does not decrypt, rekey changes no
-file.
-`
-
 func secretUsage(ctx context.Context, env Env, f *flags, args []string) int {
-	fmt.Fprint(env.stderr, secretHelp)
+	c, _ := commandNamed("secret")
+	writeHelp(env.stderr, c)
 	return exitInvalid
 }
 
