@@ -585,6 +585,9 @@ func TestLoadRecipes(t *testing.T) {
 		{name: "require-env", files: map[string]string{
 			"recipes/nginx/recipe.yaml": "require:\n  - !expr '$env.facts.os.id == \"debian\"'\nsteps: []\n",
 		}},
+		{name: "require-now-in-map-of-filter", files: map[string]string{
+			"recipes/nginx/recipe.yaml": "require:\n  - !expr 'len(map(filter([1], true), now())) > 0'\nsteps: []\n",
+		}},
 		{name: "require-snippet", files: map[string]string{
 			"recipes/nginx/recipe.yaml": "require:\n  - !expr facts.os.id == \"debian\" &&& true\nsteps: []\n",
 		}},

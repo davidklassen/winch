@@ -1,0 +1,3 @@
+recipes/nginx/recipe.yaml:2:5: require: now() is not allowed
+ | len(map(filter([1], true), now())) > 0
+ | ...........................^
