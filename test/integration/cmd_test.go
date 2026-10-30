@@ -152,7 +152,7 @@ func TestCmdModule(t *testing.T) {
 		{
 			Name:         "a missing user",
 			Args:         &module.Cmd{Command: "true", User: "winch-nobody"},
-			Want:         module.Result{Status: module.Unknown},
+			Want:         module.Result{Status: module.Unknown, Missing: []string{"user winch-nobody"}},
 			WantApplyErr: "user winch-nobody does not exist",
 			Fix:          "useradd winch-nobody",
 			NoConverge:   true,
@@ -160,7 +160,7 @@ func TestCmdModule(t *testing.T) {
 		{
 			Name:         "a missing dir",
 			Args:         &module.Cmd{Command: "true", Dir: "/srv/winch-missing"},
-			Want:         module.Result{Status: module.Unknown},
+			Want:         module.Result{Status: module.Unknown, Missing: []string{"dir /srv/winch-missing"}},
 			WantApplyErr: "/srv/winch-missing",
 			Fix:          "mkdir /srv/winch-missing",
 			NoConverge:   true,

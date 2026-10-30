@@ -69,6 +69,44 @@ func TestTimezoneValidate(t *testing.T) {
 }
 
 // spec: Modules/hostname and timezone
+func TestZoneMissing(t *testing.T) {
+	dir := t.TempDir() + "/"
+	if err := os.WriteFile(dir+"UTC", []byte("TZif2\x00"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"leapseconds", []byte("# leap seconds\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"Short", []byte("TZ"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dir+"Etc", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name        string
+		wantMissing bool
+		wantErr     string
+	}{
+		{"UTC", false, ""},
+		{"Mars", true, ""},
+		{"Etc", false, "Etc is not a time zone: " + dir + "Etc is a directory"},
+		{"leapseconds", false, "leapseconds is not a time zone: " + dir + "leapseconds does not start with TZif"},
+		{"Short", false, "Short is not a time zone: " + dir + "Short does not start with TZif"},
+	}
+	for _, tt := range tests {
+		missing, err := zoneMissing(dir, tt.name)
+		got := ""
+		if err != nil {
+			got = err.Error()
+		}
+		if missing != tt.wantMissing || got != tt.wantErr {
+			t.Errorf("zoneMissing(%q) = %v, %v; want %v, %q", tt.name, missing, err, tt.wantMissing, tt.wantErr)
+		}
+	}
+}
+
+// spec: Modules/hostname and timezone
 func TestCurrentZone(t *testing.T) {
 	dir := t.TempDir()
 	tests := []struct {

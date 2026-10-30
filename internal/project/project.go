@@ -773,7 +773,7 @@ func (l *loader) decodePipeline(p part) (*Pipeline, error) {
 			errs = append(errs, yamlx.Errorf(sf.Pos, "duplicate stage name %q", sf.Name))
 		}
 		seen[sf.Name] = true
-		errs = append(errs, printableName("stage", sf.Name, sf.Pos))
+		errs = append(errs, patternName("stage", sf.Name, sf.Pos), printableName("stage", sf.Name, sf.Pos))
 		s := Stage{Name: sf.Name, Pipeline: pl.Name, Hosts: sf.Hosts, HostsPos: sf.HostsPos}
 		if sf.HostsPos == (yamlx.Pos{}) {
 			s.Hosts, s.HostsPos = "all", sf.Pos

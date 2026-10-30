@@ -151,9 +151,15 @@ func (p *Plan) WriteNotes(out *color.Writer) {
 	for _, stage := range p.Stages {
 		for _, host := range stage.Hosts {
 			for _, step := range host.Steps {
-				if len(step.Result.MissingUnitFiles) > 0 && p.Failed[host.Host.Name] == nil {
+				if p.Failed[host.Host.Name] != nil {
+					continue
+				}
+				if len(step.Result.MissingUnitFiles) > 0 {
 					s := module.Service{Name: step.Step.ShownMain()}
 					fmt.Fprintf(out, "%s: %s: unit file not found\n", host.Host.Name, secret.Printable(s.Unit()))
+				}
+				for _, m := range step.Result.Missing {
+					fmt.Fprintf(out, "%s: %s does not exist and no step creates it\n", host.Host.Name, secret.Printable(m))
 				}
 			}
 		}

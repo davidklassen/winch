@@ -236,7 +236,7 @@ func parseValue(text, what string) (*yamlx.Node, error) {
 	n, err := yamlx.Parse(what, []byte(text))
 	if err != nil {
 		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
-			return nil, errors.New(ye.Msg)
+			return nil, fmt.Errorf("%s; quote it: %q", ye.Msg, text)
 		}
 		return nil, err
 	}

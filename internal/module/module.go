@@ -51,7 +51,10 @@ type Result struct {
 	// MissingUnitFiles are the paths of a missing service unit file. A
 	// selected removal of any of these paths suppresses the plan's note.
 	MissingUnitFiles []string `json:"missing_unit_files,omitempty"`
-	Deferred         bool     `json:"deferred,omitempty"`
+	// Missing are the user and the dir of a cmd that runs, as "user <name>"
+	// or "dir <path>", that do not exist on the host.
+	Missing  []string `json:"missing,omitempty"`
+	Deferred bool     `json:"deferred,omitempty"`
 	// Validates is set on a change for which apply runs the validate command
 	// of the step.
 	Validates bool `json:"validates,omitempty"`

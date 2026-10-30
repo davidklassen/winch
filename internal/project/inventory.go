@@ -118,13 +118,20 @@ func (l *loader) loadInventory(p part, set []setValue) (*Inventory, error) {
 		if h.Name == "all" {
 			errs = append(errs, yamlx.Errorf(h.Pos, "host %q has the name of a group", h.Name))
 		}
-		errs = append(errs, patternName("host", h.Name, h.Pos), printableName("host", h.Name, h.Pos))
+		nameErr := errors.Join(patternName("host", h.Name, h.Pos), printableName("host", h.Name, h.Pos))
+		errs = append(errs, nameErr)
+		what, hint := fmt.Sprintf("address %q", h.Address), ""
 		if h.Address == "" {
 			h.Address = h.Name
-		} else if !validAddress(h.Address) {
-			errs = append(errs, yamlx.Errorf(h.Pos, "host %q: address %q is not a host name or IP", h.Name, h.Address))
-		} else if hasPort(h.Address) {
-			errs = append(errs, yamlx.Errorf(h.Pos, "host %q: address %q has a port or brackets; put the port in the SSH config", h.Name, h.Address))
+			what, hint = "the name", "; set address"
+		}
+		switch {
+		case what == "the name" && nameErr != nil:
+			// The name error covers the same characters.
+		case !validAddress(h.Address):
+			errs = append(errs, yamlx.Errorf(h.Pos, "host %q: %s is not a host name or IP%s", h.Name, what, hint))
+		case hasPort(h.Address):
+			errs = append(errs, yamlx.Errorf(h.Pos, "host %q: %s has a port or brackets; put the port in the SSH config", h.Name, what))
 		}
 		// Two hosts with one address share the lock of the helper there.
 		if other, ok := addresses[strings.ToLower(h.Address)]; ok {
@@ -164,13 +171,17 @@ func (l *loader) values(n *yamlx.Node) ([]source, []error) {
 	return out, errs
 }
 
-// patternName returns the load error for a host or group name that a host
-// pattern cannot name.
+// patternName returns the load error for a host, group, or stage name that a
+// host pattern or --stages cannot name.
 func patternName(kind, name string, pos yamlx.Pos) error {
 	if !strings.ContainsAny(name, ",&!") && !strings.ContainsFunc(name, unicode.IsSpace) {
 		return nil
 	}
-	return yamlx.Errorf(pos, `%s %q: a %s name cannot hold ",", "&", "!", or white space; a host pattern could not name it`, kind, name, kind)
+	by := "a host pattern"
+	if kind == "stage" {
+		by = "--stages"
+	}
+	return yamlx.Errorf(pos, `%s %q: a %s name cannot hold ",", "&", "!", or white space; %s could not name it`, kind, name, kind, by)
 }
 
 // printableName returns the load error for a name with a tab or an

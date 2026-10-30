@@ -1,6 +1,7 @@
 package project
 
 import (
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -121,12 +122,46 @@ func TestHostNameCharacters(t *testing.T) {
 		{"hosts:\n  \"!web\": {address: 192.0.2.1}\n", `host "!web": a host name cannot hold`},
 		{"hosts:\n  web1: {}\ngroups:\n  \"a&b\":\n    hosts: [web1]\n", `inventories/test.yaml:4:3: group "a&b": a group name cannot hold ",", "&", "!", or white space; a host pattern could not name it`},
 		{"hosts:\n  web1: {}\ngroups:\n  \"a b\":\n    hosts: [web1]\n", `group "a b": a group name cannot hold`},
+		{"hosts:\n  \"mail.acme.com:2222\": {}\n", `inventories/test.yaml:2:3: host "mail.acme.com:2222": the name has a port or brackets; put the port in the SSH config`},
+		{"hosts:\n  \"[2001:db8::1]\": {}\n", `host "[2001:db8::1]": the name has a port or brackets`},
+		{"hosts:\n  \"a$(id)b\": {}\n", `inventories/test.yaml:2:3: host "a$(id)b": the name is not a host name or IP; set address`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.inventory, func(t *testing.T) {
 			_, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{"inventories/test.yaml": tt.inventory})), "", "site", nil, Keys{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Inventory
+func TestHostNameWithoutAddress(t *testing.T) {
+	for _, name := range []string{"mail.acme.com", "192.0.2.1", `"2001:db8::1"`, `"fe80::1%eth0"`} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{"inventories/test.yaml": "hosts:\n  " + name + ": {}\n"})), "", "site", nil, Keys{})
+			if err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	_, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{"inventories/test.yaml": "hosts:\n  \"web,1\": {}\n"})), "", "site", nil, Keys{})
+	if err == nil || strings.Count(err.Error(), "\n") != 0 {
+		t.Errorf("a name with a comma gives one error; got %v", err)
+	}
+}
+
+// spec: Pipelines; CLI (--stages)
+func TestStageNameCharacters(t *testing.T) {
+	for _, name := range []string{"a,b", "a b", "a&b", `"!a"`} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{
+				"pipelines/site.yaml": "stages:\n  - name: " + name + "\n    steps: []\n",
+			})), "", "site", nil, Keys{})
+			want := fmt.Sprintf(`pipelines/site.yaml:2:5: stage %q: a stage name cannot hold ",", "&", "!", or white space; --stages could not name it`, strings.Trim(name, `"`))
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %v, want %q", err, want)
 			}
 		})
 	}

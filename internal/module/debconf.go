@@ -2,7 +2,9 @@ package module
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"slices"
 	"strings"
 	"unicode"
@@ -44,7 +46,8 @@ func (d *Debconf) Validate() error {
 }
 
 // Check reads the answer and the template of the question while it holds the
-// dpkg locks, so no apt run changes them.
+// dpkg locks, so no apt run changes them. A changed answer of an installed
+// package gives a note.
 func (d *Debconf) Check(ctx context.Context, _ *State, note func(string)) (Result, error) {
 	unlock, err := lockFiles(ctx, dpkgLocks, note)
 	if err != nil {
@@ -83,6 +86,14 @@ func (d *Debconf) Check(ctx context.Context, _ *State, note func(string)) (Resul
 	}
 	if exists && sameAnswer(d.Type, cur, d.Value) {
 		return Result{Status: OK}, nil
+	}
+	// dpkg-query fails for a package that dpkg does not know.
+	status, err := run(ctx, nil, "dpkg-query", "-W", "-f=${db:Status-Status}\n", d.Package)
+	if err != nil && !errors.As(err, new(*exec.ExitError)) {
+		return Result{}, err
+	}
+	if slices.Contains(strings.Fields(status), "installed") {
+		note(d.Package + " is installed; the new answer has no effect until dpkg-reconfigure runs")
 	}
 	action, old := Modify, fmt.Sprintf("%q", cur)
 	if !exists {

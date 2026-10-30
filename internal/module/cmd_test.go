@@ -3,6 +3,7 @@ package module
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -99,6 +100,35 @@ func TestCmdCheck(t *testing.T) {
 			}
 			if _, err := os.Stat(ran); err == nil {
 				t.Error("the check ran the command")
+			}
+		})
+	}
+}
+
+// spec: Modules/cmd
+func TestCmdCheckMissingDir(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, dir, creates string
+		want               []string
+	}{
+		{"a dir that exists", dir, "", nil},
+		{"a missing dir", filepath.Join(dir, "nope"), "", []string{"dir " + filepath.Join(dir, "nope")}},
+		{"a dir under a file", filepath.Join(file, "x"), "", []string{"dir " + filepath.Join(file, "x")}},
+		{"a cmd that does not run", filepath.Join(dir, "nope"), file, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := (&Cmd{Command: "true", Dir: tt.dir, Creates: tt.creates}).Check(t.Context(), &State{}, func(string) {})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got.Missing, tt.want) {
+				t.Errorf("missing = %q, want %q", got.Missing, tt.want)
 			}
 		})
 	}
