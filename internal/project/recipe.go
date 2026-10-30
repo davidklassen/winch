@@ -333,27 +333,51 @@ func (r *Recipe) key(k *module.Repo) ([]*yamlx.Error, error) {
 	return out, nil
 }
 
-// fileTemplates returns the template of the file arguments n. A computed
-// template name gives all templates of the recipe.
-func (r *Recipe) fileTemplates(n *yamlx.Node) []*tmplFile {
+// fileTemplates returns the templates of the file step st with the
+// arguments n. A computed template name gives all templates of the recipe,
+// unless it reads only item and the loop is a literal list: then it gives the
+// templates that the items name.
+func (r *Recipe) fileTemplates(st Step, n *yamlx.Node) []*tmplFile {
 	i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "template" })
 	if i < 0 {
 		return nil
 	}
-	if v := n.Pairs[i].Value; v.Tag == "" {
+	v := n.Pairs[i].Value
+	var names []string
+	if v.Tag == "" {
 		name, _ := v.Value.(string)
-		if t := r.templates[name]; t != nil {
-			return []*tmplFile{t}
-		}
-		return nil
+		names = []string{name}
+	} else if l, ok := loopNames(st, v); ok {
+		names = l
+	} else {
+		names = slices.Collect(maps.Keys(r.templates))
 	}
 	var out []*tmplFile
-	for _, t := range r.templates {
-		if t != nil {
+	for _, name := range names {
+		if t := r.templates[name]; t != nil {
 			out = append(out, t)
 		}
 	}
 	return out
+}
+
+// loopNames returns the value of the computed scalar v of the step st for
+// each item, when v reads only item and the loop is a literal list.
+func loopNames(st Step, v *yamlx.Node) ([]string, bool) {
+	c := st.args.computed[v]
+	if st.loop == nil || st.loop.computed != nil || c.data {
+		return nil, false
+	}
+	var out []string
+	for _, item := range st.loop.node.Items {
+		name, err := c.evalItem(yamlx.Value(item))
+		s, ok := name.(string)
+		if err != nil || !ok {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, true
 }
 
 // readFile reads name in the directory sub of r. It does not follow a

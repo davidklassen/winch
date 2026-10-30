@@ -1034,7 +1034,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 	}
 	if st.Module == "file" {
 		var tmplValues []string
-		for _, t := range r.fileTemplates(argsNode) {
+		for _, t := range r.fileTemplates(st, argsNode) {
 			st.tmplReads = append(st.tmplReads, t.reads...)
 			tmplValues = append(tmplValues, t.values...)
 		}

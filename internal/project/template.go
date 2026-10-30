@@ -25,7 +25,9 @@ var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": 
 type tmplFile struct {
 	t *template.Template
 	// item is true when the template reads .item.
-	item  bool
+	item bool
+	// data is true when it reads a name other than item.
+	data  bool
 	reads []string
 	// values are the variables whose values it reads.
 	values []string
@@ -47,7 +49,7 @@ func parseTemplate(file string, text []byte, sc scope) (*tmplFile, error) {
 		return nil, err
 	}
 	failNull(t)
-	return &tmplFile{t: t, item: c.item, reads: c.reads, values: c.values}, nil
+	return &tmplFile{t: t, item: c.item, data: c.data, reads: c.reads, values: c.values}, nil
 }
 
 // parseInline parses the text of a !tpl value at pos.
@@ -67,7 +69,7 @@ func parseInline(pos yamlx.Pos, text string, sc scope) (*tmplFile, error) {
 		return nil, err
 	}
 	failNull(t)
-	return &tmplFile{t: t, item: c.item, reads: c.reads, values: c.values}, nil
+	return &tmplFile{t: t, item: c.item, data: c.data, reads: c.reads, values: c.values}, nil
 }
 
 // names is a level of the names that a template can read. A nil *names allows
@@ -108,6 +110,7 @@ type nameCheck struct {
 	top   *names
 	main  bool
 	item  bool
+	data  bool
 	reads []string
 	// values are the variables whose values it reads. A range over only
 	// the keys of a map does not read its values.
@@ -249,6 +252,8 @@ func (c *nameCheck) peers(ident []string, off int) {
 func (c *nameCheck) field(ident []string, dot, first int) {
 	if ident[0] == "item" {
 		c.item = true
+	} else {
+		c.data = true
 	}
 	level := c.top
 	vars := c.top.sub["vars"]
