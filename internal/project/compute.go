@@ -200,7 +200,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 
 // exprCheck finds the variables that an expression reads by name, and
 // reports $env, now(), an item that is not defined, and a read of vars other
-// than by name.
+// than by name. get() with a constant key reads a peer's variable by name.
 type exprCheck struct {
 	sc  scope
 	src file.Source
@@ -212,7 +212,8 @@ type exprCheck struct {
 	errs    []string
 	// named are the nodes that a member access with a constant name reads.
 	named map[ast.Node]bool
-	// whole are the nodes that hold vars: vars, host, and host.vars.
+	// whole are the nodes that hold vars: vars, host, host.vars, and the
+	// vars of a peer.
 	whole []ast.Node
 }
 
@@ -226,6 +227,21 @@ func (c *exprCheck) snippet(n ast.Node) string {
 }
 
 func (c *exprCheck) Visit(np *ast.Node) {
+	if isVars(*np) || isPeerVars(*np) {
+		c.whole = append(c.whole, *np)
+	}
+	if base, key, ok := constKey(*np); ok {
+		_, member := (*np).(*ast.MemberNode)
+		if member || isPeerVars(base) {
+			c.named[base] = true
+		}
+		if member && isVars(base) {
+			c.reads = append(c.reads, key)
+		}
+		if member && isVars(base) || isPeerVars(base) {
+			c.names = append(c.names, varRead{name: key, snippet: c.snippet(*np)})
+		}
+	}
 	switch n := (*np).(type) {
 	case *ast.IdentifierNode:
 		if n.Value == "item" && c.sc.noItem != "" {
@@ -237,7 +253,7 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		if n.Value == "match" && c.sc.noMatch != "" {
 			c.fail(n, c.sc.noMatch)
 		}
-		if isVars(n) || n.Value == "host" {
+		if n.Value == "host" {
 			c.whole = append(c.whole, n)
 		}
 	case *ast.BuiltinNode:
@@ -252,23 +268,6 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		if pattern, ok := n.Arguments[0].(*ast.StringNode); ok {
 			c.matches = append(c.matches, matchCall{pattern: pattern.Value, snippet: c.snippet(n)})
 		}
-	case *ast.MemberNode:
-		if isVars(n) {
-			c.whole = append(c.whole, n)
-		}
-		name, ok := n.Property.(*ast.StringNode)
-		if ok {
-			c.named[n.Node] = true
-		}
-		if !ok {
-			return
-		}
-		if isVars(n.Node) {
-			c.reads = append(c.reads, name.Value)
-		}
-		if m, peer := unpatched(n.Node).(*ast.MemberNode); isVars(n.Node) || peer && isName(m.Property, "vars") {
-			c.names = append(c.names, varRead{name: name.Value, snippet: c.snippet(n)})
-		}
 	}
 }
 
@@ -281,8 +280,12 @@ func (c *exprCheck) checkByName() {
 	}
 }
 
-// unpatched returns n without the call of readFunc that readCheck adds.
+// unpatched returns n without the call of readFunc that readCheck adds, and
+// without the chain node of an optional read such as p?.vars.
 func unpatched(n ast.Node) ast.Node {
+	if c, ok := n.(*ast.ChainNode); ok {
+		n = c.Node
+	}
 	if c, ok := n.(*ast.CallNode); ok {
 		if id, ok := c.Callee.(*ast.IdentifierNode); ok && id.Value == readFunc {
 			return c.Arguments[0]
@@ -308,6 +311,33 @@ func isVars(n ast.Node) bool {
 	}
 	id, ok := m.Node.(*ast.IdentifierNode)
 	return ok && id.Value == "host" && isName(m.Property, "vars")
+}
+
+// isPeerVars reports whether n reads the vars of a value other than the host,
+// such as a host from match(): p.vars or get(p, "vars"). A variable named vars
+// is not.
+func isPeerVars(n ast.Node) bool {
+	base, key, ok := constKey(n)
+	return ok && key == "vars" && !isVars(n) && !isVars(base)
+}
+
+// constKey returns the value and the key of a read with a constant key:
+// x.key, x["key"], or get(x, "key").
+func constKey(n ast.Node) (ast.Node, string, bool) {
+	switch n := n.(type) {
+	case *ast.MemberNode:
+		if key, ok := n.Property.(*ast.StringNode); ok {
+			return unpatched(n.Node), key.Value, true
+		}
+	case *ast.BuiltinNode:
+		if len(n.Arguments) != 2 || n.Name != "get" {
+			return nil, "", false
+		}
+		if key, ok := n.Arguments[1].(*ast.StringNode); ok {
+			return unpatched(n.Arguments[0]), key.Value, true
+		}
+	}
+	return nil, "", false
 }
 
 func unknownVariable(name string, known map[string]bool) string {

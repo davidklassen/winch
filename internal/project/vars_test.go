@@ -1179,6 +1179,37 @@ func TestReadsDeclare(t *testing.T) {
 			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      peer_key: p1", 1),
 			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/p\n      content: !expr 'join(map(filter(match(\"all\"), .name != host.name), .vars.peer_kye), \",\")'\n",
 		}, want: `recipes/r/recipe.yaml:14:16: unknown variable "peer_kye"; did you mean "peer_key"?`},
+		{name: "keys of a peer's vars", files: map[string]string{
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'join(map(match(\"all\"), join(keys(.vars), \" \")), \",\")'\n",
+		}, want: `recipes/r/recipe.yaml:14:16: a read of vars names the variable, such as vars.nginx_port`},
+		{name: "get of a peer's vars by a computed key", files: map[string]string{
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'join(map(match(\"all\"), string(get(.vars, item))), \",\")'\n    loop: [key]\n",
+		}, want: `recipes/r/recipe.yaml:14:16: a read of vars names the variable, such as vars.nginx_port`},
+		{name: "a peer's whole vars", files: map[string]string{
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'string(match(\"all\")[0].vars)'\n",
+		}, want: `recipes/r/recipe.yaml:14:16: a read of vars names the variable, such as vars.nginx_port`},
+		{name: "get of the key vars of a peer", files: map[string]string{
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'join(keys(get(match(\"all\")[0], \"vars\")), \",\")'\n",
+		}, want: `recipes/r/recipe.yaml:14:16: a read of vars names the variable, such as vars.nginx_port`},
+		{name: "get of a peer's vars by name", files: map[string]string{
+			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      peer_key: p1", 1),
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'join(map(match(\"all\"), string(get(.vars, \"peer_key\"))), \",\")'\n",
+		}},
+		{name: "get of a peer's optional vars by name", files: map[string]string{
+			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      peer_key: p1", 1),
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'string(get(match(\"all\")[0]?.vars, \"peer_key\"))'\n",
+		}},
+		{name: "a misspelled get of a peer's vars", files: map[string]string{
+			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      peer_key: p1", 1),
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'join(map(match(\"all\"), string(get(.vars, \"peer_kye\"))), \",\")'\n",
+		}, want: `recipes/r/recipe.yaml:14:16: unknown variable "peer_kye"; did you mean "peer_key"?`},
+		{name: "a variable named vars", files: map[string]string{
+			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      vars: {a: 1}", 1),
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'string(vars.vars) + string(vars.vars.a)'\n",
+		}},
+		{name: "get of the own vars by name", files: map[string]string{
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'string(get(vars, \"key\"))'\n",
+		}, want: `recipes/r/recipe.yaml:14:16: a read of vars names the variable, such as vars.nginx_port`},
 		{name: "a value name with upper case", files: map[string]string{
 			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      Port: 1", 1),
 			"recipes/r/recipe.yaml": strings.Replace(r, "string(vars.port)", "string(vars.Port)", 1),
