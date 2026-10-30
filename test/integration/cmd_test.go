@@ -292,7 +292,7 @@ func TestCmdPipeline(t *testing.T) {
 	if r := lab.Winch(t, dir, "apply", "gate", "--yes"); r.Code != 0 {
 		t.Errorf("a passing assert: exit %d, stderr %q", r.Code, r.Stderr)
 	}
-	vm.MustRun(t, "test -e /root/after && test ! -s /var/lib/winch/checks/cmds && rm /root/open")
+	vm.MustRun(t, "test -e /root/after && ! grep -qv '^version 1$' /var/lib/winch/checks/cmds && rm /root/open")
 	// Only the assert is left: the host has no change, and apply skips it.
 	r = lab.Winch(t, dir, "apply", "gate", "--yes")
 	if r.Code != 0 || !strings.Contains(r.Stdout, "1 host: 0 to change, 1 unchanged, 0 unknown\n") {

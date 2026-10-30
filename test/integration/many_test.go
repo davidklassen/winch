@@ -120,7 +120,7 @@ handlers:
 		noSecrets(t, strings.Join(args, " "), r.Stdout+r.Stderr, manyTokens[0], manyTokens[1])
 		return r
 	}
-	const records = "cat /var/lib/winch/handlers/many 2>/dev/null; true"
+	const records = "sed '/^version 1$/d' /var/lib/winch/handlers/many 2>/dev/null; true"
 
 	t.Run("match() peers and step vars render, secrets show as (secret)", func(t *testing.T) {
 		r := winch("plan", "site")
@@ -224,7 +224,7 @@ handlers:
 		if out := vms[1].MustRun(t, "cat /root/web"); out != "three\n" {
 			t.Errorf("many-b did not change after the gate passed: /root/web = %q", out)
 		}
-		if out := vms[0].MustRun(t, "cat /var/lib/winch/checks/many"); out != "" {
+		if out := vms[0].MustRun(t, "sed '/^version 1$/d' /var/lib/winch/checks/many"); out != "" {
 			t.Errorf("records after the gate passed: %q", out)
 		}
 	})

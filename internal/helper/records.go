@@ -7,7 +7,9 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -21,8 +23,12 @@ type records struct {
 	what string
 }
 
-// read returns the lines of the file, also empty ones, so that the index of a
-// line gives its line number.
+// recordsVersion is the format version of the record files. A file starts
+// with a line "version <n>".
+const recordsVersion = 1
+
+// read returns the lines of the file after its version, also empty ones, so
+// that the index i of a line gives its line number i+2.
 func (h records) read() ([]string, error) {
 	f, err := os.OpenInRoot(h.dir, h.project)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -39,7 +45,16 @@ func (h records) read() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read the %s: %w", h.what, err)
 	}
-	text := strings.TrimSuffix(string(data), "\n")
+	head, text, _ := strings.Cut(string(data), "\n")
+	v, ok := strings.CutPrefix(head, "version ")
+	n, err := strconv.Atoi(v)
+	if !ok || err != nil || n < 1 {
+		return nil, fmt.Errorf("read the %s: %s: no format version", h.what, filepath.Join(h.dir, h.project))
+	}
+	if n > recordsVersion {
+		return nil, fmt.Errorf("upgrade winch to read %s", filepath.Join(h.dir, h.project))
+	}
+	text = strings.TrimSuffix(text, "\n")
 	if text == "" {
 		return []string{}, nil
 	}
@@ -82,25 +97,32 @@ func (h records) remove(names ...string) error {
 
 // write replaces the file in one rename, after the data is on disk.
 func (h records) write(names []string) error {
-	if err := os.MkdirAll(h.dir, 0o700); err != nil {
-		return fmt.Errorf("create %s: %w", h.dir, err)
+	var b strings.Builder
+	fmt.Fprintf(&b, "version %d\n", recordsVersion)
+	for _, n := range names {
+		b.WriteString(n + "\n")
 	}
-	root, err := os.OpenRoot(h.dir)
+	return writeFile(h.dir, h.project, h.what, b.String())
+}
+
+// writeFile replaces the file name in dir in one rename, after the data is
+// on disk.
+func writeFile(dir, name, what, data string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	var b strings.Builder
-	for _, n := range names {
-		b.WriteString(n + "\n")
-	}
 	tmp := ".winch-" + rand.Text()
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return fmt.Errorf("record the %s: %w", h.what, err)
+		return fmt.Errorf("record the %s: %w", what, err)
 	}
 	defer root.Remove(tmp)
-	_, err = f.WriteString(b.String())
+	_, err = f.WriteString(data)
 	if err == nil {
 		err = f.Sync()
 	}
@@ -108,13 +130,13 @@ func (h records) write(names []string) error {
 		err = cerr
 	}
 	if err == nil {
-		err = root.Rename(tmp, h.project)
+		err = root.Rename(tmp, name)
 	}
 	if err == nil {
 		err = syncDir(root)
 	}
 	if err != nil {
-		return fmt.Errorf("record the %s: %w", h.what, err)
+		return fmt.Errorf("record the %s: %w", what, err)
 	}
 	return nil
 }

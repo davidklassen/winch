@@ -465,7 +465,7 @@ func TestLockoutPendingHandler(t *testing.T) {
 		"pipelines/site.yaml":   pendingConfirmPipeline,
 	})
 	const conf = "cat /etc/ssh/sshd_config.d/winch.conf"
-	const records = "cat /var/lib/winch/handlers/pdemo 2>/dev/null; true"
+	const records = "sed '/^version 1$/d' /var/lib/winch/handlers/pdemo 2>/dev/null; true"
 	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
 		t.Fatalf("first apply: exit %d\n%s", r.Code, r.Stderr)
 	}

@@ -71,7 +71,7 @@ func TestDownloadModule(t *testing.T) {
 	missing := strings.TrimSuffix(url1, "v1") + "missing"
 	attrs := "owner root, group root, mode 0644"
 	record := "/var/lib/winch/downloads/test"
-	recordV1 := "mkdir -p /var/lib/winch/downloads && echo '" + sha(v1) + " /tmp/w/f' > " + record
+	recordV1 := "mkdir -p /var/lib/winch/downloads && printf 'version 1\\n%s\\n' '" + sha(v1) + " /tmp/w/f' > " + record
 
 	tgz := tarGz(t, []entry{
 		{name: "./", typ: tar.TypeDir, mode: 0o700},
@@ -91,7 +91,7 @@ func TestDownloadModule(t *testing.T) {
 	})
 	urlLate := lab.Serve(t, "download/late.tar.gz", late)
 	unpackRecord := sha(tgz) + ":root:root /tmp/w/opt"
-	unpacked := "mkdir -p /var/lib/winch/downloads && echo '" + unpackRecord + "' > " + record
+	unpacked := "mkdir -p /var/lib/winch/downloads && printf 'version 1\\n%s\\n' '" + unpackRecord + "' > " + record
 	extracted := unpacked + " && mkdir /tmp/w/opt && curl -sf " + urlTgz + " | tar -C /tmp/w/opt -xzf -"
 	unpackLine := "unpack into /tmp/w/opt (owner root, group root)"
 	evil := tarGz(t, []entry{{name: "../evil", typ: tar.TypeReg, mode: 0o644, body: "x\n"}})
@@ -258,7 +258,7 @@ func TestDownloadModule(t *testing.T) {
 			Args:      &module.Download{URL: url2, SHA256: sha(v2), Path: "/tmp/w/f"},
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + url2 + " (the sha256 differs)"}},
 			Unchanged: `[ "$(cat /tmp/w/f)" = "version 1" ]`,
-			After:     `[ "$(cat /tmp/w/f)" = "version 2" ] && [ "$(cat ` + record + `)" = "$(printf '%s\n' '` + sha(v1) + ` /tmp/w/f' '` + sha(v1) + ` /tmp/w/other')" ]`,
+			After:     `[ "$(cat /tmp/w/f)" = "version 2" ] && [ "$(cat ` + record + `)" = "$(printf '%s\n' 'version 1' '` + sha(v1) + ` /tmp/w/f' '` + sha(v1) + ` /tmp/w/other')" ]`,
 		},
 		{
 			Name:  "a file that changed on the host downloads again",
@@ -426,7 +426,7 @@ func TestDownloadModule(t *testing.T) {
 			Setup: extracted + " && mkdir /tmp/w/opt2 && echo '" + sha(v1) + " /tmp/w/other' >> " + record,
 			Args:  &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt2"},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"download " + urlTgz + " (no record of an earlier download)", "unpack into /tmp/w/opt2 (owner root, group root)", "remove its content: 0 files, 0 directories"}},
-			After: `[ "$(/tmp/w/opt2/app/latest)" = tool ] && [ "$(cat ` + record + `)" = "$(printf '%s\n' '` + unpackRecord + `' '` + sha(v1) + ` /tmp/w/other' '` + sha(tgz) + `:root:root /tmp/w/opt2')" ]`,
+			After: `[ "$(/tmp/w/opt2/app/latest)" = tool ] && [ "$(cat ` + record + `)" = "$(printf '%s\n' 'version 1' '` + unpackRecord + `' '` + sha(v1) + ` /tmp/w/other' '` + sha(tgz) + `:root:root /tmp/w/opt2')" ]`,
 		},
 		{
 			Name:      "a new checksum unpacks the new archive",

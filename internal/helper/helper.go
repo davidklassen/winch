@@ -470,7 +470,7 @@ func readPending(handlers, thens, checks records) (protocol.Pending, error) {
 		}
 		var t protocol.Then
 		if err := json.Unmarshal([]byte(l), &t); err != nil {
-			return protocol.Pending{}, fmt.Errorf("read the pending then records: %s:%d: %w", filepath.Join(thens.dir, thens.project), i+1, err)
+			return protocol.Pending{}, fmt.Errorf("read the pending then records: %s:%d: %w", filepath.Join(thens.dir, thens.project), i+2, err)
 		}
 		p.Then = append(p.Then, t)
 	}
@@ -484,7 +484,7 @@ func readPending(handlers, thens, checks records) (protocol.Pending, error) {
 		}
 		var c protocol.Check
 		if err := json.Unmarshal([]byte(l), &c); err != nil {
-			return protocol.Pending{}, fmt.Errorf("read the pending health gates and asserts: %s:%d: %w", filepath.Join(checks.dir, checks.project), i+1, err)
+			return protocol.Pending{}, fmt.Errorf("read the pending health gates and asserts: %s:%d: %w", filepath.Join(checks.dir, checks.project), i+2, err)
 		}
 		p.Checks = append(p.Checks, c)
 	}
