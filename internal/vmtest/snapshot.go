@@ -25,8 +25,20 @@ import (
 // without one can miss a test's deadline.
 // Ubuntu resolves the host name only through DNS, which an offline VM does
 // not reach, so each lookup of it waits 10 s. /etc/hosts answers at once.
+// Offline, the VM gets no gateway and no DNS from DHCP. Netplan makes each
+// boot wait 2 minutes for them before sshd starts, unless a router advert
+// gives them; in CI, none does. The drop-in sorts after netplan's, so its
+// ExecStart replaces netplan's. It waits for an IPv4 address: cloud-init
+// reads the seed over IPv4 next. It is not in /etc/systemd/system, where the
+// tests of the purge of that directory would see it.
 const userData = `#cloud-config
 manage_etc_hosts: true
+write_files:
+  - path: /usr/local/lib/systemd/system/systemd-networkd-wait-online.service.d/99-winch.conf
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any --ipv4 -o degraded
 users:
   - name: admin
     primary_group: admin
@@ -46,6 +58,17 @@ runcmd:
 `
 
 const metaData = "instance-id: base\nlocal-hostname: base\n"
+
+// Without a network-config, cloud-init asks the seed server for one 11 times
+// at each boot.
+const networkConfig = `version: 2
+ethernets:
+  net0:
+    match:
+      name: "e*"
+    dhcp4: true
+    dhcp6: true
+`
 
 // The SSH key of the lab's users. examples/demo names the public key.
 var (
@@ -98,7 +121,7 @@ func (l *Lab) snapshotInputs(ctx context.Context) (snapshotInputs, error) {
 	}
 	return snapshotInputs{
 		Image: hex.EncodeToString(h.Sum(nil)),
-		Seed:  seedUserData() + metaData,
+		Seed:  seedUserData() + metaData + networkConfig,
 		QEMU:  strings.SplitN(string(version), "\n", 2)[0],
 		Flags: strings.Join(append(args, "disk "+diskSize), "\n"),
 	}, nil
@@ -131,9 +154,10 @@ func (l *Lab) useKey() error {
 		return err
 	}
 	seed := map[string]string{
-		"meta-data":   metaData,
-		"user-data":   seedUserData(),
-		"vendor-data": "",
+		"meta-data":      metaData,
+		"user-data":      seedUserData(),
+		"vendor-data":    "",
+		"network-config": networkConfig,
 	}
 	for name, content := range seed {
 		if err := os.WriteFile(filepath.Join(l.Dir, "www", "seed", name), []byte(content), 0o644); err != nil {
