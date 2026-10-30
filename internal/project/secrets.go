@@ -610,7 +610,7 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	if read := l.readNames(); !read[name] {
 		return "", errors.Join(errors.New(unknownVariable(name, read)), lErr, plErr)
 	}
-	inventory = cmp.Or(inventory, cfg.Inventory, l.layout.top())
+	inventory = cmp.Or(inventory, cfg.Inventory, l.layout.only())
 	if inventory == "" {
 		return "", errors.New("no inventory: use --inventory, or set inventory in winch.yaml")
 	}

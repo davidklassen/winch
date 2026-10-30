@@ -134,9 +134,9 @@ func partNames(parts []part) []string {
 	return out
 }
 
-// top returns the name of the inventory at the top of winch.yaml, or "".
-func (ly layout) top() string {
-	if len(ly.inventories) > 0 && ly.inventories[0].top {
+// only returns the name of the only inventory, or "".
+func (ly layout) only() string {
+	if len(ly.inventories) == 1 {
 		return ly.inventories[0].name
 	}
 	return ""

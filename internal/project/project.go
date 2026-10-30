@@ -427,11 +427,11 @@ func newLoader(dir string, cfg *Config) (*loader, error) {
 }
 
 // loadInventories loads the inventory flag, the default from winch.yaml, or
-// the inventory at the top of winch.yaml.
+// the only inventory.
 // Without any of them, it loads every inventory when all is true. It returns the
 // inventories that loaded.
 func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setValue) ([]*Inventory, error) {
-	if name := cmp.Or(flag, cfg.Inventory, l.layout.top()); name != "" {
+	if name := cmp.Or(flag, cfg.Inventory, l.layout.only()); name != "" {
 		p, err := l.layout.inventory(name)
 		if err != nil && flag == "" {
 			err = yamlx.Errorf(cfg.InventoryPos, "%s", err)

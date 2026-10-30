@@ -1112,7 +1112,7 @@ func TestWriteSecret(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + k.id.Recipient().String() + "\nvars:\n  domain: x\n  motd: x\n",
+				"winch.yaml":            "name: acme\nrecipients:\n  - " + k.id.Recipient().String() + "\nvars:\n  domain: x\n  motd: x\n",
 				"inventories/test.yaml": tt.inv,
 				"pipelines/site.yaml":   readsPipeline("pw"),
 			})
@@ -1156,7 +1156,7 @@ func TestWriteSecretErrors(t *testing.T) {
 		{"a value in the host", "", "", "web1", "pw", `variable "pw" is already in the vars of host "web1" in inventories/test.yaml`},
 		{"not read", "", "", "", "tokn", `unknown variable "tokn"; did you mean "token"?`},
 		{"an unknown host", "", "", "web9", "token", `host "web9" is not in inventories/test.yaml`},
-		{"no inventory", "name: acme\nrecipients:\n  - KEY\n", "", "", "pw", "no inventory: use --inventory, or set inventory in winch.yaml"},
+		{"two inventories and no default", "name: acme\nrecipients:\n  - KEY\ninventories:\n  prod:\n    hosts: {}\n", "", "", "pw", "no inventory: use --inventory, or set inventory in winch.yaml"},
 		{"a missing inventory", "", "prod", "", "pw", `unknown inventory "prod"`},
 		{"a null value", "", "", "web2", "pw", `variable "pw" is already in the vars of host "web2" in inventories/test.yaml`},
 		{"no recipients", "name: acme\ninventory: test\n", "", "", "pw", "winch.yaml has no recipients"},
