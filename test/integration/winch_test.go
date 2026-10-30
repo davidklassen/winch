@@ -445,7 +445,7 @@ func otherWinch(t *testing.T) string {
 	}
 	replace := map[string]string{}
 	for _, arch := range []string{"amd64", "arm64"} {
-		src := filepath.Join(root, "internal/helperbin/helper-linux-"+arch)
+		src := filepath.Join(root, "internal/helperbin/bin/helper-linux-"+arch)
 		data, err := os.ReadFile(src)
 		if err != nil {
 			t.Fatal(err)

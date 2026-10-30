@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -64,6 +65,10 @@ type Env struct {
 	// AgeCmd is the value of WINCH_AGE_IDENTITY_CMD.
 	AgeCmd string
 	Filter *secret.Filter
+	// Version is the version of winch, from the build info.
+	Version string
+	// NoHelpers is true in a binary built without the host helpers.
+	NoHelpers bool
 	// Now is the clock of the JSON events. Nil means time.Now.
 	Now func() time.Time
 	// stdout and stderr are Out and Err through Filter. Main sets them and
@@ -85,6 +90,7 @@ var runs = map[string]func(ctx context.Context, env Env, f *flags, args []string
 	"secret encrypt":  secretEncrypt,
 	"secret rekey":    secretRekey,
 	"doc":             docCommand,
+	"version":         version,
 }
 
 type flags struct {
@@ -117,6 +123,9 @@ func Main(ctx context.Context, args []string, env Env) int {
 		return exitOK
 	}
 	name := args[0]
+	if name == "--version" {
+		name = "version"
+	}
 	if name == "secret" && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 		name, args = "secret "+args[1], args[1:]
 	}
@@ -153,7 +162,29 @@ func Main(ctx context.Context, args []string, env Env) int {
 		fmt.Fprintf(env.stderr, "Run \"winch %s --help\" for the flags.\n", name)
 		return exitInvalid
 	}
+	if env.NoHelpers && slices.Contains([]string{"plan", "apply", "run", "exec"}, name) {
+		o := newOutput(env, &f)
+		o.fail(errNoHelpers)
+		return o.end(exitFailed, summary{})
+	}
 	return runs[name](ctx, env, &f, pos)
+}
+
+var errNoHelpers = errors.New(`winch: this binary has no host helpers, so it cannot work on hosts.
+It was probably built with go install, which cannot include them.
+Install a release: curl -fsSL https://winchstack.app/install.sh | sh`)
+
+func version(_ context.Context, env Env, _ *flags, args []string) int {
+	if len(args) != 0 {
+		printError(env.stderr, "winch: version takes no arguments")
+		return exitInvalid
+	}
+	line := fmt.Sprintf("winch %s %s/%s", env.Version, runtime.GOOS, runtime.GOARCH)
+	if env.NoHelpers {
+		line += " (built without host helpers)"
+	}
+	fmt.Fprintln(env.stdout, line)
+	return exitOK
 }
 
 // flagSet returns the parser of the flags of cmd, which sets f.

@@ -22,6 +22,10 @@ Commands:
   exec      run a shell command on hosts
   secret    manage secrets and the age key
   doc       show the reference
+  version   print the version and the platform
+
+Flags:
+  --version                   version and platform, as winch version
 
 Run "winch <command> --help" for the arguments and flags of a command.
 

@@ -114,7 +114,10 @@ var mainCommand = command{
 		{"make those changes after a question", "winch apply site --inventory test"},
 	},
 	usage: []string{"winch <command> [arguments] [flags]"},
-	see:   []string{"winch doc"},
+	flags: []flagDoc{
+		{name: "--version", text: "version and platform, as winch version"},
+	},
+	see: []string{"winch doc"},
 }
 
 var commands = []command{
@@ -458,6 +461,18 @@ checks use, so it matches the installed version.`,
 		},
 		flags: []flagDoc{
 			{name: "--json", text: "whole reference as one JSON document"},
+		},
+	},
+	{
+		name:    "version",
+		summary: "print the version and the platform",
+		examples: []example{
+			{"print the version and the platform", "winch version"},
+		},
+		usage: []string{"winch version", "winch --version"},
+		description: []string{
+			`Version prints the version of winch and the platform, such as
+winch v0.1.0 darwin/arm64.`,
 		},
 	},
 }
