@@ -176,10 +176,11 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	if len(p.todo) > 0 {
 		changes = []string{p.verb() + " " + strings.Join(p.todo, ", ")}
 		if p.Absent {
-			others, err := p.dependents(ctx, note)
+			out, err := p.simulate(ctx, note)
 			if err != nil {
 				return Result{}, err
 			}
+			others := parseRemovals(out, p.todo)
 			if len(others) > 0 {
 				changes = append(changes, "also "+p.verb()+" "+strings.Join(others, ", "))
 			}
@@ -331,35 +332,6 @@ func (p *Pkg) verb() string {
 	return "install"
 }
 
-// dependents returns the other packages that apt removes with the step's
-// packages after the earlier steps. apt reads a copy of the dpkg status in
-// which p.Installed are installed and p.Removed are gone.
-func (p *Pkg) dependents(ctx context.Context, note func(string)) ([]string, error) {
-	candidates, err := candidateStanzas(ctx, p.Installed)
-	if err != nil {
-		return nil, err
-	}
-	unlock, err := lockFiles(ctx, dpkgLocks, note)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	args := []string{"-s", "-q", p.verb()}
-	if candidates != "" {
-		status, err := writeStatus(candidates, p.Removed)
-		if err != nil {
-			return nil, err
-		}
-		defer os.Remove(status)
-		args = append(args, "-o", "Dir::State::status="+status)
-	}
-	out, err := aptGet(ctx, append(args, p.todo...)...)
-	if err != nil {
-		return nil, err
-	}
-	return parseRemovals(out, p.todo), nil
-}
-
 // candidateStanzas returns the package stanzas of the candidate versions of
 // the names that the package index knows.
 func candidateStanzas(ctx context.Context, names []string) (string, error) {
@@ -454,14 +426,35 @@ func parseRemovals(out string, own []string) []string {
 }
 
 // simulate runs the apt-get call of the step with -s. It holds the package
-// locks, so it does not see the half-done packages of a running apt.
+// locks, so it does not see the half-done packages of a running apt. apt reads
+// a copy of the dpkg status in which p.Installed are installed and p.Removed
+// are gone.
 func (p *Pkg) simulate(ctx context.Context, note func(string), flags ...string) (string, error) {
+	// The copy has no stanza for a package that an earlier step removes, and
+	// apt fails on a name that neither the copy nor the index has.
+	todo := slices.DeleteFunc(slices.Clone(p.todo), func(n string) bool { return slices.Contains(p.Removed, n) })
+	if len(todo) == 0 && len(p.configure) == 0 {
+		return "", nil
+	}
+	candidates, err := candidateStanzas(ctx, p.Installed)
+	if err != nil {
+		return "", err
+	}
 	unlock, err := lockFiles(ctx, dpkgLocks, note)
 	if err != nil {
 		return "", err
 	}
 	defer unlock()
-	return aptGet(ctx, slices.Concat([]string{"-s", "-q", p.verb()}, flags, p.todo, p.configure)...)
+	args := slices.Concat([]string{"-s", "-q", p.verb()}, flags)
+	if candidates != "" || len(p.Removed) > 0 {
+		status, err := writeStatus(candidates, p.Removed)
+		if err != nil {
+			return "", err
+		}
+		defer os.Remove(status)
+		args = append(args, "-o", "Dir::State::status="+status)
+	}
+	return aptGet(ctx, slices.Concat(args, todo, p.configure)...)
 }
 
 // others returns the plan lines of the other packages that apt installs or
@@ -473,7 +466,7 @@ func (p *Pkg) others(ctx context.Context, note func(string)) ([]string, error) {
 		return nil, err
 	}
 	var errs []error
-	for _, n := range parseRemovals(out, p.Removed) {
+	for _, n := range parseRemovals(out, nil) {
 		if strings.Contains(n, ":") {
 			errs = append(errs, fmt.Errorf("apt must remove %s; first run apt-get remove %s", n, n))
 		} else {
