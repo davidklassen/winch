@@ -395,6 +395,7 @@ const startWatch = 2 * time.Second
 func checkStarted(ctx context.Context, unit, action string) error {
 	deadline := time.Now().Add(commandLimit)
 	u, err := showUnit(ctx, unit)
+	invocation := u.invocation
 	for err == nil && u.active == "activating" && !u.restarting() && time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -413,6 +414,9 @@ func checkStarted(ctx context.Context, unit, action string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if u.invocation != invocation {
+		return withJournal(ctx, unit, fmt.Errorf("%s restarted after its %s", unit, action))
 	}
 	if u.up() && !u.restarting() {
 		return nil
@@ -607,9 +611,9 @@ func sectionKeys(files [][]byte, section string) map[string][]string {
 }
 
 type unitState struct {
-	id, load, active, sub, file, fragment, dropIns string
-	triggeredBy                                    []string
-	reload, oneshot, remain                        bool
+	id, load, active, sub, file, fragment, dropIns, invocation string
+	triggeredBy                                                []string
+	reload, oneshot, remain                                    bool
 }
 
 func (u unitState) up() bool {
@@ -621,9 +625,10 @@ func (u unitState) restarting() bool {
 	return strings.HasPrefix(u.sub, "auto-restart")
 }
 
-// showUnit returns the load, active, and sub state of unit.
+// showUnit returns the load, active, and sub state of unit, and its
+// invocation, which changes with each start.
 func showUnit(ctx context.Context, unit string) (unitState, error) {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState", "--", unit)
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,InvocationID", "--", unit)
 	if err != nil {
 		return unitState{}, err
 	}
@@ -655,6 +660,8 @@ func parseShow(out string) (unitState, error) {
 			u.active = v
 		case "SubState":
 			u.sub = v
+		case "InvocationID":
+			u.invocation = v
 		case "UnitFileState":
 			u.file = v
 		case "FragmentPath":

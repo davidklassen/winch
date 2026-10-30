@@ -115,6 +115,11 @@ cat > /etc/systemd/system/winch-late.service <<'U'
 [Service]
 ExecStart=/bin/sh -c 'sleep 0.5; exit 1'
 U
+cat > /etc/systemd/system/winch-loop.service <<'U'
+[Service]
+ExecStart=/bin/sh -c 'sleep 0.5; exit 1'
+Restart=on-failure
+U
 cat > /etc/systemd/system/winch-indirect.service <<'U'
 [Service]
 ExecStart=/bin/sleep infinity
@@ -162,7 +167,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl unmask --runtime winch-vendor; systemctl reset-failed winch-crash winch-quick winch-late; if [ -d /etc/systemd/system/winch-crash.service.d ] || [ -d /etc/systemd/system/winch-quick.service.d ] || [ -d /etc/systemd/system/winch-slowstop.service.d ] || [ -d /etc/systemd/system/winch-test.service.d ]; then rm -rf /etc/systemd/system/winch-crash.service.d /etc/systemd/system/winch-quick.service.d /etc/systemd/system/winch-slowstop.service.d /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; if [ -e /etc/systemd/system/winch-nope.service ]; then systemctl disable --now winch-nope; rm /etc/systemd/system/winch-nope.service; systemctl daemon-reload; fi; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service winch-lost.service winch-cond.service winch-slowstop.service winch-late.service; rm -f /tmp/boom /tmp/winch-cond; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service winch-noexec.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
+	reset := "systemctl unmask --runtime winch-vendor; systemctl reset-failed winch-crash winch-quick winch-late winch-loop; if [ -d /etc/systemd/system/winch-crash.service.d ] || [ -d /etc/systemd/system/winch-quick.service.d ] || [ -d /etc/systemd/system/winch-slowstop.service.d ] || [ -d /etc/systemd/system/winch-test.service.d ]; then rm -rf /etc/systemd/system/winch-crash.service.d /etc/systemd/system/winch-quick.service.d /etc/systemd/system/winch-slowstop.service.d /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; if [ -e /etc/systemd/system/winch-nope.service ]; then systemctl disable --now winch-nope; rm /etc/systemd/system/winch-nope.service; systemctl daemon-reload; fi; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service winch-lost.service winch-cond.service winch-slowstop.service winch-late.service winch-loop.service; rm -f /tmp/boom /tmp/winch-cond; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service winch-noexec.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -186,6 +191,21 @@ func TestServiceModule(t *testing.T) {
 				t.Fatalf("run %d: apply error = %v, want %q", i, err, want)
 			}
 		}
+	})
+	t.Run("a start of a unit that crashes and restarts fails each time", func(t *testing.T) {
+		s := vm.Session(t)
+		args := &module.Service{Name: "winch-loop", Running: new(true)}
+		for i := range 10 {
+			vm.MustRun(t, "systemctl stop winch-loop")
+			if _, err := s.Check(t.Context(), "service", args, &module.State{}); err != nil {
+				t.Fatalf("run %d: check: %v", i, err)
+			}
+			_, err := s.Apply(t.Context(), "service", args, &module.State{}, nil, nil, nil, protocol.Guard{})
+			if want := "winch-loop.service restarted after its start\n"; err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("run %d: apply error = %v, want %q", i, err, want)
+			}
+		}
+		vm.MustRun(t, "systemctl stop winch-loop")
 	})
 	vmtest.RunCases(t, vm, "service", reset, []vmtest.Case{
 		{
