@@ -1029,8 +1029,12 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 		}
 	}
 	if st.Module == "file" {
-		st.tmplReads = r.templateReads(argsNode)
-		st.open = openContent(st, args.(*module.File), argsNode)
+		var tmplValues []string
+		for _, t := range r.fileTemplates(argsNode) {
+			st.tmplReads = append(st.tmplReads, t.reads...)
+			tmplValues = append(tmplValues, t.values...)
+		}
+		st.open = openContent(st, args.(*module.File), argsNode, tmplValues)
 	}
 	if st.Module == "certbot" {
 		st.hooks = hookReads(st, argsNode)
@@ -1080,7 +1084,7 @@ func tempWarning(p, verb string) string {
 
 // openContent returns the content reads of the file step st when its mode
 // lets others read the file, or nil.
-func openContent(st Step, f *module.File, n *yamlx.Node) *readsAt {
+func openContent(st Step, f *module.File, n *yamlx.Node, tmplValues []string) *readsAt {
 	if f.Absent || !f.OthersRead() {
 		return nil
 	}
@@ -1096,13 +1100,13 @@ func openContent(st Step, f *module.File, n *yamlx.Node) *readsAt {
 		case p.Key == "mode":
 			pos = p.Value.Pos
 		case p.Key == "content" && st.args != nil && st.args.computed[p.Value] != nil:
-			reads = st.args.computed[p.Value].reads
+			reads = st.args.computed[p.Value].values
 			computed = true
 		}
 	}
-	reads = slices.Concat(reads, st.tmplReads)
+	reads = slices.Concat(reads, tmplValues)
 	if computed && st.loop != nil {
-		reads = append(reads, st.loop.reads()...)
+		reads = append(reads, st.loop.values()...)
 	}
 	if len(reads) == 0 {
 		return nil
@@ -1110,7 +1114,8 @@ func openContent(st Step, f *module.File, n *yamlx.Node) *readsAt {
 	return &readsAt{pos, reads}
 }
 
-// hookReads returns the reads of each computed hook of the certbot step st.
+// hookReads returns the value reads of each computed hook of the certbot
+// step st.
 func hookReads(st Step, n *yamlx.Node) []readsAt {
 	if st.args == nil {
 		return nil
@@ -1121,9 +1126,9 @@ func hookReads(st Step, n *yamlx.Node) []readsAt {
 		if c == nil || !strings.HasSuffix(p.Key, "_hook") {
 			continue
 		}
-		reads := c.reads
+		reads := c.values
 		if st.loop != nil {
-			reads = slices.Concat(reads, st.loop.reads())
+			reads = slices.Concat(reads, st.loop.values())
 		}
 		out = append(out, readsAt{p.Value.Pos, reads})
 	}
@@ -1177,7 +1182,7 @@ func (l *loader) secretChecks(invs []*Inventory, pls []*Pipeline) ([]*yamlx.Erro
 	for changed := true; changed; {
 		changed = false
 		for _, v := range vars {
-			if !secret[v.Name] && v.computed != nil && slices.ContainsFunc(v.computed.reads(), isSecret) {
+			if !secret[v.Name] && v.computed != nil && slices.ContainsFunc(v.computed.values(), isSecret) {
 				secret[v.Name], changed = true, true
 			}
 		}

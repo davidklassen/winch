@@ -333,9 +333,9 @@ func (r *Recipe) key(k *module.Repo) ([]*yamlx.Error, error) {
 	return out, nil
 }
 
-// templateReads returns the variables that the template of the file
-// arguments n read by name.
-func (r *Recipe) templateReads(n *yamlx.Node) []string {
+// fileTemplates returns the template of the file arguments n. A computed
+// template name gives all templates of the recipe.
+func (r *Recipe) fileTemplates(n *yamlx.Node) []*tmplFile {
 	i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "template" })
 	if i < 0 {
 		return nil
@@ -343,14 +343,14 @@ func (r *Recipe) templateReads(n *yamlx.Node) []string {
 	if v := n.Pairs[i].Value; v.Tag == "" {
 		name, _ := v.Value.(string)
 		if t := r.templates[name]; t != nil {
-			return t.reads
+			return []*tmplFile{t}
 		}
 		return nil
 	}
-	var out []string
+	var out []*tmplFile
 	for _, t := range r.templates {
 		if t != nil {
-			out = append(out, t.reads...)
+			out = append(out, t)
 		}
 	}
 	return out

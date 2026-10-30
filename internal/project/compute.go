@@ -26,6 +26,8 @@ type computed struct {
 	tmpl *template.Template
 	// reads are the variables that it reads by name.
 	reads []string
+	// values are the variables whose values it reads.
+	values []string
 	// matches are the calls of match() with a constant pattern.
 	matches []matchCall
 }
@@ -163,11 +165,11 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 	text, _ := n.Value.(string)
 	c := &computed{pos: n.Pos}
 	if n.Tag == "!tpl" {
-		t, reads, err := parseInline(n.Pos, text, sc)
+		t, err := parseInline(n.Pos, text, sc)
 		if err != nil {
 			return nil, err
 		}
-		c.tmpl, c.reads = t, reads
+		c.tmpl, c.reads, c.values = t.t, t.reads, t.values
 		return c, nil
 	}
 	prog, err := expr.Compile(text, exprOptions...)
@@ -189,7 +191,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 		}
 		return nil, errors.Join(errs...)
 	}
-	c.reads, c.matches = check.reads, check.matches
+	c.reads, c.values, c.matches = check.reads, check.reads, check.matches
 	return c, nil
 }
 
@@ -423,6 +425,15 @@ func (v *value) reads() []string {
 	var out []string
 	for _, c := range v.computed {
 		out = append(out, c.reads...)
+	}
+	return out
+}
+
+// values returns the variables whose values the value reads.
+func (v *value) values() []string {
+	var out []string
+	for _, c := range v.computed {
+		out = append(out, c.values...)
 	}
 	return out
 }
