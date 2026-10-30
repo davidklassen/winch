@@ -154,7 +154,11 @@ func (c *converter) convert(n *yaml.Node) *Node {
 	}
 	switch n.Kind {
 	case yaml.ScalarNode:
-		out.Kind, out.Value = scalar(n)
+		var err error
+		out.Kind, out.Value, err = scalar(n)
+		if err != nil {
+			c.errorf(n, "%v", err)
+		}
 		out.Text = n.Value
 	case yaml.MappingNode:
 		out.Kind = Map
@@ -182,7 +186,11 @@ func (c *converter) convert(n *yaml.Node) *Node {
 				continue
 			}
 			first[k.Value] = c.pos(k)
-			_, kv := scalar(k)
+			_, kv, err := scalar(k)
+			if err != nil {
+				c.errorf(k, "%v", err)
+				continue
+			}
 			out.Pairs = append(out.Pairs, Pair{Key: k.Value, KeyValue: kv, KeyPos: c.pos(k), Value: c.convert(v)})
 		}
 	case yaml.SequenceNode:
@@ -202,26 +210,26 @@ var (
 	floatRe  = regexp.MustCompile(`^[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?$`)
 )
 
-// scalar resolves a scalar by the YAML 1.2 core schema, with one change: only
-// "true" and "false" are booleans.
-func scalar(n *yaml.Node) (Kind, any) {
+// scalar resolves a scalar by the YAML 1.2 core schema, with two changes: only
+// "true" and "false" are booleans, and an integer must fit in an int.
+func scalar(n *yaml.Node) (Kind, any, error) {
 	s := n.Value
 	if n.Style != 0 {
-		return Scalar, s
+		return Scalar, s, nil
 	}
 	switch s {
 	case "", "~", "null", "Null", "NULL":
-		return Null, nil
+		return Null, nil, nil
 	case "true":
-		return Scalar, true
+		return Scalar, true, nil
 	case "false":
-		return Scalar, false
+		return Scalar, false, nil
 	case ".inf", "+.inf", ".Inf", "+.Inf", ".INF", "+.INF":
-		return Scalar, math.Inf(1)
+		return Scalar, math.Inf(1), nil
 	case "-.inf", "-.Inf", "-.INF":
-		return Scalar, math.Inf(-1)
+		return Scalar, math.Inf(-1), nil
 	case ".nan", ".NaN", ".NAN":
-		return Scalar, math.NaN()
+		return Scalar, math.NaN(), nil
 	}
 	var base int
 	digits := s
@@ -234,17 +242,18 @@ func scalar(n *yaml.Node) (Kind, any) {
 		base, digits = 16, s[2:]
 	}
 	if base != 0 {
-		if i, err := strconv.ParseInt(digits, base, 64); err == nil {
-			return Scalar, i
+		i, err := strconv.ParseInt(digits, base, strconv.IntSize)
+		if err != nil {
+			return Scalar, s, fmt.Errorf("the integer %s is out of range (%d to %d); quote it to make it a string", s, math.MinInt, math.MaxInt)
 		}
-		return Scalar, s
+		return Scalar, i, nil
 	}
 	if floatRe.MatchString(s) {
 		if f, err := strconv.ParseFloat(s, 64); err == nil {
-			return Scalar, f
+			return Scalar, f, nil
 		}
 	}
-	return Scalar, s
+	return Scalar, s, nil
 }
 
 // Describe names a value for an error message.

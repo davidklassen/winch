@@ -467,12 +467,12 @@ func (f repoFile) restore() error {
 		return err
 	}
 	st := f.fi.Sys().(*syscall.Stat_t)
-	return writeRoot(f.path, f.old, st.Uid, st.Gid, uint32(st.Mode)&0o7777)
+	return writeRoot(f.path, f.old, int(st.Uid), int(st.Gid), uint32(st.Mode)&0o7777)
 }
 
 // writeRoot writes content to the file p through a rename, and creates its
 // missing parents.
-func writeRoot(p string, content []byte, uid, gid, mode uint32) error {
+func writeRoot(p string, content []byte, uid, gid int, mode uint32) error {
 	dir, missing, err := openParent(p)
 	if err != nil {
 		return err

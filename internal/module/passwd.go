@@ -3,6 +3,7 @@ package module
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -46,27 +47,31 @@ func rows(file string, data []byte, n int, row func(f []string) error) error {
 	return sc.Err()
 }
 
-func parseID(what, s string) (uint32, error) {
-	n, err := strconv.ParseUint(s, 10, 32)
+// parseID parses a user or group ID for an int of intSize bits.
+func parseID(what, s string, intSize int) (int, error) {
+	n, err := strconv.ParseUint(s, 10, min(32, intSize-1))
+	if errors.Is(err, strconv.ErrRange) {
+		return 0, fmt.Errorf("the %s %s is out of range", what, s)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("the %s %q is not a number", what, s)
 	}
-	return uint32(n), nil
+	return int(n), nil
 }
 
 func parsePasswd(file string, data []byte) ([]passwdEntry, error) {
 	var out []passwdEntry
 	err := rows(file, data, 7, func(f []string) error {
-		uid, err := parseID("UID", f[2])
+		uid, err := parseID("UID", f[2], strconv.IntSize)
 		if err != nil {
 			return err
 		}
-		gid, err := parseID("GID", f[3])
+		gid, err := parseID("GID", f[3], strconv.IntSize)
 		if err != nil {
 			return err
 		}
 		// login uses / for an empty home and /bin/sh for an empty shell.
-		e := passwdEntry{name: f[0], uid: uid, gid: gid, comment: f[4], home: f[5], shell: f[6]}
+		e := passwdEntry{name: f[0], uid: uint32(uid), gid: uint32(gid), comment: f[4], home: f[5], shell: f[6]}
 		if e.home == "" {
 			e.home = "/"
 		}
@@ -83,11 +88,11 @@ func parsePasswd(file string, data []byte) ([]passwdEntry, error) {
 func parseGroup(file string, data []byte) ([]groupEntry, error) {
 	var out []groupEntry
 	err := rows(file, data, 4, func(f []string) error {
-		gid, err := parseID("GID", f[2])
+		gid, err := parseID("GID", f[2], strconv.IntSize)
 		if err != nil {
 			return err
 		}
-		e := groupEntry{name: f[0], gid: gid}
+		e := groupEntry{name: f[0], gid: uint32(gid)}
 		if f[3] != "" {
 			e.members = strings.Split(f[3], ",")
 		}

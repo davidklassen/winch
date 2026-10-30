@@ -176,7 +176,7 @@ func TestUnpackZipModes(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer root.Close()
-			u := unpacker{root: root, path: dir, uid: uint32(os.Getuid()), gid: uint32(os.Getgid())}
+			u := unpacker{root: root, path: dir, uid: os.Getuid(), gid: os.Getgid()}
 			if err := u.read(t.Context(), f, ".zip"); err != nil {
 				t.Fatal(err)
 			}

@@ -939,7 +939,7 @@ func (u *User) Apply(ctx context.Context, _ func(string)) error {
 		return fmt.Errorf("user %s does not exist", u.Name)
 	}
 	if u.mkHome != "" {
-		if err := makeHome(u.mkHome, e.uid, e.gid); err != nil {
+		if err := makeHome(u.mkHome, int(e.uid), int(e.gid)); err != nil {
 			return err
 		}
 	}
@@ -949,7 +949,7 @@ func (u *User) Apply(ctx context.Context, _ func(string)) error {
 	return nil
 }
 
-func makeHome(home string, uid, gid uint32) error {
+func makeHome(home string, uid, gid int) error {
 	dir, missing, err := openPath(home, home)
 	if err != nil {
 		return err
@@ -982,18 +982,18 @@ func (u *User) writeKeys(e passwdEntry) error {
 	case len(missing) > 1:
 		return fmt.Errorf("%s does not exist", missing[0])
 	case len(missing) == 1:
-		sub, err := mkdir(dir, ".ssh", e.uid, e.gid, 0o700)
+		sub, err := mkdir(dir, ".ssh", int(e.uid), int(e.gid), 0o700)
 		if err != nil {
 			return err
 		}
 		defer sub.Close()
 		dir = sub
 	default:
-		if err := setRootAttrs(dir, e.uid, e.gid, 0o700); err != nil {
+		if err := setRootAttrs(dir, int(e.uid), int(e.gid), 0o700); err != nil {
 			return err
 		}
 	}
-	return writeFile(dir, "authorized_keys", bytes.NewReader(u.keyText()), e.uid, e.gid, 0o600, func(tmp string) error {
+	return writeFile(dir, "authorized_keys", bytes.NewReader(u.keyText()), int(e.uid), int(e.gid), 0o600, func(tmp string) error {
 		return dir.Rename(tmp, "authorized_keys")
 	})
 }

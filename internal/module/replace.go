@@ -81,7 +81,7 @@ func walkTree(dir *os.Root, name, p string, fi fs.FileInfo) (tree, error) {
 
 // countEntries counts the entries that walkOwners visits, and fails on a
 // flag that stops a change of one.
-func countEntries(dir *os.Root, name string, fi fs.FileInfo, p string, uid, gid int64) (tree, error) {
+func countEntries(dir *os.Root, name string, fi fs.FileInfo, p string, uid, gid int) (tree, error) {
 	t := tree{dir: true}
 	err := walkOwners(dir, name, fi, uid, gid, func(sub *os.Root, name, rel string, info fs.FileInfo) error {
 		if info.IsDir() {

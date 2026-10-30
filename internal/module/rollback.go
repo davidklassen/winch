@@ -147,8 +147,8 @@ type Saved struct {
 }
 
 type Attrs struct {
-	UID  uint32 `json:"uid"`
-	GID  uint32 `json:"gid"`
+	UID  int    `json:"uid"`
+	GID  int    `json:"gid"`
 	Mode uint32 `json:"mode"`
 }
 
@@ -183,7 +183,7 @@ func save(t Touch, archive string) (Saved, error) {
 	}
 	if fi.IsDir() && !t.Tree {
 		st := fi.Sys().(*syscall.Stat_t)
-		return Saved{Path: t.Path, Dir: &Attrs{st.Uid, st.Gid, uint32(st.Mode) & 0o7777}}, nil
+		return Saved{Path: t.Path, Dir: &Attrs{int(st.Uid), int(st.Gid), uint32(st.Mode) & 0o7777}}, nil
 	}
 	f, err := os.OpenFile(archive, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -425,7 +425,7 @@ func extractEntry(dir *os.Root, h *tar.Header, r io.Reader) error {
 		}
 		return dir.Lchown(h.Name, h.Uid, h.Gid)
 	case tar.TypeReg:
-		err := writeFile(dir, h.Name, r, uint32(h.Uid), uint32(h.Gid), uint32(h.Mode), func(tmp string) error {
+		err := writeFile(dir, h.Name, r, h.Uid, h.Gid, uint32(h.Mode), func(tmp string) error {
 			return dir.Rename(tmp, h.Name)
 		})
 		if err != nil {

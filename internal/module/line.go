@@ -127,7 +127,7 @@ func (l *Line) Apply(ctx context.Context, _ func(string)) error {
 		return err
 	}
 	st := fi.Sys().(*syscall.Stat_t)
-	return writeFile(dir, name, bytes.NewReader(out), st.Uid, st.Gid, uint32(st.Mode)&0o7777, func(tmp string) error {
+	return writeFile(dir, name, bytes.NewReader(out), int(st.Uid), int(st.Gid), uint32(st.Mode)&0o7777, func(tmp string) error {
 		return put(ctx, dir, missing, dir, tmp, name, l.Validation)
 	})
 }

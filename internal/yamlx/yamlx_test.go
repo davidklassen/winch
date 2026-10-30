@@ -193,6 +193,37 @@ func TestInts(t *testing.T) {
 	}
 }
 
+// spec: YAML
+func TestIntRange(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"max", "x: 9223372036854775807\n", "9223372036854775807"},
+		{"min", "x: -9223372036854775808\n", "-9223372036854775808"},
+		{"above max", "x: 9223372036854775808\n", "t.yaml:1:4: the integer 9223372036854775808 is out of range (-9223372036854775808 to 9223372036854775807); quote it to make it a string"},
+		{"below min", "x: -9223372036854775809\n", "t.yaml:1:4: the integer -9223372036854775809 is out of range (-9223372036854775808 to 9223372036854775807); quote it to make it a string"},
+		{"hex above max", "x: 0x8000000000000000\n", "t.yaml:1:4: the integer 0x8000000000000000 is out of range (-9223372036854775808 to 9223372036854775807); quote it to make it a string"},
+		{"key above max", "9223372036854775808: a\n", "t.yaml:1:1: the integer 9223372036854775808 is out of range (-9223372036854775808 to 9223372036854775807); quote it to make it a string"},
+		{"quoted", "x: '9223372036854775808'\n", "9223372036854775808"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := Parse("t.yaml", []byte(tt.yaml))
+			got := ""
+			if err != nil {
+				got = err.Error()
+			} else {
+				got = fmt.Sprint(Value(n.Pairs[0].Value))
+			}
+			if got != tt.want {
+				t.Errorf("got  %s\nwant %s", got, tt.want)
+			}
+		})
+	}
+}
+
 // spec: Templates and expressions; YAML
 func TestTags(t *testing.T) {
 	tests := []struct {

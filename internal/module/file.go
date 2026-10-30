@@ -225,7 +225,7 @@ func attrs(owner, group yamlx.NameOrID, mode, defaultMode string) (string, strin
 }
 
 // ids returns the IDs of a user and a group that must exist.
-func ids(owner, group string) (uid, gid uint32, err error) {
+func ids(owner, group string) (uid, gid int, err error) {
 	uid, ok, err := lookupUser(owner)
 	if err != nil {
 		return 0, 0, err
@@ -801,7 +801,7 @@ func mkdirs(dir *os.Root, missing []string) (*os.Root, error) {
 
 // mkdir creates the directory name in dir with the owner, group, and mode,
 // and opens it.
-func mkdir(dir *os.Root, name string, uid, gid, mode uint32) (*os.Root, error) {
+func mkdir(dir *os.Root, name string, uid, gid int, mode uint32) (*os.Root, error) {
 	if err := dir.Mkdir(name, 0o700); err != nil {
 		return nil, err
 	}
@@ -820,7 +820,7 @@ func mkdir(dir *os.Root, name string, uid, gid, mode uint32) (*os.Root, error) {
 	return sub, nil
 }
 
-func setRootAttrs(r *os.Root, uid, gid, mode uint32) error {
+func setRootAttrs(r *os.Root, uid, gid int, mode uint32) error {
 	f, err := r.Open(".")
 	if err != nil {
 		return err
@@ -867,15 +867,15 @@ func openRoot(dir *os.Root, name string, fi fs.FileInfo) (*os.Root, error) {
 
 // setAttrs changes nothing when f is already right: the kernel refuses even
 // such a change on an immutable or append-only file.
-func setAttrs(f *os.File, uid, gid, mode uint32) error {
+func setAttrs(f *os.File, uid, gid int, mode uint32) error {
 	fi, err := f.Stat()
 	if err != nil {
 		return err
 	}
-	if st := fi.Sys().(*syscall.Stat_t); st.Uid == uid && st.Gid == gid && uint32(st.Mode)&0o7777 == mode {
+	if st := fi.Sys().(*syscall.Stat_t); int(st.Uid) == uid && int(st.Gid) == gid && uint32(st.Mode)&0o7777 == mode {
 		return nil
 	}
-	if err := f.Chown(int(uid), int(gid)); err != nil {
+	if err := f.Chown(uid, gid); err != nil {
 		return err
 	}
 	return f.Chmod(fileMode(mode))
@@ -901,7 +901,7 @@ func ParentChange(dir string) string {
 
 // writeFile writes content to a temporary file in dir, and calls put to move
 // it to name.
-func writeFile(dir *os.Root, name string, content io.Reader, uid, gid, mode uint32, put func(tmp string) error) error {
+func writeFile(dir *os.Root, name string, content io.Reader, uid, gid int, mode uint32, put func(tmp string) error) error {
 	tmpName := ".winch-" + rand.Text()
 	tmp, err := dir.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -910,7 +910,7 @@ func writeFile(dir *os.Root, name string, content io.Reader, uid, gid, mode uint
 	defer dir.Remove(tmpName)
 	_, err = io.Copy(tmp, content)
 	if err == nil {
-		err = tmp.Chown(int(uid), int(gid))
+		err = tmp.Chown(uid, gid)
 	}
 	if err == nil {
 		err = tmp.Chmod(fileMode(mode))
@@ -944,9 +944,10 @@ func fileMode(m uint32) fs.FileMode {
 
 // lookupUser returns the ID of a user name, or the ID that a value of only
 // digits gives.
-func lookupUser(name string) (uint32, bool, error) {
-	if id, err := strconv.ParseUint(name, 10, 32); err == nil {
-		return uint32(id), true, nil
+func lookupUser(name string) (int, bool, error) {
+	if numberRe.MatchString(name) {
+		id, err := parseID("UID", name, strconv.IntSize)
+		return id, true, err
 	}
 	u, err := user.Lookup(name)
 	if _, ok := errors.AsType[user.UnknownUserError](err); ok {
@@ -955,13 +956,14 @@ func lookupUser(name string) (uint32, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
-	id, err := strconv.ParseUint(u.Uid, 10, 32)
-	return uint32(id), true, err
+	id, err := parseID("UID", u.Uid, strconv.IntSize)
+	return id, true, err
 }
 
-func lookupGroup(name string) (uint32, bool, error) {
-	if id, err := strconv.ParseUint(name, 10, 32); err == nil {
-		return uint32(id), true, nil
+func lookupGroup(name string) (int, bool, error) {
+	if numberRe.MatchString(name) {
+		id, err := parseID("GID", name, strconv.IntSize)
+		return id, true, err
 	}
 	g, err := user.LookupGroup(name)
 	if _, ok := errors.AsType[user.UnknownGroupError](err); ok {
@@ -970,17 +972,17 @@ func lookupGroup(name string) (uint32, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
-	id, err := strconv.ParseUint(g.Gid, 10, 32)
-	return uint32(id), true, err
+	id, err := parseID("GID", g.Gid, strconv.IntSize)
+	return id, true, err
 }
 
 // ownerChange describes a change of owner or group, or returns "".
-func ownerChange(what, want string, cur uint32, lookup func(string) (uint32, bool, error), name func(uint32) string) (string, error) {
+func ownerChange(what, want string, cur uint32, lookup func(string) (int, bool, error), name func(uint32) string) (string, error) {
 	id, ok, err := lookup(want)
 	if err != nil {
 		return "", err
 	}
-	if ok && id == cur {
+	if ok && id == int(cur) {
 		return "", nil
 	}
 	line := fmt.Sprintf("%s %s → %s", what, name(cur), want)
