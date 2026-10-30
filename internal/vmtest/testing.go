@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -268,7 +269,7 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 			if !equal(got, c.Want) {
 				t.Fatalf("check = %s, want %s", show(got), show(c.Want))
 			}
-			if st != c.WantState {
+			if !reflect.DeepEqual(st, c.WantState) {
 				t.Fatalf("state after check = %+v, want %+v", st, c.WantState)
 			}
 			if c.Unchanged != "" {
@@ -304,7 +305,7 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 			if !equal(applied, want) {
 				t.Errorf("apply = %s, want %s", show(applied), show(want))
 			}
-			if st != c.WantState {
+			if !reflect.DeepEqual(st, c.WantState) {
 				t.Errorf("state after apply = %+v, want %+v", st, c.WantState)
 			}
 			if c.After != "" {

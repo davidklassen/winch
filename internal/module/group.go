@@ -16,6 +16,7 @@ type Group struct {
 	Name   string   `yaml:"name,required" json:"name"`
 	GID    yamlx.ID `yaml:"gid" json:"gid,omitempty"`
 	System bool     `yaml:"system" json:"system,omitempty"`
+	Absent bool     `yaml:"absent" json:"absent,omitempty"`
 
 	// Check sets the command for Apply.
 	todo []string
@@ -26,6 +27,9 @@ func (g *Group) Main() string { return g.Name }
 func (g *Group) Validate() error {
 	if err := checkAccountName("name", "group", g.Name); err != nil {
 		return err
+	}
+	if g.Absent {
+		return absentTakesNone(arg{"gid", g.GID != ""}, arg{"system", g.System})
 	}
 	return checkID("gid", g.GID)
 }
@@ -69,12 +73,15 @@ func checkID(field string, id yamlx.ID) error {
 	return nil
 }
 
-func (g *Group) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+func (g *Group) Check(ctx context.Context, st *State, _ func(string)) (Result, error) {
 	a, err := readAccounts()
 	if err != nil {
 		return Result{}, err
 	}
 	cur, exists := a.group(g.Name)
+	if g.Absent {
+		return g.checkAbsent(a, cur, exists, st)
+	}
 	if g.GID != "" {
 		other, ok := a.group(string(g.GID))
 		if ok && other.name != g.Name {
@@ -109,17 +116,47 @@ func (g *Group) Check(ctx context.Context, _ *State, _ func(string)) (Result, er
 	}
 	g.todo = []string{"groupmod", "-g", string(g.GID), g.Name}
 	changes := []string{fmt.Sprintf("gid %d → %s; files keep the old gid", cur.gid, g.GID)}
-	var users []string
-	for _, u := range a.users {
-		if u.gid == cur.gid {
-			users = append(users, u.name)
-		}
-	}
-	if len(users) > 0 {
-		slices.Sort(users)
+	if users := a.primaryUsers(cur.gid); len(users) > 0 {
 		changes = append(changes, fmt.Sprintf("the primary group of %s moves to gid %s", strings.Join(users, ", "), g.GID))
 	}
 	return Result{Status: Change, Action: Modify, Changes: changes}, nil
+}
+
+func (g *Group) checkAbsent(a accounts, cur groupEntry, exists bool, st *State) (Result, error) {
+	if !exists {
+		return Result{Status: OK}, nil
+	}
+	if err := g.removable(a, cur, st); err != nil {
+		return Result{}, err
+	}
+	if err := noFlagsAt("/etc/group", "/etc/gshadow"); err != nil {
+		return Result{}, err
+	}
+	g.todo = []string{"groupdel", g.Name}
+	return Result{Status: Change, Action: Remove}, nil
+}
+
+func (g *Group) removable(a accounts, cur groupEntry, st *State) error {
+	if login, ok := a.userByID(st.LoginUID); st.LoginUID != 0 && ok && (login.gid == cur.gid || slices.Contains(cur.members, login.name)) {
+		return fmt.Errorf("the login user %s is in group %s; removing it cuts off winch's access", login.name, g.Name)
+	}
+	users := slices.DeleteFunc(a.primaryUsers(cur.gid), func(u string) bool { return slices.Contains(st.RemovedUsers, u) })
+	if len(users) > 0 {
+		return fmt.Errorf("%s is the primary group of %s; remove them or change their group first", g.Name, strings.Join(users, ", "))
+	}
+	return nil
+}
+
+// primaryUsers returns the sorted names of the users whose primary group is gid.
+func (a accounts) primaryUsers(gid uint32) []string {
+	var users []string
+	for _, u := range a.users {
+		if u.gid == gid {
+			users = append(users, u.name)
+		}
+	}
+	slices.Sort(users)
+	return users
 }
 
 func (g *Group) Apply(ctx context.Context, _ func(string)) error {
