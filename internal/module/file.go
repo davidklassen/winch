@@ -83,10 +83,10 @@ func (f *File) Validate() error {
 			return err
 		}
 	}
-	if err := checkRelative("template", f.Template); err != nil {
+	if err := CheckRelative("template", f.Template); err != nil {
 		return err
 	}
-	if err := checkRelative("source", f.Source); err != nil {
+	if err := CheckRelative("source", f.Source); err != nil {
 		return err
 	}
 	if f.CopyFrom != "" {
@@ -138,7 +138,7 @@ func checkMode(mode, example string) error {
 	return nil
 }
 
-func checkRelative(field, p string) error {
+func CheckRelative(field, p string) error {
 	if p != "" && (!fs.ValidPath(p) || p == ".") {
 		return &yamlx.FieldError{Field: field, Msg: `must be a clean relative path, such as "a/b.conf"`}
 	}

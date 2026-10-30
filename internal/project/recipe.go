@@ -260,12 +260,18 @@ func (r *Recipe) content(f *module.File, loops bool) (*template.Template, error)
 	case f.Content != nil:
 		f.Data = []byte(*f.Content)
 	case f.Source != "":
+		if err := module.CheckRelative("source", f.Source); err != nil {
+			return nil, yamlx.Errorf(f.SourcePos, "%v", err)
+		}
 		data, err := r.readFile("files", f.Source)
 		if err != nil {
 			return nil, yamlx.Errorf(f.SourcePos, "source: %v", err)
 		}
 		f.Data = data
 	case f.Template != "":
+		if err := module.CheckRelative("template", f.Template); err != nil {
+			return nil, yamlx.Errorf(f.TemplatePos, "%v", err)
+		}
 		t, ok := r.templates[f.Template]
 		switch {
 		case ok && t == nil:
@@ -284,15 +290,19 @@ func (r *Recipe) content(f *module.File, loops bool) (*template.Template, error)
 // unitContent sets the data of a unit step of r from its content or its
 // source file.
 func (r *Recipe) unitContent(u *module.Unit) error {
-	if u.Content != nil {
+	switch {
+	case u.Content != nil:
 		u.Data = []byte(*u.Content)
-		return nil
+	case u.Source != "":
+		if err := module.CheckRelative("source", u.Source); err != nil {
+			return yamlx.Errorf(u.SourcePos, "%v", err)
+		}
+		data, err := r.readFile("files", u.Source)
+		if err != nil {
+			return yamlx.Errorf(u.SourcePos, "source: %v", err)
+		}
+		u.Data = data
 	}
-	data, err := r.readFile("files", u.Source)
-	if err != nil {
-		return yamlx.Errorf(u.SourcePos, "source: %v", err)
-	}
-	u.Data = data
 	return nil
 }
 

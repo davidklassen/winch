@@ -105,7 +105,7 @@ func (r *Repo) Validate() error {
 	if r.KeyPos.Line > 0 && r.KeyContent != nil {
 		return &yamlx.FieldError{Field: "key_content", Msg: "a repo has at most one of key and key_content"}
 	}
-	return checkRelative("key", r.Key)
+	return CheckRelative("key", r.Key)
 }
 
 // SetKey sets the key data to data, the content of the key file name. data
