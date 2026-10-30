@@ -359,8 +359,8 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 		}
 		_, err := run(ctx, nil, "systemctl", args...)
 		switch {
-		case err == nil && c == "start":
-			if err := checkStarted(ctx, s.Unit()); err != nil {
+		case err == nil && (c == "start" || (c == "try-restart" || c == "try-reload-or-restart") && s.up):
+			if err := checkStarted(ctx, s.Unit(), cmp.Or(planLabels[c], c)); err != nil {
 				return err
 			}
 		case err == nil:
@@ -384,12 +384,18 @@ func resetFailed(ctx context.Context, unit string) error {
 	return err
 }
 
-// checkStarted fails when unit is not running after its start. systemctl
-// start exits 0 also when a Condition failed, and when the unit ended or
-// crashed right after its start.
-func checkStarted(ctx context.Context, unit string) error {
+// startWatch is how long a unit must keep running after its start. A
+// Type=simple unit is active as soon as its process runs, also when the
+// process exits a moment later.
+const startWatch = 2 * time.Second
+
+// checkStarted fails when unit is not running after action. systemctl exits
+// 0 also when a Condition failed, and when the unit ended or crashed right
+// after its start.
+func checkStarted(ctx context.Context, unit, action string) error {
 	deadline := time.Now().Add(commandLimit)
 	u, err := showUnit(ctx, unit)
+	invocation := u.invocation
 	for err == nil && u.active == "activating" && !u.restarting() && time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -398,8 +404,19 @@ func checkStarted(ctx context.Context, unit string) error {
 		}
 		u, err = showUnit(ctx, unit)
 	}
+	if err == nil && u.up() && !u.restarting() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(startWatch):
+		}
+		u, err = showUnit(ctx, unit)
+	}
 	if err != nil {
 		return err
+	}
+	if u.invocation != invocation {
+		return withJournal(ctx, unit, fmt.Errorf("%s restarted after its %s", unit, action))
 	}
 	if u.up() && !u.restarting() {
 		return nil
@@ -412,13 +429,13 @@ func checkStarted(ctx context.Context, unit string) error {
 	cmd.Stdout, cmd.Stderr = &res, &res
 	err = wait(ctx, cmd, KillDelay)
 	if err == nil {
-		return withJournal(ctx, unit, fmt.Errorf("%s is not running after its start: %s (%s)", unit, u.active, u.sub))
+		return withJournal(ctx, unit, fmt.Errorf("%s is not running after its %s: %s (%s)", unit, action, u.active, u.sub))
 	}
 	failed := failedConditions(unit, res.String())
 	if len(failed) == 0 {
 		return failure("systemd-analyze condition", err, res.String())
 	}
-	return fmt.Errorf("%s did not start: %s failed", unit, strings.Join(failed, ", "))
+	return fmt.Errorf("%s did not %s: %s failed", unit, action, strings.Join(failed, ", "))
 }
 
 // failedConditions returns the conditions that kept unit from its start,
@@ -594,9 +611,9 @@ func sectionKeys(files [][]byte, section string) map[string][]string {
 }
 
 type unitState struct {
-	id, load, active, sub, file, fragment, dropIns string
-	triggeredBy                                    []string
-	reload, oneshot, remain                        bool
+	id, load, active, sub, file, fragment, dropIns, invocation string
+	triggeredBy                                                []string
+	reload, oneshot, remain                                    bool
 }
 
 func (u unitState) up() bool {
@@ -608,9 +625,10 @@ func (u unitState) restarting() bool {
 	return strings.HasPrefix(u.sub, "auto-restart")
 }
 
-// showUnit returns the load, active, and sub state of unit.
+// showUnit returns the load, active, and sub state of unit, and its
+// invocation, which changes with each start.
 func showUnit(ctx context.Context, unit string) (unitState, error) {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState", "--", unit)
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,InvocationID", "--", unit)
 	if err != nil {
 		return unitState{}, err
 	}
@@ -642,6 +660,8 @@ func parseShow(out string) (unitState, error) {
 			u.active = v
 		case "SubState":
 			u.sub = v
+		case "InvocationID":
+			u.invocation = v
 		case "UnitFileState":
 			u.file = v
 		case "FragmentPath":
