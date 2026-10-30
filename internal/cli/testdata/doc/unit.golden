@@ -1,13 +1,13 @@
 unit: manage a systemd unit file
 
 A change of the file, also of its owner or mode, runs systemctl
-daemon-reload. It does not restart a running unit; a handler with
-restarted: true does.
+daemon-reload. daemon-reload does not restart a running unit. A handler
+with restarted: true does.
 
 Keys:
-  name     string  required  The unit file name with its type, such as app.service or app@.service.
-  source   string  -         A file in the recipe's files directory.
-  content  string  -         The content of the unit file.
+  name     string  required  file name with its type
+  source   string  -         file in the recipe's files/
+  content  string  -         unit file text
 
 Example:
   - unit:

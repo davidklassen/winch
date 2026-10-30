@@ -18,11 +18,11 @@ import (
 )
 
 type Line struct {
-	Path       string  `yaml:"path,required" json:"path" doc:"The absolute path of the file. A missing file is a change in the plan, since an earlier step can create it; apply fails when it is still missing."`
-	Line       string  `yaml:"line" json:"line,omitempty" doc:"The line that the file keeps. It replaces the one line that match finds, or goes at the end of the file."`
-	Match      string  `yaml:"match,required" json:"match" doc:"A regular expression that finds the line. More than one matching line fails the check."`
-	Validation *string `yaml:"validate" json:"validate,omitempty" doc:"A command that checks the new file, as for file. It runs with absent too."`
-	Absent     bool    `yaml:"absent" json:"absent,omitempty" doc:"Remove the lines that match finds."`
+	Path       string  `yaml:"path,required" json:"path" line:"absolute" doc:"Absolute. A missing file is a change in the plan, since an earlier step can create it. Apply fails when it is still missing."`
+	Line       string  `yaml:"line" json:"line,omitempty" line:"line to keep" doc:"Line to keep. It replaces the one line that match finds, or goes at the end of the file."`
+	Match      string  `yaml:"match,required" json:"match" line:"regular expression for the line" doc:"Regular expression for the line. More than one matching line fails the check."`
+	Validation *string `yaml:"validate" json:"validate,omitempty" line:"check command, as for file" doc:"Check command, as for file. It runs with absent too."`
+	Absent     bool    `yaml:"absent" json:"absent,omitempty" line:"remove the matching lines" doc:"Remove the matching lines."`
 }
 
 func (l *Line) Main() string { return l.Path }

@@ -1,0 +1,87 @@
+computed values (!expr)
+
+An expression computes a value for each host, such as a list, a
+number, or true or false.
+
+Syntax:
+  The !expr tag marks an expression in the language of expr
+  (expr-lang.org). Its result keeps its type: a list, a number, a
+  boolean, a map, or a string.
+
+Data:
+  An expression reads these names without a leading dot:
+
+    vars      the variables of the host, with the vars of the recipe step
+    facts     the facts of the host; run winch doc facts
+    host      name, short, address, groups, and vars of the host
+    item      the current element in a step with loop
+    match(p)  the hosts that match the host pattern p, with the fields
+              of host
+
+  match(p) reads the inventory, not the --hosts selection. A host from
+  match() has only the vars that need no facts. A default cannot use
+  match().
+
+Where expressions go:
+  Any module argument can be an expression or a template, and so can
+  then. when takes an expression. loop takes a list or an expression.
+
+Operators:
+  + - * / % **                  arithmetic
+  == != < > <= >=               comparison
+  and or not                    logic, also && || !
+  in                            membership in a list or a map
+  contains startsWith endsWith  text tests
+  matches                       regular expression test
+  c ? a : b                     choice
+  a ?? b                        a, or b when a is nil
+  [] ?.                         read an element or a key
+  x[i:j] 1..3                   slice and range
+  |                             pipe: vars.name | lower()
+
+Predicates:
+  In a predicate, such as the second argument of filter, # is the
+  element, and .name reads the key name of a map element:
+  filter(vars.users, .uid >= 1000).
+
+Missing values:
+  A missing map key is nil. A module argument whose expression gives
+  null fails the host.
+
+Quoting:
+  Quote a YAML value that starts with a quote, [, {, &, *, or !, or
+  that contains ": " or " #".
+
+When they run:
+  winch evaluates expressions on the controller, during the plan. They
+  cannot read the result of a step. winch checks each one when it
+  loads the project: an unknown name or a syntax error is an error. An
+  error while winch evaluates one for a host fails that host. The
+  other hosts go on. $env and now() are errors in every expression.
+
+Example:
+  # winch.yaml
+  name: demo
+  hosts:
+    mail.acme.com: {}
+    web1.acme.com: {}
+  vars:
+    mail_server: false
+    domain: acme.com
+    admins: [ann, bob]
+    mailname: !expr 'vars.mail_server ? vars.domain : host.name'
+  steps:
+    - name: Set the mail name
+      file:
+        path: /etc/mailname
+        content: !expr 'vars.mailname + "\n"'
+      when: !expr vars.mail_server
+    - name: Add the admins
+      user:
+        name: !expr item
+        groups: [sudo]
+      loop: !expr sort(vars.admins)
+    - name: List the other hosts
+      file:
+        path: /etc/peers
+        content: !expr 'join(map(filter(match("all"), .name != host.name), .address), "\n") + "\n"'

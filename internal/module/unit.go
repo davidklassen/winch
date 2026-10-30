@@ -13,10 +13,10 @@ import (
 )
 
 type Unit struct {
-	Name      string    `yaml:"name,required" json:"name" doc:"The unit file name with its type, such as app.service or app@.service."`
-	Source    string    `yaml:"source" json:"-" doc:"A file in the recipe's files directory. A step has source or content."`
+	Name      string    `yaml:"name,required" json:"name" line:"file name with its type" doc:"File name with its type, such as app.service or app@.service."`
+	Source    string    `yaml:"source" json:"-" line:"file in the recipe's files/" doc:"File in the recipe's files/ directory. A step has source or content."`
 	SourcePos yamlx.Pos `json:"-"`
-	Content   *string   `yaml:"content" json:"-" doc:"The content of the unit file. A step has source or content."`
+	Content   *string   `yaml:"content" json:"-" line:"unit file text" doc:"Unit file text. A step has source or content."`
 	// Data is the content, or the content of the source file in the recipe's
 	// files.
 	Data       []byte `json:"data"`

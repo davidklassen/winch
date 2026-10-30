@@ -21,13 +21,13 @@ import (
 )
 
 type Repo struct {
-	Name       string        `yaml:"name,required" json:"name" doc:"The name of the source file and of the key file in /etc/apt."`
-	URL        string        `yaml:"url,required" json:"url" doc:"The URL of the repository. It has no user name or password."`
-	Suite      string        `yaml:"suite,required" json:"suite" doc:"The suite, such as trixie. A flat suite ends in /."`
-	Components yamlx.Strings `yaml:"components" json:"components,omitempty" doc:"The components, such as main. They are required, except for a flat suite, which has none."`
-	Key        string        `yaml:"key" json:"-" doc:"An ASCII-armored OpenPGP public key in the recipe's files directory. Download the vendor's key once and keep it in the project. A step has at most one of key and key_content."`
+	Name       string        `yaml:"name,required" json:"name" line:"file name in /etc/apt" doc:"File name in /etc/apt, of the source file and of the key file."`
+	URL        string        `yaml:"url,required" json:"url" line:"without a user or a password" doc:"Without a user or a password."`
+	Suite      string        `yaml:"suite,required" json:"suite" line:"such as trixie" doc:"Such as trixie. A flat suite ends in /."`
+	Components yamlx.Strings `yaml:"components" json:"components,omitempty" line:"such as main" doc:"Such as main. They are required, except for a flat suite, which has none."`
+	Key        string        `yaml:"key" json:"-" line:"key file in the recipe's files/" doc:"Key file in the recipe's files/ directory: an ASCII-armored OpenPGP public key. Download the vendor's key once and keep it in the project. A step has at most one of key and key_content."`
 	KeyPos     yamlx.Pos     `json:"-"`
-	KeyContent *string       `yaml:"key_content" json:"-" doc:"The text of an ASCII-armored OpenPGP public key. A step has at most one of key and key_content."`
+	KeyContent *string       `yaml:"key_content" json:"-" line:"key text, in place of key" doc:"Key text, in place of key: an ASCII-armored OpenPGP public key. A step has at most one of key and key_content."`
 	// KeyContentPos is the position of key_content.
 	KeyContentPos yamlx.Pos `json:"-"`
 	// KeyData is key_content, or the content of the key file in the recipe's

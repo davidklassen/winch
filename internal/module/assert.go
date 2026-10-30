@@ -10,8 +10,8 @@ import (
 )
 
 type Assert struct {
-	Command string `yaml:"command,required" json:"command" doc:"The command that runs during apply. It runs through sh -e as root, in /."`
-	Message string `yaml:"message,required" json:"message" doc:"The error of the host when the command exits non-zero."`
+	Command string `yaml:"command,required" json:"command" line:"check command" doc:"Check command. It runs during apply, through sh -e as root, in /. Exit 0 passes."`
+	Message string `yaml:"message,required" json:"message" line:"error when the check fails" doc:"Error when the check fails. The host fails with it when the command exits non-zero."`
 }
 
 func (a *Assert) Main() string { return strings.TrimSuffix(a.Command, "\n") }

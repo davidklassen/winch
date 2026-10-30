@@ -15,15 +15,15 @@ import (
 )
 
 type Facts struct {
-	OS             OS   `json:"os" expr:"os" yaml:"os" doc:"The OS of the host. winch reads id, version, and codename from /etc/os-release, or from /usr/lib/os-release when the first does not exist."`
-	RebootRequired bool `json:"reboot_required" expr:"reboot_required" yaml:"reboot_required" doc:"true when the host waits for a reboot: /run/reboot-required exists, or a kernel in /boot is newer than the running kernel."`
+	OS             OS   `json:"os" expr:"os" yaml:"os" line:"OS release of the host" doc:"OS release of the host. winch reads id, version, and codename from /etc/os-release, or from /usr/lib/os-release when the first does not exist."`
+	RebootRequired bool `json:"reboot_required" expr:"reboot_required" yaml:"reboot_required" line:"pending reboot" doc:"Pending reboot. It is true when /run/reboot-required exists, or when a kernel in /boot is newer than the running kernel."`
 }
 
 type OS struct {
-	ID       string `json:"id" expr:"id" yaml:"id" doc:"The ID of the OS, such as debian or ubuntu."`
-	Version  string `json:"version" expr:"version" yaml:"version" doc:"The version of the release, such as 13 or 24.04. It is a string: compare it with a string, such as \"13\"."`
-	Codename string `json:"codename" expr:"codename" yaml:"codename" doc:"The code name of the release, such as trixie or noble."`
-	Arch     string `json:"arch" expr:"arch" yaml:"arch" doc:"The architecture of the host, amd64 or arm64."`
+	ID       string `json:"id" expr:"id" yaml:"id" line:"distribution, such as debian or ubuntu" doc:"Distribution, such as debian or ubuntu."`
+	Version  string `json:"version" expr:"version" yaml:"version" line:"release number, such as 13 or 24.04" doc:"Release number, such as 13 or 24.04. It is a string: compare it with a string, such as \"13\"."`
+	Codename string `json:"codename" expr:"codename" yaml:"codename" line:"release code name, such as trixie or noble" doc:"Release code name, such as trixie or noble."`
+	Arch     string `json:"arch" expr:"arch" yaml:"arch" line:"CPU architecture" doc:"CPU architecture: amd64 or arm64."`
 }
 
 // Read reads the facts from the first os-release file in paths that exists.
