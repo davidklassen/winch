@@ -16,15 +16,15 @@ import (
 type Inventory struct {
 	// File names the inventory in messages.
 	File   string
-	Hosts  []Host  `yaml:"hosts" type:"map" doc:"The hosts, by name. Without address, the name is the SSH host name. A host name that YAML reads as a number, such as 1234, needs quotes. A host and a group cannot have the same name."`
-	Groups []Group `yaml:"groups" type:"map" doc:"The groups, by name. The group all contains every host. A host value beats a group value, and a group value beats a value of all."`
+	Hosts  []Host  `yaml:"hosts" type:"map" line:"keyed by host name" doc:"Keyed by host name. Without address, the name is the SSH host name. A host name that YAML reads as a number, such as 1234, needs quotes. A host and a group cannot have the same name."`
+	Groups []Group `yaml:"groups" type:"map" line:"keyed by group name" doc:"Keyed by group name. The group all contains every host. A host value beats a group value, and a group value beats a value of all."`
 }
 
 type Host struct {
 	Name     string      `yaml:",key"`
-	Address  string      `yaml:"address" doc:"The host name or IP for SSH. Without it, the SSH config decides the host name. The Host blocks of the SSH config match the host name, also with address. A port goes in the SSH config. Two hosts cannot have the same address."`
-	User     string      `yaml:"user" doc:"The SSH login user. Without it, the host takes the user of its groups, then of all, then of the SSH config. --user beats it. Every other SSH setting comes from the SSH config of the controller."`
-	VarsNode *yamlx.Node `yaml:"vars" type:"map" doc:"Variable values for the host. They beat the values of its groups."`
+	Address  string      `yaml:"address" line:"host name or IP for SSH" doc:"Host name or IP for SSH. Without it, the SSH config decides the host name. The Host blocks of the SSH config match the host name, also with address. A port goes in the SSH config. Two hosts cannot have the same address."`
+	User     string      `yaml:"user" line:"SSH login user" doc:"SSH login user. Without it, the host takes the user of its groups, then of all, then of the SSH config. --user beats it. Every other SSH setting comes from the SSH config of the controller."`
+	VarsNode *yamlx.Node `yaml:"vars" type:"map" line:"variable values of the host" doc:"Variable values of the host. They beat the values of its groups."`
 	Pos      yamlx.Pos
 	// Groups are the groups of the host: all, then the others in file order.
 	Groups []string
@@ -34,10 +34,10 @@ type Host struct {
 
 type Group struct {
 	Name      string `yaml:",key"`
-	User      string `yaml:"user" doc:"The SSH login user of the hosts of the group. Two groups of one host with different users are an error, unless the host sets user."`
+	User      string `yaml:"user" line:"SSH login user of the members" doc:"SSH login user of the members. Two groups of one host with different users are an error, unless the host sets user."`
 	UserPos   yamlx.Pos
-	HostsNode *yamlx.Node `yaml:"hosts" type:"list of strings" doc:"The member hosts. The group all cannot have hosts. A group can be empty: hosts: []."`
-	VarsNode  *yamlx.Node `yaml:"vars" type:"map" doc:"Variable values for the hosts of the group. Two groups of one host that set different values for one variable are an error, unless the host sets that value too."`
+	HostsNode *yamlx.Node `yaml:"hosts" type:"list of strings" line:"member host names" doc:"Member host names. The group all cannot have hosts. A group can be empty: hosts: []."`
+	VarsNode  *yamlx.Node `yaml:"vars" type:"map" line:"variable values of the members" doc:"Variable values of the members. Two groups of one host that set different values for one variable are an error, unless the host sets that value too."`
 	Pos       yamlx.Pos
 	members   []string
 	vars      []source

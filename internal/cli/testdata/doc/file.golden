@@ -1,18 +1,23 @@
 file: manage a file
 
+At most one of content, template, source, copy_from, and stock sets the
+content. A step without any of them manages only the owner, group, and
+mode that it gives, of a file that exists. The step creates missing
+parent directories, owned by root with mode 0755.
+
 Keys:
-  path       string      required  The absolute path of the file.
-  content    string      -         The content of the file, as a string.
-  template   string      -         A template in the recipe's templates directory.
-  source     string      -         A file in the recipe's files directory.
-  copy_from  string      -         A file on the host to copy the content from.
-  stock      boolean     false     Write the content that the installed package ships for path.
-  owner      name or ID  root      The owner of the file, a user name or a numeric ID.
-  group      name or ID  root      The group of the file, a group name or a numeric ID.
-  mode       string      0644      The mode of the file, in octal, such as 0640.
-  validate   string      -         A command that checks the new file.
-  absent     boolean     false     Remove the file.
-  replace    boolean     false     Remove another kind of thing at path first, such as a directory.
+  path       string      required  absolute
+  content    string      -         literal text
+  template   string      -         file in the recipe's templates/
+  source     string      -         file in the recipe's files/
+  copy_from  string      -         file on the host
+  stock      boolean     false     content that the package ships
+  owner      name or ID  root
+  group      name or ID  root
+  mode       string      0644      octal, in quotes
+  validate   string      -         check command for the new file
+  absent     boolean     false
+  replace    boolean     false     remove another kind of thing at path first
 
 Example:
   - name: Write the message of the day

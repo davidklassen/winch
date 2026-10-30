@@ -32,13 +32,13 @@ import (
 )
 
 type Download struct {
-	URL    string         `yaml:"url,required" json:"url" doc:"The URL of the file. The host fetches it."`
-	SHA256 string         `yaml:"sha256,required" json:"sha256" doc:"The SHA-256 of the file. A download with another checksum fails and keeps the old file. Take the value from the checksum file that the vendor publishes, or download the file once and run sha256sum on it."`
-	Path   string         `yaml:"path" json:"path,omitempty" doc:"The absolute path of the file. A step has path or unpack."`
-	Unpack string         `yaml:"unpack" json:"unpack,omitempty" doc:"The directory that the archive goes into. The path of the URL ends in .tar.gz, .tgz, .tar.xz, or .zip. The step unpacks again when sha256, owner, group, or the directory changes. A new archive replaces the whole tree, so keep the files that a program writes, such as its config, data, and logs, outside the directory."`
-	Owner  yamlx.NameOrID `yaml:"owner" json:"owner,omitempty" doc:"The owner of the file or of the unpacked tree, a user name or a numeric ID." default:"root"`
-	Group  yamlx.NameOrID `yaml:"group" json:"group,omitempty" doc:"The group of the file or of the unpacked tree, a group name or a numeric ID." default:"root"`
-	Mode   string         `yaml:"mode" json:"mode,omitempty" doc:"The mode of the file at path, in octal. Quote it, or YAML reads it as a number. With unpack, the entries keep the modes of the archive." default:"0644"`
+	URL    string         `yaml:"url,required" json:"url" line:"fetched by the host" doc:"Fetched by the host."`
+	SHA256 string         `yaml:"sha256,required" json:"sha256" line:"checksum of the file" doc:"Checksum of the file. Take the value from the checksum file that the vendor publishes, or download the file once and run sha256sum on it. A download with another checksum fails and keeps the old file."`
+	Path   string         `yaml:"path" json:"path,omitempty" line:"absolute target of a single file" doc:"Absolute target of a single file. A step has path or unpack."`
+	Unpack string         `yaml:"unpack" json:"unpack,omitempty" line:"directory for the unpacked archive" doc:"Directory for the unpacked archive. The path of the URL ends in .tar.gz, .tgz, .tar.xz, or .zip. The step unpacks again when sha256, owner, group, or the directory changes. A new archive replaces the whole tree. Keep the files that a program writes, such as its config, data, and logs, outside the directory."`
+	Owner  yamlx.NameOrID `yaml:"owner" json:"owner,omitempty" line:"of the file or the unpacked tree" doc:"Of the file or the unpacked tree. A user name or a numeric ID." default:"root"`
+	Group  yamlx.NameOrID `yaml:"group" json:"group,omitempty" line:"of the file or the unpacked tree" doc:"Of the file or the unpacked tree. A group name or a numeric ID." default:"root"`
+	Mode   string         `yaml:"mode" json:"mode,omitempty" line:"octal, in quotes; path only" doc:"Octal, in quotes; path only. Without quotes, YAML reads it as a number. With unpack, mode is an error: the entries keep the modes of the archive, without write permission for group and others." default:"0644"`
 
 	// Recorded is the Record of the last successful unpack into Unpack, or
 	// "".

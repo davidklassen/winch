@@ -128,26 +128,26 @@ var modules = map[string]struct {
 	new        func() Module
 	text, body string
 }{
-	"assert":   {func() Module { return new(Assert) }, "stop a host when a check command fails", ""},
-	"certbot":  {func() Module { return new(Certbot) }, "get a Let's Encrypt certificate", "The step runs certbot certonly. Renewal stays with certbot's own timer."},
-	"cmd":      {func() Module { return new(Cmd) }, "run a command", "A secret in the command does not show in the process list of the host. A program that the command starts with the secret as an argument, such as psql -c, does show it."},
-	"debconf":  {func() Module { return new(Debconf) }, "set a debconf answer", ""},
-	"dir":      {func() Module { return new(Dir) }, "manage a directory", ""},
-	"download": {func() Module { return new(Download) }, "download a file or an archive", ""},
-	"file":     {func() Module { return new(File) }, "manage a file", ""},
-	"firewall": {func() Module { return new(Firewall) }, "filter incoming traffic", "The step owns the nftables table inet winch and changes no other table, so the rules of Docker, fail2ban, or /etc/nftables.conf stay. Its input chain filters traffic to the host. A host has at most one firewall step in a run. The step needs nft: install the package nftables first. Every change is guarded as a confirm_access step is: when no new SSH connection works after the new rules load, the old rules come back."},
+	"assert":   {func() Module { return new(Assert) }, "stop a host when a check command fails", "The plan marks the step with * and runs nothing. Apply runs the command. A failed assert stays pending on the host, and the next apply runs it again, also when nothing else changes."},
+	"certbot":  {func() Module { return new(Certbot) }, "get a Let's Encrypt certificate", "The step runs certbot certonly. Renewal stays with certbot's own timer. Install the package certbot in an earlier pkg step. The nginx and apache authenticators also need python3-certbot-nginx or python3-certbot-apache."},
+	"cmd":      {func() Module { return new(Cmd) }, "run a command", "Without creates or unless, the check result is unknown, and apply runs the command each time. A secret in the command does not show in the process list of the host. A program that the command starts with the secret as an argument, such as psql -c, does show it."},
+	"debconf":  {func() Module { return new(Debconf) }, "set a debconf answer", "Only the scripts of a package read its answers. Put the step before the pkg step that installs the package, also when the package comes in as a dependency."},
+	"dir":      {func() Module { return new(Dir) }, "manage a directory", "The step creates missing parent directories, owned by root with mode 0755. winch checks owner, group, and mode on every run."},
+	"download": {func() Module { return new(Download) }, "download a file or an archive", "The host fetches the file and checks its SHA-256. A download with another checksum fails and keeps the old file. A step has path or unpack."},
+	"file":     {func() Module { return new(File) }, "manage a file", "At most one of content, template, source, copy_from, and stock sets the content. A step without any of them manages only the owner, group, and mode that it gives, of a file that exists. The step creates missing parent directories, owned by root with mode 0755."},
+	"firewall": {func() Module { return new(Firewall) }, "filter incoming traffic", "The step owns the nftables table inet winch and changes no other table. The rules of Docker, fail2ban, or /etc/nftables.conf stay. Its input chain filters traffic to the host. A host has at most one firewall step in a run.\n\nThe step needs nft: install the package nftables in an earlier pkg step.\n\nEvery change is guarded as a confirm_access step is. When no new SSH connection works after the new rules load, the old rules come back."},
 	"group":    {func() Module { return new(Group) }, "manage a group", ""},
 	"hostname": {func() Module { return new(Hostname) }, "set the host name", ""},
 	"line":     {func() Module { return new(Line) }, "manage one line in a file", ""},
-	"link":     {func() Module { return new(Link) }, "manage a symbolic link", ""},
+	"link":     {func() Module { return new(Link) }, "manage a symbolic link", "The step creates missing parent directories, owned by root with mode 0755."},
 	"pkg":      {func() Module { return new(Pkg) }, "install or remove packages", "Before the first install of a run on a host, apply refreshes the package index. After a repo step changed something, the next pkg step refreshes it again."},
 	"reboot":   {func() Module { return new(Reboot) }, "reboot the host", ""},
 	"repo":     {func() Module { return new(Repo) }, "manage an apt source", ""},
-	"service":  {func() Module { return new(Service) }, "control a systemd unit", "With running: false, a missing unit file is ok, with the note <unit>: unit file not found. A service step with confirm_access: true checks that a new SSH connection works after the step, and rolls back when none does. Run winch doc step.confirm_access for more."},
+	"service":  {func() Module { return new(Service) }, "control a systemd unit", "With running: false, a missing unit file is ok, with the note <unit>: unit file not found. A service step with confirm_access: true checks that a new SSH connection works after the step, and rolls back when none does. Run winch doc step.confirm_access."},
 	"timezone": {func() Module { return new(Timezone) }, "set the time zone", ""},
-	"unit":     {func() Module { return new(Unit) }, "manage a systemd unit file", "A change of the file, also of its owner or mode, runs systemctl daemon-reload. It does not restart a running unit; a handler with restarted: true does."},
+	"unit":     {func() Module { return new(Unit) }, "manage a systemd unit file", "A change of the file, also of its owner or mode, runs systemctl daemon-reload. daemon-reload does not restart a running unit. A handler with restarted: true does."},
 	"upgrade":  {func() Module { return new(Upgrade) }, "upgrade the installed packages", "The step refreshes the package index, also during the plan, and checks for pending upgrades."},
-	"user":     {func() Module { return new(User) }, "manage a user account", ""},
+	"user":     {func() Module { return new(User) }, "manage a user account", "A step that creates a user also creates its home directory. Without group, it also creates a group with the name of the user. The defaults and system count only when the step creates the user."},
 }
 
 // New returns empty arguments for the module name.

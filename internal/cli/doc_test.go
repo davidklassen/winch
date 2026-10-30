@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/vmtest"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -71,52 +74,97 @@ func TestDocKey(t *testing.T) {
 	tests := []struct{ arg, want string }{
 		{"file.mode", `file.mode: string, default 0644
 
-The mode of the file, in octal, such as 0640. Quote it, or YAML reads it
-as a number. With stock, the package gives the default. With copy_from,
-the source gives it. A step without content has no default.
+Octal, in quotes: "0640". Without quotes, YAML reads it as a number.
+With stock, the package gives the default. With copy_from, the source
+gives it. A step without content has no default.
 `},
-		{"templates.has", "templates.has: function\n\nhas list v: true when list contains v. In an expression, use v in list.\n"},
-		{"file.path", "file.path: string, required\n\nThe absolute path of the file. The step creates missing parent\ndirectories, owned by root with mode 0755.\n"},
-		{"file.content", "file.content: string\n\nThe content of the file, as a string. A step without content, template,\nsource, copy_from, or stock sets only the owner, group, and mode that it\ngives, with no defaults, of a file that exists. When that file is\nmissing, the plan says does not exist yet, and apply fails when it is\nstill missing.\n"},
+		{"templates.has", `templates.has: function
+
+has list v: true when list contains v. In an expression, use v in list.
+`},
+		{"file.path", `file.path: string, required
+
+Absolute. The step creates missing parent directories, owned by root
+with mode 0755.
+`},
+		{"file.content", `file.content: string
+
+Literal text. A step without content, template, source, copy_from, or
+stock sets only the owner, group, and mode that it gives, with no
+defaults, of a file that exists. When that file is missing, the plan
+says does not exist yet. Apply fails when it is still missing.
+`},
+		{"file.owner", `file.owner: name or ID, default root
+
+A user name or a numeric ID. A step without content has no default.
+`},
 		{"firewall.allow", `firewall.allow: list of maps
 
-The rules of the traffic that the host accepts. The host drops other
-traffic to it. It always accepts established and related traffic,
-loopback, ICMP echo requests, the ICMPv6 types that IPv6 needs, and DHCP
-replies. It drops invalid packets.
+Accepted traffic; the host drops the rest. It always accepts established
+and related traffic, loopback, ICMP echo requests, the ICMPv6 types that
+IPv6 needs, and DHCP replies. It drops invalid packets.
 
 Keys of each element:
-  tcp   integer or list of integers  -  A TCP port or a list of TCP ports.
-  udp   integer or list of integers  -  A UDP port or a list of UDP ports.
-  from  string or list of strings    -  An address or a network, or a list of them.
-`},
-		{"step.notify", `step.notify: string or list of strings
-
-A handler name, or a list of them. Not a template or an expression. With
-loop, notify fires once when any element changed. Run winch doc handlers
-for more.
-`},
-		{"pipeline.health", `pipeline.health: map
-
-A health gate: a check that must pass on a host after it finishes the
-stage, when the stage has a change on that host.
-
-Keys:
-  command  string   required  A command that must exit 0.
-  stable   integer  0         The seconds that the command must keep exiting 0.
-  timeout  integer  60        The seconds that the gate has to pass.
-`},
-		{"pipeline.stages.parallelism", `pipeline.stages.parallelism: integer
-
-The maximum number of hosts that run the stage at the same time. Hosts
-start in inventory order. The next host starts when a host finishes the
-stage and its health gate passes. A failure stops new hosts from
-starting.
+  tcp   integer or list of integers  -  ports
+  udp   integer or list of integers  -  ports
+  from  string or list of strings    -  source addresses or networks
 `},
 		{"firewall.allow.from", `firewall.allow.from: string or list of strings
 
-An address or a network, or a list of them. IPv4 and IPv6 are allowed.
-Without from, the rule accepts every source.
+Source addresses or networks. IPv4 and IPv6 are allowed. Without from,
+the rule accepts every source.
+`},
+		{"step.notify", `step.notify: string or list of strings
+
+Handlers to run after a change. Not a template or an expression. With
+loop, notify fires once when any element changed. Run winch doc
+handlers.
+`},
+		{"step.confirm_access", `step.confirm_access: boolean, default false
+
+SSH check with rollback, for a service step. Only a service step can use
+it, in steps or in handlers. A firewall step gets the same check without
+it.
+
+Before the step, the helper keeps the old state of each path that the
+changed steps of the recipe wrote or removed in this run. It starts a
+60-second rollback timer in a process of its own.
+
+After the step, winch opens a new SSH connection and runs a command,
+through sudo -n when the login user is not root. It tries twice, 5
+seconds apart.
+
+When both tries fail, the helper puts back the old files and runs
+daemon-reload after a unit file. It reverses a start or a stop of the
+step, and reloads or restarts the unit again. The host fails with the
+error "no new SSH connection works: <error>; the old files are back".
+When the session ends first, the helper rolls back at the session end.
+When the helper is gone, the timer does it.
+
+When a run ends before a notified handler with confirm_access ran, the
+helper puts back the files of that handler at once. The next run applies
+the change again.
+
+A rollback puts back files only. It does not undo a change of a user or
+a group.
+`},
+		{"pipeline.health", `pipeline.health: map
+
+Check after a host changed in the stage. The gate runs on a host after
+it finishes the stage, when the stage has a change on that host. The
+plan marks it with * and does not run it. A gate that fails stays
+pending on the host, and the next apply runs it.
+
+Keys:
+  command  string   required  must exit 0
+  stable   integer  0         seconds the command keeps passing
+  timeout  integer  60        seconds the gate has to pass
+`},
+		{"pipeline.stages.parallelism", `pipeline.stages.parallelism: integer
+
+Maximum hosts at the same time. Hosts start in inventory order. The next
+host starts when a host finishes the stage and its health gate passes. A
+failure stops new hosts from starting. Running hosts finish the stage.
 `},
 	}
 	for _, tt := range tests {
@@ -207,6 +255,22 @@ func TestDocNoTrailingSpace(t *testing.T) {
 }
 
 // spec: CLI
+func TestDocTopicLayout(t *testing.T) {
+	for _, name := range docTopics {
+		r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", name)
+		if strings.Contains(r.out, "\n\n\n") {
+			t.Errorf("winch doc %s has two empty lines in a row", name)
+		}
+		example := strings.Index(r.out, "\nExample:\n")
+		for _, section := range []string{"\nKeys:\n", "\nFunctions:\n"} {
+			if i := strings.Index(r.out, section); example >= 0 && i > example {
+				t.Errorf("winch doc %s: %q comes after the example", name, strings.TrimSpace(section))
+			}
+		}
+	}
+}
+
+// spec: CLI
 func TestDocExamples(t *testing.T) {
 	key, err := os.ReadFile(filepath.Join("..", "module", "testdata", "key.asc"))
 	if err != nil {
@@ -255,6 +319,13 @@ func TestDocTopicNames(t *testing.T) {
 	}
 }
 
+// secretExample is a !secret of a topic example, with its ciphertext cut
+// short. The test encrypts a value for the age recipients of the example.
+var (
+	secretExample = regexp.MustCompile(`!secret \S+\.\.\.`)
+	ageRecipient  = regexp.MustCompile(`age1[0-9a-z]+`)
+)
+
 // spec: CLI
 func TestDocTopicExamples(t *testing.T) {
 	for _, name := range docTopics {
@@ -264,34 +335,52 @@ func TestDocTopicExamples(t *testing.T) {
 				t.Fatalf("exit %d, stderr %q", r.code, r.err)
 			}
 			files := map[string]string{}
-			blocks := strings.Split(r.out, "```")
-			if len(blocks)%2 == 0 {
-				t.Fatal("an example has no end")
-			}
-			for i := 1; i < len(blocks); i += 2 {
-				_, text, _ := strings.Cut(blocks[i], "\n")
-				first, _, _ := strings.Cut(text, "\n")
-				file, ok := strings.CutPrefix(first, "# ")
-				if !ok {
-					t.Fatalf("an example does not start with the name of its file:\n%s", text)
+			lines := strings.Split(r.out, "\n")
+			for i := 0; i < len(lines); i++ {
+				indent := lines[i][:len(lines[i])-len(strings.TrimLeft(lines[i], " "))]
+				file, ok := strings.CutPrefix(lines[i], indent+"# ")
+				if indent == "" || !ok {
+					continue
 				}
 				if _, ok := files[file]; ok {
-					t.Fatalf("two YAML examples of %s", file)
+					t.Fatalf("two examples of %s", file)
 				}
-				files[file] = text
+				var text strings.Builder
+				// An empty line ends the file unless the file goes on after it.
+				for i++; i < len(lines); i++ {
+					line := lines[i]
+					if line == "" && i+1 < len(lines) && strings.HasPrefix(lines[i+1], indent) && !strings.HasPrefix(lines[i+1], indent+"# ") {
+						line = indent
+					}
+					if !strings.HasPrefix(line, indent) {
+						break
+					}
+					text.WriteString(strings.TrimPrefix(line, indent) + "\n")
+				}
+				files[file] = text.String()
 			}
-			if len(files) == 0 {
+			for file, text := range files {
+				if !secretExample.MatchString(text) {
+					continue
+				}
+				recipients, err := secret.ParseRecipients(ageRecipient.FindAllString(files["winch.yaml"], -1))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ciphertext, err := secret.Encrypt("example", recipients)
+				if err != nil {
+					t.Fatal(err)
+				}
+				files[file] = secretExample.ReplaceAllLiteralString(text, "!secret "+ciphertext)
+			}
+			if name == "project" && (len(files) != 1 || !strings.Contains(files["winch.yaml"], "path: /etc/motd")) {
+				t.Errorf("the minimal project is not one winch.yaml that writes /etc/motd: %v", slices.Collect(maps.Keys(files)))
+			}
+			if name == "workflow" {
 				return
 			}
-			if name == "project" {
-				var kinds []string
-				for file := range files {
-					kinds = append(kinds, strings.Split(file, "/")[0])
-				}
-				slices.Sort(kinds)
-				if !slices.Equal(kinds, []string{"inventories", "pipelines", "winch.yaml"}) {
-					t.Errorf("the minimal project has the files %v, want winch.yaml, one inventory, and one pipeline", kinds)
-				}
+			if len(files) == 0 {
+				t.Fatal("the example names no file")
 			}
 			dir := vmtest.WriteProject(t, files)
 			warnings, err := project.Validate(dir, "", nil)

@@ -22,18 +22,18 @@ import (
 )
 
 type User struct {
-	Name           string         `yaml:"name,required" json:"name" doc:"The user name."`
-	UID            yamlx.ID       `yaml:"uid" json:"uid,omitempty" doc:"The numeric user ID."`
-	Group          yamlx.NameOrID `yaml:"group" json:"group,omitempty" doc:"The primary group. Without group, a step that creates the user also creates a group with the name of the user." default:"<name>"`
-	System         bool           `yaml:"system" json:"system,omitempty" doc:"Create a system user. Its home is /nonexistent and its shell is /usr/sbin/nologin. It counts only when the step creates the user."`
-	Home           string         `yaml:"home" json:"home,omitempty" doc:"The home directory. The default counts only when the step creates the user, and a system user gets /nonexistent. The step creates a missing home directory, except /nonexistent. A changed home is not moved." default:"/home/<name>"`
-	Shell          string         `yaml:"shell" json:"shell,omitempty" doc:"The login shell. The default counts only when the step creates the user, and a system user gets /usr/sbin/nologin." default:"/bin/sh"`
-	Groups         *[]string      `yaml:"groups" json:"groups,omitempty" doc:"The exact list of supplementary groups. A step has groups or add_groups."`
-	AddGroups      *[]string      `yaml:"add_groups" json:"add_groups,omitempty" doc:"Groups that the user joins. The user keeps its other groups. A step with only name and add_groups does not create the user: apply fails when the user does not exist."`
-	Password       string         `yaml:"password" json:"password,omitempty" doc:"A crypt hash, such as one from mkpasswd -m yescrypt, usually a !secret. ! or * alone locks the password. Without password, the password of a new user is locked."`
-	Comment        string         `yaml:"comment" json:"comment,omitempty" doc:"The full name or a description of the user."`
-	AuthorizedKeys *[]string      `yaml:"authorized_keys" json:"authorized_keys,omitempty" doc:"The exact list of SSH keys in ~/.ssh/authorized_keys."`
-	Absent         bool           `yaml:"absent" json:"absent,omitempty" doc:"Remove the user. Its home stays."`
+	Name           string         `yaml:"name,required" json:"name" doc:"A new user's name has lowercase letters, digits, _, and -, and does not start with a digit or -. It has at most 32 characters."`
+	UID            yamlx.ID       `yaml:"uid" json:"uid,omitempty" doc:"A whole number. A uid that another user has fails the check."`
+	Group          yamlx.NameOrID `yaml:"group" json:"group,omitempty" line:"primary group" doc:"Primary group. Without group, a step that creates the user also creates a group with the name of the user." default:"<name>"`
+	System         bool           `yaml:"system" json:"system,omitempty" line:"system user, at creation only" doc:"System user, at creation only. Its home is /nonexistent and its shell is /usr/sbin/nologin. It counts only when the step creates the user."`
+	Home           string         `yaml:"home" json:"home,omitempty" line:"created when missing; never moved" doc:"Created when missing; never moved. The step creates a missing home directory, except /nonexistent. The default counts only when the step creates the user. A system user gets /nonexistent. A changed home is not moved." default:"/home/<name>"`
+	Shell          string         `yaml:"shell" json:"shell,omitempty" line:"login shell" doc:"Login shell. The default counts only when the step creates the user. A system user gets /usr/sbin/nologin." default:"/bin/sh"`
+	Groups         *[]string      `yaml:"groups" json:"groups,omitempty" line:"exact supplementary groups" doc:"Exact supplementary groups. A step has groups or add_groups."`
+	AddGroups      *[]string      `yaml:"add_groups" json:"add_groups,omitempty" line:"groups to join, keeping the others" doc:"Groups to join, keeping the others. A step with only name and add_groups does not create the user: apply fails when the user does not exist."`
+	Password       string         `yaml:"password" json:"password,omitempty" line:"crypt hash, usually a !secret" doc:"Crypt hash, usually a !secret, such as one from mkpasswd -m yescrypt. ! or * alone locks the password. Without password, the password of a new user is locked."`
+	Comment        string         `yaml:"comment" json:"comment,omitempty" line:"full name or description" doc:"Full name or description."`
+	AuthorizedKeys *[]string      `yaml:"authorized_keys" json:"authorized_keys,omitempty" line:"exact SSH keys of the user" doc:"Exact SSH keys of the user, in ~/.ssh/authorized_keys."`
+	Absent         bool           `yaml:"absent" json:"absent,omitempty" line:"remove the user; the home stays" doc:"Remove the user; the home stays."`
 
 	// Check sets these for Apply: the useradd, usermod, or userdel command,
 	// the home to create for a user that exists, and whether to set the

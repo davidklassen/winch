@@ -14,11 +14,11 @@ import (
 )
 
 type Link struct {
-	Path       string  `yaml:"path,required" json:"path" doc:"The absolute path of the link. The step creates missing parent directories, owned by root with mode 0755."`
-	Target     *string `yaml:"target" json:"target,omitempty" doc:"The path that the link points to. It can be relative, and it need not exist."`
-	Validation *string `yaml:"validate" json:"validate,omitempty" doc:"A command that checks the new link, as for file."`
-	Absent     bool    `yaml:"absent" json:"absent,omitempty" doc:"Remove the link."`
-	Replace    bool    `yaml:"replace" json:"replace,omitempty" doc:"Remove another kind of thing at path first, such as a file or a directory."`
+	Path       string  `yaml:"path,required" json:"path" line:"absolute" doc:"Absolute. The step creates missing parent directories, owned by root with mode 0755."`
+	Target     *string `yaml:"target" json:"target,omitempty" line:"relative or absolute; need not exist" doc:"Relative or absolute; need not exist."`
+	Validation *string `yaml:"validate" json:"validate,omitempty" line:"check command, as for file" doc:"Check command, as for file."`
+	Absent     bool    `yaml:"absent" json:"absent,omitempty" doc:"Remove the link. A path of another kind fails the check."`
+	Replace    bool    `yaml:"replace" json:"replace,omitempty" line:"remove another kind of thing at path first" doc:"Remove another kind of thing at path first, such as a file or a directory. Without it, such a thing fails the check."`
 }
 
 func (l *Link) Main() string { return l.Path }

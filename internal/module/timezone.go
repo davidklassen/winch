@@ -16,7 +16,7 @@ import (
 )
 
 type Timezone struct {
-	Name string `yaml:"name,required" json:"name" doc:"The time zone, such as Europe/Berlin."`
+	Name string `yaml:"name,required" json:"name" line:"zone name, such as Europe/Berlin" doc:"Zone name, such as Europe/Berlin."`
 }
 
 func (z *Timezone) Main() string { return z.Name }

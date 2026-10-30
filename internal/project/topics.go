@@ -31,7 +31,7 @@ func Topics() []doc.Topic {
 	}
 	var out []doc.Topic
 	for _, name := range []string{"project", "inventory", "pipeline", "recipe", "step", "handlers", "variables", "templates", "expressions", "facts", "secrets", "workflow"} {
-		text, _ := topics.ReadFile("topics/" + name + ".md")
+		text, _ := topics.ReadFile("topics/" + name + ".txt")
 		t := doc.NewTopic(name, string(text), keys[name])
 		for _, f := range functions[name] {
 			f.Type = "function"
@@ -52,7 +52,7 @@ var templateFunctions = []doc.Key{
 	{Name: "gt", Text: "gt a b: true when a > b."},
 	{Name: "has", Text: "has list v: true when list contains v. In an expression, use v in list."},
 	{Name: "html", Text: "html s: s with the special characters of HTML escaped."},
-	{Name: "index", Text: "index x k: the element of the map or the list x at the key or the index k. More keys read deeper. A missing map key is an error; use get for a key that may be missing."},
+	{Name: "index", Text: "index x k: the element of the map or the list x at the key or the index k. More keys read deeper. A missing map key is an error. Use get for a key that may be missing."},
 	{Name: "join", Text: "join list sep: the elements of list as text, joined with sep."},
 	{Name: "js", Text: "js s: s escaped for a JavaScript string."},
 	{Name: "json", Text: "json v: v as JSON on one line. Map keys are in sorted order, and non-ASCII characters stay UTF-8. The output is also a valid YAML value, so it writes a string into a JSON or a YAML file: \"data-root\": {{ json .vars.docker_root }}."},
@@ -65,7 +65,7 @@ var templateFunctions = []doc.Key{
 	{Name: "print", Text: "print args: the arguments as text, as Go's fmt.Sprint gives them."},
 	{Name: "printf", Text: "printf format args: the arguments formatted as Go's fmt.Sprintf does: {{ printf \"%05d\" .vars.uid }}."},
 	{Name: "println", Text: "println args: the arguments as text, with spaces between them and a newline at the end."},
-	{Name: "quote", Text: "quote s: s in single quotes for sh, each ' as '\\''. A value goes into a command as it is; quote a value that must stay one word: then: !tpl \"postmap {{ quote .vars.map }}\"."},
+	{Name: "quote", Text: "quote s: s in single quotes for sh, each ' as '\\''. A value goes into a command as it is. Quote a value that must stay one word: then: !tpl \"postmap {{ quote .vars.map }}\"."},
 	{Name: "slice", Text: "slice x i j: the part of the string or the list x from the index i up to j. In an expression, use x[i:j]."},
 	{Name: "sqlquote", Text: "sqlquote s: s as a MariaDB string literal: in single quotes, each ' as '', each \\ as \\\\. For PostgreSQL, write E before it. It assumes the default SQL mode, without NO_BACKSLASH_ESCAPES, and a UTF-8 client."},
 	{Name: "title", Text: "title s: s with the first letter of each word in upper case."},
@@ -123,7 +123,7 @@ var expressionFunctions = []doc.Key{
 	{Name: "min", Text: "min(a, b, ...), or min(list): the smallest number."},
 	{Name: "none", Text: "none(list, pred): true when pred is false for each element."},
 	{Name: "one", Text: "one(list, pred): true when pred is true for exactly one element."},
-	{Name: "quote", Text: "quote(s): s in single quotes for sh, each ' as '\\''. A value goes into a command as it is; quote a value that must stay one word: then: !expr '\"postmap \" + quote(vars.map)'."},
+	{Name: "quote", Text: "quote(s): s in single quotes for sh, each ' as '\\''. A value goes into a command as it is. Quote a value that must stay one word: then: !expr '\"postmap \" + quote(vars.map)'."},
 	{Name: "reduce", Text: "reduce(list, pred, initial): one value from all elements. In pred, #acc is the value so far, # the element, and #index its index: reduce(vars.sizes, #acc + #, 0)."},
 	{Name: "repeat", Text: "repeat(s, n): s n times."},
 	{Name: "replace", Text: "replace(s, old, new): s with each old replaced by new."},

@@ -10,11 +10,12 @@ import (
 )
 
 // Key is a key of a YAML map. Default is "required" for a required key, and
-// "" for a key without a default. Keys are the keys of its value, or of each
-// element of a list of maps.
+// "" for a key without a default. Line is the text of the key tables, and
+// Text the full text. Keys are the keys of its value, or of each element of
+// a list of maps.
 type Key struct {
-	Name, Type, Default, Text string
-	Keys                      []Key
+	Name, Type, Default, Line, Text string
+	Keys                            []Key
 }
 
 func (k Key) Summary() string {
@@ -24,14 +25,14 @@ func (k Key) Summary() string {
 	return k.Text
 }
 
-// Keys returns the keys of the struct type t, from the tags yaml, doc,
+// Keys returns the keys of the struct type t, from the tags yaml, line, doc,
 // default, and type. The type tag names the type of a field that the code
 // decodes by hand.
 func Keys(t reflect.Type) []Key {
 	var out []Key
 	for _, yf := range yamlx.Fields(t) {
 		f := t.Field(yf.Index)
-		k := Key{Name: yf.Name, Type: f.Tag.Get("type"), Default: f.Tag.Get("default"), Text: f.Tag.Get("doc")}
+		k := Key{Name: yf.Name, Type: f.Tag.Get("type"), Default: f.Tag.Get("default"), Line: f.Tag.Get("line"), Text: f.Tag.Get("doc")}
 		if k.Type == "" {
 			k.Type = typeName(f.Type)
 		}
@@ -84,16 +85,21 @@ func typeName(t reflect.Type) string {
 	panic("doc: no type name for " + t.String())
 }
 
-// Topic is a page of the reference. Text is its first paragraph, and Keys
-// are the keys of the file or the map that it describes.
+// Topic is a page of the reference. Text is its index line. Keys are the
+// keys of the file or the map that it describes. The page prints the keys
+// and the functions between Body and Example.
 type Topic struct {
-	Name, Text, Body string
-	Keys, Functions  []Key
+	Name, Text, Body, Example string
+	Keys, Functions           []Key
 }
 
-// NewTopic makes the topic name from Markdown text: the first paragraph
-// is the summary, the rest the body.
-func NewTopic(name, markdown string, keys []Key) Topic {
-	text, body, _ := strings.Cut(markdown, "\n\n")
-	return Topic{Name: name, Text: strings.Join(strings.Fields(text), " "), Body: body, Keys: keys}
+// NewTopic makes the topic name from its page: the first line is the index
+// line, and an "Example:" section ends the page.
+func NewTopic(name, page string, keys []Key) Topic {
+	text, body, _ := strings.Cut(page, "\n\n")
+	var example string
+	if i := strings.Index(body, "\nExample:\n"); i >= 0 {
+		body, example = body[:i], body[i+1:]
+	}
+	return Topic{Name: name, Text: text, Body: body, Example: example, Keys: keys}
 }

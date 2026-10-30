@@ -14,7 +14,7 @@ import (
 )
 
 type Hostname struct {
-	Name string `yaml:"name,required" json:"name" doc:"The short host name, such as mail."`
+	Name string `yaml:"name,required" json:"name" line:"short name, such as mail" doc:"Short name, such as mail."`
 }
 
 func (h *Hostname) Main() string { return h.Name }

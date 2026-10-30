@@ -1,0 +1,102 @@
+how to plan and apply changes
+
+A run of winch plans the changes, asks for approval, and then applies
+them.
+
+Plan and apply:
+  winch plan shows the changes and changes nothing. winch apply shows
+  the same plan, asks, and then makes the changes. For each host, the
+  plan starts a session, reads the facts, evaluates the steps, checks
+  the requirements of the recipes, and asks the helper to check each
+  step. Apply checks each step again right before it changes it. The
+  second check decides.
+
+Plan marks:
+  +  create
+  ~  change
+  -  remove
+  ?  unknown: a cmd without creates or unless
+  !  a handler, or a pending then, gate, or assert that will run
+  *  a reboot, assert, or health gate that runs during apply
+
+Plan hash:
+  The last line of a plan is its hash, such as plan a3f9c2e1d07b4c58.
+  The hash covers the project name, the hosts with their SSH targets
+  and login users, the stages, the evaluated steps, the check results,
+  and the pending handlers and then commands. winch apply --check
+  <hash> applies only when the new plan has that hash, without the
+  question.
+
+Without a terminal:
+  apply without --yes or --check prints the plan and exits 5. Its last
+  line is the command that applies that plan.
+
+What winch changes:
+  winch changes only what steps declare. Deleting a step changes
+  nothing on the host. To remove a thing, declare it with absent:
+  true. The plan fails a host when two steps manage the same path,
+  package, unit, user, or group with different arguments.
+
+Stopping and resuming:
+  The first Ctrl-C lets the running step of each host finish, starts
+  no new step, and ends with the summary. A second Ctrl-C ends the
+  sessions. A new run is the resume: steps that already succeeded
+  check as ok, and pending handlers run.
+
+Access to the host:
+  winch keeps its access to each host.
+  - A step that stops, disables, masks, or removes the SSH server
+    fails: "this cuts off winch's access".
+  - Some steps get the rollback of confirm_access without it: a change
+    of the login user's authorized_keys, ~/.ssh, or home directory,
+    groups added to the login user, a change of /etc/pam.d, and a
+    change of /etc/sudoers or /etc/sudoers.d when the login user is not
+    root. Every firewall step gets it too. The plan marks such a step.
+    Run winch doc step.confirm_access.
+  - A step that changes sshd's config while ssh.socket is active, as on
+    Ubuntu, restarts ssh.socket. It gets the same protection.
+  - After the last step of a host that changed something, winch checks
+    the access once more. When it fails, the host fails, and nothing
+    rolls back.
+
+Changing the SSH port:
+  The access check connects to the port in the controller's SSH
+  config. So a change of sshd's Port in one run always rolls back. Move
+  sshd to a new port in three runs:
+
+    1. Let sshd listen on the old and the new port.
+    2. Change the port in the SSH config.
+    3. Remove the old port from sshd.
+
+Exit codes:
+  0  success
+  1  one or more hosts failed
+  2  plan --exit-code: apply would change something
+  3  invalid command line or project; nothing ran
+  4  one or more hosts were unreachable, and no step failed
+  5  confirmation needed; nothing changed
+  6  the plan hash differs from --check; nothing changed
+
+  When several apply, the first in the order 3, 1, 4, 6, 5, 2, 0 wins.
+
+JSON output:
+  --json writes one JSON object per line on stdout. Each has type and
+  time. The types:
+
+    version     the format version; always first
+    diagnostic  an error or a warning, with file, line, col, and message
+    planned     the check of one step
+    applied     the apply of one step
+    host        a host finished, failed, or was unreachable
+    exec        the output of winch exec on one host
+    summary     the counts, the plan hash, and the exit code; always last
+
+  A step event has host and address, such as mail.acme.com:nginx#3[0]:
+  the host, the stage or recipe, the step number from 1, and the loop
+  index from 0.
+
+Example:
+  winch plan site
+  winch apply site
+  winch apply site --check a3f9c2e1d07b4c58
+  winch plan site --exit-code

@@ -164,9 +164,24 @@ Topics:
 }
 
 // writeTopic writes the text of t, then each of its keys with the keys of
-// their values, by their path, or its functions.
+// their values, by their path, or its functions, then its example.
 func writeTopic(out io.Writer, t doc.Topic) {
 	fmt.Fprintf(out, "%s: %s\n\n%s", t.Name, t.Text, t.Body)
+	if len(t.Keys) > 0 {
+		var all []doc.Key
+		var add func(prefix string, keys []doc.Key)
+		add = func(prefix string, keys []doc.Key) {
+			for _, k := range keys {
+				sub := k.Keys
+				k.Name, k.Keys = prefix+k.Name, nil
+				all = append(all, k)
+				add(k.Name+".", sub)
+			}
+		}
+		add("", t.Keys)
+		fmt.Fprintln(out, "\nKeys:")
+		writeKeys(out, all)
+	}
 	if len(t.Functions) > 0 {
 		fmt.Fprintln(out, "\nFunctions:")
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
@@ -174,53 +189,53 @@ func writeTopic(out io.Writer, t doc.Topic) {
 			fmt.Fprintf(w, "  %s\t%s\n", f.Name, f.Summary())
 		}
 		w.Flush()
+	}
+	if t.Example != "" {
+		fmt.Fprintf(out, "\n%s", t.Example)
+	}
+	if len(t.Keys) > 0 {
+		fmt.Fprintf(out, "\nRun \"winch doc %s.<key>\" for the full text of a key.\n", t.Name)
+	}
+	if len(t.Functions) > 0 {
 		fmt.Fprintf(out, "\nRun \"winch doc %s.<function>\" for the full text of a function.\n", t.Name)
 	}
-	if len(t.Keys) == 0 {
-		return
-	}
-	var all []doc.Key
-	var add func(prefix string, keys []doc.Key)
-	add = func(prefix string, keys []doc.Key) {
-		for _, k := range keys {
-			sub := k.Keys
-			k.Name, k.Keys = prefix+k.Name, nil
-			all = append(all, k)
-			add(k.Name+".", sub)
-		}
-	}
-	add("", t.Keys)
-	fmt.Fprintln(out, "\nKeys:")
-	writeKeys(out, all)
-	fmt.Fprintf(out, "\nRun \"winch doc %s.<key>\" for the full text of a key.\n", t.Name)
 }
 
-// writeKeys writes a line for each key: its name, type, default, and the
-// first sentence of its text.
+// writeKeys writes a line for each key: its name, type, default, and line.
 func writeKeys(out io.Writer, keys []doc.Key) {
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for _, k := range keys {
-		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", k.Name, k.Type, cmp.Or(k.Default, "-"), k.Summary())
+		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", k.Name, k.Type, cmp.Or(k.Default, "-"), k.Line)
 	}
 	w.Flush()
+	for line := range strings.Lines(b.String()) {
+		fmt.Fprintln(out, strings.TrimRight(line, " \n"))
+	}
 }
 
-// wrap breaks text into lines of at most width characters at spaces.
+// wrap breaks each paragraph of text into lines of at most width characters
+// at spaces.
 func wrap(text string, width int) string {
 	var b strings.Builder
-	n := 0
-	for i, word := range strings.Fields(text) {
-		switch {
-		case i == 0:
-		case n+1+len(word) > width:
-			b.WriteByte('\n')
-			n = 0
-		default:
-			b.WriteByte(' ')
-			n++
+	for i, para := range strings.Split(text, "\n\n") {
+		if i > 0 {
+			b.WriteString("\n\n")
 		}
-		b.WriteString(word)
-		n += len(word)
+		n := 0
+		for j, word := range strings.Fields(para) {
+			switch {
+			case j == 0:
+			case n+1+len(word) > width:
+				b.WriteByte('\n')
+				n = 0
+			default:
+				b.WriteByte(' ')
+				n++
+			}
+			b.WriteString(word)
+			n += len(word)
+		}
 	}
 	return b.String()
 }
