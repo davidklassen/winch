@@ -21,6 +21,7 @@ import (
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/session"
+	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 // spec: Remote execution/Sessions; Running a pipeline/Failures
@@ -274,5 +275,94 @@ func TestMaxStartupsRetry(t *testing.T) {
 	}
 	if n := starts.Load() - 2; n != 2 {
 		t.Errorf("open started ssh %d times, want 2", n)
+	}
+}
+
+// spec: Remote execution/Sessions
+func TestCloseAfterBannerRetry(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "banner-close")
+	data, err := os.ReadFile(filepath.Join(lab.Dir, "hosts", vm.Name+".conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var port int
+	if _, err := fmt.Sscanf(string(data[strings.Index(string(data), "Port "):]), "Port %d", &port); err != nil {
+		t.Fatal(err)
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	// The proxy closes its first connection after sshd's banner, as sshd does
+	// while it executes itself again after a reload. The lab's LogLevel ERROR
+	// hides ssh's message, so ssh exits 255 with no output.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	var starts atomic.Int32
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			n := starts.Add(1)
+			go func() {
+				defer c.Close() //nolint:errcheck // the copy is over
+				vc, err := net.Dial("tcp", addr)
+				if err != nil {
+					t.Errorf("proxy: %v", err)
+					return
+				}
+				defer vc.Close() //nolint:errcheck // the copy is over
+				if n == 1 {
+					banner, err := bufio.NewReader(vc).ReadString('\n')
+					if err != nil {
+						t.Errorf("proxy: read the banner: %v", err)
+						return
+					}
+					c.Write([]byte(banner))       //nolint:errcheck // ssh sees the close either way
+					c.(*net.TCPConn).CloseWrite() //nolint:errcheck // the close of c follows
+					io.Copy(io.Discard, c)        //nolint:errcheck // ssh closes c
+					return
+				}
+				go func() {
+					io.Copy(vc, c) //nolint:errcheck // the close ends the other copy
+					vc.Close()     //nolint:errcheck // the copy is over
+				}()
+				io.Copy(c, vc) //nolint:errcheck // ssh sees the end and closes c
+			}()
+		}
+	}()
+	proxy := vm.Name + "-proxy"
+	conf, err := lab.WriteHost(proxy, fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port %d\n", proxy, l.Addr().(*net.TCPAddr).Port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(conf) })
+
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  " + proxy + ": {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: one
+    hosts: all
+    steps:
+      - file:
+          path: /tmp/wt
+          content: "x\n"
+`,
+	})
+	start := time.Now()
+	r := lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 {
+		t.Fatalf("plan: exit %d: %s", r.Code, r.Stderr)
+	}
+	if elapsed := time.Since(start); elapsed < 2*time.Second {
+		t.Errorf("plan took %s, want the 2s wait before the retry", elapsed)
+	}
+	if n := starts.Load(); n != 2 {
+		t.Errorf("plan started ssh %d times, want 2", n)
 	}
 }

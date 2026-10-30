@@ -148,12 +148,12 @@ func command(script string) string {
 // ssh once more after RetryDelay. It does not retry another failure, so a
 // retry never counts as a second failed login.
 func Open(ctx context.Context, cfg Config) (*Session, error) {
-	hostName, port, err := resolve(ctx, cfg)
+	hostName, port, logLevel, err := resolve(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
 	s, exit, err := dial(ctx, cfg)
-	if !exit.started && Dropped(exit.code, exit.stderr) {
+	if !exit.started && Dropped(exit.code, exit.stderr, logLevel) {
 		select {
 		case <-ctx.Done():
 			return nil, err
@@ -168,16 +168,16 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	return s, nil
 }
 
-// resolve returns the host name and the port that ssh connects to for the
+// resolve returns the host name, the port, and the log level of ssh for the
 // host of cfg.
-func resolve(ctx context.Context, cfg Config) (hostName, port string, err error) {
+func resolve(ctx context.Context, cfg Config) (hostName, port, logLevel string, err error) {
 	out, err := exec.CommandContext(ctx, "ssh", append([]string{"-G"}, argv(cfg)...)...).Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
 			err = errors.New(strings.TrimSpace(string(exit.Stderr)))
 		}
-		return "", "", fmt.Errorf("read the SSH config: %w", err)
+		return "", "", "", fmt.Errorf("read the SSH config: %w", err)
 	}
 	for line := range strings.Lines(string(out)) {
 		key, value, _ := strings.Cut(strings.TrimSpace(line), " ")
@@ -186,9 +186,11 @@ func resolve(ctx context.Context, cfg Config) (hostName, port string, err error)
 			hostName = value
 		case "port":
 			port = value
+		case "loglevel":
+			logLevel = value
 		}
 	}
-	return hostName, port, nil
+	return hostName, port, logLevel, nil
 }
 
 // argv returns the arguments of ssh for the host of cfg, up to the target.
@@ -304,11 +306,17 @@ func (s *Session) exit() sshExit {
 // closed or reset the connection before the SSH handshake. Each line of the
 // error output must say so. Another line, such as a refused login on a jump
 // host before the close of the proxy, means that the host did more than drop
-// the connection.
-func Dropped(code int, stderr string) bool {
-	out := strings.TrimSpace(stderr)
-	if code != 255 || out == "" {
+// the connection. No output counts at log level ERROR only: ssh then prints
+// nothing for a close after the banner, as sshd does while it executes itself
+// again after a reload, but it prints a refused login. At QUIET, it prints
+// nothing for a refused login either.
+func Dropped(code int, stderr, logLevel string) bool {
+	if code != 255 {
 		return false
+	}
+	out := strings.TrimSpace(stderr)
+	if out == "" {
+		return logLevel == "ERROR"
 	}
 	for line := range strings.Lines(out) {
 		if !droppedLine(strings.TrimSpace(line)) {
