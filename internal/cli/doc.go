@@ -22,17 +22,34 @@ const docHelp = `Examples:
   winch doc file
   winch doc file.mode
   winch doc firewall.allow.tcp
+  winch doc --json
 
 Show the reference: the index of topics and modules, a topic, the keys
 of one module with an example step, or the full text of one key or
 function.
 
-Usage: winch doc [<topic> | <module>][.<key>...]
+Usage: winch doc [<topic> | <module>][.<key>...] [flags]
 
 doc needs no project.
+
+Flags:
+  --json                        Print the whole reference as one JSON
+                                document.
 `
 
+const docIntro = `Winch is a server configuration tool. It describes the desired state
+of your servers in declarative YAML and provides commands to manage
+that state.`
+
 func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
+	if f.json {
+		if len(args) > 0 {
+			printError(env.stderr, "winch: doc --json takes no topic, module, or key")
+			return exitInvalid
+		}
+		writeDocJSON(env.stdout)
+		return exitOK
+	}
 	if len(args) > 1 {
 		printError(env.stderr, "winch: doc takes one topic, module, or key")
 		return exitInvalid
@@ -86,13 +103,7 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 		}
 		fmt.Fprintln(env.stdout, "Keys:")
 		writeKeys(env.stdout, d.Keys)
-		fmt.Fprintln(env.stdout, "\nExample:")
-		for line := range strings.Lines(d.Example) {
-			if line != "\n" {
-				line = "  " + line
-			}
-			fmt.Fprint(env.stdout, line)
-		}
+		writeExample(env.stdout, d.Example)
 		fmt.Fprintf(env.stdout, "\nRun \"winch doc %s.<key>\" for the full text of a key.\n", name)
 		return exitOK
 	}
@@ -142,12 +153,7 @@ func hasKeyPath(keys []doc.Key, path []string) bool {
 }
 
 func writeIndex(out io.Writer, ts []doc.Topic) {
-	fmt.Fprint(out, `Winch is a server configuration tool. It describes the desired state
-of your servers in declarative YAML and provides commands to manage
-that state.
-
-Topics:
-`)
+	fmt.Fprintf(out, "%s\n\nTopics:\n", docIntro)
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, t := range ts {
 		fmt.Fprintf(w, "  %s\t%s\n", t.Name, t.Text)
@@ -191,13 +197,23 @@ func writeTopic(out io.Writer, t doc.Topic) {
 		w.Flush()
 	}
 	if t.Example != "" {
-		fmt.Fprintf(out, "\n%s", t.Example)
+		writeExample(out, t.Example)
 	}
 	if len(t.Keys) > 0 {
 		fmt.Fprintf(out, "\nRun \"winch doc %s.<key>\" for the full text of a key.\n", t.Name)
 	}
 	if len(t.Functions) > 0 {
 		fmt.Fprintf(out, "\nRun \"winch doc %s.<function>\" for the full text of a function.\n", t.Name)
+	}
+}
+
+func writeExample(out io.Writer, example string) {
+	fmt.Fprintln(out, "\nExample:")
+	for line := range strings.Lines(example) {
+		if line != "\n" {
+			line = "  " + line
+		}
+		fmt.Fprint(out, line)
 	}
 }
 

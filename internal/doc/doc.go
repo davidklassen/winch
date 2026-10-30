@@ -94,12 +94,17 @@ type Topic struct {
 }
 
 // NewTopic makes the topic name from its page: the first line is the index
-// line, and an "Example:" section ends the page.
+// line, and an "Example:" section ends the page. Example holds the section
+// without its heading and its indent.
 func NewTopic(name, page string, keys []Key) Topic {
 	text, body, _ := strings.Cut(page, "\n\n")
-	var example string
+	var b strings.Builder
 	if i := strings.Index(body, "\nExample:\n"); i >= 0 {
-		body, example = body[:i], body[i+1:]
+		var example string
+		body, example = body[:i], body[i+len("\nExample:\n"):]
+		for line := range strings.Lines(example) {
+			b.WriteString(strings.TrimPrefix(line, "  "))
+		}
 	}
-	return Topic{Name: name, Text: text, Body: body, Example: example, Keys: keys}
+	return Topic{Name: name, Text: text, Body: body, Example: b.String(), Keys: keys}
 }

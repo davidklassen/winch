@@ -1,0 +1,128 @@
+{
+  "name": "file",
+  "line": "manage a file",
+  "body": "At most one of content, template, source, copy_from, and stock sets the content. A step without any of them manages only the owner, group, and mode that it gives, of a file that exists. The step creates missing parent directories, owned by root with mode 0755.",
+  "keys": [
+    {
+      "name": "path",
+      "path": "file.path",
+      "type": "string",
+      "default": "",
+      "required": true,
+      "line": "absolute",
+      "text": "Absolute. The step creates missing parent directories, owned by root with mode 0755.",
+      "keys": []
+    },
+    {
+      "name": "content",
+      "path": "file.content",
+      "type": "string",
+      "default": "",
+      "required": false,
+      "line": "literal text",
+      "text": "Literal text. A step without content, template, source, copy_from, or stock sets only the owner, group, and mode that it gives, with no defaults, of a file that exists. When that file is missing, the plan says does not exist yet. Apply fails when it is still missing.",
+      "keys": []
+    },
+    {
+      "name": "template",
+      "path": "file.template",
+      "type": "string",
+      "default": "",
+      "required": false,
+      "line": "file in the recipe's templates/",
+      "text": "File in the recipe's templates/ directory. Its output is the content.",
+      "keys": []
+    },
+    {
+      "name": "source",
+      "path": "file.source",
+      "type": "string",
+      "default": "",
+      "required": false,
+      "line": "file in the recipe's files/",
+      "text": "File in the recipe's files/ directory. Its bytes are the content.",
+      "keys": []
+    },
+    {
+      "name": "copy_from",
+      "path": "file.copy_from",
+      "type": "string",
+      "default": "",
+      "required": false,
+      "line": "file on the host",
+      "text": "File on the host. Its bytes are the content, and its permission bits are the default mode. The default owner and group stay root: the owner of the source does not carry over.",
+      "keys": []
+    },
+    {
+      "name": "stock",
+      "path": "file.stock",
+      "type": "boolean",
+      "default": "false",
+      "required": false,
+      "line": "content that the package ships",
+      "text": "Content that the package ships for path, from the installed version. The package also gives the default owner, group, and mode.",
+      "keys": []
+    },
+    {
+      "name": "owner",
+      "path": "file.owner",
+      "type": "name or ID",
+      "default": "root",
+      "required": false,
+      "line": "",
+      "text": "A user name or a numeric ID. A step without content has no default.",
+      "keys": []
+    },
+    {
+      "name": "group",
+      "path": "file.group",
+      "type": "name or ID",
+      "default": "root",
+      "required": false,
+      "line": "",
+      "text": "A group name or a numeric ID. A step without content has no default.",
+      "keys": []
+    },
+    {
+      "name": "mode",
+      "path": "file.mode",
+      "type": "string",
+      "default": "0644",
+      "required": false,
+      "line": "octal, in quotes",
+      "text": "Octal, in quotes: \"0640\". Without quotes, YAML reads it as a number. With stock, the package gives the default. With copy_from, the source gives it. A step without content has no default.",
+      "keys": []
+    },
+    {
+      "name": "validate",
+      "path": "file.validate",
+      "type": "string",
+      "default": "",
+      "required": false,
+      "line": "check command for the new file",
+      "text": "Check command for the new file. The command names the real path, or checks the whole config: nginx -t. The helper puts the new file in place and runs the command. When the command fails, the old file comes back and the step fails.",
+      "keys": []
+    },
+    {
+      "name": "absent",
+      "path": "file.absent",
+      "type": "boolean",
+      "default": "false",
+      "required": false,
+      "line": "",
+      "text": "Remove the file. A path of another kind fails the check.",
+      "keys": []
+    },
+    {
+      "name": "replace",
+      "path": "file.replace",
+      "type": "boolean",
+      "default": "false",
+      "required": false,
+      "line": "remove another kind of thing at path first",
+      "text": "Remove another kind of thing at path first, such as a directory. Without it, such a thing fails the check.",
+      "keys": []
+    }
+  ],
+  "example": "- name: Write the message of the day\n  file:\n    path: /etc/motd\n    content: \"Welcome to mail.example.com.\\n\"\n    mode: \"0644\"\n"
+}

@@ -128,7 +128,7 @@ var commands = map[string]command{
 	"secret generate": {help: generateHelp, inventory: true, host: true, run: secretGenerate},
 	"secret encrypt":  {help: encryptHelp, run: secretEncrypt},
 	"secret rekey":    {help: rekeyHelp, run: secretRekey},
-	"doc":             {help: docHelp, run: docCommand},
+	"doc":             {help: docHelp, json: true, run: docCommand},
 }
 
 const validateHelp = `Examples:
