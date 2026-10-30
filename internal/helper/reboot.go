@@ -18,15 +18,30 @@ import (
 
 const bootIDFile = "/proc/sys/kernel/random/boot_id"
 
+// rebootRecord is the file in the state directory that holds the failure of
+// the reboot command. The next reboot removes it.
+const rebootRecord = "reboot"
+
+// rebootScript runs systemctl reboot. When it fails, the script writes its
+// exit status and output to the file $1, so a reconnect can report them.
+const rebootScript = `sleep 1
+out=$(systemctl reboot 2>&1) && exit
+printf 'exit status %s%s' "$?" "${out:+: $out}" > "$1.tmp"
+mv "$1.tmp" "$1"
+`
+
 // reboot starts the reboot in a process of its own, a second from now, so
 // the answer reaches the controller first. It returns the boot ID.
 // systemctl reboot does not ask as molly-guard's reboot does.
-func reboot() (string, error) {
+func reboot(record string) (string, error) {
 	id, err := os.ReadFile(bootIDFile)
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command("sh", "-c", "sleep 1; exec systemctl reboot")
+	if err := os.Remove(record); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	cmd := exec.Command("sh", "-c", rebootScript, "sh", record)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start the reboot: %w", err)
@@ -36,8 +51,9 @@ func reboot() (string, error) {
 }
 
 // booted reports whether the host has another boot ID than the one before
-// the reboot, and then waits for the system to start.
-func booted(ctx context.Context, params json.RawMessage) (protocol.Boot, error) {
+// the reboot, and then waits for the system to start. With the same boot ID,
+// it reports the failure of the reboot command from record.
+func booted(ctx context.Context, params json.RawMessage, record string) (protocol.Boot, error) {
 	var b protocol.Booted
 	if err := json.Unmarshal(params, &b); err != nil {
 		return protocol.Boot{}, fmt.Errorf("decode booted: %w", err)
@@ -47,7 +63,14 @@ func booted(ctx context.Context, params json.RawMessage) (protocol.Boot, error) 
 		return protocol.Boot{}, err
 	}
 	if strings.TrimSpace(string(id)) == b.Old {
-		return protocol.Boot{Same: true}, nil
+		failed, err := os.ReadFile(record)
+		if errors.Is(err, fs.ErrNotExist) {
+			return protocol.Boot{Same: true}, nil
+		}
+		if err != nil {
+			return protocol.Boot{}, err
+		}
+		return protocol.Boot{RebootError: strings.TrimSpace(string(failed))}, nil
 	}
 	wait, cancel := context.WithTimeout(ctx, b.Wait)
 	defer cancel()

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/vmtest"
@@ -267,5 +268,46 @@ func TestReboot(t *testing.T) {
 	}
 	if boot() == before {
 		t.Error("the boot ID did not change")
+	}
+}
+
+// spec: Modules/reboot (when the reboot command fails and the host answers
+// with the same boot ID, the step fails at once)
+func TestRebootCommandFails(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "rebootfail")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  rebootfail: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - reboot:
+          if_required: false
+          timeout: 60
+`,
+	})
+	vm.MustRun(t, "systemctl mask reboot.target")
+	before := vm.MustRun(t, "cat /proc/sys/kernel/random/boot_id")
+	start := time.Now()
+	r := lab.Winch(t, dir, "apply", "site", "--yes")
+	if want := "the reboot command failed: exit status 1"; r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
+		t.Errorf("apply: exit %d, want a failure with %q:\n%s%s", r.Code, want, r.Stdout, r.Stderr)
+	}
+	if took := time.Since(start); took > 45*time.Second {
+		t.Errorf("apply took %s, want a failure at once", took)
+	}
+	if got := vm.MustRun(t, "cat /proc/sys/kernel/random/boot_id"); got != before {
+		t.Error("the host rebooted")
+	}
+
+	// The record of the failure stays and must not fail the next reboot.
+	vm.MustRun(t, "systemctl unmask reboot.target")
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply after the failure: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	if got := vm.MustRun(t, "cat /proc/sys/kernel/random/boot_id"); got == before {
+		t.Error("the host did not reboot")
 	}
 }

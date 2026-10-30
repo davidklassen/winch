@@ -35,8 +35,9 @@ func TestFilter(t *testing.T) {
 		{"json html", []string{"a<b&c>d"}, `{"k": "a\u003cb\u0026c\u003ed"}`, `{"k": "(secret)"}`},
 		{"json of the printable form", []string{"a<b\x01cdef"}, `{"k": "a\u003cb?cdef"}`, `{"k": "(secret)"}`},
 		{"json non-ascii stays", []string{"Zürich-secret\x01"}, `{"k": "Zürich-secret\u0001"}`, `{"k": "(secret)"}`},
-		{"lines printable form", []string{"abc\r\nxyz\r\n"}, "e: abc?\nxyz", "e: (secret)\n(secret)"},
-		{"json of the lines printable form", []string{"abc\r\nxyz\r\n"}, `{"k": "abc?\nxyz"}`, `{"k": "(secret)"}`},
+		{"lines printable form", []string{"abc\r\nxyz\r\n"}, "e: abc\nxyz", "e: (secret)\n(secret)"},
+		{"lines printable form of a lone carriage return", []string{"abcd\rwxyz\n12345"}, "e: abcd?wxyz\n12345", "e: (secret)\n(secret)"},
+		{"json of the lines printable form", []string{"abc\r\nxyz\r\n"}, `{"k": "abc\nxyz"}`, `{"k": "(secret)"}`},
 		{"base64", []string{"topsecret"}, "data: dG9wc2VjcmV0", "data: (secret)"},
 		{"base64 with padding", []string{"hunter2"}, "data: aHVudGVyMg==", "data: (secret)=="},
 		{"url query", []string{"p@ss word&x"}, "https://h/?p=p%40ss+word%26x", "https://h/?p=(secret)"},
@@ -193,6 +194,25 @@ func TestPrintable(t *testing.T) {
 	for _, tt := range tests {
 		if got := Printable(tt.in); got != tt.want {
 			t.Errorf("Printable(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// spec: CLI/Output (a \r\n line end from a host is a newline)
+func TestPrintableLines(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"one\r\ntwo\r\n", "one\ntwo\n"},
+		{"one\ntwo\ttab", "one\ntwo\ttab"},
+		{"cr\ronly\r", "cr?only?"},
+		{"twice\r\r\n", "twice?\n"},
+		{"bell\x07\u2028", "bell??"},
+	}
+	for _, tt := range tests {
+		if got := PrintableLines(tt.in); got != tt.want {
+			t.Errorf("PrintableLines(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }

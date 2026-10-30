@@ -54,7 +54,9 @@ type Config struct {
 	// RetryDelay is the wait before another ssh start: the retry of a
 	// dropped connection, and each connect after a reboot. Zero means 2s.
 	RetryDelay time.Duration
-	// Batch makes ssh ask no questions.
+	// Batch makes ssh ask no questions. A check of the access and a
+	// reconnect after a reboot always set it: they can run on several hosts
+	// at once.
 	Batch bool
 	// fresh makes ssh open its own connection, also when the SSH config
 	// shares one: a check of the access and a reconnect after a reboot need
@@ -463,7 +465,7 @@ var accessCommand = command("echo " + accessMarker)
 // Like the session start, it fails when the login prints to stdout.
 func (s *Session) Access(ctx context.Context) error {
 	cfg := s.cfg
-	cfg.fresh = true
+	cfg.fresh, cfg.Batch = true, true
 	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, append(argv(cfg), accessCommand)...)...)
 	stdout, stderr := &limitedBuffer{max: 4 << 10}, &limitedBuffer{max: 4 << 10}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -475,7 +477,7 @@ func (s *Session) Access(ctx context.Context) error {
 			msg = strings.TrimSpace(stdout.String())
 		}
 		if msg != "" {
-			return fmt.Errorf("%w: %s", err, msg)
+			return hint(cfg, fmt.Errorf("%w: %s", err, msg))
 		}
 		return err
 	}
@@ -512,7 +514,7 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 	// The helper ends when its input closes, before the reboot.
 	s.Close() //nolint:errcheck // the reboot ends the connection
 	cfg := s.cfg
-	cfg.fresh = true
+	cfg.fresh, cfg.Batch, cfg.Hold = true, true, nil
 	cfg.Hello.Resume = true
 	last := errors.New("no connection yet")
 	for {
@@ -537,6 +539,10 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 			n.Close() //nolint:errcheck // the call failed already
 			last = err
 			continue
+		}
+		if b.RebootError != "" {
+			n.Close() //nolint:errcheck // the step fails already
+			return protocol.Boot{}, fmt.Errorf("the reboot command failed: %s", b.RebootError)
 		}
 		if b.Same {
 			n.Close() //nolint:errcheck // the next connect tries again

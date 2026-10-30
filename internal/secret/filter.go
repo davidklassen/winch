@@ -183,14 +183,15 @@ func Printable(s string) string {
 	}, s)
 }
 
-// PrintableLines is Printable for text with lines: it keeps each newline.
+// PrintableLines is Printable for text with lines: it keeps each newline,
+// and a \r\n line end becomes a newline.
 func PrintableLines(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r != '\n' && Unprintable(r) {
 			return '?'
 		}
 		return r
-	}, s)
+	}, strings.ReplaceAll(s, "\r\n", "\n"))
 }
 
 // Plain adds the lines of plain project text. A line of a multi-line value
