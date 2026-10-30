@@ -202,7 +202,7 @@ func TestCertbotChanges(t *testing.T) {
 }
 
 // writeCert writes a self-signed certificate for names to path.
-func writeCert(t *testing.T, path string, names ...string) {
+func writeCert(t *testing.T, path string, notAfter time.Time, names ...string) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -212,8 +212,8 @@ func writeCert(t *testing.T, path string, names ...string) {
 		SerialNumber: big.NewInt(1),
 		Subject:      pkix.Name{CommonName: names[0]},
 		DNSNames:     names,
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Hour),
+		NotBefore:    notAfter.Add(-90 * 24 * time.Hour),
+		NotAfter:     notAfter,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
@@ -256,8 +256,9 @@ a.example.com = /var/www
 	if err != nil || !reflect.DeepEqual(cur, want) {
 		t.Fatalf("no certificate: %+v, %v; want %+v", cur, err, want)
 	}
-	writeCert(t, cert, "a.example.com", "b.example.com")
-	want.domains = []string{"a.example.com", "b.example.com"}
+	notAfter := time.Now().Add(time.Hour).Truncate(time.Second).UTC()
+	writeCert(t, cert, notAfter, "a.example.com", "b.example.com")
+	want.domains, want.notAfter = []string{"a.example.com", "b.example.com"}, notAfter
 	cur, err = readCertState(dir, "a")
 	if err != nil || !reflect.DeepEqual(cur, want) {
 		t.Errorf("got %+v, %v; want %+v", cur, err, want)
@@ -290,9 +291,60 @@ func TestCertbotCheckBrokenLineage(t *testing.T) {
 	}
 	c := &Certbot{Name: "a", Domains: []string{"a.example.com"}, Email: "a@example.com"}
 	want := "certificate a: " + filepath.Join(dir, "renewal", "a.conf") + " exists, but its certificate does not; certbot would make a new certificate a-0001 on each run; remove the rest with certbot delete --cert-name a"
-	if _, err := c.check(dir); err == nil || err.Error() != want {
+	if _, err := c.check(dir, func(string) {}); err == nil || err.Error() != want {
 		t.Errorf("got %v\nwant %s", err, want)
 	}
+}
+
+// spec: Modules/certbot (an expiring certificate gives a plan note)
+func TestCertbotCheckExpiry(t *testing.T) {
+	day := 24 * time.Hour
+	for _, tt := range []struct {
+		name string
+		left time.Duration
+		note bool
+	}{
+		{"expired", -day, true},
+		{"in 3 days", 3 * day, true},
+		{"in 13 days", 13 * day, true},
+		{"in 15 days", 15 * day, false},
+		{"in 60 days", 60 * day, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cert := filepath.Join(dir, "live", "a", "cert.pem")
+			notAfter := time.Now().Add(tt.left)
+			writeCert(t, cert, notAfter, "a.example.com")
+			if err := os.MkdirAll(filepath.Join(dir, "renewal"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			conf := "cert = " + cert + "\n[renewalparams]\nauthenticator = nginx\n"
+			if err := os.WriteFile(filepath.Join(dir, "renewal", "a.conf"), []byte(conf), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			c := &Certbot{Name: "a", Domains: []string{"a.example.com"}, Email: "a@example.com"}
+			var notes []string
+			res, err := c.check(dir, func(s string) { notes = append(notes, s) })
+			if err != nil || res.Status != OK {
+				t.Fatalf("got %+v, %v; want ok", res, err)
+			}
+			var want []string
+			if tt.note {
+				want = []string{"the certificate a expires on " + notAfter.UTC().Format(time.DateOnly) + "; check its renewal"}
+			}
+			if !slices.Equal(notes, want) {
+				t.Errorf("notes %q, want %q", notes, want)
+			}
+		})
+	}
+	t.Run("no certificate", func(t *testing.T) {
+		c := &Certbot{Name: "a", Domains: []string{"a.example.com"}, Email: "a@example.com"}
+		var notes []string
+		res, err := c.check(t.TempDir(), func(s string) { notes = append(notes, s) })
+		if err != nil || res.Action != Create || notes != nil {
+			t.Errorf("got %+v, %v, notes %q; want a create without notes", res, err, notes)
+		}
+	})
 }
 
 // spec: Modules/certbot
