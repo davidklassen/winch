@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -374,8 +375,8 @@ func TestSecretInit(t *testing.T) {
 			t.Errorf("key directory mode %o; want 700", got)
 		}
 		want := "made the age key " + key + "\npublic key: " + pub + "\nadded the public key to recipients in winch.yaml\n"
-		if !strings.HasPrefix(r.out, want) {
-			t.Errorf("stdout %q; want the prefix %q", r.out, want)
+		if r.out != want {
+			t.Errorf("stdout %q; want %q", r.out, want)
 		}
 		wantCfg := strings.Replace(cfg, other.Recipient().String()+"\n", other.Recipient().String()+"\n  - "+pub+"\n", 1)
 		if got := read(t, filepath.Join(dir, "winch.yaml")); got != wantCfg {
@@ -419,7 +420,7 @@ func TestSecretInit(t *testing.T) {
 		path, id := newIdentity(t)
 		home := t.TempDir()
 		r := winchWith(t, dir, home, "", "cat "+path, fakehost.New(), false, "", "secret", "init")
-		if r.code != exitOK || r.out != "public key: "+id.Recipient().String()+"\nadded the public key to recipients in winch.yaml\na member who can read the secrets must now run winch secret rekey\n" {
+		if r.code != exitOK || r.out != "public key: "+id.Recipient().String()+"\nadded the public key to recipients in winch.yaml\n" {
 			t.Fatalf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 		}
 		want := "name: acme\nvars: {}\nrecipients:\n  - " + id.Recipient().String() + "\n"
@@ -428,6 +429,46 @@ func TestSecretInit(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(home, ".config")); err == nil {
 			t.Errorf("init made a key with WINCH_AGE_IDENTITY_CMD")
+		}
+	})
+
+	plain := map[string]string{
+		"winch.yaml":            "name: acme\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: x\n",
+		"recipes/r/recipe.yaml": "steps:\n  - file:\n      path: /a\n      content: !expr '\"x\"'\n",
+	}
+	for _, c := range []struct{ name, file, text, hint string }{
+		{"no secret", "", "", ""},
+		{"a secret in winch.yaml", "winch.yaml", "name: acme\nvars:\n  pw: !secret YWdl\n", "a member who can read the secrets must now run winch secret rekey\n"},
+		{"a secret in an inventory", "inventories/test.yaml", "hosts:\n  web1:\n    vars:\n      pw: !secret YWdl\n", "a member who can read the secrets must now run winch secret rekey\n"},
+		{"a secret in a recipe", "recipes/r/recipe.yaml", "vars:\n  pw: !secret YWdl\nsteps:\n  - file:\n      path: /a\n      content: x\n", "a member who can read the secrets must now run winch secret rekey\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			files := maps.Clone(plain)
+			if c.file != "" {
+				files[c.file] = c.text
+			}
+			dir := vmtest.WriteProject(t, files)
+			path, id := newIdentity(t)
+			r := winchWith(t, dir, "", path, "", fakehost.New(), false, "", "secret", "init")
+			want := "public key: " + id.Recipient().String() + "\nadded the public key to recipients in winch.yaml\n" + c.hint
+			if r.code != exitOK || r.out != want {
+				t.Errorf("exit %d, stdout %q, stderr %q; want stdout %q", r.code, r.out, r.err, want)
+			}
+		})
+	}
+
+	t.Run("a broken recipe", func(t *testing.T) {
+		files := maps.Clone(plain)
+		files["recipes/r/recipe.yaml"] = "steps: [\n"
+		dir := vmtest.WriteProject(t, files)
+		path, _ := newIdentity(t)
+		r := winchWith(t, dir, "", path, "", fakehost.New(), false, "", "secret", "init")
+		if r.code != exitInvalid || strings.Contains(r.out, "added") || !strings.Contains(r.err, "recipes/r/recipe.yaml") {
+			t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+		}
+		if got := read(t, filepath.Join(dir, "winch.yaml")); got != "name: acme\n" {
+			t.Errorf("winch.yaml changed: %q", got)
 		}
 	})
 

@@ -122,13 +122,21 @@ func secretInit(ctx context.Context, env Env, f *flags, args []string) int {
 		return exitInvalid
 	}
 	fmt.Fprintf(env.stdout, "public key: %s\n", key)
+	sealed, err := project.HasSecrets(env.Dir)
+	if err != nil {
+		printError(env.stderr, err.Error())
+		return exitInvalid
+	}
 	added, err := project.AddRecipient(env.Dir, key)
 	if err != nil {
 		printError(env.stderr, err.Error())
 		return exitInvalid
 	}
-	if added {
-		fmt.Fprintln(env.stdout, "added the public key to recipients in winch.yaml")
+	if !added {
+		return exitOK
+	}
+	fmt.Fprintln(env.stdout, "added the public key to recipients in winch.yaml")
+	if sealed {
 		fmt.Fprintln(env.stdout, "a member who can read the secrets must now run winch secret rekey")
 	}
 	return exitOK
