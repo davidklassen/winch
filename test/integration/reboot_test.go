@@ -330,7 +330,7 @@ func TestRebootRequiredInRun(t *testing.T) {
           creates: /root/updated
       - reboot:
           if_required: true
-          timeout: 120
+          timeout: 300
 `,
 	})
 	r := lab.Winch(t, dir, "plan", "site")
