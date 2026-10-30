@@ -348,6 +348,30 @@ func TestValidate(t *testing.T) {
 			"winch.yaml":            "name: acme\n",
 			"inventories/test.yaml": "",
 		}},
+		{name: "recipe-notify-no-handlers", files: map[string]string{
+			"winch.yaml":                "name: acme\nhosts: {web1.acme.com: {}}\nsteps: [{recipe: nginx}]\n",
+			"inventories/test.yaml":     "",
+			"pipelines/site.yaml":       "",
+			"recipes/nginx/recipe.yaml": "steps: [{pkg: {name: nginx}, notify: reload}]\n",
+		}},
+		{name: "recipe-notify-unknown-handler", files: map[string]string{
+			"winch.yaml":                "name: acme\nhosts: {web1.acme.com: {}}\nsteps: [{recipe: nginx}]\n",
+			"inventories/test.yaml":     "",
+			"pipelines/site.yaml":       "",
+			"recipes/nginx/recipe.yaml": "steps: [{pkg: {name: nginx}, notify: relaod}]\nhandlers:\n  reload: [{pkg: {name: nginx}}]\n",
+		}},
+		{name: "recipe-notify-other-no-handlers", files: map[string]string{
+			"winch.yaml":                "name: acme\nhosts: {web1.acme.com: {}}\nsteps: [{recipe: nginx}, {recipe: other}]\n",
+			"inventories/test.yaml":     "",
+			"pipelines/site.yaml":       "",
+			"recipes/nginx/recipe.yaml": "steps: [{pkg: {name: nginx}, notify: other.reload}]\n",
+			"recipes/other/recipe.yaml": "steps: []\n",
+		}},
+		{name: "stage-notify-no-handlers", files: map[string]string{
+			"winch.yaml":            "name: acme\nhosts: {web1.acme.com: {}}\nsteps: [{pkg: {name: nginx}, notify: reload}]\n",
+			"inventories/test.yaml": "",
+			"pipelines/site.yaml":   "",
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
