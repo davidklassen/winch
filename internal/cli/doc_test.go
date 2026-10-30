@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"bytes"
+	"cmp"
+	"encoding/json"
 	"maps"
 	"os"
 	"path/filepath"
@@ -198,6 +201,7 @@ func TestDocInvalid(t *testing.T) {
 		{"topic name and key paths", []string{"doc", "steps"}, `winch doc: unknown topic or module "steps"; did you mean "step", "project.steps", "pipeline.steps", or "recipe.steps"?`},
 		{"unknown module of a key", []string{"doc", "fiel.mode"}, `winch doc: unknown topic or module "fiel"; did you mean "file"?`},
 		{"two arguments", []string{"doc", "file", "dir"}, "winch: doc takes one topic, module, or key"},
+		{"json with a module", []string{"doc", "file", "--json"}, "winch: doc --json takes no topic, module, or key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -387,6 +391,309 @@ func TestDocTopicExamples(t *testing.T) {
 			if err != nil || len(warnings) > 0 {
 				t.Errorf("the examples do not load as a project: %v %v", err, warnings)
 			}
+		})
+	}
+}
+
+// docJSON is the shape of winch doc --json.
+type docJSON struct {
+	Intro    string
+	Topics   []docJSONTopic
+	Modules  []docJSONModule
+	Commands []struct{ Name, Usage, Help string }
+}
+
+type docJSONTopic struct {
+	Name, Line, Body, Example string
+	Keys                      []docJSONKey
+	Functions                 []struct{ Name, Line, Text string }
+}
+
+type docJSONModule struct {
+	Name, Line, Body, Example string
+	Keys                      []docJSONKey
+}
+
+type docJSONKey struct {
+	Name, Path, Type, Default string
+	Required                  bool
+	Line, Text                string
+	Keys                      []docJSONKey
+}
+
+// docColumns splits a table row of winch doc into its columns.
+var docColumns = regexp.MustCompile(` {2,}`)
+
+// docTable returns the rows of the table that starts after head in page.
+func docTable(page, head string) [][]string {
+	_, table, ok := strings.Cut(page, head)
+	if !ok {
+		return nil
+	}
+	table, _, _ = strings.Cut(table, "\n\n")
+	var rows [][]string
+	for line := range strings.Lines(table) {
+		rows = append(rows, docColumns.Split(strings.TrimSpace(line), -1))
+	}
+	return rows
+}
+
+// docKeyRows returns the rows of a key table of keys, with nested keys by
+// their path when nested is true.
+func docKeyRows(prefix string, keys []docJSONKey, nested bool) [][]string {
+	var rows [][]string
+	for _, k := range keys {
+		def := cmp.Or(k.Default, "-")
+		if k.Required {
+			def = "required"
+		}
+		row := []string{prefix + k.Name, k.Type, def}
+		if k.Line != "" {
+			row = append(row, k.Line)
+		}
+		rows = append(rows, row)
+		if nested {
+			rows = append(rows, docKeyRows(prefix+k.Name+".", k.Keys, true)...)
+		}
+	}
+	return rows
+}
+
+var (
+	docMarkdown = strings.NewReplacer("\n```\n", "\n", "\n## ", "\n")
+	docEscape   = regexp.MustCompile(`\\([[:punct:]])`)
+	docHeading  = regexp.MustCompile(`(?m)^(\S.*):$`)
+)
+
+// docWords returns the words of text, without the Markdown of a topic body.
+func docWords(text string) []string {
+	text = docMarkdown.Replace("\n" + text + "\n")
+	return strings.Fields(docEscape.ReplaceAllString(text, "$1"))
+}
+
+// docSection returns the part of page after head up to the first of ends.
+func docSection(page, head string, ends ...string) string {
+	_, s, _ := strings.Cut(page, head)
+	for _, end := range ends {
+		s, _, _ = strings.Cut(s, end)
+	}
+	return s
+}
+
+func indentDoc(text string) string {
+	var b strings.Builder
+	for line := range strings.Lines(text) {
+		if line != "\n" {
+			line = "  " + line
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+func decodeDocJSON(t *testing.T) (docJSON, string) {
+	t.Helper()
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "--json")
+	if r.code != exitOK || r.err != "" {
+		t.Fatalf("exit %d, stderr %q", r.code, r.err)
+	}
+	dec := json.NewDecoder(strings.NewReader(r.out))
+	dec.DisallowUnknownFields()
+	var d docJSON
+	if err := dec.Decode(&d); err != nil {
+		t.Fatalf("the output does not parse: %v", err)
+	}
+	if dec.More() {
+		t.Fatal("the output has more than one JSON document")
+	}
+	return d, r.out
+}
+
+// checkDocKeys checks that winch doc <path> of each key in keys prints its
+// type, default, text, and the table of its keys.
+func checkDocKeys(t *testing.T, dir string, h *fakehost.Hosts, keys []docJSONKey) {
+	t.Helper()
+	for _, k := range keys {
+		r := winch(t, dir, h, false, "", "doc", k.Path)
+		head := k.Type
+		switch {
+		case k.Required:
+			head += ", required"
+		case k.Default != "":
+			head += ", default " + k.Default
+		}
+		head = k.Path + ": " + head + "\n\n"
+		if r.code != exitOK || !strings.HasPrefix(r.out, head) {
+			t.Errorf("winch doc %s: exit %d, stdout %q, want the head %q", k.Path, r.code, r.out, head)
+			continue
+		}
+		text := docSection(r.out, head, "\nKeys")
+		if !slices.Equal(docWords(text), docWords(k.Text)) {
+			t.Errorf("winch doc %s: text %q, JSON %q", k.Path, text, k.Text)
+		}
+		rows := docTable(r.out, "Keys of each element:\n")
+		if rows == nil {
+			rows = docTable(r.out, "\nKeys:\n")
+		}
+		if want := docKeyRows("", k.Keys, false); !slices.EqualFunc(rows, want, slices.Equal) {
+			t.Errorf("winch doc %s: keys %q, JSON %q", k.Path, rows, want)
+		}
+		checkDocKeys(t, dir, h, k.Keys)
+	}
+}
+
+// spec: CLI
+func TestDocJSON(t *testing.T) {
+	d, _ := decodeDocJSON(t)
+	dir, h := t.TempDir(), fakehost.New()
+	index := winch(t, dir, h, false, "", "doc").out
+	if d.Intro == "" || !strings.HasPrefix(index, d.Intro+"\n\nTopics:\n") {
+		t.Errorf("intro %q, index %q", d.Intro, index)
+	}
+	var topicRows, moduleRows [][]string
+	for _, tp := range d.Topics {
+		topicRows = append(topicRows, []string{tp.Name, tp.Line})
+	}
+	for _, m := range d.Modules {
+		moduleRows = append(moduleRows, []string{m.Name, m.Line})
+	}
+	if rows := docTable(index, "\nTopics:\n"); !slices.EqualFunc(rows, topicRows, slices.Equal) {
+		t.Errorf("index topics %q, JSON %q", rows, topicRows)
+	}
+	if rows := docTable(index, "\nModules:\n"); !slices.EqualFunc(rows, moduleRows, slices.Equal) {
+		t.Errorf("index modules %q, JSON %q", rows, moduleRows)
+	}
+
+	for _, tp := range d.Topics {
+		page := winch(t, dir, h, false, "", "doc", tp.Name).out
+		head := tp.Name + ": " + tp.Line + "\n\n"
+		if !strings.HasPrefix(page, head) {
+			t.Errorf("winch doc %s: %q does not start with %q", tp.Name, page, head)
+			continue
+		}
+		body := docSection(page, head, "\nKeys:\n", "\nFunctions:\n", "\nExample:\n", "\nRun \"winch doc")
+		if !slices.Equal(docWords(docHeading.ReplaceAllString(body, "$1")), docWords(tp.Body)) {
+			t.Errorf("winch doc %s: body\n%s\nJSON\n%s", tp.Name, body, tp.Body)
+		}
+		if example := docSection(page, "\nExample:\n", "\nRun \"winch doc"); example != indentDoc(tp.Example) {
+			t.Errorf("winch doc %s: example %q, JSON %q", tp.Name, example, tp.Example)
+		}
+		if rows, want := docTable(page, "\nKeys:\n"), docKeyRows("", tp.Keys, true); !slices.EqualFunc(rows, want, slices.Equal) {
+			t.Errorf("winch doc %s: keys %q, JSON %q", tp.Name, rows, want)
+		}
+		var functions [][]string
+		for _, f := range tp.Functions {
+			functions = append(functions, []string{f.Name, f.Line})
+			path := tp.Name + "." + f.Name
+			r := winch(t, dir, h, false, "", "doc", path)
+			head := path + ": function\n\n"
+			if !strings.HasPrefix(r.out, head) || !slices.Equal(docWords(r.out[len(head):]), docWords(f.Text)) {
+				t.Errorf("winch doc %s: %q, JSON %q", path, r.out, f.Text)
+			}
+		}
+		if rows := docTable(page, "\nFunctions:\n"); !slices.EqualFunc(rows, functions, slices.Equal) {
+			t.Errorf("winch doc %s: functions %q, JSON %q", tp.Name, rows, functions)
+		}
+		checkDocKeys(t, dir, h, tp.Keys)
+	}
+
+	for _, m := range d.Modules {
+		page := winch(t, dir, h, false, "", "doc", m.Name).out
+		head := m.Name + ": " + m.Line + "\n\n"
+		if !strings.HasPrefix(page, head) {
+			t.Errorf("winch doc %s: %q does not start with %q", m.Name, page, head)
+			continue
+		}
+		if body := docSection(page, head, "Keys:\n"); !slices.Equal(docWords(body), docWords(m.Body)) {
+			t.Errorf("winch doc %s: body %q, JSON %q", m.Name, body, m.Body)
+		}
+		if example := docSection(page, "\nExample:\n", "\nRun \"winch doc"); m.Example == "" || example != indentDoc(m.Example) {
+			t.Errorf("winch doc %s: example %q, JSON %q", m.Name, example, m.Example)
+		}
+		if rows, want := docTable(page, "\nKeys:\n"), docKeyRows("", m.Keys, false); !slices.EqualFunc(rows, want, slices.Equal) {
+			t.Errorf("winch doc %s: keys %q, JSON %q", m.Name, rows, want)
+		}
+		checkDocKeys(t, dir, h, m.Keys)
+	}
+
+	var names []string
+	for _, c := range d.Commands {
+		names = append(names, c.Name)
+		r := winch(t, dir, h, false, "", append(strings.Fields(c.Name), "--help")...)
+		if r.code != exitOK || r.out != c.Help {
+			t.Errorf("winch %s --help: exit %d, stdout %q, JSON %q", c.Name, r.code, r.out, c.Help)
+		}
+		if !strings.Contains(c.Help, "\nUsage: "+c.Usage+"\n") {
+			t.Errorf("winch %s: usage %q is not the usage line of the help", c.Name, c.Usage)
+		}
+	}
+	// The commands come in the order of winch --help, each with its
+	// subcommands in the order of its own help.
+	var want []string
+	for _, row := range docTable(mainHelp, "\nCommands:\n") {
+		if _, ok := commands[row[0]]; !ok {
+			continue
+		}
+		want = append(want, row[0])
+		for _, sub := range docTable(commands[row[0]].help, "\nCommands:\n") {
+			want = append(want, row[0]+" "+sub[0])
+		}
+	}
+	if !slices.Equal(names, want) || len(want) != len(commands) {
+		t.Errorf("commands %q, want %q, all %q", names, want, slices.Sorted(maps.Keys(commands)))
+	}
+}
+
+// spec: CLI
+func TestDocJSONFields(t *testing.T) {
+	_, out := decodeDocJSON(t)
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &top); err != nil {
+		t.Fatal(err)
+	}
+	if got := slices.Sorted(maps.Keys(top)); !slices.Equal(got, []string{"commands", "intro", "modules", "topics"}) {
+		t.Errorf("top-level fields %q", got)
+	}
+	var cmds []map[string]json.RawMessage
+	if err := json.Unmarshal(top["commands"], &cmds); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cmds {
+		if got := slices.Sorted(maps.Keys(c)); !slices.Equal(got, []string{"help", "name", "usage"}) {
+			t.Errorf("command fields %q", got)
+		}
+	}
+}
+
+// spec: CLI
+func TestDocJSONGolden(t *testing.T) {
+	_, out := decodeDocJSON(t)
+	var d struct{ Topics, Modules []json.RawMessage }
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name  string
+		items []json.RawMessage
+	}{
+		{"file", d.Modules},
+		{"secrets", d.Topics},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			i := slices.IndexFunc(tt.items, func(raw json.RawMessage) bool {
+				var v struct{ Name string }
+				return json.Unmarshal(raw, &v) == nil && v.Name == tt.name
+			})
+			if i < 0 {
+				t.Fatalf("no %s in the JSON", tt.name)
+			}
+			var b bytes.Buffer
+			if err := json.Indent(&b, tt.items[i], "", "  "); err != nil {
+				t.Fatal(err)
+			}
+			b.WriteByte('\n')
+			golden.Assert(t, filepath.Join("testdata", "doc", tt.name+".json.golden"), b.Bytes())
 		})
 	}
 }
