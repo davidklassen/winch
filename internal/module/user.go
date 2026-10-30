@@ -163,7 +163,7 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 	}
 	cur, exists := a.user(u.Name)
 	if u.Absent {
-		return u.checkAbsent(a, cur, exists, st.LoginUID)
+		return u.checkAbsent(a, cur, exists, st)
 	}
 	if u.Password != "" {
 		if err := checkHash(u.Password); err != nil {
@@ -297,19 +297,20 @@ func (u *User) uid() uint32 {
 	return uint32(id)
 }
 
-func (u *User) checkAbsent(a accounts, cur passwdEntry, exists bool, login uint32) (Result, error) {
+func (u *User) checkAbsent(a accounts, cur passwdEntry, exists bool, st *State) (Result, error) {
 	if !exists {
 		return Result{Status: OK}, nil
 	}
-	if cur.uid == login {
+	if cur.uid == st.LoginUID {
 		return Result{}, fmt.Errorf("%s is the login user of this session; log in as another user to remove it", u.Name)
 	}
 	if err := noFlagsAt("/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow"); err != nil {
 		return Result{}, err
 	}
 	u.account = []string{"userdel", u.Name}
+	st.RemovedUsers = append(st.RemovedUsers, u.Name)
 	res := Result{Status: Change, Action: Remove}
-	if removesGroup(a, cur) {
+	if removesGroup(a, cur, st.RemovedUsers) {
 		res.Changes = []string{"remove group " + cur.name}
 	}
 	procs, err := userProcesses("/proc", cur.uid)
@@ -323,16 +324,17 @@ func (u *User) checkAbsent(a accounts, cur passwdEntry, exists bool, login uint3
 }
 
 // removesGroup reports whether userdel removes the primary group of user, as
-// shadow's userdel decides.
-func removesGroup(a accounts, user passwdEntry) bool {
+// shadow's userdel decides. The removed users are gone by then.
+func removesGroup(a accounts, user passwdEntry, removed []string) bool {
+	gone := func(name string) bool { return name == user.name || slices.Contains(removed, name) }
 	g, ok := a.group(strconv.FormatUint(uint64(user.gid), 10))
 	// userdel removes the user from the members first.
-	others := slices.DeleteFunc(slices.Clone(g.members), func(m string) bool { return m == user.name })
+	others := slices.DeleteFunc(slices.Clone(g.members), gone)
 	if !ok || g.name != user.name || len(others) > 0 || !userGroups() {
 		return false
 	}
 	for _, o := range a.users {
-		if o.gid == user.gid && o.name != user.name {
+		if o.gid == user.gid && !gone(o.name) {
 			return false
 		}
 	}

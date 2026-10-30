@@ -712,30 +712,50 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Name:      "absent",
 			Setup:     `useradd -m -U wtalice`,
 			Args:      &module.User{Name: "wtalice", Absent: true},
+			WantState: module.State{RemovedUsers: []string{"wtalice"}},
 			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove group wtalice"}},
 			Unchanged: `getent passwd wtalice`,
 			After:     `! getent passwd wtalice && ! getent group wtalice && [ -d /home/wtalice ]`,
 		},
 		{
-			Name:  "absent keeps a group with members",
-			Setup: `useradd -m -U wtalice && usermod -aG wtalice admin`,
-			Args:  &module.User{Name: "wtalice", Absent: true},
-			Want:  module.Result{Status: module.Change, Action: module.Remove},
-			After: `! getent passwd wtalice && getent group wtalice`,
+			Name:      "absent keeps a group with members",
+			Setup:     `useradd -m -U wtalice && usermod -aG wtalice admin`,
+			Args:      &module.User{Name: "wtalice", Absent: true},
+			WantState: module.State{RemovedUsers: []string{"wtalice"}},
+			Want:      module.Result{Status: module.Change, Action: module.Remove},
+			After:     `! getent passwd wtalice && getent group wtalice`,
 		},
 		{
-			Name:  "absent removes a group whose only member is the user",
-			Setup: `useradd -m -U wtalice && usermod -aG wtalice wtalice`,
-			Args:  &module.User{Name: "wtalice", Absent: true},
-			Want:  module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove group wtalice"}},
-			After: `! getent group wtalice`,
+			Name:      "absent removes a group whose only member is the user",
+			Setup:     `useradd -m -U wtalice && usermod -aG wtalice wtalice`,
+			Args:      &module.User{Name: "wtalice", Absent: true},
+			WantState: module.State{RemovedUsers: []string{"wtalice"}},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove group wtalice"}},
+			After:     `! getent group wtalice`,
 		},
 		{
-			Name:  "absent keeps a group that is the primary group of another user",
-			Setup: `useradd -m -U wtalice && useradd -M -g wtalice wtbob`,
-			Args:  &module.User{Name: "wtalice", Absent: true},
-			Want:  module.Result{Status: module.Change, Action: module.Remove},
-			After: `getent group wtalice`,
+			Name:      "absent keeps a group that is the primary group of another user",
+			Setup:     `useradd -m -U wtalice && useradd -M -g wtalice wtbob`,
+			Args:      &module.User{Name: "wtalice", Absent: true},
+			WantState: module.State{RemovedUsers: []string{"wtalice"}},
+			Want:      module.Result{Status: module.Change, Action: module.Remove},
+			After:     `getent group wtalice`,
+		},
+		{
+			Name:      "absent removes a group that is the primary group of a removed user",
+			Setup:     `useradd -m -U wtalice && useradd -M -g wtalice wtbob`,
+			State:     module.State{RemovedUsers: []string{"wtbob"}},
+			Args:      &module.User{Name: "wtalice", Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove group wtalice"}},
+			WantState: module.State{RemovedUsers: []string{"wtbob", "wtalice"}},
+		},
+		{
+			Name:      "absent removes a group whose other member is a removed user",
+			Setup:     `useradd -m -U wtalice && useradd -M -U -G wtalice wtbob`,
+			State:     module.State{RemovedUsers: []string{"wtbob"}},
+			Args:      &module.User{Name: "wtalice", Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove group wtalice"}},
+			WantState: module.State{RemovedUsers: []string{"wtbob", "wtalice"}},
 		},
 		{
 			Name: "absent of a missing user",
@@ -751,6 +771,7 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Name:         "absent with a running process",
 			Setup:        `useradd -U wtalice && systemd-run --uid=wtalice --unit=wt-sleep sleep 600 && timeout 10 sh -c 'until pgrep -u wtalice sleep; do sleep 0.1; done'`,
 			Args:         &module.User{Name: "wtalice", Absent: true},
+			WantState:    module.State{RemovedUsers: []string{"wtalice"}},
 			Want:         module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove group wtalice", "processes of wtalice run (sleep); userdel fails while they run"}},
 			WantApplyErr: "userdel: user wtalice is currently used by process",
 			Fix:          "systemctl stop wt-sleep",
@@ -991,6 +1012,50 @@ func TestGroupModule(t *testing.T) {
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"gid 2600 → 2700; files keep the old gid"}},
 			After: `[ "$(getent group wtgrp)" = "wtgrp:x:2700:" ]`,
 		},
+		{
+			Name:      "absent",
+			Setup:     `groupadd wtgrp && useradd -M -U -G wtgrp wtu1`,
+			Args:      &module.Group{Name: "wtgrp", Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove},
+			Unchanged: `getent group wtgrp`,
+			After:     `! getent group wtgrp && [ "$(id -Gn wtu1)" = wtu1 ]`,
+		},
+		{
+			Name: "absent of a missing group",
+			Args: &module.Group{Name: "wtgrp", Absent: true},
+			Want: module.Result{Status: module.OK},
+		},
+		{
+			Name:      "absent of a primary group",
+			Setup:     `groupadd wtgrp && useradd -M -g wtgrp wtu2 && useradd -M -g wtgrp wtu1`,
+			Args:      &module.Group{Name: "wtgrp", Absent: true},
+			WantErr:   "wtgrp is the primary group of wtu1, wtu2; remove them or change their group first",
+			Unchanged: `getent group wtgrp`,
+		},
+		{
+			Name:    "absent with an immutable /etc/gshadow",
+			Setup:   `groupadd wtgrp && chattr +i /etc/gshadow`,
+			Args:    &module.Group{Name: "wtgrp", Absent: true},
+			WantErr: "/etc/gshadow is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "absent with an immutable /etc/group",
+			Setup:   `groupadd wtgrp && chattr +i /etc/group`,
+			Args:    &module.Group{Name: "wtgrp", Absent: true},
+			WantErr: "/etc/group is immutable; chattr -i changes it",
+		},
+		{
+			Name:      "absent of a group of the login user",
+			Setup:     `groupadd wtgrp && gpasswd -a admin wtgrp`,
+			Args:      &module.Group{Name: "wtgrp", Absent: true},
+			WantErr:   "the login user admin is in group wtgrp; removing it cuts off winch's access",
+			Unchanged: `getent group wtgrp`,
+		},
+		{
+			Name:    "absent of the primary group of the login user",
+			Args:    &module.Group{Name: "admin", Absent: true},
+			WantErr: "the login user admin is in group admin; removing it cuts off winch's access",
+		},
 	})
 }
 
@@ -1036,6 +1101,50 @@ func TestUsers(t *testing.T) {
 	if err != nil || string(out) != "wtdev\nwtteam\n" {
 		t.Errorf("ssh as wtdev: %v: %q", err, out)
 	}
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+}
+
+// spec: Modules/user and group
+func TestGroupAbsentAfterUser(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "group-absent")
+	vm.MustRun(t, `useradd -M -U wtapp && groupadd wtshared && useradd -M -g wtshared wtu1`)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  " + vm.Name + ": {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: s
+    hosts: all
+    steps:
+      - user: {name: wtapp, absent: true}
+      - group: {name: wtapp, absent: true}
+      - user: {name: wtu1, absent: true}
+      - group: {name: wtshared, absent: true}
+`,
+		"pipelines/reverse.yaml": `stages:
+  - name: s
+    hosts: all
+    steps:
+      - group: {name: wtapp, absent: true}
+      - user: {name: wtapp, absent: true}
+`,
+	})
+	r := lab.Winch(t, dir, "plan", "reverse")
+	if r.Code == 0 || !strings.Contains(r.Stderr, "wtapp is the primary group of wtapp") {
+		t.Errorf("plan reverse: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "- group wtshared") {
+		t.Fatalf("plan: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 0 || strings.Contains(r.Stdout, "s: - group wtapp") || !strings.Contains(r.Stdout, "s: - group wtshared") {
+		t.Fatalf("apply: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, `! getent passwd wtapp && ! getent group wtapp && ! getent passwd wtu1 && ! getent group wtshared`)
 	r = lab.Winch(t, dir, "plan", "site")
 	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)

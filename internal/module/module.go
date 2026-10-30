@@ -75,6 +75,8 @@ type State struct {
 	// IndexFresh is true after an install of the run refreshed the package
 	// index.
 	IndexFresh bool `json:"index_fresh,omitempty"`
+	// RemovedUsers are the users that earlier steps of the host remove.
+	RemovedUsers []string `json:"removed_users,omitempty"`
 	// LoginUID is the UID of the session's login user. The helper sets it.
 	LoginUID uint32 `json:"-"`
 	// SSHConnection is the SSH_CONNECTION of the session's login. The helper

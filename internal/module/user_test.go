@@ -175,7 +175,9 @@ func TestGroupValidate(t *testing.T) {
 		{"bad name", "name: \"-x\"\n", `t.yaml:1:7: name: "-x" is not a group name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
 		{"gid name", "name: a\ngid: abc\n", `t.yaml:2:6: gid: must be a numeric ID, such as "1000"`},
 		{"gid too large", "name: a\ngid: \"99999999999\"\n", `t.yaml:2:6: gid: an ID must be below 4294967295`},
-		{"absent", "name: a\nabsent: true\n", `t.yaml:2:1: unknown key "absent"`},
+		{"absent", "name: a\nabsent: true\n", ""},
+		{"absent with gid", "name: a\nabsent: true\ngid: 5\n", `t.yaml:3:6: gid: absent: true takes no gid`},
+		{"absent with system", "name: a\nabsent: true\nsystem: true\n", `t.yaml:3:9: system: absent: true takes no system`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Group{}, tt.yaml, tt.want) })
@@ -271,6 +273,44 @@ func TestKeyChanges(t *testing.T) {
 			got := keyChanges(tt.cur, tt.want)
 			if fmt.Sprint(got) != fmt.Sprint(tt.changes) {
 				t.Errorf("got %q, want %q", got, tt.changes)
+			}
+		})
+	}
+}
+
+// spec: Modules/user and group
+func TestGroupRemovable(t *testing.T) {
+	a := accounts{
+		users:  []passwdEntry{{name: "root", gid: 0}, {name: "admin", uid: 1000, gid: 1000}, {name: "app", uid: 1001, gid: 1001}, {name: "u2", uid: 1003, gid: 1002}, {name: "u1", uid: 1002, gid: 1002}},
+		groups: []groupEntry{{name: "root", gid: 0}, {name: "admin", gid: 1000}, {name: "app", gid: 1001}, {name: "shared", gid: 1002}, {name: "sudo", gid: 27, members: []string{"app", "admin", "root"}}, {name: "web", gid: 33, members: []string{"app"}}},
+	}
+	tests := []struct {
+		name    string
+		group   string
+		login   uint32
+		removed []string
+		want    string
+	}{
+		{"a group with members", "web", 1000, nil, ""},
+		{"a primary group", "shared", 1000, nil, "shared is the primary group of u1, u2; remove them or change their group first"},
+		{"a primary group of removed users", "shared", 1000, []string{"u1", "u2"}, ""},
+		{"a primary group of one removed user", "shared", 1000, []string{"u2"}, "shared is the primary group of u1; remove them or change their group first"},
+		{"a group of the login user", "sudo", 1000, nil, "the login user admin is in group sudo; removing it cuts off winch's access"},
+		{"the primary group of the login user", "admin", 1000, nil, "the login user admin is in group admin; removing it cuts off winch's access"},
+		{"root as the login user", "root", 0, nil, "root is the primary group of root; remove them or change their group first"},
+		{"a group of root as the login user", "sudo", 0, nil, ""},
+		{"a login user that is not in passwd", "root", 4294967295, nil, "root is the primary group of root; remove them or change their group first"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := Group{Name: tt.group, Absent: true}
+			cur, _ := a.group(tt.group)
+			got := ""
+			if err := g.removable(a, cur, &State{LoginUID: tt.login, RemovedUsers: tt.removed}); err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("removable() = %q, want %q", got, tt.want)
 			}
 		})
 	}
