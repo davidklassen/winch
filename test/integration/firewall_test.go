@@ -26,10 +26,20 @@ func TestFirewallModule(t *testing.T) {
 	firewall := "  - firewall:\n      allow:\n"
 	table := "nft list table inet winch"
 
+	// Without nft and a pkg step for nftables, the plan notes the package.
+	vm.MustRun(t, "[ ! -e /usr/sbin/nft ] || mv /usr/sbin/nft /usr/sbin/nft.off")
+	if err := os.WriteFile(filepath.Join(dir, "winch.yaml"), []byte("name: fw\nhosts:\n  firewall2: {}\nsteps:\n"+firewall+"        - tcp: 22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := lab.Winch(t, dir, "plan"); r.Code != 0 || !strings.Contains(r.Stderr, "firewall2: nft is missing and no pkg step installs nftables\n") {
+		t.Fatalf("plan without nftables: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, "[ ! -e /usr/sbin/nft.off ] || mv /usr/sbin/nft.off /usr/sbin/nft")
+
 	// Create.
 	project(firewall + "        - tcp: 22\n")
 	r := lab.Winch(t, dir, "plan")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "+ firewall\n        add tcp 22\n        create directory /etc/winch") || !strings.Contains(r.Stdout, "create file /etc/systemd/system/nftables.service.d/winch.conf") || !strings.Contains(r.Stdout, "enable winch-firewall.service\n        load the rules\n\n") {
+	if r.Code != 0 || strings.Contains(r.Stderr, "nft is missing") || !strings.Contains(r.Stdout, "+ firewall\n        add tcp 22\n        create directory /etc/winch") || !strings.Contains(r.Stdout, "create file /etc/systemd/system/nftables.service.d/winch.conf") || !strings.Contains(r.Stdout, "enable winch-firewall.service\n        load the rules\n\n") {
 		t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	if r := lab.Winch(t, dir, "apply", "--yes"); r.Code != 0 {

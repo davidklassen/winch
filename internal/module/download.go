@@ -43,6 +43,9 @@ type Download struct {
 	// Recorded is the Record of the last successful unpack into Unpack, or
 	// "".
 	Recorded string `json:"-"`
+
+	// fetch is set by a check that downloads the URL.
+	fetch bool
 }
 
 func (d *Download) Main() string {
@@ -112,7 +115,37 @@ func (d *Download) archiveType() string {
 	return ""
 }
 
-func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result, error) {
+func (d *Download) Check(_ context.Context, _ *State, _ func(string)) (Result, error) {
+	res, err := d.check()
+	if err != nil || !d.fetch {
+		return res, err
+	}
+	res.MissingTools, err = d.missingTools()
+	return res, err
+}
+
+// missingTools returns the tools that the download and the unpack need and
+// the host lacks.
+func (d *Download) missingTools() ([]Tool, error) {
+	var tools []Tool
+	if u, err := url.Parse(d.URL); err == nil && u.Scheme == "https" {
+		_, err := os.Stat(caBundle)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			tools = append(tools, Tool{Name: caBundle, Package: "ca-certificates"})
+		case err != nil:
+			return nil, err
+		}
+	}
+	if d.Unpack != "" && d.archiveType() == ".tar.xz" {
+		if _, err := exec.LookPath("xz"); err != nil {
+			tools = append(tools, Tool{Name: "xz", Package: "xz-utils"})
+		}
+	}
+	return tools, nil
+}
+
+func (d *Download) check() (Result, error) {
 	owner, group, mode, err := attrs(d.Owner, d.Group, d.Mode, "0644")
 	if err != nil {
 		return Result{}, err
@@ -131,6 +164,7 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 		return Result{}, err
 	}
 	if !exists {
+		d.fetch = true
 		changes := append(parentChanges(missing), "download "+d.URL, attrLine(owner, group, mode)+userNote(owner, group))
 		return Result{Status: Change, Action: Create, Changes: changes}, nil
 	}
@@ -143,6 +177,7 @@ func (d *Download) Check(ctx context.Context, st *State, _ func(string)) (Result
 	}
 	res := Result{Status: OK}
 	if !same {
+		d.fetch = true
 		res = Result{Status: Change, Action: Modify, Changes: []string{"download " + d.URL + " (the sha256 differs)"}}
 	}
 	changes, err := attrChanges(fi, owner, group, mode)
@@ -177,6 +212,7 @@ func (d *Download) checkUnpack(owner, group string) (Result, error) {
 	unpack := "unpack into " + d.Unpack + " (owner " + owner + ", group " + group + userNote(owner, group) + ")"
 	switch {
 	case !exists:
+		d.fetch = true
 		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), "download "+d.URL, unpack)}, nil
 	case !fi.IsDir():
 		return Result{}, fmt.Errorf("%s is %s, not a directory", d.Unpack, kind(fi))
@@ -201,6 +237,7 @@ func (d *Download) checkUnpack(owner, group string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	d.fetch = true
 	changes := []string{"download " + d.URL + " (" + why + ")", unpack}
 	if d.Recorded == "" {
 		changes = append(changes, "remove its content: "+t.counts())

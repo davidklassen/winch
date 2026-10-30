@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -379,7 +380,7 @@ func equal(got, want module.Result) bool {
 	if (got.Old == nil) != (want.Old == nil) || got.Old != nil && *got.Old != *want.Old {
 		return false
 	}
-	return got.Status == want.Status && got.Action == want.Action && got.OldReason == want.OldReason && got.Link == want.Link && slices.Equal(got.Changes, want.Changes) && slices.Equal(got.StartedBy, want.StartedBy) && slices.Equal(got.Missing, want.Missing) && got.Deferred == want.Deferred && got.Validates == want.Validates
+	return got.Status == want.Status && got.Action == want.Action && got.OldReason == want.OldReason && got.Link == want.Link && slices.Equal(got.Changes, want.Changes) && slices.Equal(got.StartedBy, want.StartedBy) && slices.Equal(got.Missing, want.Missing) && slices.Equal(got.MissingTools, want.MissingTools) && got.Deferred == want.Deferred && got.Validates == want.Validates
 }
 
 func show(r module.Result) string {
@@ -387,5 +388,5 @@ func show(r module.Result) string {
 	if r.Old != nil {
 		old = *r.Old
 	}
-	return string(r.Status) + " " + string(r.Action) + " " + strings.Join(r.Changes, "; ") + " old=" + old + " old reason=" + r.OldReason + " link=" + r.Link + " started by=" + strings.Join(r.StartedBy, " ") + " missing=" + strings.Join(r.Missing, ", ") + " deferred=" + strconv.FormatBool(r.Deferred) + " validates=" + strconv.FormatBool(r.Validates)
+	return string(r.Status) + " " + string(r.Action) + " " + strings.Join(r.Changes, "; ") + " old=" + old + " old reason=" + r.OldReason + " link=" + r.Link + " started by=" + strings.Join(r.StartedBy, " ") + " missing=" + strings.Join(r.Missing, ", ") + " missing tools=" + fmt.Sprint(r.MissingTools) + " deferred=" + strconv.FormatBool(r.Deferred) + " validates=" + strconv.FormatBool(r.Validates)
 }

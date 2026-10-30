@@ -164,6 +164,9 @@ func (p *Plan) WriteNotes(out *color.Writer) {
 					kind, _, _ := strings.Cut(m, " ")
 					fmt.Fprintf(out, "%s: %s does not exist yet and no %s step creates it\n", host.Host.Name, secret.Printable(m), kind)
 				}
+				for _, t := range step.Result.MissingTools {
+					fmt.Fprintf(out, "%s: %s is missing and no pkg step installs %s\n", host.Host.Name, t.Name, t.Package)
+				}
 			}
 		}
 	}

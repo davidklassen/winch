@@ -407,7 +407,11 @@ func (f *Firewall) Check(ctx context.Context, st *State, _ func(string)) (Result
 	if file.fi == nil {
 		action = Create
 	}
-	return Result{Status: Change, Action: action, Changes: changes, Guard: true}, nil
+	res := Result{Status: Change, Action: action, Changes: changes, Guard: true}
+	if _, err := exec.LookPath("nft"); err != nil {
+		res.MissingTools = []Tool{{Name: "nft", Package: "nftables"}}
+	}
+	return res, nil
 }
 
 // tableStale reports whether the table on the host is missing, holds the

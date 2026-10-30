@@ -133,7 +133,7 @@ func TestDownloadModule(t *testing.T) {
 	broken := txz[:len(txz)/2]
 	urlBroken := lab.Serve(t, "download/broken.tar.xz", broken)
 
-	reset := "[ ! -d /tmp/w ] || find /tmp/w -depth -mindepth 1 -type d -exec mountpoint -q {} \\; -exec umount {} \\;\n[ ! -d /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w " + record + " && mkdir /tmp/w"
+	reset := "[ ! -e /usr/bin/xz.off ] || mv /usr/bin/xz.off /usr/bin/xz\n[ -e /etc/ssl/certs ] || mv /etc/ssl/certs.off /etc/ssl/certs\n[ ! -d /tmp/w ] || find /tmp/w -depth -mindepth 1 -type d -exec mountpoint -q {} \\; -exec umount {} \\;\n[ ! -d /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w " + record + " && mkdir /tmp/w"
 	t.Run("a failed unpack stays a change and keeps the old tree", func(t *testing.T) {
 		ctx := t.Context()
 		s := vm.Session(t)
@@ -366,6 +366,20 @@ func TestDownloadModule(t *testing.T) {
 			Args:  &module.Download{URL: urlTxz, SHA256: sha(txz), Unpack: "/tmp/w/opt"},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + urlTxz, unpackLine}},
 			After: `[ "$(cat /tmp/w/opt/xd/f)" = xz ]`,
+		},
+		{
+			Name:  "an http tar.xz to a path needs neither xz nor CA certificates",
+			Setup: "mv /usr/bin/xz /usr/bin/xz.off && mv /etc/ssl/certs /etc/ssl/certs.off",
+			Args:  &module.Download{URL: urlTxz, SHA256: sha(txz), Path: "/tmp/w/f"},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + urlTxz, attrs}},
+		},
+		{
+			Name:         "a tar.xz without xz names xz-utils",
+			Setup:        "mv /usr/bin/xz /usr/bin/xz.off",
+			Args:         &module.Download{URL: urlTxz, SHA256: sha(txz), Unpack: "/tmp/w/opt"},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + urlTxz, unpackLine}, MissingTools: []module.Tool{{Name: "xz", Package: "xz-utils"}}},
+			WantApplyErr: "xz is missing; install the package xz-utils with an earlier pkg step",
+			Fix:          "mv /usr/bin/xz.off /usr/bin/xz",
 		},
 		{
 			Name:  "unpack a tgz",
@@ -699,10 +713,17 @@ while True:
 			Fix:          trust,
 		},
 		{
-			Name:         "https without CA certificates names ca-certificates",
-			Setup:        "mv /etc/ssl/certs /etc/ssl/certs.off && " + tls,
-			Args:         &module.Download{URL: untrusted, SHA256: sum, Path: "/tmp/w/f"},
-			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + untrusted, attrs}},
+			Name:  "a file with its sha256 needs no CA certificates",
+			Setup: "mv /etc/ssl/certs /etc/ssl/certs.off && printf tool > /tmp/w/f && chmod 0644 /tmp/w/f",
+			Args:  &module.Download{URL: untrusted, SHA256: sum, Path: "/tmp/w/f"},
+			Want:  module.Result{Status: module.OK},
+		},
+		{
+			Name:  "https without CA certificates names ca-certificates",
+			Setup: "mv /etc/ssl/certs /etc/ssl/certs.off && " + tls,
+			Args:  &module.Download{URL: untrusted, SHA256: sum, Path: "/tmp/w/f"},
+			Want: module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + untrusted, attrs},
+				MissingTools: []module.Tool{{Name: "/etc/ssl/certs/ca-certificates.crt", Package: "ca-certificates"}}},
 			WantApplyErr: "download " + untrusted + ": the host has no CA certificates; install the package ca-certificates with an earlier pkg step",
 			Fix:          "mv /etc/ssl/certs.off /etc/ssl/certs && " + trust,
 		},
