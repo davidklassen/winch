@@ -83,6 +83,8 @@ func (c *Config) Validate() error {
 type Pipeline struct {
 	Name   string
 	Stages []Stage
+	// AdHoc is true for the pipeline of winch run or winch exec.
+	AdHoc bool
 }
 
 type Stage struct {
@@ -269,7 +271,7 @@ func (l *loader) commandPipeline(c Command) (*Pipeline, error) {
 	where := yamlx.Pos{File: "winch " + c.Name}
 	s := Stage{Name: "run", Pipeline: "run", Hosts: c.Pattern, HostsPos: where}
 	if c.Module == "" {
-		return &Pipeline{Name: "run", Stages: []Stage{s}}, nil
+		return &Pipeline{Name: "run", Stages: []Stage{s}, AdHoc: true}, nil
 	}
 	if _, ok := module.New(c.Module); !ok {
 		return nil, yamlx.Errorf(where, "unknown module %q%s", c.Module, yamlx.Suggest(c.Module, module.Names()))
@@ -307,7 +309,7 @@ func (l *loader) commandPipeline(c Command) (*Pipeline, error) {
 		return nil, err
 	}
 	s.Steps = []Step{st}
-	return &Pipeline{Name: "run", Stages: []Stage{s}}, nil
+	return &Pipeline{Name: "run", Stages: []Stage{s}, AdHoc: true}, nil
 }
 
 func setPos(n *yamlx.Node, pos yamlx.Pos) {

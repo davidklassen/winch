@@ -561,12 +561,13 @@ func (o *output) apply(ctx context.Context, f *flags, p *project.Project, words 
 		o.fail(fmt.Errorf("winch: the plan hash is %s, not %s; nothing changed", hash, *f.check))
 		return o.end(worst(code, exitHash), s)
 	}
-	if !pl.HasChanges() {
+	if !pl.HasWork() {
 		return o.end(code, s)
 	}
 	// After an interrupt, apply starts no host, so there is nothing to ask:
-	// the hosts with changes fail as interrupted.
-	if f.check == nil && !f.yes && ctx.Err() == nil {
+	// the hosts with work fail as interrupted. Gone records alone are winch's
+	// own records, not managed state.
+	if pl.HasChanges() && f.check == nil && !f.yes && ctx.Err() == nil {
 		if !env.Terminal {
 			s.command = applyCommand(words, f, pl.Hash())
 			if o.ev == nil {

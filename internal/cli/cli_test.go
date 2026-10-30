@@ -13,6 +13,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -234,6 +235,35 @@ func TestApply(t *testing.T) {
 		r = winch(t, dir, h, false, "", "apply", "site")
 		if r.code != exitOK || !strings.Contains(r.out, "2 hosts: 0 to change, 2 unchanged, 0 unknown\nplan ") {
 			t.Errorf("second apply: exit %d, stdout %q", r.code, r.out)
+		}
+	})
+	// spec: Running a pipeline/Apply
+	t.Run("only a gone record", func(t *testing.T) {
+		for _, tc := range []struct {
+			name     string
+			terminal bool
+			args     []string
+		}{
+			{"yes", false, []string{"--yes"}},
+			{"no terminal", false, nil},
+			{"terminal", true, nil},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				h := fakehost.New()
+				h.SetFile("web1", "/etc/motd", "hello\n")
+				h.SetFile("web2", "/etc/motd", "hello\n")
+				h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/etc/aliases"}})
+				if r := winch(t, dir, h, false, "", "plan", "site", "--exit-code"); r.code != exitOK {
+					t.Errorf("plan --exit-code: exit %d", r.code)
+				}
+				r := winch(t, dir, h, tc.terminal, "", append([]string{"apply", "site"}, tc.args...)...)
+				if r.code != exitOK || !strings.Contains(r.out, "2 hosts: 0 changed, 2 unchanged\n") || strings.Contains(r.err, "Apply these changes?") {
+					t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+				}
+				if got := h.ThenOf("web1"); len(got) != 0 {
+					t.Errorf("then records after apply = %v, want none", got)
+				}
+			})
 		}
 	})
 	t.Run("no terminal", func(t *testing.T) {

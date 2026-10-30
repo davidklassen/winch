@@ -410,8 +410,10 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	for name, hr := range runs {
 		if hr.pending != nil {
 			plan.Pending[name] = *hr.pending
-			plan.gone[name] = goneChecks(p.Pipeline, hr.pending.Checks)
-			plan.goneThens[name] = goneThens(p.Pipeline, name, hr)
+			if !p.Pipeline.AdHoc {
+				plan.gone[name] = goneChecks(p.Pipeline, hr.pending.Checks)
+				plan.goneThens[name] = goneThens(p.Pipeline, name, hr)
+			}
 		}
 		plan.Destinations[name] = hr.dest
 	}
@@ -1193,6 +1195,17 @@ func (p *Plan) HasChanges() bool {
 		}
 	}
 	return false
+}
+
+// HasWork reports whether apply has work on a host that did not fail: a
+// change, or a gone record to remove.
+func (p *Plan) HasWork() bool {
+	return p.HasChanges() || slices.ContainsFunc(p.Hosts, func(h project.Host) bool { return p.removes(h.Name) })
+}
+
+// removes reports whether apply removes gone records on host.
+func (p *Plan) removes(host string) bool {
+	return p.Failed[host] == nil && (len(p.gone[host]) > 0 || len(p.goneThens[host]) > 0)
 }
 
 // scope is the recipe of a step, or the stage for a module step of a stage.

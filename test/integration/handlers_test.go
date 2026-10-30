@@ -361,6 +361,23 @@ func TestHandlers(t *testing.T) {
 		if r = lab.Winch(t, dir, "plan", "site"); r.Code != 0 || r.Stderr != "" {
 			t.Errorf("second plan: exit %d, stderr %q", r.Code, r.Stderr)
 		}
+
+		// Apply removes the record also when the host has no change.
+		fails(strings.Replace(gone, "/root/t/gone", "/root/t/gone2", 1))
+		r = lab.Winch(t, dir, "plan", "site")
+		if want := "handlers: a pending then of file /root/t/gone2 matches no step and will not run\n"; r.Code != 0 || r.Stderr != want || !strings.Contains(r.Stdout, "0 to change") {
+			t.Fatalf("plan: exit %d, stderr %q, want %q\n%s", r.Code, r.Stderr, want, r.Stdout)
+		}
+		// A plan with only gone records asks nothing.
+		if r = lab.Winch(t, dir, "apply", "site"); r.Code != 0 || !strings.Contains(r.Stdout, "0 changed, 1 unchanged") {
+			t.Fatalf("apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if out := vm.MustRun(t, record); out != "" {
+			t.Errorf("then records = %q, want none", out)
+		}
+		if r = lab.Winch(t, dir, "plan", "site"); r.Code != 0 || r.Stderr != "" {
+			t.Errorf("third plan: exit %d, stderr %q", r.Code, r.Stderr)
+		}
 	})
 }
 

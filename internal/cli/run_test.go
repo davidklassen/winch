@@ -7,6 +7,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
@@ -42,6 +43,24 @@ func TestRun(t *testing.T) {
 	r = winch(t, dir, h, false, "", "run", "web2", "file", "path=/etc/n", `content="0644"`, "--yes")
 	if c, _ := h.File("web2", "/etc/n"); r.code != exitOK || c != "0644" {
 		t.Errorf("a quoted number: exit %d, content %q, stderr %q", r.code, c, r.err)
+	}
+}
+
+// spec: Running a pipeline/Apply ("Ad hoc commands")
+func TestRunKeepsRecords(t *testing.T) {
+	dir := runProject(t)
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/motd", "hi")
+	then := protocol.Then{Pipeline: "run", Stage: "web", Module: "file", Mains: []string{"/etc/aliases"}}
+	gate := protocol.Check{Pipeline: "run", Stage: "web"}
+	h.SetThen("web1", then)
+	h.Pend("web1", gate)
+	r := winch(t, dir, h, false, "", "run", "web1", "file", "path=/etc/motd", "content=hi", "--yes")
+	if r.code != exitOK || r.err != "" {
+		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	if len(h.ThenOf("web1")) != 1 || len(h.ChecksOf("web1")) != 1 {
+		t.Errorf("records after run: %v %v, want both", h.ThenOf("web1"), h.ChecksOf("web1"))
 	}
 }
 

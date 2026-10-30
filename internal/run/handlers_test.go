@@ -3,6 +3,7 @@ package run_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"maps"
 	"path/filepath"
 	"reflect"
@@ -508,12 +509,12 @@ func TestPendingThen(t *testing.T) {
 	}
 	// The plan does not check these scopes on web2: a recipe that the project
 	// does not have, a recipe whose when is false, and another pipeline.
-	other := append(slices.Clone(gone),
-		protocol.Then{Recipe: "apps", Module: "file", Mains: []string{"/etc/motd"}},
-		protocol.Then{Recipe: "app", Module: "file", Mains: []string{"/etc/app.conf"}},
-		protocol.Then{Pipeline: "deploy", Stage: "apps", Module: "file", Mains: []string{"/etc/motd"}},
-	)
-	h.SetThen("web2", other...)
+	kept := []protocol.Then{
+		{Recipe: "apps", Module: "file", Mains: []string{"/etc/motd"}},
+		{Recipe: "app", Module: "file", Mains: []string{"/etc/app.conf"}},
+		{Pipeline: "deploy", Stage: "apps", Module: "file", Mains: []string{"/etc/motd"}},
+	}
+	h.SetThen("web2", slices.Concat(gone, kept)...)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -534,9 +535,9 @@ func TestPendingThen(t *testing.T) {
 	if got := h.ThenOf("web1"); len(got) != 0 {
 		t.Errorf("then records on web1 = %v, want none", got)
 	}
-	// Apply does not run on web2, which has no change.
-	if got := h.ThenOf("web2"); !reflect.DeepEqual(got, other) {
-		t.Errorf("then records on web2 = %v, want %v", got, other)
+	// Apply removes the gone records on web2, which has no change.
+	if got := h.ThenOf("web2"); !reflect.DeepEqual(got, kept) {
+		t.Errorf("then records on web2 = %v, want %v", got, kept)
 	}
 	if plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{}); plan.HasChanges() {
 		t.Error("a second plan has changes")
@@ -1116,6 +1117,114 @@ func TestGoneThenScopes(t *testing.T) {
 				t.Errorf("notes:\n%s\nwant:\n%s", errOut.String(), tc.want)
 			}
 		})
+	}
+}
+
+// spec: Steps; Modules/assert; Running a pipeline/Health gates; Running a pipeline/Apply
+func TestGoneRecordWithoutChange(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml":              "name: acme\ninventory: test\n",
+		"inventories/test.yaml":   "hosts:\n  web1: {}\n  web2: {}\n",
+		"pipelines/site.yaml":     "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: \"hi\\n\"\n      - recipe: app\n",
+		"recipes/app/recipe.yaml": "steps:\n  - file:\n      path: /etc/app.conf\n      content: \"app\\n\"\n",
+	}
+	then := protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/etc/aliases"}}
+	pend := func(c protocol.Check) func(*fakehost.Hosts) { return func(h *fakehost.Hosts) { h.Pend("web1", c) } }
+	for _, tc := range []struct {
+		name   string
+		record func(*fakehost.Hosts)
+		note   string
+	}{
+		{"then", func(h *fakehost.Hosts) { h.SetThen("web1", then) }, "a pending then of file /etc/aliases matches no step"},
+		{"gate", pend(protocol.Check{Pipeline: "site", Stage: "base"}), "a pending health gate of stage base matches no gate"},
+		{"assert", pend(protocol.Check{Pipeline: "site", Stage: "base", Step: 3}), "a pending assert of stage base step 3 matches no assert"},
+		{"recipe assert", pend(protocol.Check{Recipe: "app", Step: 2}), "a pending assert of recipe app step 2 matches no assert"},
+		{"handler assert", pend(protocol.Check{Recipe: "app", Handler: "check", Step: 1}), "a pending assert of handler app.check step 1 matches no assert"},
+		{"stage handler assert", pend(protocol.Check{Pipeline: "site", Stage: "base", Handler: "check", Step: 1}), "a pending assert of handler base.check step 1 matches no assert"},
+		{"unprintable stage", pend(protocol.Check{Pipeline: "site", Stage: "x\x1b[2J"}), "a pending health gate of stage x?[2J matches no gate"},
+	} {
+		for _, other := range []bool{false, true} {
+			name := tc.name + " alone"
+			if other {
+				name = tc.name + " next to a change"
+			}
+			t.Run(name, func(t *testing.T) {
+				p := loadFiles(t, files)
+				h := fakehost.New()
+				h.SetFile("web1", "/etc/motd", "hi\n")
+				h.SetFile("web1", "/etc/app.conf", "app\n")
+				h.SetFile("web2", "/etc/app.conf", "app\n")
+				if !other {
+					h.SetFile("web2", "/etc/motd", "hi\n")
+				}
+				tc.record(h)
+				plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+				var out, errOut bytes.Buffer
+				plan.Write(plain(&out), plain(&errOut))
+				if want := "web1: " + tc.note + " and will not run\n"; errOut.String() != want {
+					t.Errorf("plan notes %q, want %q", errOut.String(), want)
+				}
+				want := "2 hosts: 0 to change, 2 unchanged, 0 unknown\n"
+				if other {
+					want = "2 hosts: 1 to change, 1 unchanged, 0 unknown\n"
+				}
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("the plan has no %q:\n%s", want, out.String())
+				}
+				// A change after the plan shows whether apply runs the steps of web1.
+				h.SetFile("web1", "/etc/motd", "drift\n")
+				o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+				if !o.OK() || o.Changed["web1"] {
+					t.Fatalf("apply failed or changed web1: %v\n%s", o.Failed, errOut.String())
+				}
+				if c, _ := h.File("web1", "/etc/motd"); c != "drift\n" {
+					t.Errorf("apply ran the steps of web1: /etc/motd = %q", c)
+				}
+				h.SetFile("web1", "/etc/motd", "hi\n")
+				if len(h.ThenOf("web1")) != 0 || len(h.ChecksOf("web1")) != 0 {
+					t.Errorf("records stay: %v %v", h.ThenOf("web1"), h.ChecksOf("web1"))
+				}
+				if len(h.Log["web1"]) != 0 {
+					t.Errorf("web1 ran %q, want nothing", h.Log["web1"])
+				}
+				next := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+				errOut.Reset()
+				next.WriteNotes(plain(&errOut))
+				if errOut.Len() != 0 || next.HasChanges() {
+					t.Errorf("the next plan has notes %q or changes", errOut.String())
+				}
+			})
+		}
+	}
+}
+
+// spec: Running a pipeline/Apply (Ctrl-C)
+func TestGoneRecordRemovalFails(t *testing.T) {
+	p := loadFiles(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: \"hi\\n\"\n",
+	})
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/motd", "hi\n")
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/etc/aliases"}})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	traced := len(h.Trace)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out, errOut bytes.Buffer
+	o := run.Apply(ctx, plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	if !errors.Is(o.Failed["web1"], run.ErrInterrupted) {
+		t.Errorf("after an interrupt web1 failed with %v, want interrupted", o.Failed["web1"])
+	}
+	if len(h.ThenOf("web1")) != 1 || len(h.Trace) != traced {
+		t.Errorf("apply started web1 after an interrupt: records %v, trace %q", h.ThenOf("web1"), h.Trace[traced:])
+	}
+	h.FailClose("web1")
+	errOut.Reset()
+	o = run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	if o.Failed["web1"] == nil || !strings.Contains(errOut.String(), "session: exit status 255") {
+		t.Errorf("apply did not fail web1: %v, stderr %q", o.Failed, errOut.String())
 	}
 }
 
