@@ -290,7 +290,7 @@ func TestRunTimer(t *testing.T) {
 	}
 	write(t, p, "new\n")
 	jobPath := filepath.Join(dir, "timer.json")
-	data, _ := json.Marshal(job{Deadline: time.Now().Add(time.Hour), Restore: []module.Saved{saved}})
+	data, _ := json.Marshal(job{Deadline: time.Now().Add(time.Hour), Restore: []module.Saved{saved}, Downloads: filepath.Join(dir, "downloads")})
 	write(t, jobPath, string(data))
 	done := make(chan error, 1)
 	go func() { done <- RunTimer(t.Context(), jobPath, 5*time.Millisecond) }()
@@ -302,7 +302,7 @@ func TestRunTimer(t *testing.T) {
 		t.Errorf("a stopped timer: %v, content %q", err, content(t, p))
 	}
 
-	data, _ = json.Marshal(job{Deadline: time.Now().Add(-time.Second), Restore: []module.Saved{saved}})
+	data, _ = json.Marshal(job{Deadline: time.Now().Add(-time.Second), Restore: []module.Saved{saved}, Downloads: filepath.Join(dir, "downloads")})
 	write(t, jobPath, string(data))
 	if err := RunTimer(t.Context(), jobPath, 5*time.Millisecond); err != nil || content(t, p) != "old\n" {
 		t.Errorf("a timer at its deadline: %v, content %q", err, content(t, p))
@@ -467,7 +467,7 @@ func TestHelloRunsADeadTimer(t *testing.T) {
 				t.Fatal(err)
 			}
 			write(t, p, "new\n")
-			data, _ := json.Marshal(job{Deadline: time.Now().Add(-time.Minute), Restore: []module.Saved{saved}})
+			data, _ := json.Marshal(job{Deadline: time.Now().Add(-time.Minute), Restore: []module.Saved{saved}, Downloads: filepath.Join(dir, "downloads", "acme")})
 			write(t, filepath.Join(dir, "rollback", name), string(data))
 			c := start(t, dir, "")
 			if r := c.call(t, "hello", hello("r1")); r.Error != "" {
@@ -788,7 +788,7 @@ func TestStoppedTimerHasEnded(t *testing.T) {
 	for _, method := range []string{"confirm", "rollback"} {
 		t.Run(method, func(t *testing.T) {
 			rb := &rollbacks{dir: t.TempDir(), project: "acme", self: self}
-			if err := rb.start(job{Deadline: time.Now().Add(time.Hour)}); err != nil {
+			if err := rb.start(job{Deadline: time.Now().Add(time.Hour), Downloads: filepath.Join(rb.dir, "downloads")}); err != nil {
 				t.Fatal(err)
 			}
 			timer := rb.timer
@@ -823,5 +823,84 @@ func TestTimerWithoutResult(t *testing.T) {
 	}
 	if err := rb.rollback(t.Context()); err == nil || err.Error() != "the rollback timer ended without a result" {
 		t.Errorf("rollback: %v", err)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection; Modules/download (a rollback
+// drops the unpack records of the paths that it puts back, so the step
+// unpacks again)
+func TestRestoreDropsTheUnpackRecords(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		restore func(t *testing.T, l *lockout)
+	}{
+		{"session end", func(t *testing.T, l *lockout) {
+			g := protocol.Guard{Recipe: "ssh", Save: true, Handlers: []string{"ssh.reload"}}
+			if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"ssh.reload"}}); r.Error != "" {
+				t.Fatal(r.Error)
+			}
+			l.end(t)
+		}},
+		{"rollback timer", func(t *testing.T, l *lockout) {
+			l.applyBoth(t)
+			if r := l.c.call(t, "rollback", nil); r.Error != "" {
+				t.Fatal(r.Error)
+			}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			l := startLockout(t)
+			downloads := records{dir: filepath.Join(l.dir, "downloads"), project: "acme"}
+			keys := []string{l.a, l.a + "/x", filepath.Dir(l.a), l.a + "b", "/opt/other"}
+			for _, k := range keys {
+				if err := record(downloads, "sum:root:root", k); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tt.restore(t, l)
+			if got := content(t, l.a); got != "old\n" {
+				t.Fatalf("a = %q, want the old file", got)
+			}
+			lines, err := downloads.read()
+			want := []string{"sum:root:root " + l.a + "b", "sum:root:root /opt/other"}
+			if err != nil || !slices.Equal(lines, want) {
+				t.Errorf("unpack records %q, %v; want %q", lines, err, want)
+			}
+		})
+	}
+}
+
+// spec: Running a pipeline/Lockout protection; Modules/download (a restore
+// in an unpack tree changes the tree; one of the attributes of a directory
+// above it does not)
+func TestRestoreDropsTheRecordsOfTheTreesItChanges(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	if err := os.MkdirAll(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name  string
+		saved module.Saved
+		want  []string
+	}{
+		{"a file in the tree", module.Saved{Path: filepath.Join(app, "conf"), Missing: true}, []string{"sum:root:root /opt/other"}},
+		{"the attributes of a directory above", module.Saved{Path: dir, Dir: &module.Attrs{UID: os.Getuid(), GID: os.Getgid(), Mode: 0o700}}, []string{"sum:root:root " + app, "sum:root:root /opt/other"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			downloads := downloadRecords(filepath.Join(t.TempDir(), "acme"))
+			for _, k := range []string{app, "/opt/other"} {
+				if err := record(downloads, "sum:root:root", k); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := restore(t.Context(), downloads, []module.Saved{tt.saved}); err != nil {
+				t.Fatal(err)
+			}
+			lines, err := downloads.read()
+			if err != nil || !slices.Equal(lines, tt.want) {
+				t.Errorf("unpack records %q, %v; want %q", lines, err, tt.want)
+			}
+		})
 	}
 }

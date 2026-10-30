@@ -23,11 +23,13 @@ import (
 )
 
 // job is a rollback timer: at Deadline, the timer process puts back Restore
-// and runs Undo, a step that reverses what the guarded step did.
+// and runs Undo, a step that reverses what the guarded step did. Downloads is
+// the file of the download records of the project.
 type job struct {
-	Deadline time.Time      `json:"deadline"`
-	Restore  []module.Saved `json:"restore"`
-	Undo     *undo          `json:"undo,omitempty"`
+	Deadline  time.Time      `json:"deadline"`
+	Restore   []module.Saved `json:"restore"`
+	Undo      *undo          `json:"undo,omitempty"`
+	Downloads string         `json:"downloads"`
 }
 
 type undo struct {
@@ -47,7 +49,8 @@ type rollbacks struct {
 	dir     string
 	project string
 	// self is the helper binary, which runs the timer process.
-	self string
+	self      string
+	downloads records
 	// running holds the records that the guarded step added, while its timer
 	// runs.
 	running *guarded
@@ -369,7 +372,7 @@ func (r *rollbacks) end(ctx context.Context, handlers, thens records) error {
 		if !done {
 			saved, rerr := readIndex(dir)
 			if rerr == nil {
-				rerr = module.Restore(ctx, saved)
+				rerr = restore(ctx, r.downloads, saved)
 			}
 			err, restored[dir] = rerr, rerr
 		}
@@ -433,7 +436,7 @@ func runJob(ctx context.Context, path string) error {
 	if err := json.Unmarshal(data, &j); err != nil {
 		return err
 	}
-	err = module.Restore(ctx, j.Restore)
+	err = restore(ctx, downloadRecords(j.Downloads), j.Restore)
 	if j.Undo == nil {
 		return err
 	}
@@ -453,6 +456,18 @@ func runJob(ctx context.Context, path string) error {
 		cerr = fmt.Errorf("%s %s: %w", j.Undo.Module, m.Main(), cerr)
 	}
 	return errors.Join(err, cerr)
+}
+
+// restore puts back the saved paths. It first drops the unpack records of the
+// trees that the restore changes, so that the unpack runs again: at and above
+// each path, and below a path whose content comes back.
+func restore(ctx context.Context, downloads records, saved []module.Saved) error {
+	err := forgetIf(downloads, func(key string) bool {
+		return slices.ContainsFunc(saved, func(s module.Saved) bool {
+			return key == s.Path || strings.HasPrefix(s.Path, key+"/") || s.Dir == nil && strings.HasPrefix(key, s.Path+"/")
+		})
+	})
+	return errors.Join(err, module.Restore(ctx, saved))
 }
 
 // writeJob writes the job of a timer through a rename.

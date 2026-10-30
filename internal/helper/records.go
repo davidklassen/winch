@@ -151,6 +151,11 @@ func syncDir(dir *os.Root) error {
 	return d.Sync()
 }
 
+// downloadRecords returns the unpack records in the file p.
+func downloadRecords(p string) records {
+	return records{dir: filepath.Dir(p), project: filepath.Base(p), what: "download records"}
+}
+
 // recorded returns the value that the records hold for key, or "".
 func recorded(downloads records, key string) (string, error) {
 	lines, err := downloads.read()
@@ -180,14 +185,19 @@ func record(downloads records, sum, key string) error {
 
 // forget removes the record of key.
 func forget(downloads records, key string) error {
+	return forgetIf(downloads, func(k string) bool { return k == key })
+}
+
+// forgetIf removes the records whose key drop reports.
+func forgetIf(downloads records, drop func(key string) bool) error {
 	lines, err := downloads.read()
 	if err != nil {
 		return err
 	}
 	n := len(lines)
 	lines = slices.DeleteFunc(lines, func(l string) bool {
-		_, lp, _ := strings.Cut(l, " ")
-		return lp == key
+		_, key, _ := strings.Cut(l, " ")
+		return drop(key)
 	})
 	if len(lines) == n {
 		return nil

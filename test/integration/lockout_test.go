@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"archive/tar"
 	"strings"
 	"syscall"
 	"testing"
@@ -540,6 +541,59 @@ func TestLockoutPendingHandler(t *testing.T) {
 			t.Errorf("pending handlers = %q, want none", out)
 		}
 	})
+}
+
+// spec: Running a pipeline/Lockout protection; Modules/download (the
+// rollback puts back the old tree of an unpack, and the next plan unpacks
+// again)
+func TestLockoutPendingHandlerUnpack(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "pending-unpack")
+	v1 := tarGz(t, []entry{{name: "bin/tool", typ: tar.TypeReg, mode: 0o755, body: "#!/bin/sh\necho v1\n"}})
+	v2 := tarGz(t, []entry{{name: "bin/tool", typ: tar.TypeReg, mode: 0o755, body: "#!/bin/sh\necho v2\n"}})
+	url1 := lab.Serve(t, "pending-unpack/v1.tar.gz", v1)
+	url2 := lab.Serve(t, "pending-unpack/v2.tar.gz", v2)
+	project := func(url, sum string) string {
+		return vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: udemo\ninventory: test\nvars:\n  fail: false\n",
+			"inventories/test.yaml": "hosts:\n  pending-unpack: {}\n",
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - download:
+          url: ` + url + `
+          sha256: ` + sum + `
+          unpack: /opt/winch-test/app
+        notify: reload
+      - name: Fails on request
+        cmd:
+          command: exit 3
+        when: !expr vars.fail
+    handlers:
+      reload:
+        - service:
+            name: ssh
+            reloaded: true
+          confirm_access: true
+`,
+		})
+	}
+	if r := lab.Winch(t, project(url1, sha(v1)), "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("first apply: exit %d\n%s", r.Code, r.Stderr)
+	}
+	dir := project(url2, sha(v2))
+	r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.fail=true")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "Fails on request") {
+		t.Fatalf("apply: exit %d, want the failed step\n%s", r.Code, r.Stderr)
+	}
+	if out := vm.MustRun(t, "/opt/winch-test/app/bin/tool"); out != "v1\n" {
+		t.Errorf("tool after the failed run: %q, want the old tree", out)
+	}
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "~ download /opt/winch-test/app") {
+		t.Errorf("plan after the failed run: exit %d, want the unpack again\n%s", r.Code, r.Stdout)
+	}
 }
 
 // spec: Running a pipeline/Lockout protection (a change of /etc/pam.d)
