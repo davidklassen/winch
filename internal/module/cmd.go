@@ -21,7 +21,7 @@ type Cmd struct {
 	Command string  `yaml:"command,required" json:"command" line:"shell script" doc:"Shell script. It runs through sh -e as root, in /, with stdin from /dev/null. A script of several lines stops at its first failed line. Without creates or unless, the check result is unknown."`
 	Creates string  `yaml:"creates" json:"creates,omitempty" line:"path that marks the work as done" doc:"Path that marks the work as done. The step is ok when the path exists. When the command exits 0 and the path is still missing, the step fails. The path has no glob characters. A step has at most one of creates and unless."`
 	Unless  *string `yaml:"unless" json:"unless,omitempty" line:"check command; exit 0 skips the step" doc:"Check command; exit 0 skips the step. It runs at the check as root, in /, with the timeout of the step. user and dir do not apply to it. A step has at most one of creates and unless."`
-	User    string  `yaml:"user" json:"user,omitempty" line:"account that runs command" doc:"Account that runs command. Its home is HOME." default:"root"`
+	User    string  `yaml:"user" json:"user,omitempty" line:"account that runs command" doc:"Account that runs command. Its home is HOME. The step starts no login session: PAM does not run, so the login umask and limits of the account do not apply, and the umask is 022." default:"root"`
 	Dir     string  `yaml:"dir" json:"dir,omitempty" line:"working directory" doc:"Working directory." default:"/"`
 	Timeout *int    `yaml:"timeout" json:"timeout,omitempty" line:"limit in seconds, also for unless" doc:"Limit in seconds, also for unless. After it, the helper stops the command and the step fails." default:"600"`
 }

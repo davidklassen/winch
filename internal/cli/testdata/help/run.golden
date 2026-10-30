@@ -1,0 +1,52 @@
+winch run: plan and apply one module step
+
+Examples:
+  # upgrade all packages on the mail hosts
+  winch run mail upgrade mode=full
+  # install two packages on the mail hosts without mail2
+  winch run 'mail & !mail2' pkg name=[htop,curl]
+  # restart monit on the monitor hosts
+  winch run monitor service name=monit restarted=true
+  # write /etc/motd only when the plan has this hash
+  winch run web file path=/etc/motd content=hello --check a3f9c2e1d07b4c58
+
+Usage:
+  winch run <pattern> <module> [key=value ...] [flags]
+
+Run plans one module step on the hosts of the pattern, asks, and
+applies it.
+
+A host pattern is a group or a host, with "," for union, "&" for
+intersection, and "!" for exclusion.
+
+Each value parses as YAML: name=[htop,curl] is a list. Quote a value
+that YAML would change, such as mode='"0644"'. A value that YAML
+rejects, such as *x, @x, or [x, is an error that says to quote it.
+
+The step runs in a stage named run. Unlike a pipeline step, it can use
+restarted and reloaded. Run rejects assert. Use winch exec for a check.
+
+winch asks only when stdin and stderr are terminals. Without a
+terminal, and without --yes or --check, run prints the plan and exits
+with code 5. Its last line is the command that applies the plan with
+its hash.
+
+--check replaces the question. When the new plan has another hash, run
+exits with code 6 and changes nothing.
+
+With a terminal, ssh can ask questions, and sessions start one at a
+time. Without one, or with --batch, ssh asks nothing, and sessions
+start in parallel. The apply question stays.
+
+Flags:
+  --inventory <name>          inventory for the run
+                              default: inventory in winch.yaml
+  --user [<host>=]<name>      SSH login user, for all hosts or one;
+                              repeatable
+                              default: from the inventory
+  --batch                     no questions from ssh
+  --yes                       no apply question
+  --check <hash>              plan hash that the apply needs
+  --json                      JSON events on stdout
+
+See: winch doc <module>, winch doc inventory, winch doc workflow

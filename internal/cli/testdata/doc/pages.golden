@@ -1,0 +1,2715 @@
+==> winch doc project
+project: project files and directories
+
+A project is a directory with a winch.yaml file and the inventories,
+pipelines, and recipes that it uses. winch reads the project in the
+current directory.
+
+Minimal project:
+  One winch.yaml with a name, a host, and one step:
+
+    # winch.yaml
+    name: demo
+    hosts:
+      web1.example.com:
+        address: 192.0.2.10
+    steps:
+      - name: Write the message of the day
+        file:
+          path: /etc/motd
+          content: "Managed by winch.\n"
+
+  Check it, show the changes, then make them:
+
+    winch validate
+    winch plan
+    winch apply
+
+Hosts:
+  winch connects with the OpenSSH client and its SSH config. The login
+  user is root, or has passwordless sudo. A host needs nothing else
+  installed: winch sends its helper binary to /var/lib/winch on the
+  host.
+
+When the project grows:
+  Move the hosts into inventories, the steps into pipelines, and
+  groups of steps into recipes:
+
+    winch.yaml               the project file
+    inventories/
+      production.yaml        an inventory: hosts and groups
+      test.yaml
+    pipelines/
+      site.yaml              a pipeline: stages and steps
+    recipes/
+      nginx/
+        recipe.yaml          a recipe: variables, steps, and handlers
+        templates/site.tmpl  the templates of the recipe
+        files/tls.conf       the files of the recipe
+
+  The name of an inventory or a pipeline is its file name without
+  .yaml. Plan and apply then name the pipeline: winch plan site.
+
+  An inventory, a pipeline, or a recipe can also be a key in
+  winch.yaml, under inventories, pipelines, or recipes. The value of
+  the key is the content of the file. A name in both places is an
+  error.
+
+Top-level inventory and pipeline:
+  hosts and groups at the top of winch.yaml are the only inventory of
+  the project. They work with any number of pipelines. steps,
+  handlers, parallelism, and health at the top of winch.yaml are the
+  only pipeline. Then plan and apply take no pipeline name.
+
+YAML:
+  All files are YAML 1.2. Only true and false are booleans: yes, no,
+  on, and off are strings. File modes are strings: mode: "0644".
+  Unknown keys and duplicate keys are errors. Anchors and aliases
+  work. Merge keys (<<) do not. winch fmt fixes the indentation and
+  the step key order.
+
+Keys:
+  name         string                 required  letters, digits, ., _, and -
+  inventory    string                 -         default for --inventory
+  recipients   list of strings        -         age public keys
+  vars         map                    -         shared variable defaults
+  inventories  map                    -         inventories kept in winch.yaml
+  pipelines    map                    -         pipelines kept in winch.yaml
+  recipes      map                    -         recipes kept in winch.yaml
+  hosts        map                    -         hosts of the only inventory
+  groups       map                    -         groups of the only inventory
+  steps        list of steps          -         steps of the only pipeline
+  handlers     map of lists of steps  -         handlers of the only pipeline
+  parallelism  integer                -         parallelism of the only pipeline
+  health       map                    -         health gate of the only pipeline
+
+Run "winch doc project.<key>" for the full text of a key.
+==> winch doc project.name
+project.name: string, required
+
+Letters, digits, ., _, and -. It does not start with a dot. Hosts keep
+pending handlers and other records under it.
+==> winch doc project.inventory
+project.inventory: string
+
+Default for --inventory. A project with more than one inventory and no
+default makes every run name its inventory with --inventory.
+==> winch doc project.recipients
+project.recipients: list of strings
+
+Age public keys. winch encrypts each secret for all of them. winch
+secret init adds a key.
+==> winch doc project.vars
+project.vars: map
+
+Shared variable defaults, by name. A default can be a !secret, an !expr,
+or a !tpl. Run winch doc variables.
+==> winch doc project.inventories
+project.inventories: map
+
+Inventories kept in winch.yaml, by name. The value of each is the
+content of an inventory file, as in inventories/<name>.yaml.
+==> winch doc project.pipelines
+project.pipelines: map
+
+Pipelines kept in winch.yaml, by name. The value of each is the content
+of a pipeline file, as in pipelines/<name>.yaml.
+==> winch doc project.recipes
+project.recipes: map
+
+Recipes kept in winch.yaml, by name. The value of each is the content of
+a recipe file, as in recipes/<name>/recipe.yaml. Such a recipe has no
+templates/ or files/ directory. Its steps cannot use template, source,
+or the key of repo.
+==> winch doc project.hosts
+project.hosts: map
+
+Hosts of the only inventory, as in an inventory file. The project then
+has no other inventory. It can have any number of pipelines.
+==> winch doc project.groups
+project.groups: map
+
+Groups of the only inventory, as in an inventory file.
+==> winch doc project.steps
+project.steps: list of steps
+
+Steps of the only pipeline. It has one stage on all hosts, and both have
+the name of the project. The project then has no other pipeline. Plan
+and apply take no pipeline name.
+==> winch doc project.handlers
+project.handlers: map of lists of steps
+
+Handlers of the only pipeline, as in a pipeline file.
+==> winch doc project.parallelism
+project.parallelism: integer
+
+Parallelism of the only pipeline, as in a pipeline file.
+==> winch doc project.health
+project.health: map
+
+Health gate of the only pipeline, as in a pipeline file.
+==> winch doc inventory
+inventory: hosts and groups
+
+An inventory lists the hosts that winch manages, puts them in groups,
+and gives them values.
+
+Files:
+  An inventory is a file in inventories/, such as
+  inventories/production.yaml, or a key in inventories of winch.yaml.
+  It holds data and secrets, but no templates or expressions.
+
+Choosing the inventory:
+  --inventory <name> names the inventory of a run. inventory in
+  winch.yaml names a default. A project with one inventory uses it. A
+  project with more inventories and no default makes each run name
+  its inventory, so a run against production is always deliberate.
+
+Groups and values:
+  The group all contains every host. A host value beats a group
+  value, and a group value beats a value of all. Two groups of one
+  host that set different values for one variable, or for user, are
+  an error, unless the host sets that value too.
+
+SSH settings:
+  Every other SSH setting, such as the port or the key, comes from the
+  SSH config of the controller. Its Host blocks match the host name,
+  also when the host has an address.
+
+Host patterns:
+  Host patterns select hosts in the hosts of a stage, in --hosts, and
+  in winch run and winch exec:
+
+    web          the hosts in the group web, or the host named web
+    web,db       the hosts in web or in db
+    web & prod   the hosts in web and in prod
+    web & !web3  the hosts in web, without web3
+
+  & and ! bind tighter than ",". Hosts keep inventory order. A name
+  that is neither a group nor a host is an error. A pattern with only
+  ! names is an error: write all & !web, not !web.
+
+Keys:
+  hosts          map              -  keyed by host name
+  hosts.address  string           -  host name or IP for SSH
+  hosts.user     string           -  SSH login user
+  hosts.vars     map              -  variable values of the host
+  groups         map              -  keyed by group name
+  groups.user    string           -  SSH login user of the members
+  groups.hosts   list of strings  -  member host names
+  groups.vars    map              -  variable values of the members
+
+Example:
+  # inventories/production.yaml
+  hosts:
+    mail.acme.com:
+      address: 192.0.2.10
+    monitor.acme.com:
+      address: 192.0.2.20
+  groups:
+    all:
+      user: admin
+      vars:
+        domain: acme.com
+    mail:
+      hosts: [mail.acme.com]
+      vars:
+        mail_server: true
+
+  # winch.yaml
+  name: acme
+  vars:
+    domain: example.com
+    mail_server: false
+  steps:
+    - name: Install postfix on the mail servers
+      pkg:
+        name: postfix
+      when: !expr vars.mail_server
+
+Run "winch doc inventory.<key>" for the full text of a key.
+==> winch doc inventory.hosts
+inventory.hosts: map
+
+Keyed by host name. Without address, the name is the SSH host name. A
+host name that YAML reads as a number, such as 1234, needs quotes. A
+host and a group cannot have the same name.
+
+Keys:
+  address  string  -  host name or IP for SSH
+  user     string  -  SSH login user
+  vars     map     -  variable values of the host
+==> winch doc inventory.hosts.address
+inventory.hosts.address: string
+
+Host name or IP for SSH. Without it, the SSH config decides the host
+name. The Host blocks of the SSH config match the host name, also with
+address. A port goes in the SSH config. Two hosts cannot have the same
+address.
+==> winch doc inventory.hosts.user
+inventory.hosts.user: string
+
+SSH login user. Without it, the host takes the user of its groups, then
+of all, then of the SSH config. --user beats it. Every other SSH setting
+comes from the SSH config of the controller.
+==> winch doc inventory.hosts.vars
+inventory.hosts.vars: map
+
+Variable values of the host. They beat the values of its groups.
+==> winch doc inventory.groups
+inventory.groups: map
+
+Keyed by group name. The group all contains every host. A host value
+beats a group value, and a group value beats a value of all.
+
+Keys:
+  user   string           -  SSH login user of the members
+  hosts  list of strings  -  member host names
+  vars   map              -  variable values of the members
+==> winch doc inventory.groups.user
+inventory.groups.user: string
+
+SSH login user of the members. Two groups of one host with different
+users are an error, unless the host sets user.
+==> winch doc inventory.groups.hosts
+inventory.groups.hosts: list of strings
+
+Member host names. The group all cannot have hosts. A group can be
+empty: hosts: [].
+==> winch doc inventory.groups.vars
+inventory.groups.vars: map
+
+Variable values of the members. Two groups of one host that set
+different values for one variable are an error, unless the host sets
+that value too.
+==> winch doc pipeline
+pipeline: ordered stages that apply steps to hosts
+
+A pipeline is an ordered list of stages. Each stage applies its steps
+to a set of hosts.
+
+Files:
+  A pipeline is a file in pipelines/, such as pipelines/site.yaml, or
+  a key in pipelines of winch.yaml. winch plan site and winch apply
+  site run it.
+
+One stage or many:
+  Most pipelines run the same steps on every host. Such a pipeline
+  holds the steps directly. It is one stage with the name of the
+  pipeline. A pipeline whose hosts have different roles, or that must
+  finish on some hosts before it starts on others, has stages.
+
+Order:
+  Stages run in order. A stage starts when the previous stage finished
+  on all its hosts. Inside a stage, each host runs its steps in order,
+  without waiting for other hosts. A stage that matches no host is
+  skipped. --stages runs only some stages, and --hosts only some
+  hosts.
+
+Steps of a stage:
+  A step in a stage can use a module directly. It cannot use template,
+  source, or the key of repo: those read the files of a recipe.
+
+Failures:
+  A failed host takes no part in later stages. The other hosts go on.
+  A new run is the resume: steps that already succeeded check as ok.
+
+Keys:
+  stages                 list of maps           -         stages in run order
+  stages.name            string                 required  unique in the pipeline
+  stages.hosts           string                 all       host pattern
+  stages.parallelism     integer                -         maximum hosts at the same time
+  stages.health          map                    -         check after a host changed in the stage
+  stages.health.command  string                 required  must exit 0
+  stages.health.stable   integer                0         seconds the command keeps passing
+  stages.health.timeout  integer                60        seconds the gate has to pass
+  stages.steps           list of steps          required  recipe steps and module steps, in order
+  stages.handlers        map of lists of steps  -         handlers of the stage
+  hosts                  string                 all       host pattern of a pipeline without stages
+  parallelism            integer                -         maximum hosts at the same time
+  health                 map                    -         check after a host changed in the stage
+  health.command         string                 required  must exit 0
+  health.stable          integer                0         seconds the command keeps passing
+  health.timeout         integer                60        seconds the gate has to pass
+  steps                  list of steps          -         steps of a pipeline without stages
+  handlers               map of lists of steps  -         handlers of a pipeline without stages
+
+Example:
+  # pipelines/site.yaml
+  stages:
+    - name: base
+      hosts: all
+      parallelism: 1
+      steps:
+        - timezone:
+            name: Etc/UTC
+    - name: web
+      hosts: web
+      health:
+        command: systemctl is-active nginx
+        stable: 10
+        timeout: 120
+      steps:
+        - recipe: nginx
+
+  # winch.yaml
+  name: acme
+  inventories:
+    production:
+      hosts:
+        web1.acme.com: {}
+        web2.acme.com: {}
+      groups:
+        web:
+          hosts: [web1.acme.com, web2.acme.com]
+  recipes:
+    nginx:
+      steps:
+        - pkg:
+            name: nginx
+
+Run "winch doc pipeline.<key>" for the full text of a key.
+==> winch doc pipeline.stages
+pipeline.stages: list of maps
+
+Stages in run order. A stage starts when the previous stage finished on
+all its hosts. A pipeline with stages has no other key.
+
+Keys of each element:
+  name         string                 required  unique in the pipeline
+  hosts        string                 all       host pattern
+  parallelism  integer                -         maximum hosts at the same time
+  health       map                    -         check after a host changed in the stage
+  steps        list of steps          required  recipe steps and module steps, in order
+  handlers     map of lists of steps  -         handlers of the stage
+==> winch doc pipeline.stages.name
+pipeline.stages.name: string, required
+
+Unique in the pipeline. It follows the rule of host names. --stages
+selects stages by name.
+==> winch doc pipeline.stages.hosts
+pipeline.stages.hosts: string, default all
+
+Host pattern. Run winch doc inventory for the patterns.
+==> winch doc pipeline.stages.parallelism
+pipeline.stages.parallelism: integer
+
+Maximum hosts at the same time. Hosts start in inventory order. The next
+host starts when a host finishes the stage and its health gate passes. A
+failure stops new hosts from starting. Running hosts finish the stage.
+==> winch doc pipeline.stages.health
+pipeline.stages.health: map
+
+Check after a host changed in the stage. The gate runs on a host after
+it finishes the stage, when the stage has a change on that host. The
+plan marks it with * and does not run it. A gate that fails stays
+pending on the host, and the next apply runs it.
+
+Keys:
+  command  string   required  must exit 0
+  stable   integer  0         seconds the command keeps passing
+  timeout  integer  60        seconds the gate has to pass
+==> winch doc pipeline.stages.health.command
+pipeline.stages.health.command: string, required
+
+Must exit 0. The helper runs it once per second until it exits 0, then
+keeps running it for stable seconds. A failed run starts the wait again.
+==> winch doc pipeline.stages.health.stable
+pipeline.stages.health.stable: integer, default 0
+
+Seconds the command keeps passing. It is less than timeout.
+==> winch doc pipeline.stages.health.timeout
+pipeline.stages.health.timeout: integer, default 60
+
+Seconds the gate has to pass. Then the host fails, and the error shows
+the end of the last output.
+==> winch doc pipeline.stages.steps
+pipeline.stages.steps: list of steps, required
+
+Recipe steps and module steps, in order.
+==> winch doc pipeline.stages.handlers
+pipeline.stages.handlers: map of lists of steps
+
+Handlers of the stage, as in a recipe. A module step of the stage
+notifies them.
+==> winch doc pipeline.hosts
+pipeline.hosts: string, default all
+
+Host pattern of a pipeline without stages. Run winch doc inventory for
+the patterns.
+==> winch doc pipeline.parallelism
+pipeline.parallelism: integer
+
+Maximum hosts at the same time. Hosts start in inventory order. The next
+host starts when a host finishes the stage and its health gate passes. A
+failure stops new hosts from starting. Running hosts finish the stage.
+==> winch doc pipeline.health
+pipeline.health: map
+
+Check after a host changed in the stage. The gate runs on a host after
+it finishes the stage, when the stage has a change on that host. The
+plan marks it with * and does not run it. A gate that fails stays
+pending on the host, and the next apply runs it.
+
+Keys:
+  command  string   required  must exit 0
+  stable   integer  0         seconds the command keeps passing
+  timeout  integer  60        seconds the gate has to pass
+==> winch doc pipeline.health.command
+pipeline.health.command: string, required
+
+Must exit 0. The helper runs it once per second until it exits 0, then
+keeps running it for stable seconds. A failed run starts the wait again.
+==> winch doc pipeline.health.stable
+pipeline.health.stable: integer, default 0
+
+Seconds the command keeps passing. It is less than timeout.
+==> winch doc pipeline.health.timeout
+pipeline.health.timeout: integer, default 60
+
+Seconds the gate has to pass. Then the host fails, and the error shows
+the end of the last output.
+==> winch doc pipeline.steps
+pipeline.steps: list of steps
+
+Steps of a pipeline without stages: recipe steps and module steps, in
+order.
+==> winch doc pipeline.handlers
+pipeline.handlers: map of lists of steps
+
+Handlers of a pipeline without stages, as in a recipe. A module step of
+the stage notifies them.
+==> winch doc recipe
+recipe: reusable groups of steps
+
+A recipe is a named group of steps that you can use again, with its own
+variables, templates, and files.
+
+Files:
+  A recipe is a directory in recipes/ with a recipe.yaml, and optional
+  templates/ and files/ directories. Or it is a key in recipes of
+  winch.yaml, without templates or files. winch loads every recipe for
+  every command, also a recipe that no pipeline uses.
+
+Names:
+  A recipe name has lowercase letters, digits, and _. It can be the
+  name of a module.
+
+Running a recipe:
+  A step runs a recipe with recipe: <name>. A recipe step has only
+  name, recipe, vars, and when. A recipe runs at most once per host in
+  a run. Two stages can run the same recipe when their hosts do not
+  overlap. A recipe cannot run another recipe.
+
+Templates and files:
+  template reads from the templates/ directory of the recipe, and
+  source from files/. Paths can name subdirectories. A template file
+  uses the language of !tpl. Run winch doc templates.
+
+Keys:
+  require   list of expressions    -         conditions on facts
+  vars      map                    -         defaults of the recipe's own variables
+  steps     list of steps          required  module steps, in order
+  handlers  map of lists of steps  -         steps that run after a change
+
+Example:
+  # recipes/nginx/recipe.yaml
+  require:
+    - !expr facts.os.id in ["debian", "ubuntu"]
+  vars:
+    nginx_port: 80
+  steps:
+    - pkg:
+        name: nginx
+    - name: Configure the site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        template: site.tmpl
+        validate: nginx -t
+      notify: reload
+    - service:
+        name: nginx
+        running: true
+        enabled: true
+  handlers:
+    reload:
+      - service:
+          name: nginx
+          reloaded: true
+
+  # recipes/nginx/templates/site.tmpl
+  server {
+      listen {{ .vars.nginx_port }};
+  }
+
+  # winch.yaml
+  name: acme
+  hosts:
+    web1.acme.com: {}
+  steps:
+    - recipe: nginx
+      vars:
+        nginx_port: 8080
+
+Run "winch doc recipe.<key>" for the full text of a key.
+==> winch doc recipe.require
+recipe.require: list of expressions
+
+Conditions on facts, each an !expr. Every host where the recipe runs in
+the pipeline meets all of them, or it fails at plan. They see only
+facts.
+==> winch doc recipe.vars
+recipe.vars: map
+
+Defaults of the recipe's own variables. Their names start with the
+recipe name and _.
+==> winch doc recipe.steps
+recipe.steps: list of steps, required
+
+Module steps, in order. A recipe cannot run another recipe.
+==> winch doc recipe.handlers
+recipe.handlers: map of lists of steps
+
+Steps that run after a change. They run after the last step of the
+recipe, when a step notified them. Run winch doc handlers.
+==> winch doc step
+step: keys that every step has
+
+A step is one action on a host: a module with its arguments, or a
+recipe.
+
+Form:
+  A step is a map. It has one module key, such as pkg or file, with the
+  arguments of the module as a map. Or it has recipe with the name of
+  a recipe. Run winch doc <module> for the arguments of a module.
+
+Computed values:
+  Any module argument can be a template or an expression, and so can
+  then. when takes an expression. loop takes a list or an expression.
+
+Evaluation:
+  On each host, winch evaluates when. When it is false, winch skips the
+  step. Then winch evaluates loop, and the arguments for each element.
+  The helper checks the step on the host, and apply changes what
+  differs.
+
+Results:
+  A step that runs a command counts as changed: a cmd, and a service
+  with restarted or reloaded. When a step fails, its host stops. Other
+  hosts go on.
+
+Key order:
+  winch fmt puts the step keys in this order: name, the module or
+  recipe, vars, when, loop, then, confirm_access, notify.
+
+Keys:
+  name            string                     -      label in the plan and the logs
+  recipe          string                     -      recipe to run, in place of a module
+  vars            map                        -      variable values for this recipe step
+  when            expression                 -      skips the step when false
+  loop            list or expression         -      elements to run the step for, as item
+  then            string                     -      command after a change
+  confirm_access  boolean                    false  SSH check with rollback, for a service step
+  notify          string or list of strings  -      handlers to run after a change
+
+Example:
+  # winch.yaml
+  name: demo
+  hosts:
+    web1.example.com: {}
+  vars:
+    sites: [blog, shop]
+  steps:
+    - name: Install nginx
+      pkg:
+        name: nginx
+    - name: Write the sites
+      file:
+        path: !tpl /etc/nginx/sites-enabled/{{ .item }}.conf
+        content: !tpl "# {{ .item }}\n"
+      when: !expr len(vars.sites) > 0
+      loop: !expr vars.sites
+      then: nginx -t
+      notify: reload
+  handlers:
+    reload:
+      - service:
+          name: nginx
+          reloaded: true
+
+Run "winch doc step.<key>" for the full text of a key.
+==> winch doc step.name
+step.name: string
+
+Label in the plan and the logs. Without it, the plan shows the module
+and its main argument.
+==> winch doc step.recipe
+step.recipe: string
+
+Recipe to run, in place of a module. A recipe step has only name,
+recipe, vars, and when. A recipe runs at most once per host in a run.
+==> winch doc step.vars
+step.vars: map
+
+Variable values for this recipe step. They beat the inventory, and --set
+beats them. Only a recipe step has vars.
+==> winch doc step.when
+step.when: expression
+
+Skips the step when false. It is an !expr that gives true or false.
+winch evaluates none of the other keys of a skipped step. when runs
+once, before loop, and cannot use item.
+==> winch doc step.loop
+step.loop: list or expression
+
+Elements to run the step for, as item. An !expr gives the list. loop: []
+runs nothing and notifies nothing. A null element fails the host.
+==> winch doc step.then
+step.then: string
+
+Command after a change. It runs right after the step changes something,
+before the next step. A failure of then fails the step. With loop, then
+runs once after the last element and cannot use item. A then that did
+not run stays pending on the host, and the next run runs it.
+==> winch doc step.confirm_access
+step.confirm_access: boolean, default false
+
+SSH check with rollback, for a service step. Only a service step can use
+it, in steps or in handlers. A firewall step gets the same check without
+it.
+
+Before the step, the helper keeps the old state of each path that the
+changed steps of the recipe wrote or removed in this run. It starts a
+60-second rollback timer in a process of its own.
+
+After the step, winch opens a new SSH connection and runs a command,
+through sudo -n when the login user is not root. It tries twice, 5
+seconds apart.
+
+When both tries fail, the helper puts back the old files and runs
+daemon-reload after a unit file. It reverses a start or a stop of the
+step, and reloads or restarts the unit again. The host fails with the
+error "no new SSH connection works: <error>; the old files are back".
+When the session ends first, the helper rolls back at the session end.
+When the helper is gone, the timer does it.
+
+When a run ends before a notified handler with confirm_access ran, the
+helper puts back the files of that handler at once. The next run applies
+the change again.
+
+A rollback puts back files only. It does not undo a change of a user or
+a group.
+==> winch doc step.notify
+step.notify: string or list of strings
+
+Handlers to run after a change. Not a template or an expression. With
+loop, notify fires once when any element changed. Run winch doc
+handlers.
+==> winch doc handlers
+handlers: steps that run after a change
+
+A handler is a list of steps that runs once, after a step that notifies
+it changes something.
+
+Declaring a handler:
+  handlers is a map in a recipe or in a stage. Each key is a handler
+  name, and its value is a list of steps. A handler name has lowercase
+  letters, digits, and _.
+
+Notifying a handler:
+  notify on a step names a handler of the current recipe or stage, or
+  <recipe>.<handler> of another recipe. That recipe must run in the
+  same pipeline, on at least one host where the step runs. On a host
+  where it does not run, winch drops the notification.
+
+When a handler runs:
+  - A handler runs at most once per recipe run on a host. A handler of
+    a stage runs at most once per stage run.
+  - A handler runs after the last step of its recipe. When its recipe
+    already ran on that host, it runs at the end of the current stage.
+  - A handler of a stage runs after the last step of the stage and
+    after the recipe handlers at the end of the stage. It runs before
+    the health gate.
+  - Handlers run in the order that the recipe or the stage declares
+    them.
+
+Handler steps:
+  A handler step can have when. It cannot use notify or run a recipe.
+  Only a handler step and winch run can use restarted and reloaded of
+  service.
+
+Pending handlers:
+  When a step notifies a handler, the helper records it on the host
+  before the step changes anything. The record goes when the handler
+  succeeds. When a run stops first, the handler stays pending. It runs
+  the next time its recipe or stage runs on that host. The plan shows
+  a handler that will run with "!".
+
+Example:
+  # winch.yaml
+  name: demo
+  hosts:
+    web1.example.com: {}
+  steps:
+    - recipe: nginx
+    - file:
+        path: /etc/nginx/conf.d/gzip.conf
+        content: "gzip on;\n"
+      notify: nginx.reload
+  recipes:
+    nginx:
+      steps:
+        - pkg:
+            name: nginx
+      handlers:
+        reload:
+          - service:
+              name: nginx
+              reloaded: true
+==> winch doc variables
+variables: named values for hosts, groups, and recipes
+
+Variables are named values that steps, templates, and expressions
+read.
+
+Sources:
+  Each host has its own value. A value comes from these sources. A
+  later source replaces an earlier one:
+
+    1. the default
+    2. the vars of the groups of the host, then of the host
+    3. the vars of the recipe step
+    4. --set vars.<name>=<value>
+
+  Maps and lists do not merge.
+
+Defaults:
+  A default is declared once: in vars of winch.yaml, or in vars of the
+  recipe that owns it. A recipe's own defaults start with the recipe
+  name and _. A default can be a !secret, a template, or an
+  expression. It sees vars, host, and facts, but not match(). A cycle
+  between defaults is an error.
+
+Variables without a default:
+  A variable without a default needs no declaration. A read of it is
+  enough, and the variable is required where it is read. A variable
+  that may stay unset needs a default, such as relay_host: "".
+
+Names and reads:
+  A variable name has lowercase letters, digits, and _. A read names
+  the variable: vars.domain, .vars.domain, $.vars.domain, or
+  host.vars.domain. Any other read of the whole map, such as
+  keys(vars) or range .vars, is an error. A map variable holds data
+  that a step reads by key: vars.users[item]. host.vars holds the
+  variables of the host without the vars of a recipe step.
+
+Types:
+  Variables have no types. A value keeps the type that YAML gives it.
+  --set parses its value as YAML. Quote a value that YAML would
+  change: --set 'vars.php_version="8.0"'.
+
+Example:
+  # winch.yaml
+  name: demo
+  hosts:
+    mail.acme.com:
+      vars:
+        relay_host: smtp.acme.com
+    web1.acme.com: {}
+  groups:
+    all:
+      vars:
+        admin_email: ops@acme.com
+  vars:
+    domain: acme.com
+    relay_host: ""
+  steps:
+    - recipe: motd
+      vars:
+        motd_text: Managed by winch
+  recipes:
+    motd:
+      vars:
+        motd_text: Welcome
+      steps:
+        - file:
+            path: /etc/motd
+            content: !tpl "{{ .vars.motd_text }} on {{ .vars.domain }}\n"
+        - file:
+            path: /etc/admin_email
+            content: !tpl "{{ .vars.admin_email }}\n"
+        - file:
+            path: /etc/relay_host
+            content: !tpl "{{ .vars.relay_host }}\n"
+          when: !expr vars.relay_host != ""
+==> winch doc templates
+templates: text with values filled in (!tpl)
+
+A template is text in which winch fills in the values of each host.
+
+Syntax:
+  The !tpl tag marks a template, a Go text/template. It builds text,
+  such as a path or a line. The template files of a recipe use the
+  same language.
+
+Data:
+  A template reads these names with a leading dot:
+
+    .vars   the variables of the host, with the vars of the recipe step
+    .facts  the facts of the host; run winch doc facts
+    .host   name, short, address, groups, and vars of the host
+    .item   the current element in a step with loop
+
+  Inside range, "." is the element. $.vars reads the variables.
+
+Where templates go:
+  Any module argument can be a template or an expression, and so can
+  then.
+
+Functions and actions:
+  A function takes its arguments after its name, separated by spaces:
+  {{ join .vars.names ", " }}. Templates also have the actions of Go's
+  text/template: if, else, range, with, define, template, block,
+  break, and continue, and the variables $x := value.
+
+Missing values:
+  A template that reads a missing map key fails. Use get for a key
+  that may be missing. A template that prints a null value fails.
+
+Quoting:
+  A value goes into a command as it is. Quote a value that must stay
+  one word with quote. Quote a YAML value that starts with a quote, [,
+  {, &, *, or !, or that contains ": " or " #". A template that starts
+  with {{ needs quotes.
+
+When they run:
+  winch evaluates templates on the controller, during the plan. They
+  cannot read the result of a step. winch checks each one when it
+  loads the project: an unknown name or a syntax error is an error. An
+  error while winch evaluates one for a host fails that host. The
+  other hosts go on.
+
+Functions:
+  and       and x y: the first empty argument, or the last argument.
+  call      call f args: the result of the function f.
+  eq        eq a b: true when a equals b.
+  ge        ge a b: true when a >= b.
+  get       get m key: the value of key in the map m, or nothing when m has no such key.
+  gt        gt a b: true when a > b.
+  has       has list v: true when list contains v.
+  html      html s: s with the special characters of HTML escaped.
+  index     index x k: the element of the map or the list x at the key or the index k.
+  join      join list sep: the elements of list as text, joined with sep.
+  js        js s: s escaped for a JavaScript string.
+  json      json v: v as JSON on one line.
+  le        le a b: true when a <= b.
+  len       len x: the length of a string, a list, or a map.
+  lt        lt a b: true when a < b.
+  ne        ne a b: true when a does not equal b.
+  not       not x: true when x is empty or false.
+  or        or x y: the first argument that is not empty, or the last argument.
+  print     print args: the arguments as text, as Go's fmt.Sprint gives them.
+  printf    printf format args: the arguments formatted as Go's fmt.Sprintf does: {{ printf "%05d" .vars.uid }}.
+  println   println args: the arguments as text, with spaces between them and a newline at the end.
+  quote     quote s: s in single quotes for sh, each ' as '\''.
+  slice     slice x i j: the part of the string or the list x from the index i up to j.
+  sqlquote  sqlquote s: s as a MariaDB string literal: in single quotes, each ' as '', each \ as \\.
+  title     title s: s with the first letter of each word in upper case.
+  urlquery  urlquery s: s escaped for the query of a URL.
+
+Example:
+  # winch.yaml
+  name: demo
+  hosts:
+    web1.acme.com: {}
+  vars:
+    sites: [blog, shop]
+    admins: [ann, bob]
+  steps:
+    - name: Write the sites
+      file:
+        path: !tpl /etc/nginx/sites-enabled/{{ .item }}.conf
+        content: !tpl "server_name {{ .item }}.{{ .host.short }};\n"
+      loop: !expr vars.sites
+    - name: Allow the admins
+      file:
+        path: /etc/ssh/sshd_config.d/admins.conf
+        content: !tpl "AllowUsers{{ range .vars.admins }} {{ . }}{{ end }}\n"
+
+Run "winch doc templates.<function>" for the full text of a function.
+==> winch doc templates.and
+templates.and: function
+
+and x y: the first empty argument, or the last argument. In an
+expression, and is an operator.
+==> winch doc templates.call
+templates.call: function
+
+call f args: the result of the function f. Project data holds no
+functions.
+==> winch doc templates.eq
+templates.eq: function
+
+eq a b: true when a equals b. With more arguments, true when a equals
+any of them. In an expression, use ==.
+==> winch doc templates.ge
+templates.ge: function
+
+ge a b: true when a >= b.
+==> winch doc templates.get
+templates.get: function
+
+get m key: the value of key in the map m, or nothing when m has no such
+key. It reads a key that a map may leave out: {{ with get . "endpoint"
+}}Endpoint = {{ . }}{{ end }}.
+==> winch doc templates.gt
+templates.gt: function
+
+gt a b: true when a > b.
+==> winch doc templates.has
+templates.has: function
+
+has list v: true when list contains v. In an expression, use v in list.
+==> winch doc templates.html
+templates.html: function
+
+html s: s with the special characters of HTML escaped.
+==> winch doc templates.index
+templates.index: function
+
+index x k: the element of the map or the list x at the key or the index
+k. More keys read deeper. A missing map key is an error. Use get for a
+key that may be missing.
+==> winch doc templates.join
+templates.join: function
+
+join list sep: the elements of list as text, joined with sep.
+==> winch doc templates.js
+templates.js: function
+
+js s: s escaped for a JavaScript string.
+==> winch doc templates.json
+templates.json: function
+
+json v: v as JSON on one line. Map keys are in sorted order, and
+non-ASCII characters stay UTF-8. The output is also a valid YAML value,
+so it writes a string into a JSON or a YAML file: "data-root": {{ json
+.vars.docker_root }}.
+==> winch doc templates.le
+templates.le: function
+
+le a b: true when a <= b.
+==> winch doc templates.len
+templates.len: function
+
+len x: the length of a string, a list, or a map.
+==> winch doc templates.lt
+templates.lt: function
+
+lt a b: true when a < b.
+==> winch doc templates.ne
+templates.ne: function
+
+ne a b: true when a does not equal b.
+==> winch doc templates.not
+templates.not: function
+
+not x: true when x is empty or false. In an expression, not and ! are
+operators.
+==> winch doc templates.or
+templates.or: function
+
+or x y: the first argument that is not empty, or the last argument. In
+an expression, or is an operator.
+==> winch doc templates.print
+templates.print: function
+
+print args: the arguments as text, as Go's fmt.Sprint gives them.
+==> winch doc templates.printf
+templates.printf: function
+
+printf format args: the arguments formatted as Go's fmt.Sprintf does: {{
+printf "%05d" .vars.uid }}.
+==> winch doc templates.println
+templates.println: function
+
+println args: the arguments as text, with spaces between them and a
+newline at the end.
+==> winch doc templates.quote
+templates.quote: function
+
+quote s: s in single quotes for sh, each ' as '\''. A value goes into a
+command as it is. Quote a value that must stay one word: then: !tpl
+"postmap {{ quote .vars.map }}".
+==> winch doc templates.slice
+templates.slice: function
+
+slice x i j: the part of the string or the list x from the index i up to
+j. In an expression, use x[i:j].
+==> winch doc templates.sqlquote
+templates.sqlquote: function
+
+sqlquote s: s as a MariaDB string literal: in single quotes, each ' as
+'', each \ as \\. For PostgreSQL, write E before it. It assumes the
+default SQL mode, without NO_BACKSLASH_ESCAPES, and a UTF-8 client.
+==> winch doc templates.title
+templates.title: function
+
+title s: s with the first letter of each word in upper case.
+==> winch doc templates.urlquery
+templates.urlquery: function
+
+urlquery s: s escaped for the query of a URL.
+==> winch doc expressions
+expressions: computed values (!expr)
+
+An expression computes a value for each host, such as a list, a
+number, or true or false.
+
+Syntax:
+  The !expr tag marks an expression in the language of expr
+  (expr-lang.org). Its result keeps its type: a list, a number, a
+  boolean, a map, or a string.
+
+Data:
+  An expression reads these names without a leading dot:
+
+    vars      the variables of the host, with the vars of the recipe step
+    facts     the facts of the host; run winch doc facts
+    host      name, short, address, groups, and vars of the host
+    item      the current element in a step with loop
+    match(p)  the hosts that match the host pattern p, with the fields
+              of host
+
+  match(p) reads the inventory, not the --hosts selection. A host from
+  match() has only the vars that need no facts. A default cannot use
+  match().
+
+Where expressions go:
+  Any module argument can be an expression or a template, and so can
+  then. when takes an expression. loop takes a list or an expression.
+
+Operators:
+  + - * / % **                  arithmetic
+  == != < > <= >=               comparison
+  and or not                    logic, also && || !
+  in                            membership in a list or a map
+  contains startsWith endsWith  text tests
+  matches                       regular expression test
+  c ? a : b                     choice
+  a ?? b                        a, or b when a is nil
+  [] ?.                         read an element or a key
+  x[i:j] 1..3                   slice and range
+  |                             pipe: vars.name | lower()
+
+Predicates:
+  In a predicate, such as the second argument of filter, # is the
+  element, and .name reads the key name of a map element:
+  filter(vars.users, .uid >= 1000).
+
+Missing values:
+  A missing map key is nil. A module argument whose expression gives
+  null fails the host.
+
+Quoting:
+  Quote a YAML value that starts with a quote, [, {, &, *, or !, or
+  that contains ": " or " #".
+
+When they run:
+  winch evaluates expressions on the controller, during the plan. They
+  cannot read the result of a step. winch checks each one when it
+  loads the project: an unknown name or a syntax error is an error. An
+  error while winch evaluates one for a host fails that host. The
+  other hosts go on. $env and now() are errors in every expression.
+
+Functions:
+  abs            abs(n): the absolute value of the number n.
+  all            all(list, pred): true when pred is true for each element.
+  any            any(list, pred): true when pred is true for at least one element.
+  bitand         bitand(a, b): the bitwise AND of two integers.
+  bitnand        bitnand(a, b): the bitwise AND NOT of two integers.
+  bitnot         bitnot(a): the bitwise NOT of an integer.
+  bitor          bitor(a, b): the bitwise OR of two integers.
+  bitshl         bitshl(a, n): a shifted left by n bits.
+  bitshr         bitshr(a, n): a shifted right by n bits, with its sign.
+  bitushr        bitushr(a, n): a shifted right by n bits, without its sign.
+  bitxor         bitxor(a, b): the bitwise XOR of two integers.
+  ceil           ceil(n): n rounded up to an integer value.
+  concat         concat(a, b, ...): the lists joined into one list.
+  count          count(list, pred): the number of elements for which pred is true.
+  date           date(s), date(s, layout), or date(s, layout, zone): the time in the text s, such as date("2026-10-30").
+  duration       duration(s): the duration in the text s, such as duration("1h30m").
+  filter         filter(list, pred): the elements for which pred is true: filter(match("all"), .name != host.name).
+  find           find(list, pred): the first element for which pred is true, or nil.
+  findIndex      findIndex(list, pred): the index of the first element for which pred is true, or -1.
+  findLast       findLast(list, pred): the last element for which pred is true, or nil.
+  findLastIndex  findLastIndex(list, pred): the index of the last element for which pred is true, or -1.
+  first          first(list): the first element, or nil for an empty list.
+  flatten        flatten(list): the elements of the list and of its nested lists, in one list.
+  float          float(v): the number or the text v as a float.
+  floor          floor(n): n rounded down to an integer value.
+  fromBase64     fromBase64(s): the text that the base64 text s encodes.
+  fromJSON       fromJSON(s): the value of the JSON text s.
+  fromPairs      fromPairs(list): a map from a list of [key, value] pairs.
+  get            get(m, key): the value of key in the map m, or nil when m has no such key.
+  groupBy        groupBy(list, pred): a map from each result of pred to the list of elements that give it.
+  hasPrefix      hasPrefix(s, prefix): true when s starts with prefix.
+  hasSuffix      hasSuffix(s, suffix): true when s ends with suffix.
+  indexOf        indexOf(s, sub): the index of the first sub in s, or -1.
+  int            int(v): the number or the text v as an integer: int("8080").
+  join           join(list, sep): the strings of list joined with sep.
+  json           json(v): v as JSON on one line.
+  keys           keys(m): the keys of the map m, in sorted order.
+  last           last(list): the last element, or nil for an empty list.
+  lastIndexOf    lastIndexOf(s, sub): the index of the last sub in s, or -1.
+  len            len(x): the length of a string, a list, or a map.
+  lower          lower(s): s in lower case.
+  map            map(list, pred): the result of pred for each element: map(vars.users, .name).
+  match          match(pattern): the hosts that match the host pattern, each with name, short, address, groups, and vars, as host has.
+  max            max(a, b, ...), or max(list): the largest number.
+  mean           mean(list): the average of the numbers.
+  median         median(list): the median of the numbers.
+  min            min(a, b, ...), or min(list): the smallest number.
+  none           none(list, pred): true when pred is false for each element.
+  one            one(list, pred): true when pred is true for exactly one element.
+  quote          quote(s): s in single quotes for sh, each ' as '\''.
+  reduce         reduce(list, pred, initial): one value from all elements.
+  repeat         repeat(s, n): s n times.
+  replace        replace(s, old, new): s with each old replaced by new.
+  reverse        reverse(list): the elements in reverse order.
+  round          round(n): n rounded to the nearest integer value.
+  sort           sort(list), or sort(list, "desc"): the elements in ascending or descending order.
+  sortBy         sortBy(list, pred), or sortBy(list, pred, "desc"): the elements in the order of the results of pred: sortBy(vars.users, .uid).
+  split          split(s, sep), or split(s, sep, n): the parts of s between each sep.
+  splitAfter     splitAfter(s, sep), or splitAfter(s, sep, n): the parts of s after each sep, each with sep at its end.
+  sqlquote       sqlquote(s): s as a MariaDB string literal: in single quotes, each ' as '', each \ as \\.
+  string         string(v): v as text: string(8080) is "8080".
+  sum            sum(list), or sum(list, pred): the sum of the numbers, or of the results of pred.
+  take           take(list, n): the first n elements.
+  timezone       timezone(name): the time zone name, such as "Europe/Berlin", for the In method of a date.
+  toBase64       toBase64(s): s in base64.
+  toPairs        toPairs(m): the [key, value] pairs of the map m, in sorted key order.
+  trim           trim(s), or trim(s, chars): s without white space, or without the characters in chars, at both ends.
+  trimPrefix     trimPrefix(s, prefix): s without prefix at its start.
+  trimSuffix     trimSuffix(s, suffix): s without suffix at its end.
+  type           type(v): the type of v as text: nil, bool, int, float, string, array, map, time.Time for a date, or time.Duration.
+  uniq           uniq(list): the elements without repeats, in their first order.
+  upper          upper(s): s in upper case.
+  values         values(m): the values of the map m, in the order of its sorted keys.
+
+Example:
+  # winch.yaml
+  name: demo
+  hosts:
+    mail.acme.com: {}
+    web1.acme.com: {}
+  vars:
+    mail_server: false
+    domain: acme.com
+    admins: [ann, bob]
+    mailname: !expr 'vars.mail_server ? vars.domain : host.name'
+  steps:
+    - name: Set the mail name
+      file:
+        path: /etc/mailname
+        content: !expr 'vars.mailname + "\n"'
+      when: !expr vars.mail_server
+    - name: Add the admins
+      user:
+        name: !expr item
+        groups: [sudo]
+      loop: !expr sort(vars.admins)
+    - name: List the other hosts
+      file:
+        path: /etc/peers
+        content: !expr 'join(map(filter(match("all"), .name != host.name), .address), "\n") + "\n"'
+
+Run "winch doc expressions.<function>" for the full text of a function.
+==> winch doc expressions.abs
+expressions.abs: function
+
+abs(n): the absolute value of the number n.
+==> winch doc expressions.all
+expressions.all: function
+
+all(list, pred): true when pred is true for each element. In pred, # is
+the element, and .name reads the key name of a map element:
+all(vars.ports, # > 0).
+==> winch doc expressions.any
+expressions.any: function
+
+any(list, pred): true when pred is true for at least one element.
+==> winch doc expressions.bitand
+expressions.bitand: function
+
+bitand(a, b): the bitwise AND of two integers.
+==> winch doc expressions.bitnand
+expressions.bitnand: function
+
+bitnand(a, b): the bitwise AND NOT of two integers.
+==> winch doc expressions.bitnot
+expressions.bitnot: function
+
+bitnot(a): the bitwise NOT of an integer.
+==> winch doc expressions.bitor
+expressions.bitor: function
+
+bitor(a, b): the bitwise OR of two integers.
+==> winch doc expressions.bitshl
+expressions.bitshl: function
+
+bitshl(a, n): a shifted left by n bits.
+==> winch doc expressions.bitshr
+expressions.bitshr: function
+
+bitshr(a, n): a shifted right by n bits, with its sign.
+==> winch doc expressions.bitushr
+expressions.bitushr: function
+
+bitushr(a, n): a shifted right by n bits, without its sign.
+==> winch doc expressions.bitxor
+expressions.bitxor: function
+
+bitxor(a, b): the bitwise XOR of two integers.
+==> winch doc expressions.ceil
+expressions.ceil: function
+
+ceil(n): n rounded up to an integer value.
+==> winch doc expressions.concat
+expressions.concat: function
+
+concat(a, b, ...): the lists joined into one list.
+==> winch doc expressions.count
+expressions.count: function
+
+count(list, pred): the number of elements for which pred is true.
+Without pred, the number of true elements.
+==> winch doc expressions.date
+expressions.date: function
+
+date(s), date(s, layout), or date(s, layout, zone): the time in the text
+s, such as date("2026-10-30"). The layout is a Go time layout. now() is
+a load error, so a plan does not depend on the clock.
+==> winch doc expressions.duration
+expressions.duration: function
+
+duration(s): the duration in the text s, such as duration("1h30m").
+==> winch doc expressions.filter
+expressions.filter: function
+
+filter(list, pred): the elements for which pred is true:
+filter(match("all"), .name != host.name).
+==> winch doc expressions.find
+expressions.find: function
+
+find(list, pred): the first element for which pred is true, or nil.
+==> winch doc expressions.findIndex
+expressions.findIndex: function
+
+findIndex(list, pred): the index of the first element for which pred is
+true, or -1.
+==> winch doc expressions.findLast
+expressions.findLast: function
+
+findLast(list, pred): the last element for which pred is true, or nil.
+==> winch doc expressions.findLastIndex
+expressions.findLastIndex: function
+
+findLastIndex(list, pred): the index of the last element for which pred
+is true, or -1.
+==> winch doc expressions.first
+expressions.first: function
+
+first(list): the first element, or nil for an empty list.
+==> winch doc expressions.flatten
+expressions.flatten: function
+
+flatten(list): the elements of the list and of its nested lists, in one
+list.
+==> winch doc expressions.float
+expressions.float: function
+
+float(v): the number or the text v as a float.
+==> winch doc expressions.floor
+expressions.floor: function
+
+floor(n): n rounded down to an integer value.
+==> winch doc expressions.fromBase64
+expressions.fromBase64: function
+
+fromBase64(s): the text that the base64 text s encodes.
+==> winch doc expressions.fromJSON
+expressions.fromJSON: function
+
+fromJSON(s): the value of the JSON text s.
+==> winch doc expressions.fromPairs
+expressions.fromPairs: function
+
+fromPairs(list): a map from a list of [key, value] pairs.
+==> winch doc expressions.get
+expressions.get: function
+
+get(m, key): the value of key in the map m, or nil when m has no such
+key. get(list, i) gives the element at the index i, or nil.
+==> winch doc expressions.groupBy
+expressions.groupBy: function
+
+groupBy(list, pred): a map from each result of pred to the list of
+elements that give it.
+==> winch doc expressions.hasPrefix
+expressions.hasPrefix: function
+
+hasPrefix(s, prefix): true when s starts with prefix. The operator
+startsWith does the same.
+==> winch doc expressions.hasSuffix
+expressions.hasSuffix: function
+
+hasSuffix(s, suffix): true when s ends with suffix. The operator
+endsWith does the same.
+==> winch doc expressions.indexOf
+expressions.indexOf: function
+
+indexOf(s, sub): the index of the first sub in s, or -1.
+==> winch doc expressions.int
+expressions.int: function
+
+int(v): the number or the text v as an integer: int("8080").
+==> winch doc expressions.join
+expressions.join: function
+
+join(list, sep): the strings of list joined with sep.
+==> winch doc expressions.json
+expressions.json: function
+
+json(v): v as JSON on one line. Map keys are in sorted order, and
+non-ASCII characters stay UTF-8. The output is also a valid YAML value.
+==> winch doc expressions.keys
+expressions.keys: function
+
+keys(m): the keys of the map m, in sorted order. It cannot read vars
+itself: name each variable.
+==> winch doc expressions.last
+expressions.last: function
+
+last(list): the last element, or nil for an empty list.
+==> winch doc expressions.lastIndexOf
+expressions.lastIndexOf: function
+
+lastIndexOf(s, sub): the index of the last sub in s, or -1.
+==> winch doc expressions.len
+expressions.len: function
+
+len(x): the length of a string, a list, or a map.
+==> winch doc expressions.lower
+expressions.lower: function
+
+lower(s): s in lower case.
+==> winch doc expressions.map
+expressions.map: function
+
+map(list, pred): the result of pred for each element: map(vars.users,
+.name).
+==> winch doc expressions.match
+expressions.match: function
+
+match(pattern): the hosts that match the host pattern, each with name,
+short, address, groups, and vars, as host has. It reads the inventory,
+not the --hosts selection. A host from match() has only the vars that
+need no facts. It works in steps, not in defaults. A constant pattern
+that matches no host is a load error.
+==> winch doc expressions.max
+expressions.max: function
+
+max(a, b, ...), or max(list): the largest number.
+==> winch doc expressions.mean
+expressions.mean: function
+
+mean(list): the average of the numbers.
+==> winch doc expressions.median
+expressions.median: function
+
+median(list): the median of the numbers.
+==> winch doc expressions.min
+expressions.min: function
+
+min(a, b, ...), or min(list): the smallest number.
+==> winch doc expressions.none
+expressions.none: function
+
+none(list, pred): true when pred is false for each element.
+==> winch doc expressions.one
+expressions.one: function
+
+one(list, pred): true when pred is true for exactly one element.
+==> winch doc expressions.quote
+expressions.quote: function
+
+quote(s): s in single quotes for sh, each ' as '\''. A value goes into a
+command as it is. Quote a value that must stay one word: then: !expr
+'"postmap " + quote(vars.map)'.
+==> winch doc expressions.reduce
+expressions.reduce: function
+
+reduce(list, pred, initial): one value from all elements. In pred, #acc
+is the value so far, # the element, and #index its index:
+reduce(vars.sizes, #acc + #, 0).
+==> winch doc expressions.repeat
+expressions.repeat: function
+
+repeat(s, n): s n times.
+==> winch doc expressions.replace
+expressions.replace: function
+
+replace(s, old, new): s with each old replaced by new.
+==> winch doc expressions.reverse
+expressions.reverse: function
+
+reverse(list): the elements in reverse order.
+==> winch doc expressions.round
+expressions.round: function
+
+round(n): n rounded to the nearest integer value.
+==> winch doc expressions.sort
+expressions.sort: function
+
+sort(list), or sort(list, "desc"): the elements in ascending or
+descending order.
+==> winch doc expressions.sortBy
+expressions.sortBy: function
+
+sortBy(list, pred), or sortBy(list, pred, "desc"): the elements in the
+order of the results of pred: sortBy(vars.users, .uid).
+==> winch doc expressions.split
+expressions.split: function
+
+split(s, sep), or split(s, sep, n): the parts of s between each sep.
+With n, at most n parts.
+==> winch doc expressions.splitAfter
+expressions.splitAfter: function
+
+splitAfter(s, sep), or splitAfter(s, sep, n): the parts of s after each
+sep, each with sep at its end.
+==> winch doc expressions.sqlquote
+expressions.sqlquote: function
+
+sqlquote(s): s as a MariaDB string literal: in single quotes, each ' as
+'', each \ as \\. For PostgreSQL, write E before it. It assumes the
+default SQL mode, without NO_BACKSLASH_ESCAPES, and a UTF-8 client.
+==> winch doc expressions.string
+expressions.string: function
+
+string(v): v as text: string(8080) is "8080".
+==> winch doc expressions.sum
+expressions.sum: function
+
+sum(list), or sum(list, pred): the sum of the numbers, or of the results
+of pred.
+==> winch doc expressions.take
+expressions.take: function
+
+take(list, n): the first n elements.
+==> winch doc expressions.timezone
+expressions.timezone: function
+
+timezone(name): the time zone name, such as "Europe/Berlin", for the In
+method of a date.
+==> winch doc expressions.toBase64
+expressions.toBase64: function
+
+toBase64(s): s in base64.
+==> winch doc expressions.toPairs
+expressions.toPairs: function
+
+toPairs(m): the [key, value] pairs of the map m, in sorted key order.
+==> winch doc expressions.trim
+expressions.trim: function
+
+trim(s), or trim(s, chars): s without white space, or without the
+characters in chars, at both ends.
+==> winch doc expressions.trimPrefix
+expressions.trimPrefix: function
+
+trimPrefix(s, prefix): s without prefix at its start.
+==> winch doc expressions.trimSuffix
+expressions.trimSuffix: function
+
+trimSuffix(s, suffix): s without suffix at its end.
+==> winch doc expressions.type
+expressions.type: function
+
+type(v): the type of v as text: nil, bool, int, float, string, array,
+map, time.Time for a date, or time.Duration.
+==> winch doc expressions.uniq
+expressions.uniq: function
+
+uniq(list): the elements without repeats, in their first order.
+==> winch doc expressions.upper
+expressions.upper: function
+
+upper(s): s in upper case.
+==> winch doc expressions.values
+expressions.values: function
+
+values(m): the values of the map m, in the order of its sorted keys.
+==> winch doc facts
+facts: values that winch reads from each host
+
+Facts are values that winch reads from each host before the plan, such
+as the OS release.
+
+Reading a fact:
+  Expressions read a fact as facts.os.id, and templates as
+  {{ .facts.os.id }}. Facts are a fixed set. A read of an unknown fact
+  is an error.
+
+When winch reads them:
+  winch reads the facts once per host per run, before the first step,
+  and again after a reboot. They describe the host before the run.
+
+Keys:
+  os               map      -  OS release of the host
+  os.id            string   -  distribution, such as debian or ubuntu
+  os.version       string   -  release number, such as 13 or 24.04
+  os.codename      string   -  release code name, such as trixie or noble
+  os.arch          string   -  CPU architecture
+  reboot_required  boolean  -  pending reboot
+
+Example:
+  # winch.yaml
+  name: demo
+  hosts:
+    web1.example.com: {}
+  steps:
+    - recipe: base
+  recipes:
+    base:
+      require:
+        - !expr facts.os.id == "debian" and facts.os.version == "13"
+      steps:
+        - reboot:
+            if_required: true
+          when: !expr facts.reboot_required
+
+Run "winch doc facts.<key>" for the full text of a key.
+==> winch doc facts.os
+facts.os: map
+
+OS release of the host. winch reads id, version, and codename from
+/etc/os-release, or from /usr/lib/os-release when the first does not
+exist.
+
+Keys:
+  id        string  -  distribution, such as debian or ubuntu
+  version   string  -  release number, such as 13 or 24.04
+  codename  string  -  release code name, such as trixie or noble
+  arch      string  -  CPU architecture
+==> winch doc facts.os.id
+facts.os.id: string
+
+Distribution, such as debian or ubuntu.
+==> winch doc facts.os.version
+facts.os.version: string
+
+Release number, such as 13 or 24.04. It is a string: compare it with a
+string, such as "13".
+==> winch doc facts.os.codename
+facts.os.codename: string
+
+Release code name, such as trixie or noble.
+==> winch doc facts.os.arch
+facts.os.arch: string
+
+CPU architecture: amd64 or arm64.
+==> winch doc facts.reboot_required
+facts.reboot_required: boolean
+
+Pending reboot. It is true when /run/reboot-required exists, or when a
+kernel in /boot is newer than the running kernel.
+==> winch doc secrets
+secrets: encrypted values in the project
+
+A secret is a value that the project keeps encrypted and winch never
+prints.
+
+Format:
+  A secret is encrypted with age for the recipients in winch.yaml. The
+  !secret tag marks it, followed by the ciphertext in base64 on one
+  line.
+
+Where a secret stands:
+  A !secret stands only in a variable value: in the vars of an
+  inventory, and in the defaults of winch.yaml and of recipes, at any
+  depth of a list or a map. --set cannot give a secret.
+
+Commands:
+  winch secret init                  make an age key, add it to recipients
+  winch secret generate vars.<name>  write a random password into the inventory
+  winch secret encrypt               encrypt a value from stdin
+  winch secret rekey                 encrypt all secrets for the current recipients
+
+The age key:
+  winch secret init makes a key at ~/.config/winch/age.key, or at the
+  path in WINCH_AGE_KEY. It makes a key only when no key is there.
+  With WINCH_AGE_IDENTITY_CMD, it makes no key and adds the public key
+  of the command's key.
+
+  winch reads the age identity from the output of the command in
+  WINCH_AGE_IDENTITY_CMD, such as op read op://infra/winch/key.
+  Without it, winch reads the file in WINCH_AGE_KEY, or else
+  ~/.config/winch/age.key. winch validate needs no identity.
+
+A new member:
+  A new member runs winch secret init and sends the change for review.
+  The new key can read the secrets after a member who can read them
+  runs winch secret rekey.
+
+Output:
+  A variable is secret when its value is a !secret, or when its
+  default reads a secret variable. The plan, diffs, errors, logs, and
+  JSON show (secret) in place of a secret, also a part of a value that
+  comes from a secret. A filter replaces each secret value in all text
+  that winch prints, also in output from the host. The filter also
+  hides private keys, age identities, passwords in URLs, and
+  well-known tokens.
+
+Secrets in commands:
+  A secret in a command does not show in the process list of the host.
+  A program that the command starts with the secret as an argument,
+  such as psql -c, does show it.
+
+Warnings and errors:
+  - winch warns about text in project files that looks like a private
+    key or a token, and is not a !secret.
+  - winch warns about a file step whose content reads a secret and
+    whose mode is missing or lets others read it.
+  - A !secret in a certbot hook is an error: certbot stores its hooks
+    in a file that other users can read.
+
+Example:
+  # inventories/production.yaml
+  hosts:
+    db1.acme.com: {}
+  groups:
+    all:
+      vars:
+        db_password: !secret YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB...
+
+  # winch.yaml
+  name: acme
+  recipients:
+    - age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+  steps:
+    - file:
+        path: /etc/app/db.env
+        content: !tpl "DB_PASSWORD={{ .vars.db_password }}\n"
+        mode: "0600"
+==> winch doc workflow
+workflow: how to plan and apply changes
+
+A run of winch plans the changes, asks for approval, and then applies
+them.
+
+Plan and apply:
+  winch plan shows the changes and changes nothing. winch apply shows
+  the same plan, asks, and then makes the changes. For each host, the
+  plan starts a session, reads the facts, evaluates the steps, checks
+  the requirements of the recipes, and asks the helper to check each
+  step. Apply checks each step again right before it changes it. The
+  second check decides.
+
+Plan marks:
+  +  create
+  ~  change
+  -  remove
+  ?  unknown: a cmd without creates or unless
+  !  a handler, or a pending then, gate, or assert that will run
+  *  a reboot, assert, or health gate that runs during apply
+
+Plan hash:
+  The last line of a plan is its hash, such as plan a3f9c2e1d07b4c58.
+  The hash covers the project name, the hosts with their SSH targets
+  and login users, the stages, the evaluated steps, the check results,
+  and the pending handlers and then commands. winch apply --check
+  <hash> applies only when the new plan has that hash, without the
+  question.
+
+Without a terminal:
+  apply without --yes or --check prints the plan and exits 5. Its last
+  line is the command that applies that plan.
+
+What winch changes:
+  winch changes only what steps declare. Deleting a step changes
+  nothing on the host. To remove a thing, declare it with absent:
+  true. The plan fails a host when two steps manage the same path,
+  package, unit, user, or group with different arguments.
+
+Stopping and resuming:
+  The first Ctrl-C lets the running step of each host finish, starts
+  no new step, and ends with the summary. A second Ctrl-C ends the
+  sessions. A new run is the resume: steps that already succeeded
+  check as ok, and pending handlers run.
+
+Access to the host:
+  winch keeps its access to each host.
+  - A step that stops, disables, masks, or removes the SSH server
+    fails: "this cuts off winch's access".
+  - Some steps get the rollback of confirm_access without it: a change
+    of the login user's authorized_keys, ~/.ssh, or home directory,
+    groups added to the login user, a change of /etc/pam.d, and a
+    change of /etc/sudoers or /etc/sudoers.d when the login user is not
+    root. Every firewall step gets it too. The plan marks such a step.
+    Run winch doc step.confirm_access.
+  - A step that changes sshd's config while ssh.socket is active, as on
+    Ubuntu, restarts ssh.socket. It gets the same protection.
+  - After the last step of a host that changed something, winch checks
+    the access once more. When it fails, the host fails, and nothing
+    rolls back.
+
+Changing the SSH port:
+  The access check connects to the port in the controller's SSH
+  config. So a change of sshd's Port in one run always rolls back. Move
+  sshd to a new port in three runs:
+
+    1. Let sshd listen on the old and the new port.
+    2. Change the port in the SSH config.
+    3. Remove the old port from sshd.
+
+Exit codes:
+  0  success
+  1  one or more hosts failed
+  2  plan --exit-code: apply would change something
+  3  invalid command line or project; nothing ran
+  4  one or more hosts were unreachable, and no step failed
+  5  confirmation needed; nothing changed
+  6  the plan hash differs from --check; nothing changed
+
+  When several apply, the first in the order 3, 1, 4, 6, 5, 2, 0 wins.
+
+JSON output:
+  --json writes one JSON object per line on stdout. Each has type and
+  time. The types:
+
+    version     the format version; always first
+    diagnostic  an error or a warning, with file, line, col, and message
+    planned     the check of one step
+    applied     the apply of one step
+    host        a host finished, failed, or was unreachable
+    exec        the output of winch exec on one host
+    summary     the counts, the plan hash, and the exit code; always last
+
+  A step event has host and address, such as mail.acme.com:nginx#3[0]:
+  the host, the stage or recipe, the step number from 1, and the loop
+  index from 0.
+
+Example:
+  winch plan site
+  winch apply site
+  winch apply site --check a3f9c2e1d07b4c58
+  winch plan site --exit-code
+==> winch doc assert
+assert: stop a host when a check command fails
+
+The plan marks the step with * and runs nothing. Apply runs the command.
+A failed assert stays pending on the host, and the next apply runs it
+again, also when nothing else changes.
+
+Keys:
+  command  string  required  check command
+  message  string  required  error when the check fails
+
+Example:
+  - name: Check that nginx answers
+    assert:
+      command: curl -fsS http://localhost/
+      message: nginx does not answer on port 80
+
+Run "winch doc assert.<key>" for the full text of a key.
+==> winch doc assert.command
+assert.command: string, required
+
+Check command. It runs during apply, through sh -e as root, in /. Exit 0
+passes.
+==> winch doc assert.message
+assert.message: string, required
+
+Error when the check fails. The host fails with it when the command
+exits non-zero.
+==> winch doc certbot
+certbot: get a Let's Encrypt certificate
+
+The step runs certbot certonly. Renewal stays with certbot's own timer.
+Install the package certbot in an earlier pkg step. The nginx and apache
+authenticators also need python3-certbot-nginx or
+python3-certbot-apache.
+
+Keys:
+  name           string                     required  certificate name in /etc/letsencrypt
+  domains        string or list of strings  required  no wildcards
+  email          string                     required  Let's Encrypt account address
+  authenticator  string                     nginx     challenge plugin
+  webroot_path   string                     -         web root for webroot
+  pre_hook       string                     -         command before each try
+  post_hook      string                     -         command after each try
+  deploy_hook    string                     -         command after each new certificate
+  reuse_key      boolean                    false     keep the private key at renewal
+
+Example:
+  - certbot:
+      name: mail
+      domains: [mail.example.com]
+      email: admin@example.com
+      deploy_hook: systemctl reload postfix
+
+Run "winch doc certbot.<key>" for the full text of a key.
+==> winch doc certbot.name
+certbot.name: string, required
+
+Certificate name in /etc/letsencrypt.
+==> winch doc certbot.domains
+certbot.domains: string or list of strings, required
+
+No wildcards. A wildcard needs a DNS challenge.
+==> winch doc certbot.email
+certbot.email: string, required
+
+Let's Encrypt account address.
+==> winch doc certbot.authenticator
+certbot.authenticator: string, default nginx
+
+Challenge plugin: nginx, apache, standalone, or webroot. The nginx and
+apache plugins do not change the config of the web server. standalone
+binds port 80 itself; pre_hook and post_hook can stop and start what
+holds that port. webroot needs webroot_path.
+==> winch doc certbot.webroot_path
+certbot.webroot_path: string
+
+Web root for webroot.
+==> winch doc certbot.pre_hook
+certbot.pre_hook: string
+
+Command before each try to get a certificate. certbot stores it in a
+file that other users can read, so it cannot hold a secret. A hook that
+needs a secret reads it from a root-only file that a file step writes.
+==> winch doc certbot.post_hook
+certbot.post_hook: string
+
+Command after each try to get a certificate. certbot stores it in a file
+that other users can read, so it cannot hold a secret.
+==> winch doc certbot.deploy_hook
+certbot.deploy_hook: string
+
+Command after each new certificate, also the first. A failed hook fails
+the step, and the next apply runs it again. It cannot hold a secret.
+==> winch doc certbot.reuse_key
+certbot.reuse_key: boolean, default false
+
+Keep the private key at renewal.
+==> winch doc cmd
+cmd: run a command
+
+Without creates or unless, the check result is unknown, and apply runs
+the command each time. A secret in the command does not show in the
+process list of the host. A program that the command starts with the
+secret as an argument, such as psql -c, does show it.
+
+Keys:
+  command  string   required  shell script
+  creates  string   -         path that marks the work as done
+  unless   string   -         check command; exit 0 skips the step
+  user     string   root      account that runs command
+  dir      string   /         working directory
+  timeout  integer  600       limit in seconds, also for unless
+
+Example:
+  - name: Build the alias database
+    cmd:
+      command: newaliases
+      creates: /etc/aliases.db
+
+Run "winch doc cmd.<key>" for the full text of a key.
+==> winch doc cmd.command
+cmd.command: string, required
+
+Shell script. It runs through sh -e as root, in /, with stdin from
+/dev/null. A script of several lines stops at its first failed line.
+Without creates or unless, the check result is unknown.
+==> winch doc cmd.creates
+cmd.creates: string
+
+Path that marks the work as done. The step is ok when the path exists.
+When the command exits 0 and the path is still missing, the step fails.
+The path has no glob characters. A step has at most one of creates and
+unless.
+==> winch doc cmd.unless
+cmd.unless: string
+
+Check command; exit 0 skips the step. It runs at the check as root, in
+/, with the timeout of the step. user and dir do not apply to it. A step
+has at most one of creates and unless.
+==> winch doc cmd.user
+cmd.user: string, default root
+
+Account that runs command. Its home is HOME. The step starts no login
+session: PAM does not run, so the login umask and limits of the account
+do not apply, and the umask is 022.
+==> winch doc cmd.dir
+cmd.dir: string, default /
+
+Working directory.
+==> winch doc cmd.timeout
+cmd.timeout: integer, default 600
+
+Limit in seconds, also for unless. After it, the helper stops the
+command and the step fails.
+==> winch doc debconf
+debconf: set a debconf answer
+
+Only the scripts of a package read its answers. Put the step before the
+pkg step that installs the package, also when the package comes in as a
+dependency.
+
+Keys:
+  package   string  required  package that asks the question
+  question  string  required  name, such as postfix/main_mailer_type
+  type      string  required  question type, such as string, boolean, or select
+  value     string  required  answer, as text
+
+Example:
+  - debconf:
+      package: postfix
+      question: postfix/main_mailer_type
+      type: select
+      value: Internet Site
+
+Run "winch doc debconf.<key>" for the full text of a key.
+==> winch doc debconf.package
+debconf.package: string, required
+
+Package that asks the question.
+==> winch doc debconf.question
+debconf.question: string, required
+
+Name, such as postfix/main_mailer_type.
+==> winch doc debconf.type
+debconf.type: string, required
+
+Question type, such as string, boolean, or select.
+==> winch doc debconf.value
+debconf.value: string, required
+
+Answer, as text. Only the scripts of the package read it, so put the
+step before the pkg step that installs the package.
+==> winch doc dir
+dir: manage a directory
+
+The step creates missing parent directories, owned by root with mode
+0755. winch checks owner, group, and mode on every run.
+
+Keys:
+  path     string           required  absolute
+  owner    name or ID       root
+  group    name or ID       root
+  mode     string           0755      octal, in quotes
+  recurse  boolean          false     owner and group for the whole tree
+  absent   boolean          false     remove it with its content
+  replace  boolean          false     remove another kind of thing at path first
+  purge    boolean          false     remove entries that nothing declares
+  keep     list of strings  -         name patterns that purge keeps
+
+Example:
+  - dir:
+      path: /var/www/app
+      owner: www-data
+      group: www-data
+      mode: "0750"
+
+Run "winch doc dir.<key>" for the full text of a key.
+==> winch doc dir.path
+dir.path: string, required
+
+Absolute. The step creates missing parent directories, owned by root
+with mode 0755. It follows a symbolic link to a directory and manages
+the directory behind it.
+==> winch doc dir.owner
+dir.owner: name or ID, default root
+
+A user name, or a numeric ID that needs no account. A value of only
+digits is an ID, also in quotes.
+==> winch doc dir.group
+dir.group: name or ID, default root
+
+A group name, or a numeric ID that needs no group. A value of only
+digits is an ID, also in quotes.
+==> winch doc dir.mode
+dir.mode: string, default 0755
+
+Octal, in quotes: "0750". Without quotes, YAML reads it as a number.
+==> winch doc dir.recurse
+dir.recurse: boolean, default false
+
+Owner and group for the whole tree. The mode stays the mode of the
+directory alone.
+==> winch doc dir.absent
+dir.absent: boolean, default false
+
+Remove it with its content.
+==> winch doc dir.replace
+dir.replace: boolean, default false
+
+Remove another kind of thing at path first, such as a file or a link.
+Without it, such a thing fails the check.
+==> winch doc dir.purge
+dir.purge: boolean, default false
+
+Remove entries that nothing declares. Purge looks only at the direct
+entries. It keeps an entry that a package owns, or that a step for the
+host writes. Each removal is a change.
+==> winch doc dir.keep
+dir.keep: list of strings
+
+Name patterns that purge keeps, such as *.db. They are glob patterns.
+keep needs purge.
+==> winch doc download
+download: download a file or an archive
+
+The host fetches the file and checks its SHA-256. A download with
+another checksum fails and keeps the old file. A step has path or
+unpack.
+
+Keys:
+  url     string      required  fetched by the host
+  sha256  string      required  checksum of the file
+  path    string      -         absolute target of a single file
+  unpack  string      -         directory for the unpacked archive
+  owner   name or ID  root      of the file or the unpacked tree
+  group   name or ID  root      of the file or the unpacked tree
+  mode    string      0644      octal, in quotes; path only
+
+Example:
+  - download:
+      url: https://example.com/releases/app-1.4.2-linux-amd64
+      sha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+      path: /usr/local/bin/app
+      mode: "0755"
+
+Run "winch doc download.<key>" for the full text of a key.
+==> winch doc download.url
+download.url: string, required
+
+Fetched by the host.
+==> winch doc download.sha256
+download.sha256: string, required
+
+Checksum of the file. Take the value from the checksum file that the
+vendor publishes, or download the file once and run sha256sum on it. A
+download with another checksum fails and keeps the old file.
+==> winch doc download.path
+download.path: string
+
+Absolute target of a single file. A step has path or unpack.
+==> winch doc download.unpack
+download.unpack: string
+
+Directory for the unpacked archive. The path of the URL ends in .tar.gz,
+.tgz, .tar.xz, or .zip. The step unpacks again when sha256, owner,
+group, or the directory changes. A new archive replaces the whole tree.
+Keep the files that a program writes, such as its config, data, and
+logs, outside the directory.
+==> winch doc download.owner
+download.owner: name or ID, default root
+
+Of the file or the unpacked tree. A user name or a numeric ID.
+==> winch doc download.group
+download.group: name or ID, default root
+
+Of the file or the unpacked tree. A group name or a numeric ID.
+==> winch doc download.mode
+download.mode: string, default 0644
+
+Octal, in quotes; path only. Without quotes, YAML reads it as a number.
+With unpack, mode is an error: the entries keep the modes of the
+archive, without write permission for group and others.
+==> winch doc file
+file: manage a file
+
+At most one of content, template, source, copy_from, and stock sets the
+content. A step without any of them manages only the owner, group, and
+mode that it gives, of a file that exists. The step creates missing
+parent directories, owned by root with mode 0755.
+
+Keys:
+  path       string      required  absolute
+  content    string      -         literal text
+  template   string      -         file in the recipe's templates/
+  source     string      -         file in the recipe's files/
+  copy_from  string      -         file on the host
+  stock      boolean     false     content that the package ships
+  owner      name or ID  root
+  group      name or ID  root
+  mode       string      0644      octal, in quotes
+  validate   string      -         check command for the new file
+  absent     boolean     false
+  replace    boolean     false     remove another kind of thing at path first
+
+Example:
+  - name: Write the message of the day
+    file:
+      path: /etc/motd
+      content: "Welcome to mail.example.com.\n"
+      mode: "0644"
+
+Run "winch doc file.<key>" for the full text of a key.
+==> winch doc file.path
+file.path: string, required
+
+Absolute. The step creates missing parent directories, owned by root
+with mode 0755.
+==> winch doc file.content
+file.content: string
+
+Literal text. A step without content, template, source, copy_from, or
+stock sets only the owner, group, and mode that it gives, with no
+defaults, of a file that exists. When that file is missing, the plan
+says does not exist yet. Apply fails when it is still missing.
+==> winch doc file.template
+file.template: string
+
+File in the recipe's templates/ directory. Its output is the content.
+==> winch doc file.source
+file.source: string
+
+File in the recipe's files/ directory. Its bytes are the content.
+==> winch doc file.copy_from
+file.copy_from: string
+
+File on the host. Its bytes are the content, and its permission bits are
+the default mode. The default owner and group stay root: the owner of
+the source does not carry over.
+==> winch doc file.stock
+file.stock: boolean, default false
+
+Content that the package ships for path, from the installed version. The
+package also gives the default owner, group, and mode.
+==> winch doc file.owner
+file.owner: name or ID, default root
+
+A user name or a numeric ID. A step without content has no default.
+==> winch doc file.group
+file.group: name or ID, default root
+
+A group name or a numeric ID. A step without content has no default.
+==> winch doc file.mode
+file.mode: string, default 0644
+
+Octal, in quotes: "0640". Without quotes, YAML reads it as a number.
+With stock, the package gives the default. With copy_from, the source
+gives it. A step without content has no default.
+==> winch doc file.validate
+file.validate: string
+
+Check command for the new file. The command names the real path, or
+checks the whole config: nginx -t. The helper puts the new file in place
+and runs the command. When the command fails, the old file comes back
+and the step fails.
+==> winch doc file.absent
+file.absent: boolean, default false
+
+Remove the file. A path of another kind fails the check.
+==> winch doc file.replace
+file.replace: boolean, default false
+
+Remove another kind of thing at path first, such as a directory. Without
+it, such a thing fails the check.
+==> winch doc firewall
+firewall: filter incoming traffic
+
+The step owns the nftables table inet winch and changes no other table.
+The rules of Docker, fail2ban, or /etc/nftables.conf stay. Its input
+chain filters traffic to the host. A host has at most one firewall step
+in a run.
+
+The step needs nft: install the package nftables in an earlier pkg step.
+
+Every change is guarded as a confirm_access step is. When no new SSH
+connection works after the new rules load, the old rules come back.
+
+Keys:
+  allow   list of maps  -      accepted traffic; the host drops the rest
+  absent  boolean       false  remove the table, its file, and its unit
+
+Example:
+  - firewall:
+      allow:
+        - tcp: [22, 80, 443]
+        - udp: 51820
+        - tcp: 5432
+          from: [10.0.0.0/8, 2001:db8::/32]
+
+Run "winch doc firewall.<key>" for the full text of a key.
+==> winch doc firewall.allow
+firewall.allow: list of maps
+
+Accepted traffic; the host drops the rest. It always accepts established
+and related traffic, loopback, ICMP echo requests, the ICMPv6 types that
+IPv6 needs, and DHCP replies. It drops invalid packets.
+
+Keys of each element:
+  tcp   integer or list of integers  -  ports
+  udp   integer or list of integers  -  ports
+  from  string or list of strings    -  source addresses or networks
+==> winch doc firewall.allow.tcp
+firewall.allow.tcp: integer or list of integers
+
+Ports. A rule has tcp or udp.
+==> winch doc firewall.allow.udp
+firewall.allow.udp: integer or list of integers
+
+Ports. A rule has tcp or udp.
+==> winch doc firewall.allow.from
+firewall.allow.from: string or list of strings
+
+Source addresses or networks. IPv4 and IPv6 are allowed. Without from,
+the rule accepts every source.
+==> winch doc firewall.absent
+firewall.absent: boolean, default false
+
+Remove the table, its file, and its unit.
+==> winch doc group
+group: manage a group
+
+Keys:
+  name    string   required
+  gid     ID       -
+  system  boolean  false     system group, at creation only
+  absent  boolean  false
+
+Example:
+  - group:
+      name: deploy
+      system: true
+
+Run "winch doc group.<key>" for the full text of a key.
+==> winch doc group.name
+group.name: string, required
+
+A new group's name has lowercase letters, digits, _, and -, and does not
+start with a digit or -. It has at most 32 characters.
+==> winch doc group.gid
+group.gid: ID
+
+A whole number. A gid that another group has fails the check.
+==> winch doc group.system
+group.system: boolean, default false
+
+System group, at creation only. It counts only when the step creates the
+group.
+==> winch doc group.absent
+group.absent: boolean, default false
+
+Remove the group. The check fails when the group is the primary group of
+a user.
+==> winch doc hostname
+hostname: set the host name
+
+Keys:
+  name  string  required  short name, such as mail
+
+Example:
+  - hostname:
+      name: mail
+
+Run "winch doc hostname.<key>" for the full text of a key.
+==> winch doc hostname.name
+hostname.name: string, required
+
+Short name, such as mail.
+==> winch doc line
+line: manage one line in a file
+
+Keys:
+  path      string   required  absolute
+  line      string   -         line to keep
+  match     string   required  regular expression for the line
+  validate  string   -         check command, as for file
+  absent    boolean  false     remove the matching lines
+
+Example:
+  - line:
+      path: /etc/default/grub
+      match: ^GRUB_TIMEOUT=
+      line: GRUB_TIMEOUT=2
+    then: update-grub
+
+Run "winch doc line.<key>" for the full text of a key.
+==> winch doc line.path
+line.path: string, required
+
+Absolute. A missing file is a change in the plan, since an earlier step
+can create it. Apply fails when it is still missing.
+==> winch doc line.line
+line.line: string
+
+Line to keep. It replaces the one line that match finds, or goes at the
+end of the file.
+==> winch doc line.match
+line.match: string, required
+
+Regular expression for the line. More than one matching line fails the
+check.
+==> winch doc line.validate
+line.validate: string
+
+Check command, as for file. It runs with absent too.
+==> winch doc line.absent
+line.absent: boolean, default false
+
+Remove the matching lines.
+==> winch doc link
+link: manage a symbolic link
+
+The step creates missing parent directories, owned by root with mode
+0755.
+
+Keys:
+  path      string   required  absolute
+  target    string   -         relative or absolute; need not exist
+  validate  string   -         check command, as for file
+  absent    boolean  false
+  replace   boolean  false     remove another kind of thing at path first
+
+Example:
+  - link:
+      path: /etc/nginx/sites-enabled/app
+      target: /etc/nginx/sites-available/app
+
+Run "winch doc link.<key>" for the full text of a key.
+==> winch doc link.path
+link.path: string, required
+
+Absolute. The step creates missing parent directories, owned by root
+with mode 0755.
+==> winch doc link.target
+link.target: string
+
+Relative or absolute; need not exist.
+==> winch doc link.validate
+link.validate: string
+
+Check command, as for file.
+==> winch doc link.absent
+link.absent: boolean, default false
+
+Remove the link. A path of another kind fails the check.
+==> winch doc link.replace
+link.replace: boolean, default false
+
+Remove another kind of thing at path first, such as a file or a
+directory. Without it, such a thing fails the check.
+==> winch doc pkg
+pkg: install or remove packages
+
+Before the first install of a run on a host, apply refreshes the package
+index. After a repo step changed something, the next pkg step refreshes
+it again.
+
+Keys:
+  name        string or list of strings  required  installed in one apt call
+  recommends  boolean                    true      install recommended packages too
+  purge       boolean                    false     remove the config files too
+  absent      boolean                    false
+
+Example:
+  - pkg:
+      name: [nginx, certbot]
+      recommends: false
+
+Run "winch doc pkg.<key>" for the full text of a key.
+==> winch doc pkg.name
+pkg.name: string or list of strings, required
+
+Installed in one apt call.
+==> winch doc pkg.recommends
+pkg.recommends: boolean, default true
+
+Install recommended packages too.
+==> winch doc pkg.purge
+pkg.purge: boolean, default false
+
+Remove the config files too. purge needs absent.
+==> winch doc pkg.absent
+pkg.absent: boolean, default false
+
+Remove the packages.
+==> winch doc reboot
+reboot: reboot the host
+
+Keys:
+  if_required  boolean  required  only on a pending reboot
+  timeout      integer  600       wait limit in seconds
+
+Example:
+  - reboot:
+      if_required: true
+
+Run "winch doc reboot.<key>" for the full text of a key.
+==> winch doc reboot.if_required
+reboot.if_required: boolean, required
+
+Only on a pending reboot. With false, the step always reboots.
+==> winch doc reboot.timeout
+reboot.timeout: integer, default 600
+
+Wait limit in seconds.
+==> winch doc repo
+repo: manage an apt source
+
+Keys:
+  name         string                     required  file name in /etc/apt
+  url          string                     required  without a user or a password
+  suite        string                     required  such as trixie
+  components   string or list of strings  -         such as main
+  key          string                     -         key file in the recipe's files/
+  key_content  string                     -         key text, in place of key
+
+Example:
+  - repo:
+      name: nginx
+      url: https://nginx.org/packages/debian
+      suite: trixie
+      components: [nginx]
+      key: key.asc
+
+Run "winch doc repo.<key>" for the full text of a key.
+==> winch doc repo.name
+repo.name: string, required
+
+File name in /etc/apt, of the source file and of the key file.
+==> winch doc repo.url
+repo.url: string, required
+
+Without a user or a password.
+==> winch doc repo.suite
+repo.suite: string, required
+
+Such as trixie. A flat suite ends in /.
+==> winch doc repo.components
+repo.components: string or list of strings
+
+Such as main. They are required, except for a flat suite, which has
+none.
+==> winch doc repo.key
+repo.key: string
+
+Key file in the recipe's files/ directory: an ASCII-armored OpenPGP
+public key. Download the vendor's key once and keep it in the project. A
+step has at most one of key and key_content.
+==> winch doc repo.key_content
+repo.key_content: string
+
+Key text, in place of key: an ASCII-armored OpenPGP public key. A step
+has at most one of key and key_content.
+==> winch doc service
+service: control a systemd unit
+
+With running: false, a missing unit file is ok, with the note <unit>:
+unit file not found. A service step with confirm_access: true checks
+that a new SSH connection works after the step, and rolls back when none
+does. Run winch doc step.confirm_access.
+
+Keys:
+  name       string   required  unit, with or without .service
+  running    boolean  -         start or stop; unset leaves it
+  enabled    boolean  -         start at boot; unset leaves it
+  reloaded   boolean  false     reload, in handlers and winch run only
+  restarted  boolean  false     restart, in handlers and winch run only
+
+Example:
+  - service:
+      name: nginx
+      running: true
+      enabled: true
+
+Run "winch doc service.<key>" for the full text of a key.
+==> winch doc service.name
+service.name: string, required
+
+Unit, with or without .service, such as nginx or certbot.timer.
+==> winch doc service.running
+service.running: boolean
+
+Start or stop; unset leaves it. Without running, the step does not start
+or stop the unit.
+==> winch doc service.enabled
+service.enabled: boolean
+
+Start at boot; unset leaves it. Without enabled, the step does not
+change it.
+==> winch doc service.reloaded
+service.reloaded: boolean, default false
+
+Reload, in handlers and winch run only. A unit that cannot reload
+restarts.
+==> winch doc service.restarted
+service.restarted: boolean, default false
+
+Restart, in handlers and winch run only. A stopped unit stays stopped.
+==> winch doc timezone
+timezone: set the time zone
+
+Keys:
+  name  string  required  zone name, such as Europe/Berlin
+
+Example:
+  - timezone:
+      name: Europe/Berlin
+
+Run "winch doc timezone.<key>" for the full text of a key.
+==> winch doc timezone.name
+timezone.name: string, required
+
+Zone name, such as Europe/Berlin.
+==> winch doc unit
+unit: manage a systemd unit file
+
+A change of the file, also of its owner or mode, runs systemctl
+daemon-reload. daemon-reload does not restart a running unit. A handler
+with restarted: true does.
+
+Keys:
+  name     string  required  file name with its type
+  source   string  -         file in the recipe's files/
+  content  string  -         unit file text
+
+Example:
+  - unit:
+      name: app.service
+      content: |
+        [Unit]
+        Description=App
+
+        [Service]
+        ExecStart=/usr/local/bin/app
+
+        [Install]
+        WantedBy=multi-user.target
+
+Run "winch doc unit.<key>" for the full text of a key.
+==> winch doc unit.name
+unit.name: string, required
+
+File name with its type, such as app.service or app@.service.
+==> winch doc unit.source
+unit.source: string
+
+File in the recipe's files/ directory. A step has source or content.
+==> winch doc unit.content
+unit.content: string
+
+Unit file text. A step has source or content.
+==> winch doc upgrade
+upgrade: upgrade the installed packages
+
+The step refreshes the package index, also during the plan, and checks
+for pending upgrades.
+
+Keys:
+  mode  string  required  safe or full
+
+Example:
+  - upgrade:
+      mode: safe
+
+Run "winch doc upgrade.<key>" for the full text of a key.
+==> winch doc upgrade.mode
+upgrade.mode: string, required
+
+Safe or full. safe installs the upgrades that remove no package. full
+also installs the upgrades that add or remove packages.
+==> winch doc user
+user: manage a user account
+
+A step that creates a user also creates its home directory. Without
+group, it also creates a group with the name of the user. The defaults
+and system count only when the step creates the user.
+
+Keys:
+  name             string           required
+  uid              ID               -
+  group            name or ID       <name>        primary group
+  system           boolean          false         system user, at creation only
+  home             string           /home/<name>  created when missing; never moved
+  shell            string           /bin/sh       login shell
+  groups           list of strings  -             exact supplementary groups
+  add_groups       list of strings  -             groups to join, keeping the others
+  password         string           -             crypt hash, usually a !secret
+  comment          string           -             full name or description
+  authorized_keys  list of strings  -             exact SSH keys of the user
+  absent           boolean          false         remove the user; the home stays
+
+Example:
+  - user:
+      name: deploy
+      groups: [www-data]
+      shell: /bin/bash
+      authorized_keys:
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGlrZDl2Q3h5c3d6bW9ja2tleWZvcmRvY3MxMjM0 deploy@laptop
+
+Run "winch doc user.<key>" for the full text of a key.
+==> winch doc user.name
+user.name: string, required
+
+A new user's name has lowercase letters, digits, _, and -, and does not
+start with a digit or -. It has at most 32 characters.
+==> winch doc user.uid
+user.uid: ID
+
+A whole number. A uid that another user has fails the check.
+==> winch doc user.group
+user.group: name or ID, default <name>
+
+Primary group. Without group, a step that creates the user also creates
+a group with the name of the user.
+==> winch doc user.system
+user.system: boolean, default false
+
+System user, at creation only. Its home is /nonexistent and its shell is
+/usr/sbin/nologin. It counts only when the step creates the user.
+==> winch doc user.home
+user.home: string, default /home/<name>
+
+Created when missing; never moved. The step creates a missing home
+directory, except /nonexistent. The default counts only when the step
+creates the user. A system user gets /nonexistent. A changed home is not
+moved.
+==> winch doc user.shell
+user.shell: string, default /bin/sh
+
+Login shell. The default counts only when the step creates the user. A
+system user gets /usr/sbin/nologin.
+==> winch doc user.groups
+user.groups: list of strings
+
+Exact supplementary groups. A step has groups or add_groups.
+==> winch doc user.add_groups
+user.add_groups: list of strings
+
+Groups to join, keeping the others. A step with only name and add_groups
+does not create the user: apply fails when the user does not exist.
+==> winch doc user.password
+user.password: string
+
+Crypt hash, usually a !secret, such as one from mkpasswd -m yescrypt. !
+or * alone locks the password. Without password, the password of a new
+user is locked.
+==> winch doc user.comment
+user.comment: string
+
+Full name or description.
+==> winch doc user.authorized_keys
+user.authorized_keys: list of strings
+
+Exact SSH keys of the user, in ~/.ssh/authorized_keys.
+==> winch doc user.absent
+user.absent: boolean, default false
+
+Remove the user; the home stays.

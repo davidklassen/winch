@@ -22,7 +22,7 @@ func TestTopicText(t *testing.T) {
 		}
 	}
 	for _, topic := range Topics() {
-		if topic.Text == "" || topic.Body == "" {
+		if topic.Text == "" || len(topic.Blocks) == 0 {
 			t.Errorf("topic %s has no text", topic.Name)
 		}
 		check(t, topic.Name+".", topic.Keys)

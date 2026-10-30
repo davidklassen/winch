@@ -15,32 +15,6 @@ import (
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
-const docHelp = `Examples:
-  winch doc
-  winch doc project
-  winch doc step.when
-  winch doc file
-  winch doc file.mode
-  winch doc firewall.allow.tcp
-  winch doc --json
-
-Show the reference: the index of topics and modules, a topic, the keys
-of one module with an example step, or the full text of one key or
-function.
-
-Usage: winch doc [<topic> | <module>][.<key>...] [flags]
-
-doc needs no project.
-
-Flags:
-  --json                        Print the whole reference as one JSON
-                                document.
-`
-
-const docIntro = `Winch is a server configuration tool. It describes the desired state
-of your servers in declarative YAML and provides commands to manage
-that state.`
-
 func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	if f.json {
 		if len(args) > 0 {
@@ -54,11 +28,11 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 		printError(env.stderr, "winch: doc takes one topic, module, or key")
 		return exitInvalid
 	}
-	ts := project.Topics()
 	if len(args) == 0 {
-		writeIndex(env.stdout, ts)
+		writeIndex(env.stdout, project.Groups())
 		return exitOK
 	}
+	ts := project.Topics()
 	path := strings.Split(args[0], ".")
 	name := path[0]
 	var keys []doc.Key
@@ -152,15 +126,23 @@ func hasKeyPath(keys []doc.Key, path []string) bool {
 	return true
 }
 
-func writeIndex(out io.Writer, ts []doc.Topic) {
-	fmt.Fprintf(out, "%s\n\nTopics:\n", docIntro)
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	for _, t := range ts {
-		fmt.Fprintf(w, "  %s\t%s\n", t.Name, t.Text)
+func writeIndex(out io.Writer, groups []doc.Group) {
+	fmt.Fprintf(out, "%s\n", docIntro)
+	// One width for all groups, so that the topic lines align.
+	width := 0
+	for _, g := range groups {
+		for _, t := range g.Topics {
+			width = max(width, len(t.Name))
+		}
 	}
-	w.Flush()
+	for _, g := range groups {
+		fmt.Fprintf(out, "\n%s:\n", g.Title)
+		for _, t := range g.Topics {
+			fmt.Fprintf(out, "  %-*s  %s\n", width, t.Name, t.Text)
+		}
+	}
 	fmt.Fprint(out, "\nModules:\n")
-	w = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, name := range module.Names() {
 		d, _ := module.Reference(name)
 		fmt.Fprintf(w, "  %s\t%s\n", name, d.Text)
@@ -169,10 +151,15 @@ func writeIndex(out io.Writer, ts []doc.Topic) {
 	fmt.Fprintln(out, "\nRun \"winch doc <topic>\" or \"winch doc <module>\" for more.")
 }
 
-// writeTopic writes the text of t, then each of its keys with the keys of
+// writeTopic writes the blocks of t, then each of its keys with the keys of
 // their values, by their path, or its functions, then its example.
 func writeTopic(out io.Writer, t doc.Topic) {
-	fmt.Fprintf(out, "%s: %s\n\n%s", t.Name, t.Text, t.Body)
+	fmt.Fprintf(out, "%s: %s\n\n", t.Name, t.Text)
+	blocks, example := t.Blocks, ""
+	if n := len(blocks); n > 0 && blocks[n-1].Kind == doc.KindExample {
+		blocks, example = blocks[:n-1], blocks[n-1].Text
+	}
+	writeBlocks(out, blocks)
 	if len(t.Keys) > 0 {
 		var all []doc.Key
 		var add func(prefix string, keys []doc.Key)
@@ -196,8 +183,8 @@ func writeTopic(out io.Writer, t doc.Topic) {
 		}
 		w.Flush()
 	}
-	if t.Example != "" {
-		writeExample(out, t.Example)
+	if example != "" {
+		writeExample(out, example)
 	}
 	if len(t.Keys) > 0 {
 		fmt.Fprintf(out, "\nRun \"winch doc %s.<key>\" for the full text of a key.\n", t.Name)
@@ -207,14 +194,83 @@ func writeTopic(out io.Writer, t doc.Topic) {
 	}
 }
 
+// writeBlocks writes the blocks of a topic page. Blocks after a heading are
+// indented by two spaces. A table, a code block, or a numbered list after a
+// paragraph is indented by two more. A list follows a paragraph without an
+// empty line.
+func writeBlocks(out io.Writer, blocks []doc.Block) {
+	indent := ""
+	var prev doc.Block
+	for i, b := range blocks {
+		listAfterParagraph := b.Kind == doc.KindList && !b.Ordered && prev.Kind == doc.KindParagraph
+		if i > 0 && prev.Kind != doc.KindHeading && !listAfterParagraph {
+			fmt.Fprintln(out)
+		}
+		in := indent
+		if prev.Kind == doc.KindParagraph && (b.Kind == doc.KindTable || b.Kind == doc.KindCode || b.Ordered) {
+			in += "  "
+		}
+		switch b.Kind {
+		case doc.KindHeading:
+			fmt.Fprintf(out, "%s:\n", b.Text)
+			indent = "  "
+		case doc.KindParagraph:
+			writeLines(out, in, in, b.Text)
+		case doc.KindCode:
+			writeLines(out, in, in, strings.TrimSuffix(b.Text, "\n"))
+		case doc.KindList:
+			for j, item := range b.Items {
+				marker := "- "
+				if b.Ordered {
+					marker = fmt.Sprintf("%d. ", j+1)
+				}
+				writeLines(out, in+marker, in+strings.Repeat(" ", len(marker)), item)
+			}
+		case doc.KindTable:
+			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+			for _, row := range b.Rows {
+				// A line break in a cell continues the cell on a row of
+				// its own.
+				lines := make([][]string, len(row))
+				n := 0
+				for c, cell := range row {
+					lines[c] = strings.Split(cell, "\n")
+					n = max(n, len(lines[c]))
+				}
+				for l := range n {
+					cells := make([]string, len(row))
+					for c := range row {
+						if l < len(lines[c]) {
+							cells[c] = lines[c][l]
+						}
+					}
+					fmt.Fprintf(w, "%s%s\n", in, strings.Join(cells, "\t"))
+				}
+			}
+			w.Flush()
+		}
+		prev = b
+	}
+}
+
+// writeLines writes each line of text, the first after first, the others
+// after rest. An empty line stays empty.
+func writeLines(out io.Writer, first, rest, text string) {
+	for j, line := range strings.Split(text, "\n") {
+		switch {
+		case line == "":
+			fmt.Fprintln(out)
+		case j == 0:
+			fmt.Fprintf(out, "%s%s\n", first, line)
+		default:
+			fmt.Fprintf(out, "%s%s\n", rest, line)
+		}
+	}
+}
+
 func writeExample(out io.Writer, example string) {
 	fmt.Fprintln(out, "\nExample:")
-	for line := range strings.Lines(example) {
-		if line != "\n" {
-			line = "  " + line
-		}
-		fmt.Fprint(out, line)
-	}
+	writeLines(out, "  ", "  ", strings.TrimSuffix(example, "\n"))
 }
 
 // writeKeys writes a line for each key: its name, type, default, and line.

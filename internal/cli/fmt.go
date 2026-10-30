@@ -7,22 +7,6 @@ import (
 	"github.com/davidklassen/winch/internal/project"
 )
 
-const fmtHelp = `Examples:
-  winch fmt
-
-Fix the indentation and the step key order of the project files:
-winch.yaml, the inventories, the pipelines, and the recipes.
-
-Usage: winch fmt [flags]
-
-fmt indents with two spaces, and indents list items under their key. It
-puts step keys in this order: name, the module or recipe key, vars,
-when, loop, then, confirm_access, notify. It keeps comments, blank
-lines, and quoting. It prints each file that it changes.
-
-When a file does not parse, fmt shows the error and changes no file.
-`
-
 func format(ctx context.Context, env Env, f *flags, args []string) int {
 	if len(args) != 0 {
 		printError(env.stderr, "winch: fmt takes no arguments")
