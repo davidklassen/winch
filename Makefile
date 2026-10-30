@@ -19,8 +19,8 @@ build: helpers
 	go build -o bin/winch ./cmd/winch
 
 helpers:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags=-s -o internal/helperbin/helper-linux-amd64 ./cmd/winch-helper
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags=-s -o internal/helperbin/helper-linux-arm64 ./cmd/winch-helper
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags=-s -o internal/helperbin/bin/helper-linux-amd64 ./cmd/winch-helper
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags=-s -o internal/helperbin/bin/helper-linux-arm64 ./cmd/winch-helper
 
 tidy:
 	go mod tidy

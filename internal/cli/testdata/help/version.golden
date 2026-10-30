@@ -1,0 +1,12 @@
+winch version: print the version and the platform
+
+Examples:
+  # print the version and the platform
+  winch version
+
+Usage:
+  winch version
+  winch --version
+
+Version prints the version of winch and the platform, such as
+winch v0.1.0 darwin/arm64.

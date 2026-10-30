@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/protocol"
+	"github.com/davidklassen/winch/internal/run"
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -214,6 +216,7 @@ func TestHelp(t *testing.T) {
 		{"secret-encrypt", []string{"secret", "encrypt", "--help"}},
 		{"secret-rekey", []string{"secret", "rekey", "-h"}},
 		{"doc", []string{"doc", "--help"}},
+		{"version", []string{"version", "--help"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.golden, func(t *testing.T) {
@@ -539,5 +542,81 @@ func TestHelpOnError(t *testing.T) {
 				t.Errorf("exit %d, stdout %q, stderr\n%s\nwant\n%s%s", r.code, r.out, r.err, tt.lead, help)
 			}
 		})
+	}
+}
+
+// spec: Remote execution/Helper
+func TestNoHelpers(t *testing.T) {
+	dir := writeProject(t, motd)
+	const msg = `winch: this binary has no host helpers, so it cannot work on hosts.
+It was probably built with go install, which cannot include them.
+Install a release: curl -fsSL https://winchstack.app/install.sh | sh
+`
+	tests := []struct {
+		args []string
+		code int
+		out  string
+		err  string
+	}{
+		{[]string{"plan", "site"}, exitFailed, "", msg},
+		{[]string{"apply", "site", "--yes"}, exitFailed, "", msg},
+		{[]string{"run", "all", "file", "path=/etc/motd", "content=hi"}, exitFailed, "", msg},
+		{[]string{"exec", "all", "--", "uptime"}, exitFailed, "", msg},
+		{[]string{"validate"}, exitOK, "ok\n", ""},
+		{[]string{"version"}, exitOK, "winch v0.1.0 " + runtime.GOOS + "/" + runtime.GOARCH + " (built without host helpers)\n", ""},
+		{[]string{"--version"}, exitOK, "winch v0.1.0 " + runtime.GOOS + "/" + runtime.GOARCH + " (built without host helpers)\n", ""},
+		{[]string{"plan", "site", "--json"}, exitFailed, `{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","message":"winch: this binary has no host helpers, so it cannot work on hosts.\nIt was probably built with go install, which cannot include them.\nInstall a release: curl -fsSL https://winchstack.app/install.sh | sh"}
+{"type":"summary","time":"2026-10-26T12:00:00Z","exit_code":1}
+`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			connect := func(bool) run.Connect {
+				t.Error("winch contacted a host")
+				return fakehost.New().ConnectorFor(false)
+			}
+			var out, errOut bytes.Buffer
+			code := Main(context.Background(), tt.args, Env{
+				Dir:       dir,
+				In:        strings.NewReader(""),
+				Out:       &out,
+				Err:       &errOut,
+				Connect:   connect,
+				Filter:    secret.NewFilter(),
+				Now:       fixedNow,
+				Version:   "v0.1.0",
+				NoHelpers: true,
+			})
+			if code != tt.code || out.String() != tt.out || errOut.String() != tt.err {
+				t.Errorf("exit %d, stdout %q, stderr %q; want %d, %q, %q", code, out.String(), errOut.String(), tt.code, tt.out, tt.err)
+			}
+		})
+	}
+}
+
+// spec: CLI
+func TestVersion(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"--version"}} {
+		var out, errOut bytes.Buffer
+		code := Main(context.Background(), args, Env{
+			Dir:     t.TempDir(),
+			Out:     &out,
+			Err:     &errOut,
+			Filter:  secret.NewFilter(),
+			Version: "v0.1.0",
+		})
+		want := "winch v0.1.0 " + runtime.GOOS + "/" + runtime.GOARCH + "\n"
+		if code != exitOK || out.String() != want || errOut.String() != "" {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q; want %q", args[0], code, out.String(), errOut.String(), want)
+		}
+	}
+}
+
+// spec: CLI/Exit codes
+func TestVersionArgs(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "version", "x")
+	if r.code != exitInvalid || r.out != "" || r.err != "winch: version takes no arguments\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 }

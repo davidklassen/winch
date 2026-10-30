@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"runtime/debug"
 	"slices"
 	"time"
 
@@ -53,6 +54,8 @@ func main() {
 	// Without a home directory and the WINCH_AGE_ variables, only a project
 	// with secrets fails: it cannot read the identity.
 	home, _ := os.UserHomeDir()
+	// A binary that go build makes holds its build info.
+	info, _ := debug.ReadBuildInfo()
 	end := display.Start()
 	code := cli.Main(ctx, os.Args[1:], cli.Env{
 		Dir:      ".",
@@ -65,11 +68,13 @@ func main() {
 		Connect: func(batch bool) run.Connect {
 			return connect(sessions, stderr, display, batch)
 		},
-		Progress: display,
-		Home:     home,
-		AgeKey:   os.Getenv("WINCH_AGE_KEY"),
-		AgeCmd:   os.Getenv("WINCH_AGE_IDENTITY_CMD"),
-		Filter:   filter,
+		Progress:  display,
+		Home:      home,
+		AgeKey:    os.Getenv("WINCH_AGE_KEY"),
+		AgeCmd:    os.Getenv("WINCH_AGE_IDENTITY_CMD"),
+		Filter:    filter,
+		Version:   info.Main.Version,
+		NoHelpers: !helperbin.Embedded(),
 	})
 	end()
 	os.Exit(code)

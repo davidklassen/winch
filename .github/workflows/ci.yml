@@ -21,6 +21,10 @@ jobs:
         with:
           version: v2.15.0
           install-only: true
+      - name: Build without make, as go install does
+        run: |
+          go build -o /tmp/winch-nohelpers ./cmd/winch
+          /tmp/winch-nohelpers version | grep -q '(built without host helpers)$'
       - run: make lint test
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
