@@ -73,6 +73,32 @@ func (c *Cmd) Validate() error {
 }
 
 func (c *Cmd) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+	res, err := c.check(ctx)
+	if err != nil || res.Status == OK {
+		return res, err
+	}
+	if c.User != "" {
+		a, err := readAccounts()
+		if err != nil {
+			return Result{}, err
+		}
+		if _, ok := a.user(c.User); !ok {
+			res.Missing = append(res.Missing, "user "+c.User)
+		}
+	}
+	if c.Dir != "" {
+		_, err := os.Stat(c.Dir)
+		switch {
+		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+			res.Missing = append(res.Missing, "dir "+c.Dir)
+		case err != nil:
+			return Result{}, err
+		}
+	}
+	return res, nil
+}
+
+func (c *Cmd) check(ctx context.Context) (Result, error) {
 	if c.Unless != nil {
 		err := ShellLimit(ctx, *c.Unless, c.limit(), KillDelay)
 		switch {

@@ -429,19 +429,27 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	}
 	switch m := m.(type) {
 	case *module.Cmd:
+		res := module.Result{Status: module.Unknown}
 		if m.Unless != nil {
-			if c.hosts.failCmd[c.host+" "+*m.Unless] {
-				return module.Result{Status: module.Change, Action: module.Modify}, nil
+			if !c.hosts.failCmd[c.host+" "+*m.Unless] {
+				return module.Result{Status: module.OK}, nil
 			}
-			return module.Result{Status: module.OK}, nil
+			res = module.Result{Status: module.Change, Action: module.Modify}
+		} else if m.Creates != "" {
+			if _, ok := c.hosts.File(c.host, m.Creates); ok {
+				return module.Result{Status: module.OK}, nil
+			}
+			res = module.Result{Status: module.Change, Action: module.Create}
 		}
-		if m.Creates == "" {
-			return module.Result{Status: module.Unknown}, nil
+		c.hosts.mu.Lock()
+		defer c.hosts.mu.Unlock()
+		if m.User != "" && !c.hosts.users[c.host+" "+m.User] {
+			res.Missing = append(res.Missing, "user "+m.User)
 		}
-		if _, ok := c.hosts.File(c.host, m.Creates); ok {
-			return module.Result{Status: module.OK}, nil
+		if c.hosts.noDirs[c.host][m.Dir] {
+			res.Missing = append(res.Missing, "dir "+m.Dir)
 		}
-		return module.Result{Status: module.Change, Action: module.Create}, nil
+		return res, nil
 	case *module.Assert:
 		return module.Result{Status: module.OK, Deferred: true}, nil
 	case *module.Reboot:

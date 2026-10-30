@@ -126,6 +126,12 @@ func TestTimezoneModule(t *testing.T) {
 			Fix:          "mkdir /usr/share/zoneinfo/Mars && cp /usr/share/zoneinfo/Etc/UTC /usr/share/zoneinfo/Mars/Olympus",
 		},
 		{
+			Name:    "a zone file that is not a TZif file",
+			Setup:   "mkdir /usr/share/zoneinfo/Mars && echo 'not a zone' > /usr/share/zoneinfo/Mars/Olympus",
+			Args:    &module.Timezone{Name: "Mars/Olympus"},
+			WantErr: "Mars/Olympus is not a time zone: /usr/share/zoneinfo/Mars/Olympus does not start with TZif",
+		},
+		{
 			Name:      "a stale /etc/timezone",
 			Setup:     "echo America/New_York > /etc/timezone",
 			Args:      &module.Timezone{Name: "Etc/UTC"},

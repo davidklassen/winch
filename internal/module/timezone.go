@@ -1,6 +1,7 @@
 package module
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -68,17 +69,28 @@ func (z *Timezone) Check(ctx context.Context, _ *State, _ func(string)) (Result,
 	return Result{Status: Change, Action: Modify, Changes: changes}, nil
 }
 
-// missing reports whether the zone has no file: an earlier step, such as an
-// install of tzdata-legacy, can still add it.
 func (z *Timezone) missing() (bool, error) {
-	fi, err := os.Stat(zoneinfo + z.Name)
+	return zoneMissing(zoneinfo, z.Name)
+}
+
+// zoneMissing reports whether the zone name has no file in dir: an earlier
+// step, such as an install of tzdata-legacy, can still add it.
+func zoneMissing(dir, name string) (bool, error) {
+	fi, err := os.Stat(dir + name)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return true, nil
 	case err != nil:
 		return false, err
 	case !fi.Mode().IsRegular():
-		return false, fmt.Errorf("%s is not a time zone: %s%s is %s", z.Name, zoneinfo, z.Name, kind(fi))
+		return false, fmt.Errorf("%s is not a time zone: %s%s is %s", name, dir, name, kind(fi))
+	}
+	data, err := os.ReadFile(dir + name)
+	if err != nil {
+		return false, err
+	}
+	if !bytes.HasPrefix(data, []byte("TZif")) {
+		return false, fmt.Errorf("%s is not a time zone: %s%s does not start with TZif", name, dir, name)
 	}
 	return false, nil
 }

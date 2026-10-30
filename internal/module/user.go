@@ -312,6 +312,13 @@ func (u *User) checkAbsent(a accounts, cur passwdEntry, exists bool, login uint3
 	if removesGroup(a, cur) {
 		res.Changes = []string{"remove group " + cur.name}
 	}
+	procs, err := userProcesses("/proc", cur.uid)
+	if err != nil {
+		return Result{}, err
+	}
+	if len(procs) > 0 {
+		res.Changes = append(res.Changes, fmt.Sprintf("processes of %s run (%s); userdel fails while they run", u.Name, strings.Join(procs, ", ")))
+	}
 	return res, nil
 }
 

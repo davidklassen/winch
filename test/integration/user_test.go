@@ -751,7 +751,7 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Name:         "absent with a running process",
 			Setup:        `useradd -U wtalice && systemd-run --uid=wtalice --unit=wt-sleep sleep 600 && timeout 10 sh -c 'until pgrep -u wtalice sleep; do sleep 0.1; done'`,
 			Args:         &module.User{Name: "wtalice", Absent: true},
-			Want:         module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove group wtalice"}},
+			Want:         module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove group wtalice", "processes of wtalice run (sleep); userdel fails while they run"}},
 			WantApplyErr: "userdel: user wtalice is currently used by process",
 			Fix:          "systemctl stop wt-sleep",
 			After:        `getent passwd wtalice`,

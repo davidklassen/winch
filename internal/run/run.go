@@ -222,6 +222,9 @@ type hostRun struct {
 	// "group <name>", or "dir <path>", that steps that run need, with the
 	// first such step.
 	needs map[string]string
+	// created are the users, groups, and directories, in the form of needs,
+	// that checked steps create.
+	created map[string]bool
 	// units are the units that service steps name.
 	units map[string]bool
 	// startedBy are the errors for units that start a unit that a service
@@ -367,7 +370,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, units: map[string]bool{}, services: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, created: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -493,6 +496,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		}
 		hr.trackRemoved(p.Step.Args)
 		hr.trackUnitFile(p.Step.Args, steps[i].Result)
+		hr.dropCreated(&steps[i].Result)
 		if err := hr.order(p.Step.Args, steps[i].Result, where); err != nil {
 			return nil, err
 		}
@@ -575,6 +579,7 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 		if w, ok := hr.needs[c]; ok {
 			return fmt.Errorf("%s: an earlier step needs it: %s; move this step before it", where, w)
 		}
+		hr.created[c] = true
 	}
 	for _, n := range needs {
 		_, name, _ := strings.Cut(n, " ")
@@ -608,6 +613,15 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 		}
 	}
 	return nil
+}
+
+// dropCreated keeps in the missing user and dir of a cmd only those that no
+// earlier step creates.
+func (hr *hostRun) dropCreated(res *module.Result) {
+	res.Missing = slices.DeleteFunc(res.Missing, func(n string) bool {
+		d, ok := strings.CutPrefix(n, "dir ")
+		return hr.created[n] || ok && hr.dirs[d]
+	})
 }
 
 // repo fails a repo step whose source an earlier repo step of the host has.

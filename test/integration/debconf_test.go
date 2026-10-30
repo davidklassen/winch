@@ -1,6 +1,9 @@
 package integration
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -168,6 +171,10 @@ func TestPackageSources(t *testing.T) {
 			t.Errorf("the plan does not show %q", want)
 		}
 	}
+	const note = "winch-signed is installed; the new answer has no effect until dpkg-reconfigure runs"
+	if strings.Contains(r.Stderr, note) {
+		t.Errorf("the plan notes a package that is not installed: %q", r.Stderr)
+	}
 	// The first install refreshes, and the first install after the repo
 	// step refreshes again. The index on the host does not know
 	// winch-signed before the refresh.
@@ -184,5 +191,17 @@ func TestPackageSources(t *testing.T) {
 	r = lab.Winch(t, dir, "plan", "site")
 	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+	recipe := filepath.Join(dir, "recipes/packages/recipe.yaml")
+	data, err := os.ReadFile(recipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(recipe, bytes.Replace(data, []byte("hi from winch"), []byte("hello again"), 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, `answer "hi from winch" → "hello again"`) || !strings.Contains(r.Stderr, note) {
+		t.Errorf("a changed answer of an installed package: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 }
