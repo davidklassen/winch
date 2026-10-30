@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strings"
 	"text/template"
 
 	"github.com/expr-lang/expr"
@@ -30,6 +31,8 @@ type computed struct {
 	values []string
 	// matches are the calls of match() with a constant pattern.
 	matches []matchCall
+	// data is true when it reads a name other than item.
+	data bool
 }
 
 // matchCall is a call of match() with a constant pattern. snippet shows the
@@ -172,7 +175,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.tmpl, c.reads, c.values = t.t, t.reads, t.values
+		c.tmpl, c.reads, c.values, c.data = t.t, t.reads, t.values, t.data
 		return c, nil
 	}
 	prog, err := expr.Compile(text, exprOptions...)
@@ -194,7 +197,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 		}
 		return nil, errors.Join(errs...)
 	}
-	c.reads, c.values, c.matches = check.reads, check.reads, check.matches
+	c.reads, c.values, c.matches, c.data = check.reads, check.reads, check.matches, check.data
 	return c, nil
 }
 
@@ -215,6 +218,8 @@ type exprCheck struct {
 	// whole are the nodes that hold vars: vars, host, host.vars, and the
 	// vars of a peer.
 	whole []ast.Node
+	// data is true when it reads a name other than item.
+	data bool
 }
 
 func (c *exprCheck) fail(n ast.Node, msg string) {
@@ -244,6 +249,9 @@ func (c *exprCheck) Visit(np *ast.Node) {
 	}
 	switch n := (*np).(type) {
 	case *ast.IdentifierNode:
+		if slices.Contains(exprNames, n.Value) && n.Value != "item" {
+			c.data = true
+		}
 		if n.Value == "item" && c.sc.noItem != "" {
 			c.fail(n, c.sc.noItem)
 		}
@@ -387,6 +395,17 @@ func fieldTags(v any) []string {
 		names = append(names, t.Field(i).Tag.Get("expr"))
 	}
 	return names
+}
+
+// evalItem returns the value for item. It is for a computed scalar that reads
+// no name but item.
+func (c *computed) evalItem(item any) (any, error) {
+	if c.tmpl != nil {
+		var b strings.Builder
+		err := c.tmpl.Execute(&b, map[string]any{"item": item})
+		return b.String(), err
+	}
+	return expr.Run(c.prog, exprEnv{Item: item})
 }
 
 // eval returns the value for the environment of a host.

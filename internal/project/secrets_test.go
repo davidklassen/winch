@@ -441,6 +441,11 @@ func TestLoadWarnings(t *testing.T) {
 // spec: Variables/Secrets in output
 func TestLoadSecretFileModeWarning(t *testing.T) {
 	const msg = "the file holds a secret and others can read it; set mode"
+	loopTemplates := map[string]string{
+		"recipes/r/templates/http.conf.tmpl":   "{{ .vars.short }}\n",
+		"recipes/r/templates/https.conf.tmpl":  "x\n",
+		"recipes/r/templates/secret.conf.tmpl": "{{ .vars.line }}\n",
+	}
 	for _, tt := range []struct {
 		name, file string
 		files      map[string]string
@@ -471,6 +476,14 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 		{"loop over secrets", "content: !expr item\n    loop: !expr values(vars.users)", nil, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"plain content in loop over secrets", "content: x\n    loop: !expr values(vars.users)", nil, ""},
 		{"computed template name in loop over secrets", "template: !expr '\"t.tmpl\"'\n    loop: !expr values(vars.users)", map[string]string{"recipes/r/templates/t.tmpl": "{{ .item }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name in a literal loop", "template: !tpl \"{{ .item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, ""},
+		{"computed template name by expr in a literal loop", "template: !expr 'item + \".conf.tmpl\"'\n    loop: [http, https]", loopTemplates, ""},
+		{"computed template name in a literal loop selects a secret", "template: !tpl \"{{ .item }}.conf.tmpl\"\n    loop: [http, secret]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name reads a variable", "template: !tpl \"{{ .vars.short }}{{ .item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name reads a fact", "template: !expr 'facts.os.id + item + \".conf.tmpl\"'\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name reads a variable in a branch", "template: !tpl \"{{ if eq .item \\\"none\\\" }}{{ .vars.short }}{{ end }}{{ .item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name in a loop with a computed element", "template: !tpl \"{{ .item }}.conf.tmpl\"\n    loop: [http, !expr '\"secret\"']", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name reads the host", "template: !tpl \"{{ .host.short }}{{ .item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"handler", "content: x\nhandlers:\n  h:\n    - file:\n        path: /etc/h\n        content: !expr vars.token", nil, "recipes/r/recipe.yaml:7:7: " + msg},
 		{"recipe step value", "", map[string]string{
 			"recipes/r/recipe.yaml": "steps:\n  - file:\n      path: /a\n      content: !expr vars.r_pw\n",
