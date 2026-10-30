@@ -575,6 +575,151 @@ handlers:
       name: nginx
       running: true
 `, ""},
+		{"a service step before the unit step of its unit", steps(`      - recipe: web
+`), `steps:
+  - service:
+      name: app
+      running: true
+  - unit:
+      name: app.service
+      source: app.service
+`, "web: unit app.service: web: service app uses app.service before this step writes it; move this step before it"},
+		{"a service step on an instance before the unit step of its template", `stages:
+  - name: s
+    hosts: all
+    steps:
+      - service:
+          name: app@a
+          running: true
+  - name: t
+    hosts: all
+    steps:
+      - recipe: web
+`, `steps:
+  - unit:
+      name: app@.service
+      source: app.service
+`, "web: unit app@.service: s: service app@a uses app@.service before this step writes it; move this step before it"},
+		{"a dir removed and a file in it", steps(`      - dir:
+          path: /etc/nginx/conf.d
+          absent: true
+      - file:
+          path: /etc/nginx/conf.d/a.conf
+          content: ""
+`), "", "s: file /etc/nginx/conf.d/a.conf: s: dir /etc/nginx/conf.d removes /etc/nginx/conf.d/a.conf, which this step writes; the two steps undo each other on every run"},
+		{"a file and a dir removed around it", steps(`      - file:
+          path: /etc/nginx/conf.d/a.conf
+          content: ""
+      - dir:
+          path: /etc/nginx/conf.d
+          absent: true
+`), "", "s: dir /etc/nginx/conf.d: this step removes /etc/nginx/conf.d/a.conf, which s: file /etc/nginx/conf.d/a.conf writes; the two steps undo each other on every run"},
+		{"a dir removed and a line in another stage", `stages:
+  - name: s
+    hosts: all
+    steps:
+      - line:
+          path: /etc/app/conf/main.conf
+          line: port 1
+          match: "^port "
+  - name: t
+    hosts: all
+    steps:
+      - dir:
+          path: /etc/app
+          absent: true
+`, "", "t: dir /etc/app: this step removes /etc/app/conf/main.conf, which s: line /etc/app/conf/main.conf writes; the two steps undo each other on every run"},
+		{"a file that replaces a parent of a file", steps(`      - file:
+          path: /etc/a
+          content: ""
+          replace: true
+      - file:
+          path: /etc/a/b
+          content: ""
+`), "", "s: file /etc/a/b: s: file /etc/a removes /etc/a/b, which this step writes; the two steps undo each other on every run"},
+		{"a dir below a link with replace", steps(`      - dir:
+          path: /var/www/html/static
+      - link:
+          path: /var/www/html
+          target: /srv/site
+          replace: true
+`), "", ""},
+		{"a link that replaces a parent, and a file below it", steps(`      - link:
+          path: /srv/app/current
+          target: /srv/app/releases/v2
+          replace: true
+      - file:
+          path: /srv/app/current/config.yml
+          content: ""
+`), "", ""},
+		{"a file below a path that a file replaces", steps(`      - file:
+          path: /etc/a/b
+          content: ""
+      - file:
+          path: /etc/a
+          content: ""
+          replace: true
+`), "", "s: file /etc/a: this step removes /etc/a/b, which s: file /etc/a/b writes; the two steps undo each other on every run"},
+		{"a dir removed and a cmd that creates a path in it", steps(`      - cmd:
+          command: make
+          creates: /opt/a/done
+      - dir:
+          path: /opt/a
+          absent: true
+`), "", "s: dir /opt/a: this step removes /opt/a/done, which s: cmd make writes; the two steps undo each other on every run"},
+		{"a stopped service before the unit step of its unit", steps(`      - recipe: web
+`), `steps:
+  - service:
+      name: app
+      running: false
+  - unit:
+      name: app.service
+      source: app.service
+`, ""},
+		{"a service step before the unit step of another unit", steps(`      - recipe: web
+`), `steps:
+  - service:
+      name: nginx
+      running: true
+  - unit:
+      name: app.service
+      source: app.service
+`, ""},
+		{"a unit step again after a service step", steps(`      - recipe: web
+      - unit:
+          name: app.service
+          content: |
+            [Service]
+            ExecStart=/bin/sleep infinity
+`), `steps:
+  - unit:
+      name: app.service
+      source: app.service
+  - service:
+      name: app
+      running: true
+`, ""},
+		{"a dir that replaces a link, and a file in it", steps(`      - dir:
+          path: /var/www/html
+          replace: true
+      - file:
+          path: /var/www/html/index.html
+          content: ""
+`), "", ""},
+		{"a dir removed and a file removed in it", steps(`      - dir:
+          path: /etc/a
+          absent: true
+      - file:
+          path: /etc/a/b
+          absent: true
+`), "", ""},
+		{"a dir removed and a file on a path with its name as a prefix", steps(`      - dir:
+          path: /etc/a
+          absent: true
+      - file:
+          path: /etc/ab
+          content: ""
+`), "", ""},
 		{"two lines with other matches on one path", steps(`      - line:
           path: /etc/redis/redis.conf
           line: port 6380
@@ -749,6 +894,8 @@ handlers:
 			h := fakehost.New()
 			h.SetResult("web1", "nginx", module.Result{Status: module.OK})
 			h.SetResult("web1", "nginx.service", module.Result{Status: module.OK})
+			h.SetResult("web1", "app", module.Result{Status: module.OK})
+			h.SetResult("web1", "app@a", module.Result{Status: module.OK})
 			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			got := ""
 			if err := plan.Failed["web1"]; err != nil {

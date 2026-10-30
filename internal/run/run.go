@@ -234,6 +234,12 @@ type hostRun struct {
 	sshOn map[string]bool
 	// removed are the paths of the checked absent steps.
 	removed []string
+	// services are the unit files that service steps start or enable, with
+	// the first step, or with "" when a unit step wrote the file first.
+	services map[string]string
+	// trees are the paths of steps that remove the tree there, and writes the
+	// paths that steps write, with the step.
+	trees, writes []pathStep
 	// unitFiles are the contents of the unit files that checked unit steps
 	// change, by name.
 	unitFiles map[string][]byte
@@ -280,6 +286,11 @@ type managed struct {
 	where  string
 	module string
 	args   module.Module
+}
+
+type pathStep struct {
+	path  string
+	where string
 }
 
 type lineStep struct {
@@ -356,7 +367,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, units: map[string]bool{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, units: map[string]bool{}, services: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -466,6 +477,12 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		}
 		hr.earlierPkgs(&steps[i].Step)
 		if err := hr.same(p.Step, where); err != nil {
+			return nil, err
+		}
+		if err := hr.tree(p.Step.Args, where); err != nil {
+			return nil, err
+		}
+		if err := hr.unitOrder(p.Step.Args, where); err != nil {
 			return nil, err
 		}
 		hr.newUnitFile(&steps[i].Step)
@@ -737,6 +754,64 @@ func (hr *hostRun) same(st project.Step, where string) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// tree fails a step that removes a tree that holds a path that another step of
+// the host writes, in either order. A dir or link step with replace removes a
+// tree only once: the paths below then go into the new directory, or through
+// the link.
+func (hr *hostRun) tree(m module.Module, where string) error {
+	removes := ""
+	switch m := m.(type) {
+	case *module.Dir:
+		if m.Absent {
+			removes = m.Path
+		}
+	case *module.File:
+		if m.Replace {
+			removes = m.Path
+		}
+	}
+	if removes != "" {
+		for _, w := range hr.writes {
+			if strings.HasPrefix(w.path, removes+"/") {
+				return fmt.Errorf("%s: this step removes %s, which %s writes; the two steps undo each other on every run", where, w.path, w.where)
+			}
+		}
+		hr.trees = append(hr.trees, pathStep{removes, where})
+	}
+	w, ok := m.(module.Writer)
+	if !ok {
+		return nil
+	}
+	for _, p := range w.Writes() {
+		for _, t := range hr.trees {
+			if strings.HasPrefix(p, t.path+"/") {
+				return fmt.Errorf("%s: %s removes %s, which this step writes; the two steps undo each other on every run", where, t.where, p)
+			}
+		}
+		hr.writes = append(hr.writes, pathStep{p, where})
+	}
+	return nil
+}
+
+// unitOrder fails a unit step whose unit file an earlier service step needs to
+// start or enable the unit. Such a step fails on a new host.
+func (hr *hostRun) unitOrder(m module.Module, where string) error {
+	switch m := m.(type) {
+	case *module.Service:
+		starts := m.Running != nil && *m.Running || m.Enabled != nil && *m.Enabled
+		if _, ok := hr.services[m.UnitFile()]; starts && !ok {
+			hr.services[m.UnitFile()] = where
+		}
+	case *module.Unit:
+		if w := hr.services[m.Name]; w != "" {
+			return fmt.Errorf("%s: %s uses %s before this step writes it; move this step before it", where, w, m.Name)
+		}
+		// Later service steps find the unit file.
+		hr.services[m.Name] = ""
 	}
 	return nil
 }
