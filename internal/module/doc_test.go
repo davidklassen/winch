@@ -1,11 +1,15 @@
 package module
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/davidklassen/winch/internal/doc"
+)
 
 // spec: CLI
 func TestReferenceText(t *testing.T) {
-	var check func(t *testing.T, prefix string, keys []Key)
-	check = func(t *testing.T, prefix string, keys []Key) {
+	var check func(t *testing.T, prefix string, keys []doc.Key)
+	check = func(t *testing.T, prefix string, keys []doc.Key) {
 		for _, k := range keys {
 			if k.Text == "" {
 				t.Errorf("key %s%s has no text", prefix, k.Name)

@@ -5,25 +5,41 @@ import (
 	"bufio"
 	"bytes"
 	"cmp"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/davidklassen/winch/internal/doc"
 )
 
 type Facts struct {
-	OS             OS   `json:"os" expr:"os"`
-	RebootRequired bool `json:"reboot_required" expr:"reboot_required"`
+	OS             OS   `json:"os" expr:"os" yaml:"os" doc:"The OS of the host. winch reads id, version, and codename from /etc/os-release, or from /usr/lib/os-release when the first does not exist."`
+	RebootRequired bool `json:"reboot_required" expr:"reboot_required" yaml:"reboot_required" doc:"true when the host waits for a reboot: /run/reboot-required exists, or a kernel in /boot is newer than the running kernel."`
 }
 
 type OS struct {
-	ID       string `json:"id" expr:"id"`
-	Version  string `json:"version" expr:"version"`
-	Codename string `json:"codename" expr:"codename"`
-	Arch     string `json:"arch" expr:"arch"`
+	ID       string `json:"id" expr:"id" yaml:"id" doc:"The ID of the OS, such as debian or ubuntu."`
+	Version  string `json:"version" expr:"version" yaml:"version" doc:"The version of the release, such as 13 or 24.04. It is a string: compare it with a string, such as \"13\"."`
+	Codename string `json:"codename" expr:"codename" yaml:"codename" doc:"The code name of the release, such as trixie or noble."`
+	Arch     string `json:"arch" expr:"arch" yaml:"arch" doc:"The architecture of the host, amd64 or arm64."`
+}
+
+//go:embed facts.md
+var topic string
+
+// Topic returns the reference page of the facts.
+func Topic() doc.Topic {
+	keys := doc.Keys(reflect.TypeFor[Facts]())
+	for i := range keys {
+		keys[i].Default = ""
+	}
+	return doc.NewTopic("facts", topic, keys)
 }
 
 // Read reads the facts from the first os-release file in paths that exists.
