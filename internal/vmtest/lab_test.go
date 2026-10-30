@@ -476,7 +476,7 @@ func TestWatchdog(t *testing.T) {
 
 // spec: roadmap: Testing/VMs
 func TestBootSSHPort(t *testing.T) {
-	usernet := `  Protocol[State]    FD  Source Address  Port   Dest. Address  Port RecvQ SendQ\r\n  TCP[HOST_FORWARD]   12       127.0.0.1 56633       10.0.2.15    22     0     0\r\n`
+	usernet := `  Protocol[State]    FD  Source Address  Port   Dest. Address  Port RecvQ SendQ\r\n  TCP[HOST_FORWARD]   13       127.0.0.1 56634       10.0.2.15  2222     0     0\r\n  TCP[HOST_FORWARD]   12       127.0.0.1 56633       10.0.2.15    22     0     0\r\n`
 	// The fake QEMU exits when a command is not the expected one.
 	greet := `expect() { read cmd; case "$cmd" in *"$1"*) ;; *) exit 1 ;; esac; }
 echo '{"QMP": {}}'; expect qmp_capabilities; echo '{"return": {}}'; expect 'info usernet'
@@ -507,7 +507,7 @@ echo '{"QMP": {}}'; expect qmp_capabilities; echo '{"return": {}}'; expect 'info
 				defer vm.Stop()
 			}
 			args, _ := os.ReadFile(filepath.Join(dir, "bin", "qemu-system-x86_64.args"))
-			for _, w := range []string{"\n-qmp\nstdio\n", "hostfwd=tcp:127.0.0.1:0-:22,"} {
+			for _, w := range []string{"\n-qmp\nstdio\n", "hostfwd=tcp:127.0.0.1:0-:22,", "hostfwd=tcp:127.0.0.1:0-:2222,"} {
 				if !bytes.Contains(args, []byte(w)) {
 					t.Errorf("QEMU arguments %q, want %q in them", args, w)
 				}
