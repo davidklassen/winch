@@ -1,0 +1,24 @@
+file: Write a file, or set the owner, group, and mode of a file.
+
+Keys:
+  path       string      required  The absolute path of the file.
+  content    string      -         The content of the file, as a string.
+  template   string      -         A template in the recipe's templates directory.
+  source     string      -         A file in the recipe's files directory.
+  copy_from  string      -         A file on the host to copy the content from.
+  stock      boolean     false     Write the content that the installed package ships for path.
+  owner      name or ID  root      The owner of the file, a user name or a numeric ID.
+  group      name or ID  root      The group of the file, a group name or a numeric ID.
+  mode       string      0644      The mode of the file, in octal, such as 0640.
+  validate   string      -         A command that checks the new file.
+  absent     boolean     false     Remove the file.
+  replace    boolean     false     Remove another kind of thing at path first, such as a directory.
+
+Example:
+  - name: Write the message of the day
+    file:
+      path: /etc/motd
+      content: "Welcome to mail.example.com.\n"
+      mode: "0644"
+
+Run "winch doc file.<key>" for the full text of a key.

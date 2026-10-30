@@ -21,13 +21,13 @@ import (
 )
 
 type Repo struct {
-	Name       string        `yaml:"name,required" json:"name"`
-	URL        string        `yaml:"url,required" json:"url"`
-	Suite      string        `yaml:"suite,required" json:"suite"`
-	Components yamlx.Strings `yaml:"components" json:"components,omitempty"`
-	Key        string        `yaml:"key" json:"-"`
+	Name       string        `yaml:"name,required" json:"name" doc:"The name of the source file and of the key file in /etc/apt."`
+	URL        string        `yaml:"url,required" json:"url" doc:"The URL of the repository. It has no user name or password."`
+	Suite      string        `yaml:"suite,required" json:"suite" doc:"The suite, such as trixie. A flat suite ends in /."`
+	Components yamlx.Strings `yaml:"components" json:"components,omitempty" doc:"The components, such as main. They are required, except for a flat suite, which has none."`
+	Key        string        `yaml:"key" json:"-" doc:"An ASCII-armored OpenPGP public key in the recipe's files directory. A step has at most one of key and key_content."`
 	KeyPos     yamlx.Pos     `json:"-"`
-	KeyContent *string       `yaml:"key_content" json:"-"`
+	KeyContent *string       `yaml:"key_content" json:"-" doc:"The text of an ASCII-armored OpenPGP public key. A step has at most one of key and key_content."`
 	// KeyContentPos is the position of key_content.
 	KeyContentPos yamlx.Pos `json:"-"`
 	// KeyData is key_content, or the content of the key file in the recipe's

@@ -26,24 +26,24 @@ import (
 )
 
 type File struct {
-	Path        string    `yaml:"path,required" json:"path"`
-	Content     *string   `yaml:"content" json:"-"`
-	Template    string    `yaml:"template" json:"-"`
+	Path        string    `yaml:"path,required" json:"path" doc:"The absolute path of the file."`
+	Content     *string   `yaml:"content" json:"-" doc:"The content of the file, as a string. A step without content, template, source, copy_from, or stock sets only the owner, group, and mode that it gives, with no defaults, of a file that exists."`
+	Template    string    `yaml:"template" json:"-" doc:"A template in the recipe's templates directory. Its output is the content."`
 	TemplatePos yamlx.Pos `json:"-"`
-	Source      string    `yaml:"source" json:"-"`
+	Source      string    `yaml:"source" json:"-" doc:"A file in the recipe's files directory. Its bytes are the content."`
 	SourcePos   yamlx.Pos `json:"-"`
-	CopyFrom    string    `yaml:"copy_from" json:"copy_from,omitempty"`
-	Stock       bool      `yaml:"stock" json:"stock,omitempty"`
+	CopyFrom    string    `yaml:"copy_from" json:"copy_from,omitempty" doc:"A file on the host to copy the content from. Its permission bits are the default mode, and the owner and group stay root."`
+	Stock       bool      `yaml:"stock" json:"stock,omitempty" doc:"Write the content that the installed package ships for path. The package also gives the default owner, group, and mode."`
 	// Data is the content for the host, from content, template, or source.
 	// Without omitempty, JSON keeps nil apart from empty content.
 	Data       []byte         `json:"data"`
 	DataSHA256 string         `json:"data_sha256,omitempty"`
-	Owner      yamlx.NameOrID `yaml:"owner" json:"owner,omitempty"`
-	Group      yamlx.NameOrID `yaml:"group" json:"group,omitempty"`
-	Mode       string         `yaml:"mode" json:"mode,omitempty"`
-	Validation *string        `yaml:"validate" json:"validate,omitempty"`
-	Absent     bool           `yaml:"absent" json:"absent,omitempty"`
-	Replace    bool           `yaml:"replace" json:"replace,omitempty"`
+	Owner      yamlx.NameOrID `yaml:"owner" json:"owner,omitempty" doc:"The owner of the file, a user name or a numeric ID. A step without content has no default." default:"root"`
+	Group      yamlx.NameOrID `yaml:"group" json:"group,omitempty" doc:"The group of the file, a group name or a numeric ID. A step without content has no default." default:"root"`
+	Mode       string         `yaml:"mode" json:"mode,omitempty" doc:"The mode of the file, in octal, such as 0640. Quote it, or YAML reads it as a number. With stock, the package gives the default. With copy_from, the source gives it. A step without content has no default." default:"0644"`
+	Validation *string        `yaml:"validate" json:"validate,omitempty" doc:"A command that checks the new file. The helper puts the new file in place and runs the command. When the command fails, the old file comes back and the step fails."`
+	Absent     bool           `yaml:"absent" json:"absent,omitempty" doc:"Remove the file."`
+	Replace    bool           `yaml:"replace" json:"replace,omitempty" doc:"Remove another kind of thing at path first, such as a directory."`
 }
 
 func (f *File) Main() string { return f.Path }

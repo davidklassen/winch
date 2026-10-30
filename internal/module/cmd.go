@@ -18,12 +18,12 @@ import (
 )
 
 type Cmd struct {
-	Command string  `yaml:"command,required" json:"command"`
-	Creates string  `yaml:"creates" json:"creates,omitempty"`
-	Unless  *string `yaml:"unless" json:"unless,omitempty"`
-	User    string  `yaml:"user" json:"user,omitempty"`
-	Dir     string  `yaml:"dir" json:"dir,omitempty"`
-	Timeout *int    `yaml:"timeout" json:"timeout,omitempty"`
+	Command string  `yaml:"command,required" json:"command" doc:"The command. It runs through sh -e as root, in /, with stdin from /dev/null. Without creates or unless, the check result is unknown."`
+	Creates string  `yaml:"creates" json:"creates,omitempty" doc:"A path that the command creates. The step is ok when the path exists. The path has no glob characters."`
+	Unless  *string `yaml:"unless" json:"unless,omitempty" doc:"A command that runs at the check, as root in /. The step is ok when it exits 0."`
+	User    string  `yaml:"user" json:"user,omitempty" doc:"The user that runs the command. The home of the user is HOME." default:"root"`
+	Dir     string  `yaml:"dir" json:"dir,omitempty" doc:"The directory that the command runs in." default:"/"`
+	Timeout *int    `yaml:"timeout" json:"timeout,omitempty" doc:"The command limit in seconds. After it, the helper stops the command and the step fails. The limit applies to unless too." default:"600"`
 }
 
 func (c *Cmd) Main() string { return strings.TrimSuffix(c.Command, "\n") }

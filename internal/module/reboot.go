@@ -11,9 +11,9 @@ import (
 )
 
 type Reboot struct {
-	IfRequired *bool `yaml:"if_required,required" json:"if_required"`
+	IfRequired *bool `yaml:"if_required,required" json:"if_required" doc:"Reboot only when the host reports a pending reboot. With false, the step always reboots."`
 	// Timeout is the wait limit in seconds; nil is the default.
-	Timeout *int `yaml:"timeout" json:"timeout,omitempty"`
+	Timeout *int `yaml:"timeout" json:"timeout,omitempty" doc:"The wait limit in seconds." default:"600"`
 }
 
 // defaultRebootTimeout is the wait limit of a reboot in seconds.

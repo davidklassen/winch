@@ -14,11 +14,11 @@ import (
 )
 
 type Link struct {
-	Path       string  `yaml:"path,required" json:"path"`
-	Target     *string `yaml:"target" json:"target,omitempty"`
-	Validation *string `yaml:"validate" json:"validate,omitempty"`
-	Absent     bool    `yaml:"absent" json:"absent,omitempty"`
-	Replace    bool    `yaml:"replace" json:"replace,omitempty"`
+	Path       string  `yaml:"path,required" json:"path" doc:"The absolute path of the link."`
+	Target     *string `yaml:"target" json:"target,omitempty" doc:"The path that the link points to. It can be relative, and it need not exist."`
+	Validation *string `yaml:"validate" json:"validate,omitempty" doc:"A command that checks the new link, as for file."`
+	Absent     bool    `yaml:"absent" json:"absent,omitempty" doc:"Remove the link."`
+	Replace    bool    `yaml:"replace" json:"replace,omitempty" doc:"Remove another kind of thing at path first, such as a file or a directory."`
 }
 
 func (l *Link) Main() string { return l.Path }

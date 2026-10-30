@@ -1,0 +1,6 @@
+- user:
+    name: deploy
+    groups: [www-data]
+    shell: /bin/bash
+    authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGlrZDl2Q3h5c3d6bW9ja2tleWZvcmRvY3MxMjM0 deploy@laptop

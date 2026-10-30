@@ -115,36 +115,39 @@ type WithContent interface {
 	WithoutContent() Module
 }
 
-var modules = map[string]func() Module{
-	"assert":   func() Module { return new(Assert) },
-	"certbot":  func() Module { return new(Certbot) },
-	"cmd":      func() Module { return new(Cmd) },
-	"debconf":  func() Module { return new(Debconf) },
-	"dir":      func() Module { return new(Dir) },
-	"download": func() Module { return new(Download) },
-	"file":     func() Module { return new(File) },
-	"firewall": func() Module { return new(Firewall) },
-	"group":    func() Module { return new(Group) },
-	"hostname": func() Module { return new(Hostname) },
-	"line":     func() Module { return new(Line) },
-	"link":     func() Module { return new(Link) },
-	"pkg":      func() Module { return new(Pkg) },
-	"reboot":   func() Module { return new(Reboot) },
-	"repo":     func() Module { return new(Repo) },
-	"service":  func() Module { return new(Service) },
-	"timezone": func() Module { return new(Timezone) },
-	"unit":     func() Module { return new(Unit) },
-	"upgrade":  func() Module { return new(Upgrade) },
-	"user":     func() Module { return new(User) },
+var modules = map[string]struct {
+	new  func() Module
+	text string
+}{
+	"assert":   {func() Module { return new(Assert) }, "Fail the host during apply when a command fails."},
+	"certbot":  {func() Module { return new(Certbot) }, "Get a Let's Encrypt certificate with certbot."},
+	"cmd":      {func() Module { return new(Cmd) }, "Run a command."},
+	"debconf":  {func() Module { return new(Debconf) }, "Set an answer in the debconf database."},
+	"dir":      {func() Module { return new(Dir) }, "Manage a directory."},
+	"download": {func() Module { return new(Download) }, "Download a file or an archive and check its SHA-256."},
+	"file":     {func() Module { return new(File) }, "Write a file, or set the owner, group, and mode of a file."},
+	"firewall": {func() Module { return new(Firewall) }, "Filter the traffic that reaches the host."},
+	"group":    {func() Module { return new(Group) }, "Manage a group."},
+	"hostname": {func() Module { return new(Hostname) }, "Set the static host name."},
+	"line":     {func() Module { return new(Line) }, "Keep one line in a file that another program owns."},
+	"link":     {func() Module { return new(Link) }, "Manage a symbolic link."},
+	"pkg":      {func() Module { return new(Pkg) }, "Install or remove packages with apt."},
+	"reboot":   {func() Module { return new(Reboot) }, "Reboot the host and wait until it answers again."},
+	"repo":     {func() Module { return new(Repo) }, "Add an apt source and its key."},
+	"service":  {func() Module { return new(Service) }, "Start, stop, enable, or disable a systemd unit."},
+	"timezone": {func() Module { return new(Timezone) }, "Set the time zone."},
+	"unit":     {func() Module { return new(Unit) }, "Write a systemd unit file."},
+	"upgrade":  {func() Module { return new(Upgrade) }, "Install the pending package upgrades."},
+	"user":     {func() Module { return new(User) }, "Manage a user account."},
 }
 
 // New returns empty arguments for the module name.
 func New(name string) (Module, bool) {
-	f, ok := modules[name]
+	m, ok := modules[name]
 	if !ok {
 		return nil, false
 	}
-	return f(), true
+	return m.new(), true
 }
 
 func Names() []string {

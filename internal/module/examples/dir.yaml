@@ -1,0 +1,5 @@
+- dir:
+    path: /var/www/app
+    owner: www-data
+    group: www-data
+    mode: "0750"

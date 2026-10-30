@@ -169,14 +169,16 @@ func (d *decoder) slice(n *Node, v reflect.Value, name string) {
 	v.Set(out)
 }
 
-type field struct {
-	index    int
-	name     string
-	required bool
+// Field is a key of a struct: the field of index Index.
+type Field struct {
+	Index    int
+	Name     string
+	Required bool
 }
 
-func fields(t reflect.Type) []field {
-	var out []field
+// Fields returns the keys of the struct type t, in field order.
+func Fields(t reflect.Type) []Field {
+	var out []Field
 	for i := range t.NumField() {
 		tag, ok := t.Field(i).Tag.Lookup("yaml")
 		if !ok || tag == "-" {
@@ -186,7 +188,7 @@ func fields(t reflect.Type) []field {
 		if name == "" {
 			continue
 		}
-		out = append(out, field{index: i, name: name, required: opts == "required"})
+		out = append(out, Field{Index: i, Name: name, Required: opts == "required"})
 	}
 	return out
 }
@@ -212,27 +214,27 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 		f.Set(reflect.ValueOf(n.Pos))
 	}
 	before, deferred := len(d.errs), d.deferred
-	fs := fields(v.Type())
+	fs := Fields(v.Type())
 	seen := map[string]Pos{}
 	for _, p := range n.Pairs {
-		i := slices.IndexFunc(fs, func(f field) bool { return f.name == p.Key })
+		i := slices.IndexFunc(fs, func(f Field) bool { return f.Name == p.Key })
 		if i < 0 {
 			var names []string
 			for _, f := range fs {
-				names = append(names, f.name)
+				names = append(names, f.Name)
 			}
 			d.errorf(p.KeyPos, "", "unknown key %q%s", p.Key, Suggest(p.Key, names))
 			continue
 		}
 		seen[p.Key] = p.Value.Pos
-		d.value(p.Value, v.Field(fs[i].index), p.Key)
-		if f := v.FieldByName(v.Type().Field(fs[i].index).Name + "Pos"); f.IsValid() && f.Type() == posType {
+		d.value(p.Value, v.Field(fs[i].Index), p.Key)
+		if f := v.FieldByName(v.Type().Field(fs[i].Index).Name + "Pos"); f.IsValid() && f.Type() == posType {
 			f.Set(reflect.ValueOf(p.Value.Pos))
 		}
 	}
 	for _, f := range fs {
-		if _, ok := seen[f.name]; f.required && !ok {
-			d.errorf(n.Pos, "", "missing key %q", f.name)
+		if _, ok := seen[f.Name]; f.Required && !ok {
+			d.errorf(n.Pos, "", "missing key %q", f.Name)
 		}
 	}
 	if len(d.errs) > before || d.deferred > deferred {

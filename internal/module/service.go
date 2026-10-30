@@ -19,11 +19,11 @@ import (
 )
 
 type Service struct {
-	Name      string `yaml:"name,required" json:"name"`
-	Running   *bool  `yaml:"running" json:"running,omitempty"`
-	Enabled   *bool  `yaml:"enabled" json:"enabled,omitempty"`
-	Reloaded  bool   `yaml:"reloaded" json:"reloaded,omitempty"`
-	Restarted bool   `yaml:"restarted" json:"restarted,omitempty"`
+	Name      string `yaml:"name,required" json:"name" doc:"The unit name, with or without .service, such as nginx or certbot.timer."`
+	Running   *bool  `yaml:"running" json:"running,omitempty" doc:"Start or stop the unit. Without running, the step does not start or stop it."`
+	Enabled   *bool  `yaml:"enabled" json:"enabled,omitempty" doc:"Enable or disable the unit at boot. Without enabled, the step does not change it."`
+	Reloaded  bool   `yaml:"reloaded" json:"reloaded,omitempty" doc:"Reload the unit. It is allowed only in handlers and in winch run. A unit that cannot reload restarts."`
+	Restarted bool   `yaml:"restarted" json:"restarted,omitempty" doc:"Restart the unit. It is allowed only in handlers and in winch run. A stopped unit stays stopped."`
 	// NewFile is the unit file that an earlier unit step of the host writes
 	// in the run. For an instance, it is the file of the template. The
 	// controller sets it.

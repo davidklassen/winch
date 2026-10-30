@@ -1,0 +1,5 @@
+- name: Write the message of the day
+  file:
+    path: /etc/motd
+    content: "Welcome to mail.example.com.\n"
+    mode: "0644"

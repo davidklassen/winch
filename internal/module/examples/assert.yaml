@@ -1,0 +1,4 @@
+- name: Check that nginx answers
+  assert:
+    command: curl -fsS http://localhost/
+    message: nginx does not answer on port 80

@@ -1,0 +1,5 @@
+- certbot:
+    name: mail
+    domains: [mail.example.com]
+    email: admin@example.com
+    deploy_hook: systemctl reload postfix

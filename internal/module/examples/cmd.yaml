@@ -1,0 +1,4 @@
+- name: Build the alias database
+  cmd:
+    command: newaliases
+    creates: /etc/aliases.db

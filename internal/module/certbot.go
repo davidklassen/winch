@@ -22,15 +22,15 @@ import (
 )
 
 type Certbot struct {
-	Name          string        `yaml:"name,required" json:"name"`
-	Domains       yamlx.Strings `yaml:"domains,required" json:"domains"`
-	Email         string        `yaml:"email,required" json:"email"`
-	Authenticator string        `yaml:"authenticator" json:"authenticator,omitempty"`
-	WebrootPath   string        `yaml:"webroot_path" json:"webroot_path,omitempty"`
-	PreHook       *string       `yaml:"pre_hook" json:"pre_hook,omitempty"`
-	PostHook      *string       `yaml:"post_hook" json:"post_hook,omitempty"`
-	DeployHook    *string       `yaml:"deploy_hook" json:"deploy_hook,omitempty"`
-	ReuseKey      bool          `yaml:"reuse_key" json:"reuse_key,omitempty"`
+	Name          string        `yaml:"name,required" json:"name" doc:"The certificate name, as certbot keeps it in /etc/letsencrypt."`
+	Domains       yamlx.Strings `yaml:"domains,required" json:"domains" doc:"The domains of the certificate. A wildcard is not allowed: it needs a DNS challenge."`
+	Email         string        `yaml:"email,required" json:"email" doc:"The email address of the Let's Encrypt account."`
+	Authenticator string        `yaml:"authenticator" json:"authenticator,omitempty" doc:"The plugin that answers the challenge: nginx, apache, standalone, or webroot. The nginx and apache plugins do not change the config of the web server. standalone binds port 80 itself." default:"nginx"`
+	WebrootPath   string        `yaml:"webroot_path" json:"webroot_path,omitempty" doc:"The web root directory of the webroot authenticator."`
+	PreHook       *string       `yaml:"pre_hook" json:"pre_hook,omitempty" doc:"A command that certbot runs before it gets a certificate. certbot stores it in a file that other users can read, so it cannot hold a secret."`
+	PostHook      *string       `yaml:"post_hook" json:"post_hook,omitempty" doc:"A command that certbot runs after it tries to get a certificate. certbot stores it in a file that other users can read, so it cannot hold a secret."`
+	DeployHook    *string       `yaml:"deploy_hook" json:"deploy_hook,omitempty" doc:"A command that certbot runs after each new certificate, also the first. A failed hook fails the step. It cannot hold a secret."`
+	ReuseKey      bool          `yaml:"reuse_key" json:"reuse_key,omitempty" doc:"Keep the private key at each renewal."`
 
 	// PendingHooks are the failed hooks recorded by the helper.
 	PendingHooks []string `yaml:"-" json:"-"`

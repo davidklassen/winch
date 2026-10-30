@@ -10,7 +10,7 @@ import (
 )
 
 type Upgrade struct {
-	Mode string `yaml:"mode,required" json:"mode"`
+	Mode string `yaml:"mode,required" json:"mode" doc:"The upgrade mode: safe or full. safe installs the upgrades that remove no package. full also installs the upgrades that add or remove packages."`
 }
 
 func (u *Upgrade) Main() string { return u.Mode }

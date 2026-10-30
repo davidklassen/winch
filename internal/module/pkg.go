@@ -18,10 +18,10 @@ import (
 )
 
 type Pkg struct {
-	Name       yamlx.Strings `yaml:"name,required" json:"name"`
-	Recommends *bool         `yaml:"recommends" json:"recommends,omitempty"`
-	Purge      bool          `yaml:"purge" json:"purge,omitempty"`
-	Absent     bool          `yaml:"absent" json:"absent,omitempty"`
+	Name       yamlx.Strings `yaml:"name,required" json:"name" doc:"A package name or a list of package names. A list installs in one call of apt."`
+	Recommends *bool         `yaml:"recommends" json:"recommends,omitempty" doc:"Install the recommended packages too." default:"true"`
+	Purge      bool          `yaml:"purge" json:"purge,omitempty" doc:"Also remove the configuration files. Needs absent."`
+	Absent     bool          `yaml:"absent" json:"absent,omitempty" doc:"Remove the packages."`
 	// Removed are the packages that earlier steps of the host remove. The
 	// run sets them.
 	Removed []string `json:"removed,omitempty"`

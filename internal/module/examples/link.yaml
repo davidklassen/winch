@@ -1,0 +1,3 @@
+- link:
+    path: /etc/nginx/sites-enabled/app
+    target: /etc/nginx/sites-available/app
