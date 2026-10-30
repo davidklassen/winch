@@ -81,10 +81,10 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			lock, project, err = takeLock(req.Params, dir, self)
 			handlers = records{dir: filepath.Join(dir, "handlers"), project: project, what: "pending handlers"}
 			thens = records{dir: filepath.Join(dir, "then"), project: project, what: "pending then records"}
-			downloads = records{dir: filepath.Join(dir, "downloads"), project: project, what: "download records"}
+			downloads = downloadRecords(filepath.Join(dir, "downloads", project))
 			certbotHooks = records{dir: filepath.Join(dir, "certbot-hooks"), project: project, what: "pending certbot hooks"}
 			checks = records{dir: filepath.Join(dir, "checks"), project: project, what: "pending health gates and asserts"}
-			rb = &rollbacks{dir: filepath.Join(dir, "rollback"), project: project, self: self}
+			rb = &rollbacks{dir: filepath.Join(dir, "rollback"), project: project, self: self, downloads: downloads}
 			if err == nil {
 				loginUser, err = module.LookupLogin(login.LoginUID)
 			}
@@ -420,7 +420,7 @@ func resumed(params json.RawMessage) bool {
 // confirm_access puts back the whole store of its recipe or stage, and its
 // undo step; another guarded step puts back only what it saved.
 func startTimer(rb *rollbacks, g protocol.Guard, m module.Module, saved, all []module.Saved) (time.Time, error) {
-	j := job{Deadline: time.Now().Add(TimerTime), Restore: saved}
+	j := job{Deadline: time.Now().Add(TimerTime), Restore: saved, Downloads: filepath.Join(rb.downloads.dir, rb.downloads.project)}
 	if u, ok := m.(*module.User); ok {
 		if un := u.Undo(); un != nil {
 			args, err := json.Marshal(un)
