@@ -207,6 +207,7 @@ func TestParsePasswdBad(t *testing.T) {
 		{"root:x:0:0:root:/root\n", "/etc/passwd:1: expected 7 fields, got 6"},
 		{"root:x:0:0:root:/root:/bin/sh\nbob:x:b:0::/:/bin/sh\n", `/etc/passwd:2: the UID "b" is not a number`},
 		{"bob:x:1:-1::/:/bin/sh\n", `/etc/passwd:1: the GID "-1" is not a number`},
+		{"bob:x:4294967296:0::/:/bin/sh\n", "/etc/passwd:1: the UID 4294967296 is out of range"},
 	}
 	for _, tt := range tests {
 		_, err := parsePasswd("/etc/passwd", []byte(tt.data))

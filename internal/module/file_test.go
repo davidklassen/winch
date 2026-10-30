@@ -167,8 +167,33 @@ func TestFileText(t *testing.T) {
 }
 
 // spec: Modules/file, dir, link
+func TestParseIDRange(t *testing.T) {
+	tests := []struct {
+		s       string
+		intSize int
+		want    string
+	}{
+		{"2147483647", 32, "2147483647"},
+		{"2147483648", 32, "the UID 2147483648 is out of range"},
+		{"4294967295", 64, "4294967295"},
+		{"4294967296", 64, "the UID 4294967296 is out of range"},
+		{"b", 64, `the UID "b" is not a number`},
+	}
+	for _, tt := range tests {
+		id, err := parseID("UID", tt.s, tt.intSize)
+		got := strconv.Itoa(id)
+		if err != nil {
+			got = err.Error()
+		}
+		if got != tt.want {
+			t.Errorf("parseID(%q, %d) = %s, want %s", tt.s, tt.intSize, got, tt.want)
+		}
+	}
+}
+
+// spec: Modules/file, dir, link
 func TestLookupNumericID(t *testing.T) {
-	for _, lookup := range []func(string) (uint32, bool, error){lookupUser, lookupGroup} {
+	for _, lookup := range []func(string) (int, bool, error){lookupUser, lookupGroup} {
 		id, ok, err := lookup("4242")
 		if id != 4242 || !ok || err != nil {
 			t.Errorf("lookup(%q) = %d, %t, %v; want 4242, true, nil", "4242", id, ok, err)

@@ -314,7 +314,7 @@ func (d *Download) Apply(ctx context.Context, note func(string)) error {
 	if err := d.get(ctx, tmp, note); err != nil {
 		return err
 	}
-	if err := tmp.Chown(int(uid), int(gid)); err != nil {
+	if err := tmp.Chown(uid, gid); err != nil {
 		return err
 	}
 	if err := tmp.Chmod(fileMode(mode)); err != nil {
@@ -331,7 +331,7 @@ func (d *Download) Apply(ctx context.Context, note func(string)) error {
 // directory with the owner uid and the group gid. The new directory takes the
 // mode of an existing unpack directory. It swaps the two directories and
 // removes the old tree.
-func (d *Download) applyUnpack(ctx context.Context, uid, gid uint32, note func(string)) error {
+func (d *Download) applyUnpack(ctx context.Context, uid, gid int, note func(string)) error {
 	parent, missing, err := openParent(d.Unpack)
 	if err != nil {
 		return err
@@ -494,7 +494,7 @@ func fetchBody(ctx context.Context, url string, w io.Writer) (string, error) {
 type unpacker struct {
 	root     *os.Root
 	path     string
-	uid, gid uint32
+	uid, gid int
 }
 
 // read reads the archive f of the type typ from its start.
@@ -712,7 +712,7 @@ func (u unpacker) symlink(name, target string) error {
 	if err := u.root.Symlink(target, name); err != nil {
 		return err
 	}
-	return u.root.Lchown(name, int(u.uid), int(u.gid))
+	return u.root.Lchown(name, u.uid, u.gid)
 }
 
 func (u unpacker) link(name, target string) error {

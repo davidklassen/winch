@@ -210,21 +210,21 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 
 // wantIDs returns the IDs of owner and group, or -1 for one that does not
 // exist yet: every entry differs from it.
-func wantIDs(owner, group string) (int64, int64, error) {
-	uid, gid := int64(-1), int64(-1)
+func wantIDs(owner, group string) (int, int, error) {
+	uid, gid := -1, -1
 	u, ok, err := lookupUser(owner)
 	if err != nil {
 		return 0, 0, err
 	}
 	if ok {
-		uid = int64(u)
+		uid = u
 	}
 	g, ok, err := lookupGroup(group)
 	if err != nil {
 		return 0, 0, err
 	}
 	if ok {
-		gid = int64(g)
+		gid = g
 	}
 	return uid, gid, nil
 }
@@ -235,7 +235,7 @@ func wantIDs(owner, group string) (int64, int64, error) {
 // walk opens each directory by one name and checks that it is the one it
 // listed, so it never follows a symbolic link. It skips a mount point with
 // its content, and an entry that goes away.
-func walkOwners(dir *os.Root, name string, fi fs.FileInfo, uid, gid int64, fn func(sub *os.Root, name, rel string, info fs.FileInfo) error) error {
+func walkOwners(dir *os.Root, name string, fi fs.FileInfo, uid, gid int, fn func(sub *os.Root, name, rel string, info fs.FileInfo) error) error {
 	top, err := openRoot(dir, name, fi)
 	if err != nil {
 		return err
@@ -279,7 +279,7 @@ func walkOwners(dir *os.Root, name string, fi fs.FileInfo, uid, gid int64, fn fu
 				return err
 			}
 			st := info.Sys().(*syscall.Stat_t)
-			if int64(st.Uid) != uid || int64(st.Gid) != gid {
+			if int(st.Uid) != uid || int(st.Gid) != gid {
 				if err := fn(sub, n, rel, info); err != nil {
 					return err
 				}
@@ -304,12 +304,12 @@ func walkOwners(dir *os.Root, name string, fi fs.FileInfo, uid, gid int64, fn fu
 
 // chownContent sets the owner and group of every entry in the directory fi at
 // name in dir when the step recurses.
-func (d *Dir) chownContent(dir *os.Root, name string, fi fs.FileInfo, uid, gid uint32) error {
+func (d *Dir) chownContent(dir *os.Root, name string, fi fs.FileInfo, uid, gid int) error {
 	if !d.Recurse {
 		return nil
 	}
-	return walkOwners(dir, name, fi, int64(uid), int64(gid), func(sub *os.Root, name, _ string, _ fs.FileInfo) error {
-		return sub.Lchown(name, int(uid), int(gid))
+	return walkOwners(dir, name, fi, uid, gid, func(sub *os.Root, name, _ string, _ fs.FileInfo) error {
+		return sub.Lchown(name, uid, gid)
 	})
 }
 
