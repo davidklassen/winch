@@ -57,10 +57,11 @@ func Format(dir string) ([]string, error) {
 	}
 
 	// fmt formats a winch.yaml with a schema error.
-	if cfg, err := loadConfig(dir); cfg == nil {
+	cfg, err := loadConfig(dir)
+	if cfg == nil {
 		return nil, err
 	}
-	format("winch.yaml", []string{"steps", "handlers.*", "pipelines.*.steps", "pipelines.*.handlers.*", "pipelines.*.stages.*.steps", "pipelines.*.stages.*.handlers.*", "recipes.*.steps", "recipes.*.handlers.*"})
+	format(cfg.file, []string{"steps", "handlers.*", "pipelines.*.steps", "pipelines.*.handlers.*", "pipelines.*.stages.*.steps", "pipelines.*.stages.*.handlers.*", "recipes.*.steps", "recipes.*.handlers.*"})
 	invs, err := list(dir, "inventories")
 	if err != nil {
 		return nil, err
@@ -105,12 +106,18 @@ func stepRank(key string) int {
 	return slices.Index(stepFields, "recipe")
 }
 
-// recipeFiles returns the recipe.yaml file of each recipe, relative to dir.
+// recipeFiles returns the recipe.yaml and recipe.yml files of the recipes,
+// relative to dir.
 func recipeFiles(dir string) ([]string, error) {
-	paths, err := filepath.Glob(filepath.Join(dir, "recipes", "*", "recipe.yaml"))
-	if err != nil {
-		return nil, err
+	var paths []string
+	for _, base := range []string{"recipe.yaml", "recipe.yml"} {
+		found, err := filepath.Glob(filepath.Join(dir, "recipes", "*", base))
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, found...)
 	}
+	slices.Sort(paths)
 	var files []string
 	for _, p := range paths {
 		rel, err := filepath.Rel(dir, p)

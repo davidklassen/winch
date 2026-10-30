@@ -1,0 +1,1 @@
+pipeline "site" is both pipelines/site.yaml and pipelines/site.yml; keep one of the two

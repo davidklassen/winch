@@ -1,2 +1,1 @@
 winch.yaml:2:1: unknown key "inventroy"; did you mean "inventory"?
-no inventory: use --inventory, or set inventory in winch.yaml

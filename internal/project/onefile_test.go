@@ -109,7 +109,8 @@ func TestOneFileLoad(t *testing.T) {
 		{name: "repo with an empty key and key_content", files: map[string]string{"pipelines/site.yaml": stage("      - recipe: app\n"),
 			"recipes/app/recipe.yaml": "steps:\n  - repo: {name: v, url: https://a.example.com, suite: s/, key: \"\", key_content: x}\n"},
 			want: "a repo has at most one of key and key_content"},
-		{name: "an inventory path", inventory: "inventories/test.yaml", want: `unknown inventory "inventories/test.yaml"; name an inventory without its directory and .yaml, such as "test"`},
+		{name: "an inventory path", inventory: "inventories/test.yaml", want: `unknown inventory "inventories/test.yaml"; name an inventory without its directory and extension, such as "test"`},
+		{name: "an inventory file name", inventory: "test.yml", want: `unknown inventory "test.yml"; name an inventory without its directory and extension, such as "test"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -935,14 +935,14 @@ func TestRekeyEveryInventory(t *testing.T) {
 	dir := writeProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + next.id.Recipient().String() + "]\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + k.encrypt(t, "test-pw") + "\n",
-		"inventories/prod.yaml": "hosts:\n  web2:\n    vars:\n      pw: !secret " + k.encrypt(t, "prod-pw") + "\n",
+		"inventories/prod.yml":  "hosts:\n  web2:\n    vars:\n      pw: !secret " + k.encrypt(t, "prod-pw") + "\n",
 		"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 	})
 	n, files, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
-	if want := []string{"inventories/prod.yaml", "inventories/test.yaml"}; err != nil || n != 2 || !slices.Equal(files, want) {
+	if want := []string{"inventories/prod.yml", "inventories/test.yaml"}; err != nil || n != 2 || !slices.Equal(files, want) {
 		t.Fatalf("Rekey = %d secrets in %v, %v; want 2 in %v", n, files, err, want)
 	}
-	for name, plain := range map[string]string{"inventories/prod.yaml": "prod-pw", "inventories/test.yaml": "test-pw"} {
+	for name, plain := range map[string]string{"inventories/prod.yml": "prod-pw", "inventories/test.yaml": "test-pw"} {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatal(err)
@@ -1112,7 +1112,7 @@ func TestWriteSecret(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + k.id.Recipient().String() + "\nvars:\n  domain: x\n  motd: x\n",
+				"winch.yaml":            "name: acme\nrecipients:\n  - " + k.id.Recipient().String() + "\nvars:\n  domain: x\n  motd: x\n",
 				"inventories/test.yaml": tt.inv,
 				"pipelines/site.yaml":   readsPipeline("pw"),
 			})
@@ -1156,7 +1156,7 @@ func TestWriteSecretErrors(t *testing.T) {
 		{"a value in the host", "", "", "web1", "pw", `variable "pw" is already in the vars of host "web1" in inventories/test.yaml`},
 		{"not read", "", "", "", "tokn", `unknown variable "tokn"; did you mean "token"?`},
 		{"an unknown host", "", "", "web9", "token", `host "web9" is not in inventories/test.yaml`},
-		{"no inventory", "name: acme\nrecipients:\n  - KEY\n", "", "", "pw", "no inventory: use --inventory, or set inventory in winch.yaml"},
+		{"two inventories and no default", "name: acme\nrecipients:\n  - KEY\ninventories:\n  prod:\n    hosts: {}\n", "", "", "pw", "no inventory: use --inventory, or set inventory in winch.yaml"},
 		{"a missing inventory", "", "prod", "", "pw", `unknown inventory "prod"`},
 		{"a null value", "", "", "web2", "pw", `variable "pw" is already in the vars of host "web2" in inventories/test.yaml`},
 		{"no recipients", "name: acme\ninventory: test\n", "", "", "pw", "winch.yaml has no recipients"},
@@ -1181,6 +1181,113 @@ func TestWriteSecretErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// spec: Variables/Secrets (winch secret generate); Project layout
+func TestWriteSecretTwoInventoryFiles(t *testing.T) {
+	k := newKey(t)
+	inv := "hosts:\n  web1:\n"
+	dir := writeProject(t, map[string]string{
+		"winch.yaml":            "name: acme\nrecipients:\n  - " + k.id.Recipient().String() + "\n",
+		"inventories/test.yaml": inv,
+		"inventories/test.yml":  inv,
+		"pipelines/site.yaml":   readsPipeline("pw"),
+	})
+	_, err := WriteSecret(dir, "", "", "pw", "hunter2")
+	if want := `inventory "test" is both inventories/test.yaml and inventories/test.yml; keep one of the two`; err == nil || err.Error() != want {
+		t.Errorf("err %v; want %q", err, want)
+	}
+	for _, name := range []string{"test.yaml", "test.yml"} {
+		if data, _ := os.ReadFile(filepath.Join(dir, "inventories", name)); string(data) != inv {
+			t.Errorf("%s changed:\n%s", name, data)
+		}
+	}
+}
+
+// spec: Project layout; CLI (winch fmt, winch secret init, winch secret rekey, winch secret generate)
+func TestWinchYML(t *testing.T) {
+	k, next := newKey(t), newKey(t)
+	write := func(t *testing.T, cfg string) string {
+		return writeProject(t, map[string]string{
+			"winch.yaml":            "",
+			"winch.yml":             cfg,
+			"inventories/test.yaml": "",
+			"pipelines/site.yaml":   readsPipeline("pw"),
+		})
+	}
+	read := func(t *testing.T, dir string) string {
+		data, err := os.ReadFile(filepath.Join(dir, "winch.yml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	inv := "inventories:\n  test:\n    hosts:\n      web1:\n"
+	t.Run("fmt", func(t *testing.T) {
+		dir := write(t, "name: acme\nvars:\n    pw: x\n"+inv)
+		if files, err := Format(dir); err != nil || !slices.Equal(files, []string{"winch.yml"}) {
+			t.Errorf("Format = %v, %v; want [winch.yml]", files, err)
+		}
+		if got, want := read(t, dir), "name: acme\nvars:\n  pw: x\n"+inv; got != want {
+			t.Errorf("winch.yml:\n%s\nwant\n%s", got, want)
+		}
+	})
+	t.Run("validate", func(t *testing.T) {
+		dir := write(t, "name: acme\nvars:\n  pw: x\n"+inv)
+		if _, err := Validate(dir, "", nil); err != nil {
+			t.Errorf("Validate: %v", err)
+		}
+	})
+	t.Run("add recipient with both files", func(t *testing.T) {
+		dir := write(t, "name: acme\n"+inv)
+		if err := os.WriteFile(filepath.Join(dir, "winch.yaml"), []byte("name: acme\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := AddRecipient(dir, k.id.Recipient().String())
+		if want := "project file is both winch.yaml and winch.yml; keep one of the two"; err == nil || err.Error() != want {
+			t.Errorf("err %v; want %q", err, want)
+		}
+	})
+	t.Run("add recipient", func(t *testing.T) {
+		dir := write(t, "name: acme\n"+inv)
+		if added, err := AddRecipient(dir, k.id.Recipient().String()); err != nil || !added {
+			t.Fatalf("AddRecipient = %v, %v", added, err)
+		}
+		if got := read(t, dir); !strings.Contains(got, "recipients:\n  - "+k.id.Recipient().String()) {
+			t.Errorf("winch.yml:\n%s", got)
+		}
+	})
+	t.Run("rekey", func(t *testing.T) {
+		dir := write(t, "name: acme\nrecipients: ["+next.id.Recipient().String()+"]\nvars:\n  pw: !secret "+k.encrypt(t, "hunter2")+"\n"+inv)
+		if n, files, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path}); err != nil || n != 1 || !slices.Equal(files, []string{"winch.yml"}) {
+			t.Errorf("Rekey = %d, %v, %v; want 1 in [winch.yml]", n, files, err)
+		}
+		texts := secretTexts(read(t, dir))
+		if len(texts) != 1 {
+			t.Fatalf("%d secrets in winch.yml", len(texts))
+		}
+		if got, err := secret.Decrypt(texts[0], []age.Identity{next.id}); err != nil || got != "hunter2" {
+			t.Errorf("secret = %q, %v; want hunter2 for the new key", got, err)
+		}
+	})
+	t.Run("generate", func(t *testing.T) {
+		dir := write(t, "name: acme\nrecipients: ["+k.id.Recipient().String()+"]\n"+inv)
+		if file, err := WriteSecret(dir, "", "", "pw", "hunter2"); err != nil || file != "inventories.test of winch.yml" {
+			t.Errorf("WriteSecret = %q, %v", file, err)
+		}
+		if got := read(t, dir); len(secretTexts(got)) != 1 {
+			t.Errorf("winch.yml:\n%s", got)
+		}
+	})
+	t.Run("generate at the top", func(t *testing.T) {
+		dir := write(t, "name: acme\nrecipients: ["+k.id.Recipient().String()+"]\nhosts:\n  web1:\n")
+		if file, err := WriteSecret(dir, "", "", "pw", "hunter2"); err != nil || file != "winch.yml" {
+			t.Errorf("WriteSecret = %q, %v", file, err)
+		}
+		if got := read(t, dir); len(secretTexts(got)) != 1 {
+			t.Errorf("winch.yml:\n%s", got)
+		}
+	})
 }
 
 // spec: Variables/Secrets (winch secret generate)

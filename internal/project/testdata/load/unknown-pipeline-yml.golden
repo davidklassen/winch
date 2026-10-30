@@ -1,1 +1,0 @@
-unknown pipeline "web"; winch reads only .yaml files: rename pipelines/web.yml to web.yaml

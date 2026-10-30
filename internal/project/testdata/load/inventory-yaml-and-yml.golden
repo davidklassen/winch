@@ -1,0 +1,1 @@
+inventory "test" is both inventories/test.yaml and inventories/test.yml; keep one of the two

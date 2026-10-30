@@ -64,6 +64,8 @@ type Config struct {
 	Parallelism *yamlx.Node `yaml:"parallelism"`
 	Health      *yamlx.Node `yaml:"health"`
 	root        *yamlx.Node
+	// file is winch.yaml or winch.yml.
+	file string
 }
 
 var projectNameRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
@@ -244,7 +246,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 	if len(l.sealed) > 0 {
 		plain = keys.Filter.Plain
 	}
-	warnings, err := scanProject(dir, plain)
+	warnings, err := scanProject(dir, cfg.file, plain)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +359,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err := l.checkNames(sets); err != nil {
 		return nil, err
 	}
-	warnings, err := scanProject(dir, func([]byte) {})
+	warnings, err := scanProject(dir, cfg.file, func([]byte) {})
 	if err != nil {
 		return nil, err
 	}
@@ -369,30 +371,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err != nil {
 		return nil, err
 	}
-	yml, err := ymlFiles(dir)
-	return slices.Concat(warnings, l.warnings, secretWarnings, purgeWarnings(invs, pls, pls), stale, yml), err
-}
-
-// ymlFiles returns a warning for each .yml file in pipelines/ and in a recipe
-// directory. winch reads neither.
-func ymlFiles(dir string) ([]*yamlx.Error, error) {
-	fsys := os.DirFS(dir)
-	pipelines, err := fs.Glob(fsys, "pipelines/*.yml")
-	if err != nil {
-		return nil, err
-	}
-	recipes, err := fs.Glob(fsys, "recipes/*/*.yml")
-	if err != nil {
-		return nil, err
-	}
-	var out []*yamlx.Error
-	for _, file := range pipelines {
-		out = append(out, yamlx.Errorf(yamlx.Pos{File: file, Line: 1, Col: 1}, "winch reads only .yaml files in pipelines/; rename it to %s.yaml", strings.TrimSuffix(path.Base(file), ".yml")))
-	}
-	for _, file := range recipes {
-		out = append(out, yamlx.Errorf(yamlx.Pos{File: file, Line: 1, Col: 1}, "winch reads only recipe.yaml in a recipe directory"))
-	}
-	return out, nil
+	return slices.Concat(warnings, l.warnings, secretWarnings, purgeWarnings(invs, pls, pls), stale), nil
 }
 
 type loader struct {
@@ -427,11 +406,11 @@ func newLoader(dir string, cfg *Config) (*loader, error) {
 }
 
 // loadInventories loads the inventory flag, the default from winch.yaml, or
-// the inventory at the top of winch.yaml.
+// the only inventory.
 // Without any of them, it loads every inventory when all is true. It returns the
 // inventories that loaded.
 func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setValue) ([]*Inventory, error) {
-	if name := cmp.Or(flag, cfg.Inventory, l.layout.top()); name != "" {
+	if name := cmp.Or(flag, cfg.Inventory, l.layout.only()); name != "" {
 		p, err := l.layout.inventory(name)
 		if err != nil && flag == "" {
 			err = yamlx.Errorf(cfg.InventoryPos, "%s", err)
@@ -594,7 +573,7 @@ func notifyStage(st Step, s Stage, runs map[*Recipe]map[string]bool, pipeline st
 	return errors.Join(errs...)
 }
 
-// list returns the .yaml files in a directory of the project, relative to dir.
+// list returns the .yaml and .yml files in a directory of the project, relative to dir.
 func list(dir, sub string) ([]string, error) {
 	entries, err := os.ReadDir(filepath.Join(dir, sub))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -605,7 +584,7 @@ func list(dir, sub string) ([]string, error) {
 	}
 	var out []string
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".yaml") {
+		if ext := path.Ext(e.Name()); !e.IsDir() && (ext == ".yaml" || ext == ".yml") {
 			out = append(out, sub+"/"+e.Name())
 		}
 	}
@@ -637,15 +616,36 @@ func (f notFound) Error() string        { return string(f) + ": no such file" }
 func (f notFound) Is(target error) bool { return target == fs.ErrNotExist }
 
 func loadConfig(dir string) (*Config, error) {
-	n, err := parse(dir, "winch.yaml")
+	file, err := projectFile(dir)
+	if err != nil {
+		return nil, err
+	}
+	n, err := parse(dir, file)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("%w; run winch in the project directory", err)
 	}
 	if err != nil {
 		return nil, err
 	}
-	cfg := Config{root: n}
+	cfg := Config{root: n, file: file}
 	return &cfg, yamlx.Decode(n, &cfg)
+}
+
+// projectFile returns the project file in dir: winch.yaml, or winch.yml when
+// only that one exists.
+func projectFile(dir string) (string, error) {
+	isFile := func(name string) bool {
+		info, err := os.Stat(projectPath(dir, name))
+		return err == nil && !info.IsDir()
+	}
+	yaml, yml := isFile("winch.yaml"), isFile("winch.yml")
+	switch {
+	case yaml && yml:
+		return "", errors.New("project file is both winch.yaml and winch.yml; keep one of the two")
+	case yml:
+		return "winch.yml", nil
+	}
+	return "winch.yaml", nil
 }
 
 // pipelineFile holds stages, or the fields of its one stage.
@@ -715,10 +715,6 @@ func (l *loader) loadPipeline(name string) (*Pipeline, error) {
 	}
 	i := slices.IndexFunc(l.layout.pipelines, func(p part) bool { return p.name == name })
 	if i < 0 {
-		yml := "pipelines/" + name + ".yml"
-		if _, err := os.Stat(filepath.Join(l.dir, yml)); err == nil {
-			return nil, fmt.Errorf("unknown pipeline %q; winch reads only .yaml files: rename %s to %s.yaml", name, yml, name)
-		}
 		return nil, fmt.Errorf("unknown pipeline %q%s", name, yamlx.Suggest(name, partNames(l.layout.pipelines)))
 	}
 	return l.decodePipeline(l.layout.pipelines[i])

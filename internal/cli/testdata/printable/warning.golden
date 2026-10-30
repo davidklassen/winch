@@ -1,6 +1,6 @@
 text:
-pipelines/a?b.yml:1:1: warning: winch reads only .yaml files in pipelines/; rename it to a?b.yaml
+pipelines/a?b.yaml:5:35: warning: mode: owner and group can read the directory but not enter it; use "0750"
 json:
 {"type":"version","time":"2026-10-26T12:00:00Z","version":1}
-{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"warning","file":"pipelines/a?b.yml","line":1,"col":1,"message":"winch reads only .yaml files in pipelines/; rename it to a?b.yaml"}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"warning","file":"pipelines/a?b.yaml","line":5,"col":35,"message":"mode: owner and group can read the directory but not enter it; use \"0750\""}
 {"type":"summary","time":"2026-10-26T12:00:00Z","exit_code":0}

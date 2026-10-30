@@ -459,8 +459,7 @@ func TestLoadErrorPrintable(t *testing.T) {
 			"recipes/nginx/recipe.yaml": "require:\n  - !expr \"facts[\\\"\\u202E\\\"] == 1\"\nsteps: []\n",
 		}},
 		{name: "warning", files: map[string]string{
-			"pipelines/site.yaml":         pipeline("pkg: {name: curl}"),
-			"pipelines/a" + rlo + "b.yml": "stages: []\n",
+			"pipelines/a" + rlo + "b.yaml": pipeline(`dir: {path: /srv/a, mode: "0640"}`),
 		}},
 	}
 	for _, tt := range tests {

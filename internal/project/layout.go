@@ -17,7 +17,7 @@ import (
 // winch.yaml.
 type part struct {
 	name string
-	// file is relative to the project, or empty for a key.
+	// file is relative to the project. For a key, it is the project file.
 	file string
 	// node is the value of the key, and pos the position of the key, or nil
 	// for a file.
@@ -29,11 +29,8 @@ type part struct {
 
 // label names the part in messages.
 func (p part) label(kind string) string {
-	if p.top {
-		return "winch.yaml"
-	}
-	if p.node != nil {
-		return kind + "." + p.name + " of winch.yaml"
+	if p.node != nil && !p.top {
+		return kind + "." + p.name + " of " + p.file
 	}
 	return p.file
 }
@@ -52,29 +49,47 @@ func readLayout(dir string, cfg *Config) (layout, error) {
 	files, err := list(dir, "inventories")
 	errs = append(errs, err)
 	for _, f := range files {
-		ly.inventories = append(ly.inventories, part{name: strings.TrimSuffix(path.Base(f), ".yaml"), file: f})
+		errs = append(errs, addFile(&ly.inventories, strings.TrimSuffix(path.Base(f), path.Ext(f)), f, "inventory"))
 	}
 	files, err = list(dir, "pipelines")
 	errs = append(errs, err)
 	for _, f := range files {
-		ly.pipelines = append(ly.pipelines, part{name: strings.TrimSuffix(path.Base(f), ".yaml"), file: f})
+		errs = append(errs, addFile(&ly.pipelines, strings.TrimSuffix(path.Base(f), path.Ext(f)), f, "pipeline"))
+	}
+	files, err = recipeFiles(dir)
+	errs = append(errs, err)
+	for _, f := range files {
+		errs = append(errs, addFile(&ly.recipes, path.Base(path.Dir(f)), f, "recipe"))
 	}
 	entries, err := os.ReadDir(filepath.Join(dir, "recipes"))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		errs = append(errs, fmt.Errorf("read recipes: %w", err))
 	}
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && !slices.ContainsFunc(ly.recipes, func(p part) bool { return p.name == e.Name() }) {
 			ly.recipes = append(ly.recipes, part{name: e.Name(), file: "recipes/" + e.Name() + "/recipe.yaml"})
 		}
 	}
+	for _, parts := range [][]part{ly.inventories, ly.pipelines, ly.recipes} {
+		slices.SortFunc(parts, func(a, b part) int { return strings.Compare(a.name, b.name) })
+	}
 	errs = append(errs,
-		addKeys(&ly.inventories, cfg.Inventories, "inventories", "inventory"),
-		addKeys(&ly.pipelines, cfg.Pipelines, "pipelines", "pipeline"),
-		addKeys(&ly.recipes, cfg.Recipes, "recipes", "recipe"),
+		addKeys(&ly.inventories, cfg.Inventories, cfg.file, "inventories", "inventory"),
+		addKeys(&ly.pipelines, cfg.Pipelines, cfg.file, "pipelines", "pipeline"),
+		addKeys(&ly.recipes, cfg.Recipes, cfg.file, "recipes", "recipe"),
 		addTop(&ly.inventories, cfg, "inventories", "hosts", "groups"),
 		addTop(&ly.pipelines, cfg, "pipelines", "steps", "handlers", "parallelism", "health"))
 	return ly, errors.Join(errs...)
+}
+
+// addFile adds the part name in file to parts. A second file for one name is
+// an error.
+func addFile(parts *[]part, name, file, kind string) error {
+	if i := slices.IndexFunc(*parts, func(p part) bool { return p.name == name }); i >= 0 {
+		return fmt.Errorf("%s %q is both %s and %s; keep one of the two", kind, name, (*parts)[i].file, file)
+	}
+	*parts = append(*parts, part{name: name, file: file})
+	return nil
 }
 
 // addTop makes the keys of winch.yaml in keys the only part, with the name of
@@ -97,14 +112,14 @@ func addTop(parts *[]part, cfg *Config, kind string, keys ...string) error {
 	n.Pos = first.KeyPos
 	var err error
 	if len(*parts) > 0 {
-		err = yamlx.Errorf(first.KeyPos, "%s: the %s at the top of winch.yaml and %s are two %s; keep one of the two", first.Key, first.Key, (*parts)[0].label(kind), kind)
+		err = yamlx.Errorf(first.KeyPos, "%s: the %s at the top of %s and %s are two %s; keep one of the two", first.Key, first.Key, cfg.file, (*parts)[0].label(kind), kind)
 	}
-	*parts = []part{{name: cfg.Name, node: n, pos: first.KeyPos, top: true}}
+	*parts = []part{{name: cfg.Name, file: cfg.file, node: n, pos: first.KeyPos, top: true}}
 	return err
 }
 
-// addKeys adds the keys of n, the field key of winch.yaml, to parts.
-func addKeys(parts *[]part, n *yamlx.Node, key, kind string) error {
+// addKeys adds the keys of n, the field key of the project file, to parts.
+func addKeys(parts *[]part, n *yamlx.Node, file, key, kind string) error {
 	if n == nil || n.Kind == yamlx.Null {
 		return nil
 	}
@@ -114,12 +129,15 @@ func addKeys(parts *[]part, n *yamlx.Node, key, kind string) error {
 	var errs []error
 	for _, p := range n.Pairs {
 		if i := slices.IndexFunc(*parts, func(o part) bool { return o.name == p.Key }); i >= 0 {
-			// A recipe directory without recipe.yaml clashes too.
-			other := strings.TrimSuffix((*parts)[i].file, "recipe.yaml")
+			other := (*parts)[i].file
+			if kind == "recipe" {
+				// A recipe directory without a recipe file clashes too.
+				other = path.Dir(other) + "/"
+			}
 			errs = append(errs, yamlx.Errorf(p.KeyPos, "%s %q is also %s; keep one of the two", kind, p.Key, other))
 			continue
 		}
-		*parts = append(*parts, part{name: p.Key, node: p.Value, pos: p.KeyPos})
+		*parts = append(*parts, part{name: p.Key, file: file, node: p.Value, pos: p.KeyPos})
 	}
 	slices.SortFunc(*parts, func(a, b part) int { return strings.Compare(a.name, b.name) })
 	return errors.Join(errs...)
@@ -134,9 +152,9 @@ func partNames(parts []part) []string {
 	return out
 }
 
-// top returns the name of the inventory at the top of winch.yaml, or "".
-func (ly layout) top() string {
-	if len(ly.inventories) > 0 && ly.inventories[0].top {
+// only returns the name of the only inventory, or "".
+func (ly layout) only() string {
+	if len(ly.inventories) == 1 {
 		return ly.inventories[0].name
 	}
 	return ""
@@ -147,8 +165,9 @@ func (ly layout) inventory(name string) (part, error) {
 	if i := slices.IndexFunc(ly.inventories, func(p part) bool { return p.name == name }); i >= 0 {
 		return ly.inventories[i], nil
 	}
-	if strings.ContainsRune(name, '/') || strings.HasSuffix(name, ".yaml") {
-		return part{}, fmt.Errorf("unknown inventory %q; name an inventory without its directory and .yaml, such as %q", name, strings.TrimSuffix(path.Base(name), ".yaml"))
+	base := strings.TrimSuffix(strings.TrimSuffix(path.Base(name), ".yaml"), ".yml")
+	if strings.ContainsRune(name, '/') || base != path.Base(name) {
+		return part{}, fmt.Errorf("unknown inventory %q; name an inventory without its directory and extension, such as %q", name, base)
 	}
 	return part{}, fmt.Errorf("unknown inventory %q%s", name, yamlx.Suggest(name, partNames(ly.inventories)))
 }
