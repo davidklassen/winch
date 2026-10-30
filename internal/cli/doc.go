@@ -3,51 +3,79 @@ package cli
 import (
 	"cmp"
 	"context"
+	_ "embed"
 	"fmt"
 	"io"
 	"slices"
 	"strings"
 	"text/tabwriter"
 
+	"github.com/davidklassen/winch/internal/doc"
+	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
 const docHelp = `Examples:
   winch doc
+  winch doc project
+  winch doc step.when
   winch doc file
   winch doc file.mode
   winch doc firewall.allow.tcp
 
-Show the module reference: the list of modules, the keys of one module
-with an example step, or the full text of one key.
+Show the reference: the index of topics and modules, a topic, the keys
+of one module with an example step, or the full text of one key.
 
-Usage: winch doc [<module>[.<key>[.<key>]]]
+Usage: winch doc [<topic> | <module>][.<key>...]
 
 doc needs no project.
 `
 
-func doc(ctx context.Context, env Env, f *flags, args []string) int {
+//go:embed plan.md
+var planTopic string
+
+// topics returns the topics of winch doc, in index order.
+func topics() []doc.Topic {
+	return append(project.Topics(), facts.Topic(), doc.NewTopic("plan", planTopic, nil))
+}
+
+func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	if len(args) > 1 {
-		printError(env.stderr, "winch: doc takes one module or one key")
+		printError(env.stderr, "winch: doc takes one topic, module, or key")
 		return exitInvalid
 	}
+	ts := topics()
 	if len(args) == 0 {
-		w := tabwriter.NewWriter(env.stdout, 0, 0, 2, ' ', 0)
-		for _, name := range module.Names() {
-			d, _ := module.Reference(name)
-			fmt.Fprintf(w, "%s\t%s\n", name, d.Text)
-		}
-		w.Flush()
-		fmt.Fprintln(env.stdout, "\nRun \"winch doc <module>\" for the keys of a module.")
+		writeIndex(env.stdout, ts)
 		return exitOK
 	}
 	path := strings.Split(args[0], ".")
 	name := path[0]
-	d, ok := module.Reference(name)
-	if !ok {
-		printError(env.stderr, fmt.Sprintf("winch doc: unknown module %q%s", name, yamlx.Suggest(name, module.Names())))
+	var keys []doc.Key
+	var d module.Doc
+	i := slices.IndexFunc(ts, func(t doc.Topic) bool { return t.Name == name })
+	isModule := false
+	if i < 0 {
+		d, isModule = module.Reference(name)
+	}
+	switch {
+	case i >= 0:
+		keys = ts[i].Keys
+	case isModule:
+		keys = d.Keys
+	default:
+		var names []string
+		for _, t := range ts {
+			names = append(names, t.Name)
+		}
+		printError(env.stderr, fmt.Sprintf("winch doc: unknown topic or module %q%s", name, yamlx.Suggest(name, append(names, module.Names()...))))
 		return exitInvalid
+	}
+	if len(path) == 1 && i >= 0 {
+		writeTopic(env.stdout, ts[i])
+		return exitOK
 	}
 	if len(path) == 1 {
 		fmt.Fprintf(env.stdout, "%s: %s\n\nKeys:\n", name, d.Text)
@@ -62,10 +90,9 @@ func doc(ctx context.Context, env Env, f *flags, args []string) int {
 		fmt.Fprintf(env.stdout, "\nRun \"winch doc %s.<key>\" for the full text of a key.\n", name)
 		return exitOK
 	}
-	var k module.Key
-	keys := d.Keys
+	var k doc.Key
 	for j, key := range path[1:] {
-		i := slices.IndexFunc(keys, func(k module.Key) bool { return k.Name == key })
+		i := slices.IndexFunc(keys, func(k doc.Key) bool { return k.Name == key })
 		if i < 0 {
 			var names []string
 			for _, k := range keys {
@@ -86,15 +113,63 @@ func doc(ctx context.Context, env Env, f *flags, args []string) int {
 	}
 	fmt.Fprintf(env.stdout, "%s: %s\n\n%s\n", args[0], head, wrap(k.Text, 72))
 	if len(k.Keys) > 0 {
-		fmt.Fprintln(env.stdout, "\nKeys of each element:")
+		if k.Type == "list of maps" {
+			fmt.Fprintln(env.stdout, "\nKeys of each element:")
+		} else {
+			fmt.Fprintln(env.stdout, "\nKeys:")
+		}
 		writeKeys(env.stdout, k.Keys)
 	}
 	return exitOK
 }
 
+func writeIndex(out io.Writer, ts []doc.Topic) {
+	fmt.Fprint(out, `winch configures Linux servers over SSH from a project of YAML files.
+Each step of a project uses a module, which checks and changes one kind of thing.
+
+Topics:
+`)
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	for _, t := range ts {
+		fmt.Fprintf(w, "  %s\t%s\n", t.Name, t.Text)
+	}
+	w.Flush()
+	fmt.Fprint(out, "\nModules:\n")
+	w = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	for _, name := range module.Names() {
+		d, _ := module.Reference(name)
+		fmt.Fprintf(w, "  %s\t%s\n", name, d.Text)
+	}
+	w.Flush()
+	fmt.Fprintln(out, "\nRun \"winch doc <topic>\" or \"winch doc <module>\" for more.")
+}
+
+// writeTopic writes the text of t, then each of its keys with the keys of
+// their values, by their path.
+func writeTopic(out io.Writer, t doc.Topic) {
+	fmt.Fprintf(out, "%s: %s\n\n%s", t.Name, t.Text, t.Body)
+	if len(t.Keys) == 0 {
+		return
+	}
+	var all []doc.Key
+	var add func(prefix string, keys []doc.Key)
+	add = func(prefix string, keys []doc.Key) {
+		for _, k := range keys {
+			sub := k.Keys
+			k.Name, k.Keys = prefix+k.Name, nil
+			all = append(all, k)
+			add(k.Name+".", sub)
+		}
+	}
+	add("", t.Keys)
+	fmt.Fprintln(out, "\nKeys:")
+	writeKeys(out, all)
+	fmt.Fprintf(out, "\nRun \"winch doc %s.<key>\" for the full text of a key.\n", t.Name)
+}
+
 // writeKeys writes a line for each key: its name, type, default, and the
 // first sentence of its text.
-func writeKeys(out io.Writer, keys []module.Key) {
+func writeKeys(out io.Writer, keys []doc.Key) {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, k := range keys {
 		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", k.Name, k.Type, cmp.Or(k.Default, "-"), k.Summary())

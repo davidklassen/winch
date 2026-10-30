@@ -1,0 +1,51 @@
+Plan and apply, the plan hash, exit codes, and JSON output.
+
+winch plan shows the changes and changes nothing. winch apply shows the
+same plan, asks, and then makes the changes. For each host, the plan
+starts a session, reads the facts, evaluates the steps, checks the
+requirements of the recipes, and asks the helper to check each step.
+Apply checks each step again right before it changes it; the second
+check decides.
+
+    + create   ~ change   - remove   ? unknown: a cmd without creates or unless
+    ! a handler, or a pending then, gate, or assert that will run
+    * a reboot, assert, or health gate that runs during apply
+
+The last line of a plan is its hash, such as plan a3f9c2e1d07b4c58. The
+hash covers the project name, the hosts and their SSH targets, the
+stages, the evaluated steps, the check results, and the pending
+handlers and then commands. winch apply --check <hash> applies only
+when the new plan has that hash, without the question. Without a
+terminal, apply without --yes or --check prints the plan and exits 5;
+its last line is the command that applies that plan.
+
+winch changes only what steps declare. Deleting a step changes nothing
+on the host. To remove a thing, declare it with absent: true. The plan
+fails a host when two steps manage the same path, package, unit, user,
+or group with different arguments.
+
+The first Ctrl-C lets the running step of each host finish, starts no
+new step, and ends with the summary. A second Ctrl-C ends the sessions.
+A new run is the resume: steps that already succeeded check as ok, and
+pending handlers run.
+
+Exit codes. When several apply, the first in the order 3, 1, 4, 6, 5,
+2, 0 wins.
+
+    0  success
+    1  one or more hosts failed
+    2  plan --exit-code: apply would change something
+    3  invalid command line or project; nothing ran
+    4  one or more hosts were unreachable, and no step failed
+    5  confirmation needed; nothing changed
+    6  the plan hash differs from --check; nothing changed
+
+--json writes one JSON object per line on stdout. Each has type and
+time. The types: version (always first), diagnostic (an error or a
+warning with file, line, col, and message), planned (the check of one
+step), applied (the apply of one step), host (a host finished, failed,
+or was unreachable), exec (the output of winch exec on one host), and
+summary (the counts, the plan hash, and the exit code; always last).
+A step event has host and address, such as mail.acme.com:nginx#3[0]:
+the host, the stage or recipe, the step number from 1, and the loop
+index from 0.

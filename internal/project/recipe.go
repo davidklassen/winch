@@ -91,10 +91,10 @@ type requireEnv struct {
 }
 
 type recipeFile struct {
-	Require  []*yamlx.Node `yaml:"require"`
-	Vars     *yamlx.Node   `yaml:"vars"`
-	Steps    []*yamlx.Node `yaml:"steps,required"`
-	Handlers *yamlx.Node   `yaml:"handlers"`
+	Require  []*yamlx.Node `yaml:"require" type:"list of expressions" doc:"Expressions on facts, each an !expr. Every host where the recipe runs in the pipeline must meet all of them, or it fails at plan. They see only facts."`
+	Vars     *yamlx.Node   `yaml:"vars" type:"map" doc:"The variables that the recipe owns, with their defaults. Their names start with the recipe name and _."`
+	Steps    []*yamlx.Node `yaml:"steps,required" type:"list of steps" doc:"Module steps, in order. A recipe cannot run another recipe."`
+	Handlers *yamlx.Node   `yaml:"handlers" type:"map of lists of steps" doc:"Named lists of steps. They run after the last step of the recipe, when a step notified them."`
 	inline   bool
 }
 

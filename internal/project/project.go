@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -48,21 +49,21 @@ type Project struct {
 }
 
 type Config struct {
-	Name         string `yaml:"name,required"`
-	Inventory    string `yaml:"inventory"`
+	Name         string `yaml:"name,required" doc:"The project name: letters, digits, ., _, and -, not starting with a dot. Hosts keep pending handlers and other records under it."`
+	Inventory    string `yaml:"inventory" doc:"The name of the default inventory. A project with more than one inventory and without a default makes every run name its inventory with --inventory."`
 	InventoryPos yamlx.Pos
-	Recipients   []string    `yaml:"recipients"`
-	Vars         *yamlx.Node `yaml:"vars"`
-	Inventories  *yamlx.Node `yaml:"inventories"`
-	Pipelines    *yamlx.Node `yaml:"pipelines"`
-	Recipes      *yamlx.Node `yaml:"recipes"`
+	Recipients   []string    `yaml:"recipients" doc:"The age public keys. winch encrypts each secret for all of them. winch secret init adds a key."`
+	Vars         *yamlx.Node `yaml:"vars" type:"map" doc:"The shared variable defaults, by name. A default can be a !secret, an !expr, or a !tpl."`
+	Inventories  *yamlx.Node `yaml:"inventories" type:"map" doc:"Inventories by name, as in inventories/<name>.yaml. The value is the content of the file."`
+	Pipelines    *yamlx.Node `yaml:"pipelines" type:"map" doc:"Pipelines by name, as in pipelines/<name>.yaml. The value is the content of the file."`
+	Recipes      *yamlx.Node `yaml:"recipes" type:"map" doc:"Recipes by name, as in recipes/<name>/recipe.yaml. The value is the content of the file. Such a recipe has no templates or files directory, so its steps cannot use template, source, or the key of repo."`
 	// The top-level inventory and pipeline. readLayout takes them from root.
-	Hosts       *yamlx.Node `yaml:"hosts"`
-	Groups      *yamlx.Node `yaml:"groups"`
-	Steps       *yamlx.Node `yaml:"steps"`
-	Handlers    *yamlx.Node `yaml:"handlers"`
-	Parallelism *yamlx.Node `yaml:"parallelism"`
-	Health      *yamlx.Node `yaml:"health"`
+	Hosts       *yamlx.Node `yaml:"hosts" type:"map" doc:"The hosts of the only inventory, as in an inventory file. The project then has no other inventory."`
+	Groups      *yamlx.Node `yaml:"groups" type:"map" doc:"The groups of the only inventory, as in an inventory file."`
+	Steps       *yamlx.Node `yaml:"steps" type:"list of steps" doc:"The steps of the only pipeline. It has one stage on all hosts, and both have the name of the project. The project then has no other pipeline, and plan and apply take no pipeline name."`
+	Handlers    *yamlx.Node `yaml:"handlers" type:"map of lists of steps" doc:"The handlers of the only pipeline, as in a pipeline file."`
+	Parallelism *yamlx.Node `yaml:"parallelism" type:"integer" doc:"The parallelism of the only pipeline, as in a pipeline file."`
+	Health      *yamlx.Node `yaml:"health" type:"map" doc:"The health gate of the only pipeline, as in a pipeline file."`
 	root        *yamlx.Node
 	// file is winch.yaml or winch.yml.
 	file string
@@ -650,33 +651,33 @@ func projectFile(dir string) (string, error) {
 
 // pipelineFile holds stages, or the fields of its one stage.
 type pipelineFile struct {
-	Stages         []stageFile `yaml:"stages"`
+	Stages         []stageFile `yaml:"stages" doc:"The stages, in the order they run. A stage starts when the previous stage finished on all its hosts. A pipeline with stages has no other key."`
 	StagesPos      yamlx.Pos
-	Hosts          string `yaml:"hosts"`
+	Hosts          string `yaml:"hosts" default:"all" doc:"The host pattern of the one stage of a pipeline without stages. Run winch doc inventory for the patterns."`
 	HostsPos       yamlx.Pos
-	Parallelism    *int `yaml:"parallelism"`
+	Parallelism    *int `yaml:"parallelism" doc:"The maximum number of hosts that run the stage at the same time. Hosts start in inventory order. The next host starts when a host finishes the stage and its health gate passes. A failure stops new hosts from starting."`
 	ParallelismPos yamlx.Pos
-	Health         *healthFile   `yaml:"health"`
-	Steps          []*yamlx.Node `yaml:"steps"`
-	Handlers       *yamlx.Node   `yaml:"handlers"`
+	Health         *healthFile   `yaml:"health" doc:"A health gate: a check that must pass on a host after it finishes the stage, when the stage has a change on that host."`
+	Steps          []*yamlx.Node `yaml:"steps" type:"list of steps" doc:"The steps of the one stage of a pipeline without stages: recipe steps and module steps, in order."`
+	Handlers       *yamlx.Node   `yaml:"handlers" type:"map of lists of steps" doc:"Named lists of steps of the stage, as in a recipe. A module step of the stage notifies them."`
 }
 
 type stageFile struct {
-	Name           string `yaml:"name,required"`
-	Hosts          string `yaml:"hosts"`
+	Name           string `yaml:"name,required" doc:"The stage name. It is unique in the pipeline and follows the rule of host names. --stages selects stages by name."`
+	Hosts          string `yaml:"hosts" default:"all" doc:"A host pattern. Run winch doc inventory for the patterns."`
 	HostsPos       yamlx.Pos
-	Parallelism    *int `yaml:"parallelism"`
+	Parallelism    *int `yaml:"parallelism" doc:"The maximum number of hosts that run the stage at the same time. Hosts start in inventory order. The next host starts when a host finishes the stage and its health gate passes. A failure stops new hosts from starting."`
 	ParallelismPos yamlx.Pos
-	Health         *healthFile   `yaml:"health"`
-	Steps          []*yamlx.Node `yaml:"steps,required"`
-	Handlers       *yamlx.Node   `yaml:"handlers"`
+	Health         *healthFile   `yaml:"health" doc:"A health gate: a check that must pass on a host after it finishes the stage, when the stage has a change on that host."`
+	Steps          []*yamlx.Node `yaml:"steps,required" type:"list of steps" doc:"Recipe steps and module steps, in order."`
+	Handlers       *yamlx.Node   `yaml:"handlers" type:"map of lists of steps" doc:"Named lists of steps of the stage, as in a recipe. A module step of the stage notifies them."`
 	Pos            yamlx.Pos
 }
 
 type healthFile struct {
-	Command string `yaml:"command,required"`
-	Stable  int    `yaml:"stable"`
-	Timeout *int   `yaml:"timeout"`
+	Command string `yaml:"command,required" doc:"A command that must exit 0. The helper runs it once per second until it exits 0, then keeps running it for stable seconds. A failed run starts the wait again."`
+	Stable  int    `yaml:"stable" default:"0" doc:"The seconds that the command must keep exiting 0. It must be less than timeout."`
+	Timeout *int   `yaml:"timeout" default:"60" doc:"The seconds that the gate has to pass. Then the host fails, and the error shows the end of the last output."`
 }
 
 // defaultTimeout is the timeout of a health gate in seconds.
@@ -824,8 +825,26 @@ var recipeOnly = map[string]map[string]string{
 	"unit": {"source": "content"},
 }
 
-// stepFields are the step keys in the order of winch fmt.
-var stepFields = []string{"name", "recipe", "vars", "when", "loop", "then", "confirm_access", "notify"}
+// stepKeys are the keys of a step other than its module, in the order of
+// winch fmt. loadStep reads them by hand.
+type stepKeys struct {
+	Name          string        `yaml:"name" doc:"Text for the plan and the logs. Without it, the plan shows the module and its main argument."`
+	Recipe        string        `yaml:"recipe" doc:"The recipe that the step runs, in place of a module. A recipe step has only name, recipe, vars, and when. A recipe runs at most once per host in a run."`
+	Vars          *yamlx.Node   `yaml:"vars" type:"map" doc:"Values of variables for this recipe step only. They beat the inventory, and --set beats them. Only a recipe step has vars."`
+	When          *yamlx.Node   `yaml:"when" type:"expression" doc:"An !expr that gives true or false. When it is false, winch skips the step and evaluates none of its other keys. It runs once, before loop, and cannot use item."`
+	Loop          *yamlx.Node   `yaml:"loop" type:"list or expression" doc:"A list, or an !expr that gives a list. The step runs once per element, as item. loop: [] runs nothing and notifies nothing. A null element fails the host."`
+	Then          string        `yaml:"then" doc:"A command. It runs right after the step changes something, before the next step. A failure of then fails the step. With loop, then runs once after the last element and cannot use item. A then that did not run stays pending on the host, and the next run runs it."`
+	ConfirmAccess bool          `yaml:"confirm_access" doc:"Check that a new SSH connection works after the step, and put back the files of the recipe when it does not. Only a service step can use it, in steps or in handlers. Run winch doc lockout for more."`
+	Notify        yamlx.Strings `yaml:"notify" doc:"A handler name, or a list of them. Not a template or an expression. With loop, notify fires once when any element changed. Run winch doc handlers for more."`
+}
+
+var stepFields = func() []string {
+	var out []string
+	for _, f := range yamlx.Fields(reflect.TypeFor[stepKeys]()) {
+		out = append(out, f.Name)
+	}
+	return out
+}()
 
 const thenInLoop = "then runs once after the last element; it cannot use item"
 

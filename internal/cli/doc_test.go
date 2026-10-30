@@ -21,8 +21,14 @@ func TestDoc(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"modules", []string{"doc"}},
+		{"index", []string{"doc"}},
 		{"file", []string{"doc", "file"}},
+	}
+	for _, name := range docTopics {
+		tests = append(tests, struct {
+			name string
+			args []string
+		}{name, []string{"doc", name}})
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -34,6 +40,9 @@ func TestDoc(t *testing.T) {
 		})
 	}
 }
+
+// docTopics are the topics of winch doc, in index order.
+var docTopics = []string{"project", "inventory", "pipeline", "recipe", "step", "handlers", "values", "functions", "secrets", "lockout", "facts", "plan"}
 
 // spec: CLI
 func TestDocKey(t *testing.T) {
@@ -58,6 +67,22 @@ Keys of each element:
   udp   integer or list of integers  -  A UDP port or a list of UDP ports.
   from  string or list of strings    -  An address or a network, or a list of them.
 `},
+		{"step.notify", `step.notify: string or list of strings
+
+A handler name, or a list of them. Not a template or an expression. With
+loop, notify fires once when any element changed. Run winch doc handlers
+for more.
+`},
+		{"pipeline.health", `pipeline.health: map
+
+A health gate: a check that must pass on a host after it finishes the
+stage, when the stage has a change on that host.
+
+Keys:
+  command  string   required  A command that must exit 0.
+  stable   integer  0         The seconds that the command must keep exiting 0.
+  timeout  integer  60        The seconds that the gate has to pass.
+`},
 		{"firewall.allow.from", `firewall.allow.from: string or list of strings
 
 An address or a network, or a list of them. IPv4 and IPv6 are allowed.
@@ -81,12 +106,15 @@ func TestDocInvalid(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"unknown module", []string{"doc", "fiel"}, `winch doc: unknown module "fiel"; did you mean "file"?`},
+		{"unknown module", []string{"doc", "fiel"}, `winch doc: unknown topic or module "fiel"; did you mean "file"?`},
+		{"unknown topic", []string{"doc", "projct"}, `winch doc: unknown topic or module "projct"; did you mean "project"?`},
+		{"unknown key of a topic", []string{"doc", "step.wen"}, `winch doc: step has no key "wen"; did you mean "when"?`},
+		{"key of a topic without keys", []string{"doc", "values.x"}, `winch doc: values has no key "x"`},
 		{"unknown key", []string{"doc", "file.mdoe"}, `winch doc: file has no key "mdoe"; did you mean "mode"?`},
 		{"unknown key of a list element", []string{"doc", "firewall.allow.tpc"}, `winch doc: firewall.allow has no key "tpc"; did you mean "tcp"?`},
 		{"key of a key without keys", []string{"doc", "file.mode.x"}, `winch doc: file.mode has no key "x"`},
-		{"unknown module of a key", []string{"doc", "fiel.mode"}, `winch doc: unknown module "fiel"; did you mean "file"?`},
-		{"two arguments", []string{"doc", "file", "dir"}, "winch: doc takes one module or one key"},
+		{"unknown module of a key", []string{"doc", "fiel.mode"}, `winch doc: unknown topic or module "fiel"; did you mean "file"?`},
+		{"two arguments", []string{"doc", "file", "dir"}, "winch: doc takes one topic, module, or key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,7 +128,7 @@ func TestDocInvalid(t *testing.T) {
 
 // spec: CLI
 func TestDocNoTrailingSpace(t *testing.T) {
-	for _, name := range module.Names() {
+	for _, name := range append(module.Names(), docTopics...) {
 		r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", name)
 		for i, line := range strings.Split(r.out, "\n") {
 			if strings.TrimRight(line, " ") != line {
@@ -135,6 +163,72 @@ func TestDocExamples(t *testing.T) {
 			warnings, err := project.Validate(dir, "", nil)
 			if err != nil || len(warnings) > 0 {
 				t.Errorf("the example does not load: %v %v\n%s", err, warnings, d.Example)
+			}
+		})
+	}
+}
+
+// spec: CLI
+func TestDocTopicNames(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc")
+	_, after, _ := strings.Cut(r.out, "\nTopics:\n")
+	section, _, _ := strings.Cut(after, "\n\n")
+	var topics []string
+	for line := range strings.Lines(section) {
+		topics = append(topics, strings.Fields(line)[0])
+	}
+	if !slices.Equal(topics, docTopics) {
+		t.Errorf("topics %v, want %v", topics, docTopics)
+	}
+	for _, name := range topics {
+		if slices.Contains(module.Names(), name) {
+			t.Errorf("topic %s is also a module; rename the topic", name)
+		}
+	}
+}
+
+// spec: CLI
+func TestDocTopicExamples(t *testing.T) {
+	for _, name := range docTopics {
+		t.Run(name, func(t *testing.T) {
+			r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", name)
+			if r.code != exitOK {
+				t.Fatalf("exit %d, stderr %q", r.code, r.err)
+			}
+			files := map[string]string{}
+			blocks := strings.Split(r.out, "```")
+			if len(blocks)%2 == 0 {
+				t.Fatal("an example has no end")
+			}
+			for i := 1; i < len(blocks); i += 2 {
+				_, text, _ := strings.Cut(blocks[i], "\n")
+				first, _, _ := strings.Cut(text, "\n")
+				file, ok := strings.CutPrefix(first, "# ")
+				if !ok {
+					t.Fatalf("an example does not start with the name of its file:\n%s", text)
+				}
+				if _, ok := files[file]; ok {
+					t.Fatalf("two YAML examples of %s", file)
+				}
+				files[file] = text
+			}
+			if len(files) == 0 {
+				return
+			}
+			if name == "project" {
+				var kinds []string
+				for file := range files {
+					kinds = append(kinds, strings.Split(file, "/")[0])
+				}
+				slices.Sort(kinds)
+				if !slices.Equal(kinds, []string{"inventories", "pipelines", "winch.yaml"}) {
+					t.Errorf("the minimal project has the files %v, want winch.yaml, one inventory, and one pipeline", kinds)
+				}
+			}
+			dir := vmtest.WriteProject(t, files)
+			warnings, err := project.Validate(dir, "", nil)
+			if err != nil || len(warnings) > 0 {
+				t.Errorf("the examples do not load as a project: %v %v", err, warnings)
 			}
 		})
 	}

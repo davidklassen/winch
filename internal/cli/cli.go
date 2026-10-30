@@ -89,7 +89,7 @@ Commands:
   exec       Run a shell command on some hosts and show its output.
   secret     Make an age key, make or encrypt a secret, or encrypt all
              secrets again.
-  doc        Show the module reference.
+  doc        Show the reference: topics and modules.
 
 Run "winch <command> --help" for the arguments and flags of a command.
 `
@@ -128,7 +128,7 @@ var commands = map[string]command{
 	"secret generate": {help: generateHelp, inventory: true, host: true, run: secretGenerate},
 	"secret encrypt":  {help: encryptHelp, run: secretEncrypt},
 	"secret rekey":    {help: rekeyHelp, run: secretRekey},
-	"doc":             {help: docHelp, run: doc},
+	"doc":             {help: docHelp, run: docCommand},
 }
 
 const validateHelp = `Examples:
