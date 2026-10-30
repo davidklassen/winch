@@ -51,6 +51,9 @@ type rollbacks struct {
 	// running holds the records that the guarded step added, while its timer
 	// runs.
 	running *guarded
+	// timer is closed when the timer process of this session ends. It is nil
+	// when no timer process of this session runs.
+	timer chan struct{}
 }
 
 type guarded struct {
@@ -58,6 +61,10 @@ type guarded struct {
 }
 
 func (r *rollbacks) job() string { return filepath.Join(r.dir, "timer.json") }
+
+// result is the file where the timer process writes the error of its
+// rollback, empty after a rollback without an error.
+func result(job string) string { return job + ".result" }
 
 // scope returns the directory of the store of g.
 func (r *rollbacks) scope(g protocol.Guard) string {
@@ -201,6 +208,9 @@ func (r *rollbacks) start(j job) error {
 	if err != nil {
 		return err
 	}
+	if err := os.Remove(result(r.job())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
 	if err := writeJob(r.job(), data); err != nil {
 		return err
 	}
@@ -210,41 +220,95 @@ func (r *rollbacks) start(j job) error {
 		os.Remove(r.job())
 		return fmt.Errorf("start the rollback timer: %w", err)
 	}
-	go cmd.Wait() //nolint:errcheck // the timer reports nothing; the wait reaps it
+	done := make(chan struct{})
+	go func() {
+		cmd.Wait() //nolint:errcheck // the timer reports through its result file
+		close(done)
+	}()
+	r.timer = done
 	return nil
 }
 
 // confirm stops the timer. It fails when the timer ended first.
-func (r *rollbacks) confirm() error {
+func (r *rollbacks) confirm(ctx context.Context) error {
 	r.running = nil
 	done := r.job() + ".done"
 	if err := os.Rename(r.job(), done); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return errors.New("the rollback timer ended first; the old files are back")
+		if !errors.Is(err, fs.ErrNotExist) {
+			return err
 		}
-		return err
+		if err := r.timerResult(ctx); err != nil {
+			return fmt.Errorf("the rollback timer ended first; the rollback failed: %w", err)
+		}
+		return errors.New("the rollback timer ended first; the old files are back")
 	}
-	return os.Remove(done)
+	return errors.Join(os.Remove(done), r.ended(ctx))
 }
 
 // rollback ends the timer at once: it puts back the files and runs the undo
-// step. When the timer took the job first, the files are back already.
+// step. When the timer took the job first, it returns the result of the
+// timer's rollback.
 func (r *rollbacks) rollback(ctx context.Context) error {
 	r.running = nil
-	return fire(ctx, r.job())
+	taken, err := fire(ctx, r.job())
+	if !taken {
+		return r.timerResult(ctx)
+	}
+	return errors.Join(err, r.ended(ctx))
 }
 
-// fire takes the job from the timer and runs it. It does nothing when the
+// fire takes the job from the timer and runs it. It returns false when the
 // job is gone: a confirm or the timer took it first.
-func fire(ctx context.Context, path string) error {
+func fire(ctx context.Context, path string) (bool, error) {
 	fired := path + ".fired"
 	if err := os.Rename(path, fired); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil
+			return false, nil
 		}
+		return true, err
+	}
+	return true, errors.Join(runJob(ctx, fired), os.Remove(fired))
+}
+
+// ended waits until the timer process of this session ends. A stopped timer
+// ends at its next poll; until then, it would take the job of the next
+// guarded step.
+func (r *rollbacks) ended(ctx context.Context) error {
+	if r.timer == nil {
+		return nil
+	}
+	select {
+	case <-r.timer:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	r.timer = nil
+	return nil
+}
+
+// timerResult waits until the timer process of this session ends, and
+// returns the error of the rollback that it ran.
+func (r *rollbacks) timerResult(ctx context.Context) error {
+	if r.timer == nil {
+		return nil
+	}
+	if err := r.ended(ctx); err != nil {
 		return err
 	}
-	return errors.Join(runJob(ctx, fired), os.Remove(fired))
+	data, err := os.ReadFile(result(r.job()))
+	if errors.Is(err, fs.ErrNotExist) {
+		return errors.New("the rollback timer ended without a result")
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(result(r.job())); err != nil {
+		return err
+	}
+	if len(data) > 0 {
+		return errors.New(string(data))
+	}
+	return nil
 }
 
 // clear removes the stores of the project, except those of recipes and
@@ -330,8 +394,8 @@ func rollbackStep(ctx context.Context, r *rollbacks, handlers, thens records) er
 }
 
 // RunTimer is the timer process: it waits until the job is gone, which
-// stops the timer, or until its deadline. Then it puts back the files and
-// runs the undo step.
+// stops the timer, or until its deadline. Then it puts back the files, runs
+// the undo step, and writes the result for the helper.
 func RunTimer(ctx context.Context, path string, poll time.Duration) error {
 	for {
 		data, err := os.ReadFile(path)
@@ -346,7 +410,15 @@ func RunTimer(ctx context.Context, path string, poll time.Duration) error {
 			return err
 		}
 		if !time.Now().Before(j.Deadline) {
-			return fire(ctx, path)
+			taken, err := fire(ctx, path)
+			if !taken {
+				return nil
+			}
+			var text string
+			if err != nil {
+				text = err.Error()
+			}
+			return os.WriteFile(result(path), []byte(text), 0o600)
 		}
 		time.Sleep(poll)
 	}
