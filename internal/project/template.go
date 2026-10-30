@@ -109,6 +109,9 @@ type nameCheck struct {
 	item  bool
 	reads []string
 	errs  []error
+	// byKey is true for the map of a get or index with a constant key: a
+	// read of a host's vars by name.
+	byKey bool
 }
 
 // check checks every template of t. main names the template of the text,
@@ -152,8 +155,20 @@ func (c *nameCheck) walk(n tparse.Node, top bool) {
 			}
 		}
 	case *tparse.CommandNode:
-		for _, x := range n.Args {
+		id, _ := n.Args[0].(*tparse.IdentifierNode)
+		lookup := id != nil && (id.Ident == "get" || id.Ident == "index")
+		byKey := false
+		if lookup && len(n.Args) > 2 {
+			_, byKey = n.Args[2].(*tparse.StringNode)
+		}
+		outer := c.byKey
+		for i, x := range n.Args {
+			c.byKey = byKey && i == 1
 			c.walk(x, top)
+		}
+		c.byKey = outer
+		if key, ok := n.Args[len(n.Args)-1].(*tparse.StringNode); lookup && ok && key.Text == "vars" {
+			c.notByName(int(key.Pos))
 		}
 	case *tparse.ChainNode:
 		c.walk(n.Node, top)
@@ -208,12 +223,16 @@ func (c *nameCheck) log(name string, off int) {
 }
 
 // peers logs the variable after each vars in ident, a field of a value
-// other than the data, such as a host from match().
+// other than the data, such as a host from match(). A read of the whole vars
+// map would lose the computed defaults of such a host.
 func (c *nameCheck) peers(ident []string, off int) {
 	for i := 1; i < len(ident); i++ {
 		if ident[i-1] == "vars" {
 			c.log(ident[i], off)
 		}
+	}
+	if len(ident) > 0 && ident[len(ident)-1] == "vars" && !c.byKey {
+		c.notByName(off)
 	}
 }
 
@@ -237,7 +256,7 @@ func (c *nameCheck) field(ident []string, dot, first int) {
 		if level == vars {
 			c.reads = append(c.reads, id)
 			c.log(id, off)
-			c.peers(ident[i:], dot)
+			c.peers(ident[i+1:], dot)
 			return
 		}
 		next, ok := level.sub[id]
