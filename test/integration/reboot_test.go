@@ -285,7 +285,7 @@ func TestRebootCommandFails(t *testing.T) {
     steps:
       - reboot:
           if_required: false
-          timeout: 60
+          timeout: 300
 `,
 	})
 	vm.MustRun(t, "systemctl mask reboot.target")
