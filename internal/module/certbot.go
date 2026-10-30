@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -125,10 +126,12 @@ func (c *Certbot) settings() []setting {
 	}
 }
 
-// certState is a certificate on the host: the DNS names of its certificate,
-// nil when the file is missing, and the settings of its renewal file.
+// certState is a certificate on the host: the DNS names and the expiry of its
+// certificate, nil and zero when the file is missing, and the settings of its
+// renewal file.
 type certState struct {
 	domains  []string
+	notAfter time.Time
 	settings map[string]string
 }
 
@@ -172,16 +175,19 @@ func readCertState(dir, name string) (*certState, error) {
 	if v := sections[""]["cert"]; len(v) == 1 {
 		certPath = v[0]
 	}
-	cur.domains, err = certNames(certPath)
+	cert, err := readCert(certPath)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", certPath, err)
+	}
+	if cert != nil {
+		cur.domains, cur.notAfter = cert.DNSNames, cert.NotAfter
 	}
 	return cur, nil
 }
 
-// certNames returns the DNS names of the certificate in the PEM file p, or nil
-// when p does not exist.
-func certNames(p string) ([]string, error) {
+// readCert returns the certificate in the PEM file p, or nil when p does not
+// exist.
+func readCert(p string) (*x509.Certificate, error) {
 	data, err := os.ReadFile(p)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -193,11 +199,7 @@ func certNames(p string) ([]string, error) {
 	if block == nil || block.Type != "CERTIFICATE" {
 		return nil, errors.New("no PEM certificate")
 	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-	return cert.DNSNames, nil
+	return x509.ParseCertificate(block.Bytes)
 }
 
 // changes returns the plan lines of the step on the certificate cur, nil when
@@ -271,18 +273,21 @@ func sameSet(a, b []string) bool {
 	return slices.Equal(slices.Compact(x), slices.Compact(y))
 }
 
-func (c *Certbot) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
-	return c.check(letsencrypt)
+func (c *Certbot) Check(ctx context.Context, _ *State, note func(string)) (Result, error) {
+	return c.check(letsencrypt, note)
 }
 
 // check checks the step in the certbot directory dir.
-func (c *Certbot) check(dir string) (Result, error) {
+func (c *Certbot) check(dir string, note func(string)) (Result, error) {
 	cur, err := readCertState(dir, c.Name)
 	if err != nil {
 		return Result{}, err
 	}
 	if cur != nil && cur.domains == nil {
 		return Result{}, fmt.Errorf("certificate %s: %s exists, but its certificate does not; certbot would make a new certificate %s-0001 on each run; remove the rest with certbot delete --cert-name %s", c.Name, renewalPath(dir, c.Name), c.Name, c.Name)
+	}
+	if cur != nil && time.Until(cur.notAfter) < 14*24*time.Hour {
+		note("the certificate " + c.Name + " expires on " + cur.notAfter.UTC().Format(time.DateOnly) + "; check its renewal")
 	}
 	changes := c.changes(cur)
 	c.issue = changes != nil
