@@ -464,26 +464,34 @@ func qemuArgs(arch, disk, dir string, httpPort int, online bool) ([]string, erro
 	return nil, fmt.Errorf("unknown architecture %q", arch)
 }
 
+// runStarted is the line that the login shell prints before the command of
+// Run starts.
+const runStarted = "vmtest: the command starts"
+
 // Run runs a shell command as root on the VM over ssh. A login while sshd
-// executes itself again after a reload gets a reset before the handshake; Run
-// then logs in once more after two seconds, as winch does.
+// executes itself again after a reload gets dropped before the command
+// starts; Run then logs in once more after two seconds.
 func (vm *VM) Run(ctx context.Context, command string) (string, error) {
 	command = "sudo sh -c " + Quote(command)
-	ssh := func() ([]byte, error) {
-		return exec.CommandContext(ctx, filepath.Join(vm.lab.Dir, "bin", "ssh"), "-o", "ConnectTimeout=5", vm.Name, command).CombinedOutput()
+	ssh := func() (string, bool, error) {
+		out, err := exec.CommandContext(ctx, filepath.Join(vm.lab.Dir, "bin", "ssh"), "-o", "ConnectTimeout=5", vm.Name, "echo '"+runStarted+"' && "+command).CombinedOutput()
+		before, after, started := strings.Cut(string(out), runStarted+"\n")
+		return before + after, started, err
 	}
-	out, err := ssh()
-	if exit, ok := errors.AsType[*exec.ExitError](err); ok && session.Dropped(exit.ExitCode(), string(out)) {
+	out, started, err := ssh()
+	// The lab's LogLevel ERROR hides the message of a close after the
+	// banner, so ssh exits 255 with no output.
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok && !started && (exit.ExitCode() == 255 && strings.TrimSpace(out) == "" || session.Dropped(exit.ExitCode(), out)) {
 		select {
 		case <-ctx.Done():
 		case <-time.After(2 * time.Second):
-			out, err = ssh()
+			out, _, err = ssh()
 		}
 	}
 	if err != nil {
-		return string(out), fmt.Errorf("%s: %w: %s%s", command, err, out, vm.lab.hint(string(out)))
+		return out, fmt.Errorf("%s: %w: %s%s", command, err, out, vm.lab.hint(out))
 	}
-	return string(out), nil
+	return out, nil
 }
 
 // stream runs a shell command as root on the VM with stdin and stdout.

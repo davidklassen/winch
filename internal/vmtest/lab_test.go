@@ -395,30 +395,41 @@ func TestWaitBoot(t *testing.T) {
 func TestRunRetriesDroppedLogin(t *testing.T) {
 	for _, c := range []struct {
 		name, first string
+		// started marks a drop after the command started.
+		started bool
 		// drops is the number of logins that sshd drops.
 		drops, calls int
 		ok           bool
 	}{
-		{"a reset before the handshake", "kex_exchange_identification: read: Connection reset by peer", 1, 2, true},
-		{"a second reset", "kex_exchange_identification: read: Connection reset by peer", 2, 2, false},
-		{"another failure", "admin@demo: Permission denied (publickey).", 1, 1, false},
+		{"a reset before the handshake", "kex_exchange_identification: read: Connection reset by peer", false, 1, 2, true},
+		{"a second reset", "kex_exchange_identification: read: Connection reset by peer", false, 2, 2, false},
+		{"a close that LogLevel ERROR hides", "", false, 1, 2, true},
+		{"a second hidden close", "", false, 2, 2, false},
+		{"a close after the command started", "", true, 1, 1, false},
+		{"another failure", "admin@demo: Permission denied (publickey).", false, 1, 1, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
-			calls := filepath.Join(dir, "calls")
-			ssh := fmt.Sprintf("#!/bin/sh\necho x >> %[1]s\nif [ $(wc -l < %[1]s) -le %[3]d ]; then echo %[2]s >&2; exit 255; fi\necho ok\n", calls, Quote(c.first), c.drops)
+			// The fake runs its last argument, the remote command, with a sudo
+			// that runs its arguments.
+			drop := "printf %s " + Quote(c.first) + " >&2; exit 255"
+			if c.started {
+				drop = `eval "$4"; ` + drop
+			}
+			ssh := fmt.Sprintf("#!/bin/sh\nPATH=%[1]s/bin:$PATH\necho x >> %[1]s/calls\nif [ $(wc -l < %[1]s/calls) -le %[2]d ]; then %[3]s; fi\neval \"$4\"\n", dir, c.drops, drop)
 			if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			writeScript(t, filepath.Join(dir, "bin", "ssh"), ssh)
+			writeScript(t, filepath.Join(dir, "bin", "sudo"), "#!/bin/sh\nexec \"$@\"\n")
 			vm := &VM{Name: "demo", lab: &Lab{Dir: dir}}
 			out, err := vm.Run(t.Context(), "true")
-			if c.ok && (err != nil || out != "ok\n") {
-				t.Errorf("Run = %q, %v; want ok", out, err)
+			if c.ok && (err != nil || out != "") {
+				t.Errorf("Run = %q, %v; want no output", out, err)
 			} else if !c.ok && err == nil {
 				t.Errorf("Run = %q, want an error", out)
 			}
-			if got, _ := os.ReadFile(calls); bytes.Count(got, []byte("\n")) != c.calls {
+			if got, _ := os.ReadFile(filepath.Join(dir, "calls")); bytes.Count(got, []byte("\n")) != c.calls {
 				t.Errorf("ssh ran %q, want %d times", got, c.calls)
 			}
 		})
