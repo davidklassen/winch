@@ -30,7 +30,7 @@ Minimal project:
 Hosts:
   winch connects with the OpenSSH client and its SSH config. The login
   user is root, or has passwordless sudo. A host needs nothing else
-  installed: winch sends a helper program to /var/lib/winch on the
+  installed: winch sends a helper program to /var/lib/winch/ on the
   host and runs it there. Run winch doc remote.
 
 When the project grows:
