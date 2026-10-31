@@ -227,6 +227,10 @@ func takeLock(ctx context.Context, params json.RawMessage, dir, self string) (_ 
 		}
 	}
 	if !locked {
+		// The record is empty, or half written, until its holder writes it.
+		if held.Run == "" {
+			return nil, "", errors.New("locked by another run that is starting; run winch again to see which one")
+		}
 		msg := fmt.Sprintf("locked by run %s (%s@%s, since %s", held.Run, held.User, held.Machine, held.Started.UTC().Format(time.RFC3339))
 		if held.PID <= 1 {
 			return nil, "", errors.New(msg + ")")
@@ -337,8 +341,11 @@ func checkTree(dir string, owner uint32) error {
 			return err
 		}
 		st, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || st.Uid != owner || !info.IsDir() && !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
-			return fmt.Errorf("%s is not owned by root or can be written by others", p)
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return fmt.Errorf("%s is not a directory or a regular file", p)
+		}
+		if !ok || st.Uid != owner || info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("%s is not owned by root, or the group or others can write it", p)
 		}
 		return nil
 	})

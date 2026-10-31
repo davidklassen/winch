@@ -1,4 +1,4 @@
-package cli
+package vmtest
 
 import (
 	"os"
@@ -8,8 +8,8 @@ import (
 	"unsafe"
 )
 
-// openPTY returns the controller and the terminal of a new pseudo-terminal.
-func openPTY(t *testing.T) (controller, terminal *os.File) {
+// OpenPTY returns the controller and the terminal of a new pseudo-terminal.
+func OpenPTY(t *testing.T) (controller, terminal *os.File) {
 	t.Helper()
 	controller, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {

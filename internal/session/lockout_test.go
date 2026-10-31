@@ -81,7 +81,7 @@ func TestAccessDestinationChanged(t *testing.T) {
 			switch {
 			case tt.wantErr == "" && err != nil:
 				t.Errorf("Access = %v", err)
-			case tt.wantErr != "" && (err == nil || err.Error() != "the SSH destination changed since the plan: "+destination(tt.dest)+" → "+tt.wantErr):
+			case tt.wantErr != "" && (err == nil || err.Error() != "the SSH destination changed since the plan: "+destination(tt.dest)+" → "+tt.wantErr+"; run winch plan again and check the new destination"):
 				t.Errorf("Access = %v, want the changed destination %s", err, tt.wantErr)
 			}
 			if _, err := os.Stat(argsFile); (err == nil) != (tt.wantErr == "") {
@@ -142,9 +142,6 @@ func TestReboot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if data, _ := os.ReadFile(argsFile); strings.Contains(string(data), "BatchMode") {
-		t.Errorf("the first connection passes %q", data)
-	}
 	b, err := s.Reboot(context.Background(), time.Minute)
 	if err != nil {
 		t.Fatalf("Reboot: %v", err)
@@ -200,7 +197,7 @@ func TestRebootDestinationChanged(t *testing.T) {
 			t.Setenv("SSH_G", tt.sshG)
 			t.Setenv("RESUME_WELCOME", tt.welcome)
 			_, err = s.Reboot(context.Background(), time.Minute)
-			if want := "the SSH destination changed since the plan: 192.0.2.10:22 (uid 0) → " + tt.wantErr; err == nil || err.Error() != want {
+			if want := "the SSH destination changed since the plan: 192.0.2.10:22 (uid 0) → " + tt.wantErr + "; run winch plan again and check the new destination"; err == nil || err.Error() != want {
 				t.Errorf("Reboot = %v, want %q", err, want)
 			}
 			if data, _ := os.ReadFile(state); string(data) != tt.connections {
@@ -430,7 +427,18 @@ func TestAccessRefusalOnStdout(t *testing.T) {
 	t.Setenv("SSH_FAIL_CODE", "1")
 	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
 	err := s.Access(context.Background())
-	if want := "exit status 1: This account is currently not available."; err == nil || err.Error() != want {
+	if want := "the login did not run winch's command; a command= line in authorized_keys or a nologin shell prints this: This account is currently not available."; err == nil || err.Error() != want {
+		t.Errorf("Access = %v, want %q", err, want)
+	}
+}
+
+// spec: CLI/Messages (a message names a fix only when the fix works)
+func TestAccessForcedCommand(t *testing.T) {
+	fakeBin(t, "aarch64", "1000", "#!/bin/sh\necho 'Please login as the user \"debian\" rather than the user \"root\".'\n")
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	err := s.Access(context.Background())
+	want := `the login did not run winch's command; a command= line in authorized_keys or a nologin shell prints this: Please login as the user "debian" rather than the user "root".`
+	if err == nil || err.Error() != want {
 		t.Errorf("Access = %v, want %q", err, want)
 	}
 }
@@ -455,9 +463,12 @@ func TestAccessBatchHint(t *testing.T) {
 		want         string
 	}{
 		{"refused login", "admin@web1: Permission denied (publickey).", 255,
-			"exit status 255: admin@web1: Permission denied (publickey). The change refuses the login. (If your key needs a passphrase, add it to the agent with ssh-add, so the check can log in.)"},
+			"the access check cannot log in after this change: admin@web1: Permission denied (publickey)."},
 		{"login without a home directory", "Could not chdir to home directory /home/admin: Permission denied\nwinch: the login user needs passwordless sudo", 1,
-			"exit status 1: Could not chdir to home directory /home/admin: Permission denied\nwinch: the login user needs passwordless sudo"},
+			"Could not chdir to home directory /home/admin: Permission denied\nwinch: the login user needs passwordless sudo"},
+		{"unknown host key", "Host key verification failed.", 255,
+			"Host key verification failed. (in batch mode ssh asks nothing; accept the host key once with: ssh web1)"},
+		{"no text", "", 255, "exit status 255"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

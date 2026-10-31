@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -140,7 +141,48 @@ func (l *Lab) winchBin(t *testing.T, bin, dir string, env, warnings []string, ar
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
-	r := Result{Stdout: stdout.String(), Stderr: stderr.String()}
+	return l.result(t, args, warnings, err, Result{Stdout: stdout.String(), Stderr: stderr.String()})
+}
+
+// WinchTerminal runs the winch binary from WINCH_BIN in dir, with env added
+// to the environment and a pseudo-terminal as its stdin, stdout, and stderr.
+// The output of the terminal is in Stdout.
+func (l *Lab) WinchTerminal(t *testing.T, dir string, env []string, args ...string) Result {
+	t.Helper()
+	bin := os.Getenv("WINCH_BIN")
+	if bin == "" {
+		t.Fatal("WINCH_BIN is not set; run make test-integration")
+	}
+	controller, terminal := OpenPTY(t)
+	cmd := exec.CommandContext(t.Context(), bin, args...)
+	cmd.Dir = dir
+	cmd.Env = append(l.Env(), env...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = terminal, terminal, terminal
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// The read ends when the last process with the terminal closes it.
+	terminal.Close()
+	var out bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		io.Copy(&out, controller) //nolint:errcheck // EIO ends the output
+		close(done)
+	}()
+	err := cmd.Wait()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the terminal stays open after winch ended")
+	}
+	return l.result(t, args, nil, err, Result{Stdout: strings.ReplaceAll(out.String(), "\r\n", "\n")})
+}
+
+// result adds the exit code of err to r, logs the run, and checks the
+// warnings.
+func (l *Lab) result(t *testing.T, args, warnings []string, err error, r Result) Result {
+	t.Helper()
 	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		r.Code = exit.ExitCode()
 	} else if err != nil {

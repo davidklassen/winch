@@ -287,7 +287,7 @@ func TestInterruptDuringPlan(t *testing.T) {
 
 // spec: CLI/Prompts
 func TestQuestionDiscardsEarlyInput(t *testing.T) {
-	controller, terminal := openPTY(t)
+	controller, terminal := vmtest.OpenPTY(t)
 	h := fakehost.New()
 	h.OnCheck = func(host, _ string) {
 		if host != "web1" {

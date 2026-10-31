@@ -128,6 +128,7 @@ func open(t *testing.T, dir string, bins []helperbin.Binary) (string, error) {
 		Hello:      protocol.Hello{Run: "r1"},
 		Progress:   plain(&progress),
 		RetryDelay: retryDelay,
+		Batch:      true,
 	})
 	if s != nil {
 		s.Close()
@@ -234,7 +235,7 @@ func TestOpenUnsafeStateDir(t *testing.T) {
 				t.Setenv("FAKE_LS_USER", path+"/")
 			}
 			progress, err := open(t, dir, bins)
-			want := "winch: " + path + " is not owned by root or can be written by others"
+			want := "winch: " + path + " is not owned by root, or the group or others can write it"
 			if err == nil || err.Error() != want {
 				t.Errorf("error = %v, want %q", err, want)
 			}
@@ -242,6 +243,25 @@ func TestOpenUnsafeStateDir(t *testing.T) {
 				t.Errorf("progress = %q, want no helper sent", progress)
 			}
 		})
+	}
+}
+
+// spec: Remote execution/Helper
+func TestOpenLinkedHelper(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	bins := []helperbin.Binary{fakeHelper("arm64")}
+	dir := filepath.Join(t.TempDir(), "state")
+	_, _ = open(t, dir, bins)
+	path := filepath.Join(dir, "bin", bins[0].SHA256)
+	if err := os.Rename(path, path+".real"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(path+".real", path); err != nil {
+		t.Fatal(err)
+	}
+	_, err := open(t, dir, bins)
+	if want := "winch: " + path + " is not a directory or a regular file"; err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
 	}
 }
 
@@ -340,6 +360,7 @@ func TestOpenMuchLoginShellText(t *testing.T) {
 	tests := []struct{ name, banner string }{
 		{"1 MB", "echo Welcome; head -c 1048576 /dev/zero"},
 		{"without end", "echo Welcome; yes"},
+		{"without a newline", "printf Welcome"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -360,6 +381,18 @@ func TestOpenMuchLoginShellText(t *testing.T) {
 				t.Errorf("error = %v, want %q", err, want)
 			}
 		})
+	}
+}
+
+// spec: CLI/Messages (a message names a fix only when the fix works)
+func TestOpenForcedCommand(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	// cloud-init puts such a command= line in root's authorized_keys.
+	failOnce(t, `Please login as the user "debian" rather than the user "root".`, "", 142)
+	_, err := open(t, t.TempDir(), []helperbin.Binary{fakeHelper("arm64")})
+	want := `the login did not run winch's command; a command= line in authorized_keys or a nologin shell prints this: Please login as the user "debian" rather than the user "root".`
+	if err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
 	}
 }
 
@@ -507,7 +540,7 @@ func TestOpenDestinationChanged(t *testing.T) {
 			switch {
 			case tt.wantErr == "" && err != nil:
 				t.Errorf("Open = %v", err)
-			case tt.wantErr != "" && (err == nil || err.Error() != "the SSH destination changed since the plan: deploy@192.0.2.10:22 (uid 1001) → "+tt.wantErr):
+			case tt.wantErr != "" && (err == nil || err.Error() != "the SSH destination changed since the plan: deploy@192.0.2.10:22 (uid 1001) → "+tt.wantErr+"; run winch plan again and check the new destination"):
 				t.Errorf("Open = %v, want the changed destination %s", err, tt.wantErr)
 			}
 			if _, err := os.Stat(argsFile); (err == nil) != tt.login {
@@ -842,7 +875,7 @@ func TestOpenUnreachable(t *testing.T) {
 			if err == nil || errors.Is(err, ErrUnreachable) != tt.unreachable {
 				t.Errorf("error %v, unreachable %v, want %v", err, errors.Is(err, ErrUnreachable), tt.unreachable)
 			}
-			if err != nil && err.Error() != tt.stderr {
+			if err != nil && !strings.HasPrefix(err.Error(), tt.stderr) {
 				t.Errorf("error %q, want the text of ssh %q", err, tt.stderr)
 			}
 		})
@@ -867,29 +900,96 @@ func TestSSHIgnoresInterrupt(t *testing.T) {
 	}
 }
 
-// spec: Remote execution/Sessions
+// spec: Remote execution/Sessions (at a terminal, a session logs in with
+// BatchMode=yes first, and logs in again with prompts only when the host
+// refuses that login)
 func TestOpenBatch(t *testing.T) {
-	for _, batch := range []bool{false, true} {
-		t.Run(map[bool]string{false: "terminal", true: "batch"}[batch], func(t *testing.T) {
+	tests := []struct {
+		name, stderr string
+		batch        bool
+		// again is whether ssh starts a second time, and batchArgs whether
+		// the login that works has BatchMode=yes.
+		again, batchArgs, prompted bool
+	}{
+		{"terminal", "", false, false, true, false},
+		{"batch", "", true, false, true, false},
+		{"terminal, refused login", "admin@web1: Permission denied (publickey).", false, true, false, true},
+		{"terminal, unknown host key", "Host key verification failed.", false, true, false, false},
+		{"terminal, changed host key", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.", false, false, false, false},
+		{"terminal, timeout", "ssh: connect to host web1 port 22: Connection timed out", false, false, false, false},
+		{"terminal, closed", closed, false, true, true, false},
+		{"batch, refused login", "admin@web1: Permission denied (publickey).", true, false, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			fakeBin(t, "aarch64", "0", goodSudo)
+			failed := ""
+			if tt.stderr != "" {
+				failed = failOnce(t, "", tt.stderr, 255)
+			}
 			argsFile := filepath.Join(t.TempDir(), "args")
 			t.Setenv("SSH_ARGS", argsFile)
 			s, err := Open(context.Background(), Config{
-				Host: "web1", Address: "web1", Dir: stateDir, Batch: batch,
-				Binaries: []helperbin.Binary{fakeHelper("arm64")}, Hello: protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
+				Host: "web1", Address: "web1", Dir: stateDir, Batch: tt.batch,
+				Binaries: []helperbin.Binary{helperbin.New("arm64", []byte("#!/bin/sh\nread -r line\necho '{\"id\":1,\"result\":{}}'\ncat >/dev/null\n"))},
+				Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
 			})
-			if s != nil {
-				s.Close()
+			if failed != "" {
+				if _, serr := os.Stat(failed + ".again"); (serr == nil) != tt.again {
+					t.Errorf("second start: %v, want %v", serr == nil, tt.again)
+				}
+				if !tt.again {
+					if err == nil {
+						t.Error("Open worked, want the error of ssh")
+					}
+					return
+				}
 			}
-			if err == nil || !strings.Contains(err.Error(), "ran arm64") {
-				t.Fatalf("error = %v", err)
+			if err != nil {
+				t.Fatal(err)
 			}
+			defer s.Close()
 			data, err := os.ReadFile(argsFile)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := strings.Contains(string(data), "-o\nBatchMode=yes\n"); got != batch {
-				t.Errorf("ssh arguments have BatchMode=yes: %v, want %v", got, batch)
+			if got := strings.Contains(string(data), "-o\nBatchMode=yes\n"); got != tt.batchArgs {
+				t.Errorf("ssh arguments have BatchMode=yes: %v, want %v", got, tt.batchArgs)
+			}
+			if got := s.Prompted(context.Background()); got != tt.prompted {
+				t.Errorf("Prompted = %v, want %v", got, tt.prompted)
+			}
+		})
+	}
+}
+
+// spec: Remote execution/Sessions (after a login that accepted a new host key,
+// the access check tells whether the login needed a prompt)
+func TestOpenNewHostKey(t *testing.T) {
+	for _, tt := range []struct {
+		name, stderr string
+		prompted     bool
+	}{
+		{"agent", "", false},
+		{"passphrase", "admin@web1: Permission denied (publickey).", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			failOnce(t, "", "Host key verification failed.", 255)
+			s, err := Open(context.Background(), Config{
+				Host: "web1", Address: "web1", Dir: stateDir,
+				Binaries: []helperbin.Binary{helperbin.New("arm64", []byte("#!/bin/sh\nread -r line\necho '{\"id\":1,\"result\":{}}'\ncat >/dev/null\n"))},
+				Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			if tt.stderr != "" {
+				failOnce(t, "", tt.stderr, 255)
+			}
+			if got := s.Prompted(context.Background()); got != tt.prompted {
+				t.Errorf("Prompted = %v, want %v", got, tt.prompted)
 			}
 		})
 	}
@@ -905,21 +1005,17 @@ func TestOpenBatchHint(t *testing.T) {
 		want         string
 	}{
 		{"host key", "Host key verification failed.", true, "web1", "",
-			`Host key verification failed. (in batch mode ssh asks nothing; run "ssh web1" once)`},
+			`Host key verification failed. (in batch mode ssh asks nothing; accept the host key once with: ssh web1)`},
 		{"host key of an address", "Host key verification failed.", true, "192.0.2.1", "",
-			`Host key verification failed. (in batch mode ssh asks nothing; run "ssh -o HostName=192.0.2.1 web1" once)`},
+			`Host key verification failed. (in batch mode ssh asks nothing; accept the host key once with: ssh -o HostName=192.0.2.1 web1)`},
 		{"host key of a user", "Host key verification failed.", true, "web1", "deploy",
-			`Host key verification failed. (in batch mode ssh asks nothing; run "ssh -l deploy web1" once)`},
+			`Host key verification failed. (in batch mode ssh asks nothing; accept the host key once with: ssh -l deploy web1)`},
 		{"refused login", "admin@web1: Permission denied (publickey).", true, "192.0.2.1", "",
-			`admin@web1: Permission denied (publickey). (batch mode cannot type a key passphrase or a password; add the key to the agent with ssh-add)`},
+			`admin@web1: Permission denied (publickey). (batch mode cannot type a passphrase or a password; if the key needs one, add it to the agent with ssh-add)`},
 		{"changed host key", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.", true, "web1", "",
 			"@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed."},
 		{"refused connection", "ssh: connect to host web1 port 22: Connection refused", true, "web1", "",
 			"ssh: connect to host web1 port 22: Connection refused"},
-		{"host key with a terminal", "Host key verification failed.", false, "web1", "",
-			"Host key verification failed."},
-		{"refused login with a terminal", "admin@web1: Permission denied (publickey).", false, "web1", "",
-			"admin@web1: Permission denied (publickey)."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -961,7 +1057,7 @@ func TestHoldDuringLogin(t *testing.T) {
 
 	log = nil
 	t.Setenv("SSH_FAIL_ONCE", filepath.Join(t.TempDir(), "failed"))
-	t.Setenv("SSH_FAIL_ERR", "Permission denied (publickey).")
+	t.Setenv("SSH_FAIL_ERR", "ssh: connect to host web1 port 22: Connection refused")
 	t.Setenv("SSH_FAIL_CODE", "255")
 	progress.Reset()
 	if _, err := Open(context.Background(), Config{Host: "web1", Address: "web1", Dir: t.TempDir(),

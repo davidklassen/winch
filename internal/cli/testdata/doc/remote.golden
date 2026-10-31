@@ -65,7 +65,11 @@ Host keys and passphrases:
     # ssh asks no questions; the apply question stays.
 
   The access checks and the connections after a reboot always use
-  BatchMode=yes. Run winch doc workflow for the access checks.
+  BatchMode=yes. Run winch doc workflow for the access checks. So with a
+  terminal, a session logs in with BatchMode=yes first. Only when the
+  host refuses that login does winch log in again, and ssh can ask. Such
+  a host plans as usual, but apply stops before its first change and
+  names ssh-add. Nothing changes on the host.
 
 When a connection fails:
   A host is unreachable when ssh fails before the session starts: the
