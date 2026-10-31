@@ -235,6 +235,7 @@ func (vm *VM) Session(t *testing.T) *session.Session {
 		Binaries: helperbin.Binaries(),
 		Hello:    protocol.Hello{Project: "test", Run: "test-" + t.Name(), User: "test", Machine: "test"},
 		Progress: color.NewWriter(io.Discard, secret.NewFilter().Parts, false),
+		Note:     func(string) {},
 	})
 	if err != nil {
 		t.Fatal(err)

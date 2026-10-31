@@ -27,11 +27,11 @@ func (a *Assert) Validate() error {
 }
 
 // Check runs nothing: the command can test what earlier steps change.
-func (a *Assert) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+func (a *Assert) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	return Result{Status: OK, Deferred: true}, nil
 }
 
-func (a *Assert) Apply(ctx context.Context, _ func(string)) error {
+func (a *Assert) Apply(ctx context.Context, _ Say) error {
 	err := Shell(ctx, a.Command)
 	if errors.As(err, new(*exec.ExitError)) {
 		return errors.New(a.Message)

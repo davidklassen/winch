@@ -54,8 +54,8 @@ type Env struct {
 	// ColorOut and ColorErr turn on color on stdout and stderr.
 	ColorOut, ColorErr bool
 	// Connect returns the function that opens sessions. With batch, ssh asks
-	// no questions.
-	Connect func(batch bool) run.Connect
+	// no questions. The sessions give the notes of the hosts to note.
+	Connect func(batch bool, note func(host, text string)) run.Connect
 	// Progress is nil, or shows the busy hosts.
 	Progress run.Progress
 	// Home is the home directory, or empty when it is not known.
@@ -74,6 +74,8 @@ type Env struct {
 	// stdout and stderr are Out and Err through Filter. Main sets them and
 	// clears Out and Err.
 	stdout, stderr *color.Writer
+	// name is the name of the command, such as plan or secret init.
+	name string
 }
 
 // runs are the functions of the commands, by name.
@@ -132,7 +134,7 @@ func Main(ctx context.Context, args []string, env Env) int {
 	cmd, ok := commandNamed(name)
 	switch {
 	case !ok && strings.HasPrefix(name, "secret "):
-		printError(env.stderr, fmt.Sprintf("winch: unknown secret command %q", args[0]))
+		printError(env.stderr, fmt.Sprintf("winch secret: unknown command %q", args[0]))
 		fmt.Fprintln(env.stderr)
 		return secretUsage(ctx, env, nil, nil)
 	case !ok:
@@ -143,6 +145,7 @@ func Main(ctx context.Context, args []string, env Env) int {
 		writeHelp(env.stderr, mainCommand)
 		return exitInvalid
 	}
+	env.name = name
 	var f flags
 	fs := flagSet(cmd, &f)
 	flagArgs := args[1:]
@@ -158,7 +161,7 @@ func Main(ctx context.Context, args []string, env Env) int {
 		return exitOK
 	}
 	if err != nil {
-		printError(env.stderr, fmt.Sprintf("winch %s: %v", name, err))
+		env.fail(usage("%v", err))
 		fmt.Fprintf(env.stderr, "Run \"winch %s --help\" for the flags.\n", name)
 		return exitInvalid
 	}
@@ -170,13 +173,13 @@ func Main(ctx context.Context, args []string, env Env) int {
 	return runs[name](ctx, env, &f, pos)
 }
 
-var errNoHelpers = errors.New(`winch: this binary has no host helpers, so it cannot work on hosts
+var errNoHelpers = usage(`this binary has no host helpers, so it cannot work on hosts
 go install builds winch without them; install a release:
 curl -fsSL https://winchstack.app/install.sh | sh`)
 
 func version(_ context.Context, env Env, _ *flags, args []string) int {
 	if len(args) != 0 {
-		printError(env.stderr, "winch: version takes no arguments")
+		env.fail(usage("takes no arguments"))
 		return exitInvalid
 	}
 	line := fmt.Sprintf("winch %s %s/%s", env.Version, runtime.GOOS, runtime.GOARCH)
@@ -238,6 +241,30 @@ func commandNamed(name string) (command, bool) {
 	return commands[i], true
 }
 
+// fail prints the lines of err. An error of the command line follows the
+// name of the command.
+func (env Env) fail(err error) {
+	for _, e := range leaves(err) {
+		msg := e.Error()
+		if commandLine(e) {
+			msg = "winch " + env.name + ": " + msg
+		}
+		printError(env.stderr, msg)
+	}
+}
+
+// usage returns an error of the command line.
+func usage(format string, args ...any) error {
+	return yamlx.Errorf(yamlx.Pos{}, format, args...)
+}
+
+// commandLine reports whether err is an error of the command line: a
+// position without a line, such as an argument, or none.
+func commandLine(err error) bool {
+	e, ok := err.(*yamlx.Error)
+	return ok && e.Pos.Line == 0
+}
+
 // printError writes an error line, red on a terminal.
 func printError(w *color.Writer, msg string) {
 	color.Fprint(w, color.Text{{Style: color.Red, Text: secret.PrintableLines(msg) + "\n"}})
@@ -274,7 +301,7 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 func validate(ctx context.Context, env Env, f *flags, args []string) int {
 	o := newOutput(env, f)
 	if len(args) != 0 {
-		o.fail(errors.New("winch: validate takes no arguments"))
+		o.fail(usage("takes no arguments"))
 		return o.end(exitInvalid, summary{})
 	}
 	warnings, err := project.Validate(env.Dir, f.inventory, f.set)
@@ -293,7 +320,7 @@ func validate(ctx context.Context, env Env, f *flags, args []string) int {
 func (env Env) identity() (secret.Identity, error) {
 	switch {
 	case env.AgeCmd != "" && env.AgeKey != "":
-		return secret.Identity{}, errors.New("winch: WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set")
+		return secret.Identity{}, usage("WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set")
 	case env.AgeCmd != "":
 		return secret.Identity{Cmd: env.AgeCmd, Dir: env.Dir}, nil
 	case filepath.IsAbs(env.AgeKey):
@@ -306,23 +333,23 @@ func (env Env) identity() (secret.Identity, error) {
 	return secret.Identity{}, nil
 }
 
-func (o *output) load(ctx context.Context, f *flags, cmd string, args []string) (*project.Project, bool) {
+func (o *output) load(ctx context.Context, f *flags, args []string) (*project.Project, bool) {
 	if len(args) > 1 {
-		o.fail(fmt.Errorf("winch: %s takes one pipeline", cmd))
+		o.fail(usage("takes at most one pipeline"))
 		return nil, false
 	}
 	var name string
 	if len(args) == 1 {
 		name = args[0]
 	}
-	return o.loadWith(f, cmd, func(keys project.Keys) (*project.Project, error) {
+	return o.loadWith(f, func(keys project.Keys) (*project.Project, error) {
 		return project.Load(ctx, o.env.Dir, f.inventory, name, f.set, keys)
 	})
 }
 
 // loadWith loads the project with load and selects the hosts and stages of
 // the flags.
-func (o *output) loadWith(f *flags, cmd string, load func(project.Keys) (*project.Project, error)) (*project.Project, bool) {
+func (o *output) loadWith(f *flags, load func(project.Keys) (*project.Project, error)) (*project.Project, bool) {
 	identity, err := o.env.identity()
 	if err != nil {
 		o.fail(err)
@@ -335,7 +362,7 @@ func (o *output) loadWith(f *flags, cmd string, load func(project.Keys) (*projec
 	}
 	o.warn(p.Warnings)
 	if err := p.Select(project.Selection{Hosts: f.hosts, Stages: f.stages, Users: f.users}); err != nil {
-		o.fail(fmt.Errorf("winch %s: %w", cmd, err))
+		o.fail(usage("%v", err))
 		return nil, false
 	}
 	return p, true
@@ -344,9 +371,9 @@ func (o *output) loadWith(f *flags, cmd string, load func(project.Keys) (*projec
 // sessions returns the function that opens sessions, and the options of the
 // run. ssh asks questions only when winch can ask its own: then the sessions
 // start one at a time.
-func (env Env) sessions(f *flags) (run.Connect, run.Options) {
-	serial := env.Terminal && !f.batch
-	return env.Connect(!serial), run.Options{Serial: serial, Progress: env.Progress}
+func (o *output) sessions(f *flags) (run.Connect, run.Options) {
+	serial := o.env.Terminal && !f.batch
+	return o.env.Connect(!serial, o.note), run.Options{Serial: serial, Progress: o.env.Progress}
 }
 
 // failedCode is the exit code of the failed hosts: 1 when one failed, 4
@@ -365,11 +392,11 @@ func failedCode(failed map[string]error) int {
 
 func plan(ctx context.Context, env Env, f *flags, args []string) int {
 	o := newOutput(env, f)
-	p, ok := o.load(ctx, f, "plan", args)
+	p, ok := o.load(ctx, f, args)
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
-	connect, opts := env.sessions(f)
+	connect, opts := o.sessions(f)
 	pl := run.MakePlan(ctx, p, connect, opts)
 	o.plan(pl)
 	code := failedCode(pl.Failed)
@@ -386,7 +413,7 @@ func apply(ctx context.Context, env Env, f *flags, args []string) int {
 	if !checkHash(o, f) {
 		return o.end(exitInvalid, summary{})
 	}
-	p, ok := o.load(ctx, f, "apply", args)
+	p, ok := o.load(ctx, f, args)
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
@@ -395,7 +422,7 @@ func apply(ctx context.Context, env Env, f *flags, args []string) int {
 
 func checkHash(o *output, f *flags) bool {
 	if f.check != nil && !hashRe.MatchString(*f.check) {
-		o.fail(fmt.Errorf("winch: --check %q: a plan hash has 16 hex characters, such as a3f9c2e1d07b4c58", *f.check))
+		o.fail(usage("--check %q: a plan hash has 16 hex characters, such as a3f9c2e1d07b4c58", *f.check))
 		return false
 	}
 	return true
@@ -405,7 +432,7 @@ func checkHash(o *output, f *flags) bool {
 // and its arguments, for the command that applies the plan.
 func (o *output) apply(ctx context.Context, f *flags, p *project.Project, words []string) int {
 	env := o.env
-	connect, opts := env.sessions(f)
+	connect, opts := o.sessions(f)
 	opts.Keep = true
 	pl := run.MakePlan(ctx, p, connect, opts)
 	defer pl.Close()
@@ -413,7 +440,7 @@ func (o *output) apply(ctx context.Context, f *flags, p *project.Project, words 
 	s := summary{plan: pl}
 	code := failedCode(pl.Failed)
 	if hash := pl.Hash(); f.check != nil && *f.check != hash {
-		o.fail(fmt.Errorf("winch: the plan hash is %s, not %s; nothing changed", hash, *f.check))
+		o.fail(usage("the plan hash is %s, not %s; nothing changed", hash, *f.check))
 		return o.end(worst(code, exitHash), s)
 	}
 	if !pl.HasWork() {
@@ -446,7 +473,7 @@ func (o *output) apply(ctx context.Context, f *flags, p *project.Project, words 
 func runModule(ctx context.Context, env Env, f *flags, args []string) int {
 	o := newOutput(env, f)
 	if len(args) < 2 {
-		o.fail(errors.New("winch: run needs a host pattern and a module"))
+		o.fail(usage("needs a host pattern and a module"))
 		return o.end(exitInvalid, summary{})
 	}
 	if !checkHash(o, f) {
@@ -462,18 +489,18 @@ func runModule(ctx context.Context, env Env, f *flags, args []string) int {
 func execCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	o := newOutput(env, f)
 	if f.command == "" {
-		o.fail(errors.New("winch exec: put the command after --, such as winch exec all -- uptime"))
+		o.fail(usage("put the command after --, such as winch exec all -- uptime"))
 		return o.end(exitInvalid, summary{})
 	}
 	if len(args) != 1 {
-		o.fail(errors.New("winch: exec needs one host pattern before --"))
+		o.fail(usage("needs one host pattern before --"))
 		return o.end(exitInvalid, summary{})
 	}
 	p, ok := o.loadCommand(ctx, f, project.Command{Name: "exec", Pattern: args[0]}, "winch exec needs the age key to hide the secrets of the project in its output")
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
-	connect, opts := env.sessions(f)
+	connect, opts := o.sessions(f)
 	results := run.Exec(ctx, p.Name, p.Pipeline.Stages[0].Targets, f.command, connect, opts)
 	if o.ev != nil {
 		o.ev.Exec(results)
@@ -496,7 +523,7 @@ func execCommand(ctx context.Context, env Env, f *flags, args []string) int {
 // loadCommand loads the project with the pipeline of c. An error of the age
 // key ends with the line why, unless it is "".
 func (o *output) loadCommand(ctx context.Context, f *flags, c project.Command, why string) (*project.Project, bool) {
-	return o.loadWith(f, c.Name, func(keys project.Keys) (*project.Project, error) {
+	return o.loadWith(f, func(keys project.Keys) (*project.Project, error) {
 		keys.Why = why
 		return project.LoadCommand(ctx, o.env.Dir, f.inventory, keys, c)
 	})
@@ -507,7 +534,7 @@ func (o *output) loadCommand(ctx context.Context, f *flags, c project.Command, w
 func ask(ctx context.Context, env Env) bool {
 	if f, ok := env.In.(*os.File); ok {
 		if err := discardInput(f); err != nil {
-			fmt.Fprintf(env.stderr, "winch: discard the typed input: %v\n", err)
+			env.fail(usage("discard the typed input: %v", err))
 			return false
 		}
 	}

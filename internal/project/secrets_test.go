@@ -376,7 +376,7 @@ func TestLoadSecretErrors(t *testing.T) {
 		{name: "bad recipient", files: map[string]string{"winch.yaml": "name: acme\ninventory: test\nrecipients: [age1nope]\n"},
 			want: "winch.yaml:3:13: recipients: "},
 		{name: "set gives a secret", set: []string{"vars.pw=!secret abc"},
-			want: "--set vars.pw=!secret abc: --set gives no !secret values"},
+			want: "--set vars.pw=!secret abc: takes no !secret values"},
 		{name: "wrong identity", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + newKey(t).encrypt(t, "x") + "\n"},
 			want: "inventories/test.yaml:4:11: the secrets are not encrypted for the age key " + k.path + " yet; a member who can read them must run winch secret rekey"},
 	}

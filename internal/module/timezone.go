@@ -36,7 +36,7 @@ const (
 	TimezoneFile = "/etc/timezone"
 )
 
-func (z *Timezone) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+func (z *Timezone) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	missing, err := z.missing()
 	if err != nil {
 		return Result{}, err
@@ -112,7 +112,7 @@ func currentZone(p string) (string, error) {
 	return zone, nil
 }
 
-func (z *Timezone) Apply(ctx context.Context, _ func(string)) error {
+func (z *Timezone) Apply(ctx context.Context, _ Say) error {
 	missing, err := z.missing()
 	if err != nil {
 		return err

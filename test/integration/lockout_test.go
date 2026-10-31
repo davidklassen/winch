@@ -762,7 +762,7 @@ func TestLockoutAfterRun(t *testing.T) {
 `,
 	})
 	r := lab.Winch(t, dir, "apply", "site", "--yes")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "after-run: failed: winch lost access after the run: ") {
+	if r.Code != 1 || !strings.Contains(r.Stderr, "after-run: winch lost access after the run: ") {
 		t.Errorf("apply: exit %d", r.Code)
 	}
 }

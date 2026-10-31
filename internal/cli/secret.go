@@ -18,27 +18,27 @@ func secretUsage(ctx context.Context, env Env, f *flags, args []string) int {
 
 func secretInit(ctx context.Context, env Env, f *flags, args []string) int {
 	if len(args) != 0 {
-		printError(env.stderr, "winch: secret init takes no arguments")
+		env.fail(usage("takes no arguments"))
 		return exitInvalid
 	}
 	identity, err := env.identity()
 	if err != nil {
-		printError(env.stderr, err.Error())
+		env.fail(err)
 		return exitInvalid
 	}
 	sealed, err := project.HasSecrets(env.Dir)
 	if err != nil {
-		printError(env.stderr, err.Error())
+		env.fail(err)
 		return exitInvalid
 	}
 	key, made, err := identity.Init(ctx)
 	if err != nil {
-		printError(env.stderr, fmt.Sprintf("winch: %v", err))
+		env.fail(usage("%v", err))
 		return exitInvalid
 	}
 	if made != nil {
 		if err := identity.WriteKey(made); err != nil {
-			printError(env.stderr, fmt.Sprintf("winch: %v", err))
+			env.fail(usage("%v", err))
 			return exitInvalid
 		}
 		fmt.Fprintf(env.stdout, "made the age key %s\n", identity.Path)
@@ -46,14 +46,14 @@ func secretInit(ctx context.Context, env Env, f *flags, args []string) int {
 	fmt.Fprintf(env.stdout, "public key: %s\n", key)
 	edit, err := project.AddRecipient(env.Dir, key)
 	if err != nil {
-		printError(env.stderr, err.Error())
+		env.fail(err)
 		return exitInvalid
 	}
 	if edit == nil {
 		return exitOK
 	}
 	if err := edit.Write(); err != nil {
-		printError(env.stderr, err.Error())
+		env.fail(err)
 		return exitInvalid
 	}
 	fmt.Fprintf(env.stdout, "added the public key to recipients in %s\n", edit.File)
@@ -69,12 +69,12 @@ func secretGenerate(ctx context.Context, env Env, f *flags, args []string) int {
 		name, ok = strings.CutPrefix(args[0], "vars.")
 	}
 	if !ok || name == "" {
-		printError(env.stderr, "winch: secret generate needs one variable: vars.<name>")
+		env.fail(usage("needs one variable: vars.<name>"))
 		return exitInvalid
 	}
 	file, err := project.WriteSecret(env.Dir, f.inventory, f.host, name, secret.Password())
 	if err != nil {
-		printError(env.stderr, err.Error())
+		env.fail(err)
 		return exitInvalid
 	}
 	where := "the group all"
@@ -87,27 +87,27 @@ func secretGenerate(ctx context.Context, env Env, f *flags, args []string) int {
 
 func secretEncrypt(ctx context.Context, env Env, f *flags, args []string) int {
 	if len(args) != 0 {
-		printError(env.stderr, "winch: secret encrypt takes no arguments")
+		env.fail(usage("takes no arguments"))
 		return exitInvalid
 	}
 	recs, err := project.Recipients(env.Dir)
 	if err != nil {
-		printError(env.stderr, err.Error())
+		env.fail(err)
 		return exitInvalid
 	}
 	in, err := io.ReadAll(env.In)
 	if err != nil {
-		printError(env.stderr, fmt.Sprintf("winch: read stdin: %v", err))
+		env.fail(usage("read stdin: %v", err))
 		return exitInvalid
 	}
 	value, err := secret.OneLine(string(in))
 	if err != nil {
-		printError(env.stderr, fmt.Sprintf("winch: %v", err))
+		env.fail(usage("%v", err))
 		return exitInvalid
 	}
 	text, err := secret.Encrypt(value, recs)
 	if err != nil {
-		printError(env.stderr, fmt.Sprintf("winch: encrypt: %v", err))
+		env.fail(usage("encrypt: %v", err))
 		return exitInvalid
 	}
 	fmt.Fprintf(env.stdout, "!secret %s\n", text)
@@ -116,17 +116,17 @@ func secretEncrypt(ctx context.Context, env Env, f *flags, args []string) int {
 
 func secretRekey(ctx context.Context, env Env, f *flags, args []string) int {
 	if len(args) != 0 {
-		printError(env.stderr, "winch: secret rekey takes no arguments")
+		env.fail(usage("takes no arguments"))
 		return exitInvalid
 	}
 	identity, err := env.identity()
 	if err != nil {
-		printError(env.stderr, err.Error())
+		env.fail(err)
 		return exitInvalid
 	}
 	n, files, err := project.Rekey(ctx, env.Dir, identity)
 	if err != nil {
-		printError(env.stderr, err.Error())
+		env.fail(err)
 		return exitInvalid
 	}
 	fmt.Fprintf(env.stdout, "rekeyed %s in %s\n", count(n, "secret"), count(len(files), "file"))

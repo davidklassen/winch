@@ -158,7 +158,7 @@ func TestReboot(t *testing.T) {
 			t.Errorf("timeout %d validates", timeout)
 		}
 	}
-	res, err := (&Reboot{IfRequired: &no}).Check(t.Context(), &State{}, func(string) {})
+	res, err := (&Reboot{IfRequired: &no}).Check(t.Context(), &State{}, Silent{})
 	if err != nil || res.Status != Change || res.Deferred {
 		t.Errorf("Check without if_required = %+v, %v; want a change", res, err)
 	}

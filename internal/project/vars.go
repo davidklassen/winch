@@ -133,12 +133,12 @@ func (l *loader) parseSets(set []string) ([]setValue, error) {
 		key, text, ok := strings.Cut(s, "=")
 		name, isVar := strings.CutPrefix(key, "vars.")
 		if !ok || !isVar {
-			errs = append(errs, fmt.Errorf("--set %s: use --set vars.<name>=<value>", s))
+			errs = append(errs, yamlx.Errorf(yamlx.Pos{File: "--set " + s}, "use --set vars.<name>=<value>"))
 			continue
 		}
 		n, err := parseValue(text, "--set", "--set ", key)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("--set %s: %w", s, err))
+			errs = append(errs, yamlx.Errorf(yamlx.Pos{File: "--set " + s}, "%s", err))
 			continue
 		}
 		out = append(out, setValue{name: name, value: yamlx.Value(n), flag: s})
@@ -175,7 +175,7 @@ func (l *loader) checkNames(sets []setValue) error {
 	}
 	for _, s := range sets {
 		if msg := unreadValue(s.name, read); msg != "" {
-			errs = append(errs, fmt.Errorf("--set %s: %s", s.flag, msg))
+			errs = append(errs, yamlx.Errorf(yamlx.Pos{File: "--set " + s.flag}, "%s", msg))
 		}
 	}
 	return errors.Join(errs...)
@@ -255,7 +255,7 @@ func parseValue(text, what, flag, key string) (*yamlx.Node, error) {
 		return nil, fmt.Errorf("YAML reads null; quote it: %s", whole)
 	}
 	if t := findTag(n); t != nil {
-		return nil, fmt.Errorf("%s gives no %s values", what, t.Tag)
+		return nil, fmt.Errorf("takes no %s values", t.Tag)
 	}
 	if n.Kind == yamlx.Map {
 		return nil, fmt.Errorf("YAML reads a map; quote it: %s", whole)

@@ -1,0 +1,15 @@
+text stderr:
+web1: note: the certificate a expires on 2026-11-20; check its renewal
+web1: note: nft is missing and no pkg step installs nftables
+json stdout:
+{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"note","host":"web1","message":"the certificate a expires on 2026-11-20; check its renewal"}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"note","host":"web1","message":"nft is missing and no pkg step installs nftables"}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hello"]}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#2","stage":"base","step":"firewall","module":"firewall","status":"change","action":"create","changes":["load the rules"]}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"change"}
+{"type":"applied","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"]}
+{"type":"applied","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#2","stage":"base","step":"firewall","module":"firewall","status":"change","action":"create","changes":["load the rules"]}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"apply","host":"web1","status":"changed"}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":1,"unchanged":0,"unknown":0,"failed":0},"apply":{"hosts":1,"changed":1,"unchanged":0,"failed":0},"hash":"fe16c8792515bf54","exit_code":0}
+json stderr:

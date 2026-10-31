@@ -73,7 +73,7 @@ func TestRunArgs(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"no module", []string{"web1"}, "winch: run needs a host pattern and a module"},
+		{"no module", []string{"web1"}, "winch run: needs a host pattern and a module"},
 		{"no key", []string{"web1", "pkg", "htop"}, "winch run: htop: an argument is key=value, such as name=htop"},
 		{"empty key", []string{"web1", "pkg", "=htop"}, "winch run: =htop: an argument is key=value, such as name=htop"},
 		{"a key twice", []string{"web1", "pkg", "name=a", "name=b"}, "winch run: name=b: name is given twice"},
@@ -85,14 +85,14 @@ func TestRunArgs(t *testing.T) {
 		{"a comment", []string{"web1", "file", "path=/x", "content=a #b"}, `winch run: content=a #b: YAML drops the comment; quote it: 'content="a #b"'`},
 		{"a number with other text", []string{"web1", "file", "path=/x", "content=x", "mode=0644"}, `winch run: mode=0644: YAML reads 0644 as 644; quote it: 'mode="0644"'`},
 		{"null", []string{"web1", "file", "path=/x", "content="}, "winch run: content=: null is not a value"},
-		{"a tag", []string{"web1", "file", "path=/x", "content=!tpl x"}, "winch run: content=!tpl x: winch run gives no !tpl values"},
+		{"a tag", []string{"web1", "file", "path=/x", "content=!tpl x"}, "winch run: content=!tpl x: takes no !tpl values"},
 		{"a wrong type", []string{"web1", "pkg", "name=htop", "recommends=yes"}, `winch run: recommends=yes: recommends: expected true or false, got the string "yes"`},
-		{"template", []string{"web1", "file", "path=/x", "template=a.tmpl"}, "winch run: template=a.tmpl: winch run cannot use template; use it in a recipe"},
-		{"source", []string{"web1", "file", "path=/x", "source=a"}, "winch run: source=a: winch run cannot use source; use it in a recipe"},
-		{"assert", []string{"all", "assert", "command=systemctl is-active nginx", "message=down"}, "winch run: winch run cannot use assert; run a check with winch exec"},
-		{"assert with no argument", []string{"web1", "assert"}, "winch run: winch run cannot use assert; run a check with winch exec"},
+		{"template", []string{"web1", "file", "path=/x", "template=a.tmpl"}, "winch run: template=a.tmpl: works only in a recipe"},
+		{"source", []string{"web1", "file", "path=/x", "source=a"}, "winch run: source=a: works only in a recipe"},
+		{"assert", []string{"all", "assert", "command=systemctl is-active nginx", "message=down"}, "winch run: assert changes nothing; run a check with winch exec"},
+		{"assert with no argument", []string{"web1", "assert"}, "winch run: assert changes nothing; run a check with winch exec"},
 		{"a service step without an action", []string{"web1", "service", "name=nginx"}, "winch run: service: a service step needs running, enabled, reloaded, or restarted"},
-		{"unit source", []string{"web1", "unit", "name=app.service", "source=app.service"}, "winch run: source=app.service: winch run cannot use source; use it in a recipe"},
+		{"unit source", []string{"web1", "unit", "name=app.service", "source=app.service"}, "winch run: source=app.service: works only in a recipe"},
 		{"unknown host", []string{"web9", "pkg", "name=htop"}, `winch run: unknown host or group "web9" in inventories/test.yaml; did you mean "web1"?`},
 		{"no host", []string{"none", "pkg", "name=htop"}, `winch run: the host pattern "none" matches no host in inventories/test.yaml`},
 		{"a YAML error", []string{"web1", "file", "path=/x", "content=[a"}, `winch run: content=[a: did not find expected ',' or ']'; quote it: 'content="[a"'`},
@@ -305,8 +305,8 @@ func TestExecArgs(t *testing.T) {
 	}{
 		{"no --", []string{"all", "uptime"}, usage},
 		{"nothing after --", []string{"all", "--"}, usage},
-		{"no pattern", []string{"--", "uptime"}, "winch: exec needs one host pattern before --"},
-		{"two patterns", []string{"web1", "web2", "--", "uptime"}, "winch: exec needs one host pattern before --"},
+		{"no pattern", []string{"--", "uptime"}, "winch exec: needs one host pattern before --"},
+		{"two patterns", []string{"web1", "web2", "--", "uptime"}, "winch exec: needs one host pattern before --"},
 		{"--yes", []string{"all", "--yes", "--", "uptime"}, "flag provided but not defined: -yes"},
 		{"no host", []string{"none", "--", "uptime"}, `winch exec: the host pattern "none" matches no host in inventories/test.yaml`},
 	} {
@@ -331,7 +331,7 @@ func TestRunJSONDiagnostic(t *testing.T) {
 	lines := jsonLines(t, r.out)
 	d := lines[1]
 	if r.code != exitInvalid || d["type"] != "diagnostic" || d["file"] != nil || d["line"] != nil ||
-		d["message"] != `winch run: nam=htop: unknown key "nam"; did you mean "name"?` {
+		d["message"] != `nam=htop: unknown key "nam"; did you mean "name"?` {
 		t.Errorf("exit %d, diagnostic %v", r.code, d)
 	}
 }
@@ -399,5 +399,14 @@ func TestPlanSSHDWarning(t *testing.T) {
 		return l["type"] == "diagnostic" && l["message"] == warning && l["line"] == 5.0
 	}) {
 		t.Errorf("no diagnostic in %q", r.out)
+	}
+}
+
+// spec: CLI/Messages ("A line has one prefix")
+func TestRunArgWarning(t *testing.T) {
+	r := winch(t, runProject(t), fakehost.New(), false, "", "run", "web1", "dir", "path=/x", `mode="0644"`)
+	want := `winch run: mode="0644": warning: mode: owner, group, and others can read the directory but not enter it; use "0755"` + "\n"
+	if !strings.Contains(r.err, want) {
+		t.Errorf("stderr %q, want %q", r.err, want)
 	}
 }

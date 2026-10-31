@@ -1,1 +1,1 @@
---set vars.admins=[!tpl x]: --set gives no !tpl values
+--set vars.admins=[!tpl x]: takes no !tpl values

@@ -72,7 +72,7 @@ func (c *Cmd) Validate() error {
 	return nil
 }
 
-func (c *Cmd) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+func (c *Cmd) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	res, err := c.check(ctx)
 	if err != nil || res.Status == OK {
 		return res, err
@@ -122,7 +122,7 @@ func (c *Cmd) check(ctx context.Context) (Result, error) {
 	return Result{}, err
 }
 
-func (c *Cmd) Apply(ctx context.Context, _ func(string)) error {
+func (c *Cmd) Apply(ctx context.Context, _ Say) error {
 	var as *runAs
 	if c.User != "" {
 		a, err := readAccounts()

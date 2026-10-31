@@ -43,7 +43,7 @@ func (r *Reboot) Wait() time.Duration {
 
 // Check shows a reboot that will surely run as a change. Otherwise an earlier
 // step of the run may still require one, so the step is deferred.
-func (r *Reboot) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+func (r *Reboot) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	if !*r.IfRequired {
 		return Result{Status: Change, Action: Modify}, nil
 	}
@@ -59,7 +59,7 @@ func (r *Reboot) Check(ctx context.Context, _ *State, _ func(string)) (Result, e
 
 // Apply changes nothing: the controller reboots the host, since it must
 // connect again.
-func (r *Reboot) Apply(ctx context.Context, _ func(string)) error { return nil }
+func (r *Reboot) Apply(ctx context.Context, _ Say) error { return nil }
 
 // RebootRequired reports whether the host waits for a reboot.
 func RebootRequired() (bool, error) {

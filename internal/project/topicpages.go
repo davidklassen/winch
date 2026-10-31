@@ -624,7 +624,7 @@ var workflowTopic = doc.Topic{
 		doc.Paragraph(`--json writes one JSON object per line on stdout. Each has type and time. The types:`),
 		doc.Table([][]string{
 			{"version", "the format version; always first"},
-			{"diagnostic", "an error or a warning, with file, line, col, and message"},
+			{"diagnostic", "an error, a warning, or a note, with severity, file, line, col, and message; a note about a host has host"},
 			{"planned", "the check of one step"},
 			{"applied", "the apply of one step"},
 			{"host", "a host finished, failed, or was unreachable"},

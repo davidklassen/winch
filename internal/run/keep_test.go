@@ -30,7 +30,7 @@ func TestApplyKeepsPlanSessions(t *testing.T) {
 			h.Kill("web1")
 			h.SetDestination("web1", protocol.Destination{HostName: "192.0.2.99", Port: "22"})
 		}, open: 2, connects: map[string]int{"web1": 1, "web2": 1, "web3": 1},
-			fail: "failed: the SSH destination changed since the plan: web1:22 (uid 0) → 192.0.2.99:22 (uid 0); run winch plan again and check the new destination"},
+			fail: "the SSH destination changed since the plan: web1:22 (uid 0) → 192.0.2.99:22 (uid 0); run winch plan again and check the new destination"},
 		{name: "gone records only", setup: func(h *fakehost.Hosts) { h.Pend("web3", gone) },
 			open: 3, connects: map[string]int{"web1": 1, "web2": 1, "web3": 1}},
 	}

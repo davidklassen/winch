@@ -26,14 +26,18 @@ import (
 )
 
 type Hosts struct {
-	mu         sync.Mutex
-	files      map[string]map[string]string
-	noDirs     map[string]map[string]bool
-	pkgs       map[string]map[string]bool
-	pkgFiles   map[string]map[string]string
-	pkgDeps    map[string][]string
-	failCheck  map[string]bool
-	failApply  map[string]bool
+	mu        sync.Mutex
+	files     map[string]map[string]string
+	noDirs    map[string]map[string]bool
+	pkgs      map[string]map[string]bool
+	pkgFiles  map[string]map[string]string
+	pkgDeps   map[string][]string
+	failCheck map[string]bool
+	failApply map[string]bool
+	// notes are the notes that a check sends, by host and main argument.
+	notes map[string]string
+	// note takes the notes, from ConnectorFor.
+	note       func(host, text string)
 	Applies    int
 	Refreshes  map[string]int
 	FactsReads map[string]int
@@ -107,6 +111,7 @@ func New() *Hosts {
 		pkgDeps:      map[string][]string{},
 		failCheck:    map[string]bool{},
 		failApply:    map[string]bool{},
+		notes:        map[string]string{},
 		Refreshes:    map[string]int{},
 		FactsReads:   map[string]int{},
 		facts:        map[string]facts.Facts{},
@@ -360,6 +365,15 @@ func (h *Hosts) Fix(key string) {
 	delete(h.failCmd, key)
 }
 
+// SetNote makes each check of the step with the main argument main on host
+// send the note text, as the helper does. It needs a connector of
+// ConnectorFor.
+func (h *Hosts) SetNote(host, main, text string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.notes[host+" "+main] = text
+}
+
 // SetUnreachable makes each later connect to host fail as unreachable.
 func (h *Hosts) SetUnreachable(host string) {
 	h.mu.Lock()
@@ -431,10 +445,12 @@ func (h *Hosts) fails(m map[string]bool, host, path string) bool {
 	return m[host] || m[host+" "+path]
 }
 
-// ConnectorFor returns Connect as a run.Connect, and records batch.
-func (h *Hosts) ConnectorFor(batch bool) run.Connect {
+// ConnectorFor returns Connect as a run.Connect, records batch, and gives
+// the notes of SetNote to note.
+func (h *Hosts) ConnectorFor(batch bool, note func(host, text string)) run.Connect {
 	h.mu.Lock()
 	h.Batch = append(h.Batch, batch)
+	h.note = note
 	h.mu.Unlock()
 	return h.Connector()
 }
@@ -487,6 +503,9 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	}
 	if c.hosts.OnCheck != nil {
 		c.hosts.OnCheck(c.host, m.Main())
+	}
+	if text := c.hosts.notes[c.host+" "+m.Main()]; text != "" {
+		c.hosts.note(c.host, text)
 	}
 	// A real session finishes a call that has started.
 	if ctx.Err() != nil {

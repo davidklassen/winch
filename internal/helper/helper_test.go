@@ -67,7 +67,7 @@ func (c *client) call(t *testing.T, method string, params any) protocol.Response
 	req, _ := json.Marshal(protocol.Request{ID: c.id, Method: method, Params: p})
 	go c.w.Write(append(req, '\n')) //nolint:errcheck // a failed write shows as a missing response
 	var resp protocol.Response
-	for resp.ID == 0 || resp.Note != "" {
+	for resp.ID == 0 || resp.Note != "" || resp.Progress != "" {
 		if !c.r.Scan() {
 			t.Fatalf("no response: %v", c.r.Err())
 		}

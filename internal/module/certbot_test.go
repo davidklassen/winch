@@ -48,7 +48,7 @@ func TestCertbotValidate(t *testing.T) {
 		{"email with a space", "name: a\ndomains: [a.example.com]\nemail: a b@example.com\n", `t.yaml:3:8: email: "a b@example.com" is not an email address`},
 		{"unknown authenticator", base + "authenticator: dns\n", `t.yaml:4:16: authenticator: "dns" is not an authenticator; use nginx, apache, standalone, or webroot`},
 		{"webroot without path", base + "authenticator: webroot\n", `t.yaml:4:16: authenticator: webroot needs webroot_path`},
-		{"path without webroot", base + "webroot_path: /var/www/html\n", `t.yaml:4:15: webroot_path: webroot_path needs authenticator: webroot`},
+		{"path without webroot", base + "webroot_path: /var/www/html\n", `t.yaml:4:15: webroot_path: needs authenticator: webroot`},
 		{"relative path", base + "authenticator: webroot\nwebroot_path: var/www\n", `t.yaml:5:15: webroot_path: must be an absolute path`},
 		{"path with a comma", base + "authenticator: webroot\nwebroot_path: /var/www/a,b\n", `t.yaml:5:15: webroot_path: has a ",", which certbot reads as a list`},
 		{"empty hook", base + "deploy_hook: \"\"\n", `t.yaml:4:14: deploy_hook: must not be empty`},
@@ -528,7 +528,7 @@ func TestCertbotPendingHookOrder(t *testing.T) {
 		t.Errorf("pending after HooksToRun = %v, want %v", c.PendingHooks, want)
 	}
 	c.PendingHooks, c.issue = []string{"deploy_hook", "post_hook"}, false
-	if err := c.Apply(t.Context(), func(string) {}); err != nil {
+	if err := c.Apply(t.Context(), Silent{}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(log)

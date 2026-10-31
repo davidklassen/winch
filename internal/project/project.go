@@ -270,24 +270,23 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 		set: setNames, peers: peerVars(invs[0], l.decls)}, nil
 }
 
-// commandPipeline builds the pipeline of c. Errors name the command and the
-// argument, as a position without a line.
+// commandPipeline builds the pipeline of c. Errors name the argument as a
+// position without a line, or have no position.
 func (l *loader) commandPipeline(c Command) (*Pipeline, error) {
-	where := yamlx.Pos{File: "winch " + c.Name}
-	s := Stage{Name: "run", Pipeline: "run", Hosts: c.Pattern, HostsPos: where}
+	s := Stage{Name: "run", Pipeline: "run", Hosts: c.Pattern}
 	if c.Module == "" {
 		return &Pipeline{Name: "run", Stages: []Stage{s}, AdHoc: true}, nil
 	}
 	if _, ok := module.New(c.Module); !ok {
-		return nil, yamlx.Errorf(where, "unknown module %q%s", c.Module, yamlx.Suggest(c.Module, module.Names()))
+		return nil, yamlx.Errorf(yamlx.Pos{}, "unknown module %q%s", c.Module, yamlx.Suggest(c.Module, module.Names()))
 	}
 	if c.Module == "assert" {
-		return nil, yamlx.Errorf(where, "winch run cannot use assert; run a check with winch exec")
+		return nil, yamlx.Errorf(yamlx.Pos{}, "assert changes nothing; run a check with winch exec")
 	}
-	args := &yamlx.Node{Kind: yamlx.Map, Pos: yamlx.Pos{File: where.File + ": " + c.Module}}
+	args := &yamlx.Node{Kind: yamlx.Map, Pos: yamlx.Pos{File: c.Module}}
 	var errs []error
 	for _, a := range c.Args {
-		pos := yamlx.Pos{File: where.File + ": " + a}
+		pos := yamlx.Pos{File: a}
 		key, text, ok := strings.Cut(a, "=")
 		if !ok || key == "" {
 			errs = append(errs, yamlx.Errorf(pos, "an argument is key=value, such as name=htop"))
@@ -297,7 +296,7 @@ func (l *loader) commandPipeline(c Command) (*Pipeline, error) {
 			errs = append(errs, yamlx.Errorf(pos, "%s is given twice", key))
 			continue
 		}
-		n, err := parseValue(text, where.File, "", key)
+		n, err := parseValue(text, "winch "+c.Name, "", key)
 		if err != nil {
 			errs = append(errs, yamlx.Errorf(pos, "%s", err))
 			continue
@@ -308,7 +307,7 @@ func (l *loader) commandPipeline(c Command) (*Pipeline, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-	step := &yamlx.Node{Kind: yamlx.Map, Pos: where, Pairs: []yamlx.Pair{{Key: c.Module, KeyValue: c.Module, KeyPos: where, Value: args}}}
+	step := &yamlx.Node{Kind: yamlx.Map, Pairs: []yamlx.Pair{{Key: c.Module, KeyValue: c.Module, Value: args}}}
 	st, err := l.loadStep(step, nil, runStep)
 	if err != nil {
 		return nil, err
@@ -517,7 +516,7 @@ func (st Step) checkMatches(inv *Inventory) error {
 			hosts, err := inv.Match(m.pattern)
 			switch {
 			case err != nil:
-				errs = append(errs, yamlx.Errorf(c.pos, "match(%q): %s%s", m.pattern, err, m.snippet))
+				errs = append(errs, yamlx.Errorf(c.pos, "match(%q): %s%s", m.pattern, problem(err), m.snippet))
 			case len(hosts) == 0:
 				errs = append(errs, yamlx.Errorf(c.pos, "match(%q): the host pattern matches no host in %s%s", m.pattern, inv.File, m.snippet))
 			}
@@ -712,7 +711,7 @@ func (h *healthFile) Validate() error {
 func (l *loader) loadPipeline(name string) (*Pipeline, error) {
 	if pls := l.layout.pipelines; len(pls) > 0 && pls[0].top {
 		if name != "" {
-			return nil, fmt.Errorf("pipeline %q: the steps at the top of winch.yaml are the only pipeline; leave out the pipeline name", name)
+			return nil, yamlx.Errorf(yamlx.Pos{}, "pipeline %q: the steps at the top of winch.yaml are the only pipeline; leave out the pipeline name", name)
 		}
 		return l.decodePipeline(pls[0])
 	}
@@ -720,11 +719,11 @@ func (l *loader) loadPipeline(name string) (*Pipeline, error) {
 		return nil, errors.New("no pipeline: add steps to winch.yaml, or a file to pipelines/")
 	}
 	if name == "" {
-		return nil, fmt.Errorf("name a pipeline: %s; only steps at the top of winch.yaml run without a name", strings.Join(partNames(l.layout.pipelines), ", "))
+		return nil, yamlx.Errorf(yamlx.Pos{}, "name a pipeline: %s; only steps at the top of winch.yaml run without a name", strings.Join(partNames(l.layout.pipelines), ", "))
 	}
 	i := slices.IndexFunc(l.layout.pipelines, func(p part) bool { return p.name == name })
 	if i < 0 {
-		return nil, fmt.Errorf("unknown pipeline %q%s", name, yamlx.Suggest(name, partNames(l.layout.pipelines)))
+		return nil, yamlx.Errorf(yamlx.Pos{}, "unknown pipeline %q%s", name, yamlx.Suggest(name, partNames(l.layout.pipelines)))
 	}
 	return l.decodePipeline(l.layout.pipelines[i])
 }
@@ -1008,7 +1007,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 			}
 			switch {
 			case kind == runStep:
-				return Step{}, yamlx.Errorf(p.Value.Pos, "winch run cannot use %s; use it in a recipe", p.Key)
+				return Step{}, yamlx.Errorf(p.Value.Pos, "works only in a recipe")
 			case r != nil:
 				return Step{}, yamlx.Errorf(p.Value.Pos, "%s: a recipe in winch.yaml cannot use %s; use %s, or move the recipe to recipes/%s/", p.Key, p.Key, alt, r.Name)
 			}

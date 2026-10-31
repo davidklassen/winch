@@ -35,7 +35,7 @@ func (h *Hostname) Validate() error {
 // hostnameFile is the file of the static host name.
 const hostnameFile = "/etc/hostname"
 
-func (h *Hostname) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+func (h *Hostname) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	data, err := os.ReadFile(hostnameFile)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return Result{}, err
@@ -67,7 +67,7 @@ func (h *Hostname) Check(ctx context.Context, _ *State, _ func(string)) (Result,
 	return Result{Status: Change, Action: Modify, Changes: changes}, nil
 }
 
-func (h *Hostname) Apply(ctx context.Context, _ func(string)) error {
+func (h *Hostname) Apply(ctx context.Context, _ Say) error {
 	_, err := run(ctx, nil, "hostnamectl", "set-hostname", "--", h.Name)
 	return err
 }

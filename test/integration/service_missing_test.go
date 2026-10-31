@@ -37,13 +37,14 @@ systemctl show --value -p MainPID winch-missing >/tmp/winch-missing.pid`)
 	}
 	t.Run("a missing stopped unit is noted", func(t *testing.T) {
 		r := lab.Winch(t, dir, "plan", "stop")
-		if r.Code != 0 || !unchanged(r.Stdout, 1) || !strings.Contains(r.Stdout+r.Stderr, note) {
+		if r.Code != 0 || !unchanged(r.Stdout, 1) || !strings.Contains(r.Stderr, "servicemissing: note: "+note+"\n") {
 			t.Errorf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 		}
 	})
 	t.Run("a missing unit is noted with JSON output", func(t *testing.T) {
 		r := lab.Winch(t, dir, "plan", "stop", "--json")
-		if r.Code != 0 || !strings.Contains(r.Stderr, note) {
+		event := `"severity":"note","host":"servicemissing","message":"` + note + `"`
+		if r.Code != 0 || !strings.Contains(r.Stdout, event) || strings.Contains(r.Stderr, note) {
 			t.Errorf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 		}
 	})

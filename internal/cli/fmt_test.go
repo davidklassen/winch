@@ -230,7 +230,7 @@ func TestFmtError(t *testing.T) {
 		}
 	}
 	r = winch(t, dir, fakehost.New(), false, "", "fmt", "site")
-	if r.code != exitInvalid || r.err != "winch: fmt takes no arguments\n" {
+	if r.code != exitInvalid || r.err != "winch fmt: takes no arguments\n" {
 		t.Errorf("with an argument: exit %d, stderr %q", r.code, r.err)
 	}
 }

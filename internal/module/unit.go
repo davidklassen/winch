@@ -80,7 +80,7 @@ func (u *Unit) File() *File {
 	return &File{Path: u.Path(), Data: u.Data, DataSHA256: u.DataSHA256}
 }
 
-func (u *Unit) Check(ctx context.Context, st *State, note func(string)) (Result, error) {
+func (u *Unit) Check(ctx context.Context, st *State, say Say) (Result, error) {
 	fi, err := os.Lstat(u.Path())
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -97,7 +97,7 @@ func (u *Unit) Check(ctx context.Context, st *State, note func(string)) (Result,
 	case !fi.Mode().IsRegular():
 		return Result{}, fmt.Errorf("%s is %s, not a file", u.Path(), kind(fi))
 	}
-	res, err := u.File().Check(ctx, st, note)
+	res, err := u.File().Check(ctx, st, say)
 	if err != nil {
 		return Result{}, err
 	}
@@ -120,8 +120,8 @@ func (u *Unit) Check(ctx context.Context, st *State, note func(string)) (Result,
 	return res, nil
 }
 
-func (u *Unit) Apply(ctx context.Context, note func(string)) error {
-	if err := u.File().Apply(ctx, note); err != nil {
+func (u *Unit) Apply(ctx context.Context, say Say) error {
+	if err := u.File().Apply(ctx, say); err != nil {
 		return err
 	}
 	_, err := run(ctx, nil, "systemctl", "daemon-reload")

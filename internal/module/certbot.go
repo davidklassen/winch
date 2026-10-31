@@ -77,7 +77,7 @@ func (c *Certbot) Validate() error {
 	}
 	if c.WebrootPath != "" {
 		if c.Authenticator != "webroot" {
-			return &yamlx.FieldError{Field: "webroot_path", Msg: "webroot_path needs authenticator: webroot"}
+			return &yamlx.FieldError{Field: "webroot_path", Msg: "needs authenticator: webroot"}
 		}
 		if err := checkAbs("webroot_path", c.WebrootPath); err != nil {
 			return err
@@ -273,8 +273,8 @@ func sameSet(a, b []string) bool {
 	return slices.Equal(slices.Compact(x), slices.Compact(y))
 }
 
-func (c *Certbot) Check(_ context.Context, _ *State, note func(string)) (Result, error) {
-	res, err := c.check(letsencrypt, note)
+func (c *Certbot) Check(_ context.Context, _ *State, say Say) (Result, error) {
+	res, err := c.check(letsencrypt, say.Note)
 	if err != nil || !c.issue {
 		return res, err
 	}
@@ -404,7 +404,7 @@ func (c *Certbot) HooksToRun() []string {
 	return hooks
 }
 
-func (c *Certbot) Apply(ctx context.Context, _ func(string)) error {
+func (c *Certbot) Apply(ctx context.Context, _ Say) error {
 	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
 	defer cancel()
 	if !c.issue {

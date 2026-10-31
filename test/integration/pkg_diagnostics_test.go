@@ -34,7 +34,7 @@ func TestPkgDiagnostics(t *testing.T) {
 	vm.MustRun(t, "apt-get update -q >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -q hello >/dev/null")
 	t.Run("an unknown absent name is noted", func(t *testing.T) {
 		r := lab.Winch(t, dir, "plan", "typo")
-		if r.Code != 0 || !unchanged(r.Stdout, 1) || !strings.Contains(r.Stdout+r.Stderr, "apt does not know apache") {
+		if r.Code != 0 || !unchanged(r.Stdout, 1) || !strings.Contains(r.Stderr, "pkgdiagnostics: note: apt does not know apache\n") {
 			t.Errorf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 		}
 	})

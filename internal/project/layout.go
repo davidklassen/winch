@@ -167,9 +167,9 @@ func (ly layout) inventory(name string) (part, error) {
 	}
 	base := strings.TrimSuffix(strings.TrimSuffix(path.Base(name), ".yaml"), ".yml")
 	if strings.ContainsRune(name, '/') || base != path.Base(name) {
-		return part{}, fmt.Errorf("unknown inventory %q; name an inventory without its directory and extension, such as %q", name, base)
+		return part{}, yamlx.Errorf(yamlx.Pos{}, "unknown inventory %q; name an inventory without its directory and extension, such as %q", name, base)
 	}
-	return part{}, fmt.Errorf("unknown inventory %q%s", name, yamlx.Suggest(name, partNames(ly.inventories)))
+	return part{}, yamlx.Errorf(yamlx.Pos{}, "unknown inventory %q%s", name, yamlx.Suggest(name, partNames(ly.inventories)))
 }
 
 // parse returns the content of p.

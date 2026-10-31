@@ -72,10 +72,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		markErr := lock.mark(false)
 		var result any
 		var err error
-		note := func(msg string) {
-			// A failed write fails the answer that follows.
-			_ = enc.Encode(protocol.Response{ID: req.ID, Note: msg})
-		}
+		say := sayer{enc: enc, id: req.ID}
 		switch {
 		case markErr != nil:
 			err = markErr
@@ -137,9 +134,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "health":
 			err = runHealth(ctx, req.Params, checks)
 		case req.Method == "check":
-			result, err = step(ctx, req.Params, false, login, loginUser, handlers, thens, downloads, certbotHooks, checks, rb, note)
+			result, err = step(ctx, req.Params, false, login, loginUser, handlers, thens, downloads, certbotHooks, checks, rb, say)
 		case req.Method == "apply":
-			result, err = step(ctx, req.Params, true, login, loginUser, handlers, thens, downloads, certbotHooks, checks, rb, note)
+			result, err = step(ctx, req.Params, true, login, loginUser, handlers, thens, downloads, certbotHooks, checks, rb, say)
 		case req.Method == "confirm":
 			err = confirmStep(ctx, rb, handlers, thens)
 		case req.Method == "rollback":
@@ -387,11 +384,22 @@ func deleteOld(bin, self string) error {
 	return nil
 }
 
+// sayer sends the lines of a step as responses before the answer to request
+// id. A failed write fails the answer that follows.
+type sayer struct {
+	enc *json.Encoder
+	id  int
+}
+
+func (s sayer) Note(text string) { _ = s.enc.Encode(protocol.Response{ID: s.id, Note: text}) }
+
+func (s sayer) Progress(text string) { _ = s.enc.Encode(protocol.Response{ID: s.id, Progress: text}) }
+
 // step checks a step. With apply, it then records the handlers that the step
 // notifies and its then, and makes the changes the check found, or runs a
 // deferred step. When the changes fail, it removes the records that it added.
 // After a successful unpack, it records the checksum, owner, and group.
-func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, loginUser *module.Login, handlers, thens, downloads, certbotHooks, checks records, rb *rollbacks, note func(string)) (protocol.StepResult, error) {
+func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, loginUser *module.Login, handlers, thens, downloads, certbotHooks, checks records, rb *rollbacks, say module.Say) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
@@ -423,7 +431,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			c.PendingHooks = strings.Split(hooks, ",")
 		}
 	}
-	res, err := m.Check(ctx, &s.State, note)
+	res, err := m.Check(ctx, &s.State, say)
 	var socket bool
 	if err == nil && res.Status == module.Change {
 		touches := module.Touches(m)
@@ -446,7 +454,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	// A deferred step changes nothing, so it notifies nothing.
 	if res.Status == module.OK {
-		err := m.Apply(ctx, note)
+		err := m.Apply(ctx, say)
 		if s.Check == nil {
 			return out, err
 		}
@@ -509,7 +517,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 		}
 	}
-	err = m.Apply(ctx, note)
+	err = m.Apply(ctx, say)
 	if err == nil && socket {
 		err = module.RestartSSHSocket(ctx)
 	}

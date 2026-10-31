@@ -73,7 +73,7 @@ func checkID(field string, id yamlx.ID) error {
 	return nil
 }
 
-func (g *Group) Check(ctx context.Context, st *State, _ func(string)) (Result, error) {
+func (g *Group) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	a, err := readAccounts()
 	if err != nil {
 		return Result{}, err
@@ -159,7 +159,7 @@ func (a accounts) primaryUsers(gid uint32) []string {
 	return users
 }
 
-func (g *Group) Apply(ctx context.Context, _ func(string)) error {
+func (g *Group) Apply(ctx context.Context, _ Say) error {
 	_, err := run(ctx, nil, g.todo[0], g.todo[1:]...)
 	return err
 }

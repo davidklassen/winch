@@ -235,7 +235,7 @@ func TestOpenUnsafeStateDir(t *testing.T) {
 				t.Setenv("FAKE_LS_USER", path+"/")
 			}
 			progress, err := open(t, dir, bins)
-			want := "winch: " + path + " is not owned by root, or the group or others can write it"
+			want := path + " is not owned by root, or the group or others can write it"
 			if err == nil || err.Error() != want {
 				t.Errorf("error = %v, want %q", err, want)
 			}
@@ -260,7 +260,7 @@ func TestOpenLinkedHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := open(t, dir, bins)
-	if want := "winch: " + path + " is not a directory or a regular file"; err == nil || err.Error() != want {
+	if want := path + " is not a directory or a regular file"; err == nil || err.Error() != want {
 		t.Errorf("error = %v, want %q", err, want)
 	}
 }
@@ -325,7 +325,7 @@ func TestOpenSudo(t *testing.T) {
 	t.Run("password required", func(t *testing.T) {
 		fakeBin(t, "aarch64", "1000", "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n")
 		_, err := open(t, stateDir, bins)
-		want := "winch: the login user needs passwordless sudo: sudo: a password is required"
+		want := "the login user needs passwordless sudo: sudo: a password is required"
 		if err == nil || err.Error() != want {
 			t.Errorf("error = %v, want %q", err, want)
 		}
@@ -334,7 +334,7 @@ func TestOpenSudo(t *testing.T) {
 		fakeBin(t, "aarch64", "1000", "#!/bin/sh\necho \"$1 $2\" >> \"$SUDO_LOG\"\nif [ \"$2\" = true ]; then echo 'sudo: a password is required' >&2; exit 1; fi\nshift\nexec \"$@\"\n")
 		calls := sudoCalls(t)
 		_, err := open(t, stateDir, bins)
-		want := "winch: the login user needs passwordless sudo: sudo: a password is required"
+		want := "the login user needs passwordless sudo: sudo: a password is required"
 		if err == nil || err.Error() != want {
 			t.Errorf("error = %v, want %q", err, want)
 		}
@@ -679,22 +679,25 @@ func TestOpenHostName(t *testing.T) {
 	}
 }
 
-// spec: Modules/pkg
-func TestNotesGoToProgress(t *testing.T) {
+// spec: Modules/pkg; CLI/Messages (notes)
+func TestNotesAndProgress(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
 	helper := helperbin.New("arm64", []byte(`#!/bin/sh
 read -r line
 echo '{"id":1,"result":{}}'
 read -r line
-echo '{"id":2,"note":"\\u001b[2Kwaiting for another apt run (pid 42)"}'
+echo '{"id":2,"progress":"\\u001b[2Kwaiting for another apt run (pid 42)"}'
+echo '{"id":2,"note":"apt does not know hello"}'
 echo '{"id":2,"result":{"status":"ok"}}'
 cat >/dev/null
 `))
 	var progress bytes.Buffer
+	var notes []string
 	s, err := Open(context.Background(), Config{
 		Host: "web1", Address: "web1", Dir: stateDir,
 		Binaries: []helperbin.Binary{helper},
 		Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&progress),
+		Note: func(text string) { notes = append(notes, text) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -707,6 +710,9 @@ cat >/dev/null
 	}
 	if want := "web1: ?[2Kwaiting for another apt run (pid 42)\n"; progress.String() != want {
 		t.Errorf("progress = %q, want %q", progress.String(), want)
+	}
+	if want := []string{"apt does not know hello"}; !slices.Equal(notes, want) {
+		t.Errorf("notes = %q, want %q", notes, want)
 	}
 }
 
@@ -864,7 +870,7 @@ func TestOpenUnreachable(t *testing.T) {
 		{"name", "", "ssh: Could not resolve hostname web1: nodename nor servname provided, or not known", 255, true},
 		{"host key", "", "Host key verification failed.", 255, true},
 		{"refused login", "", "admin@web1: Permission denied (publickey).", 255, true},
-		{"error of the script", "", "winch: unsupported architecture mips", 1, false},
+		{"error of the script", "", "unsupported architecture mips", 1, false},
 		{"closed after have", "have", closed, 255, false},
 	}
 	for _, tt := range tests {
@@ -883,7 +889,7 @@ func TestOpenUnreachable(t *testing.T) {
 	t.Run("missing sudo", func(t *testing.T) {
 		fakeBin(t, "aarch64", "1000", "#!/bin/sh\nexit 1\n")
 		_, err := open(t, t.TempDir(), []helperbin.Binary{fakeHelper("arm64")})
-		if err == nil || errors.Is(err, ErrUnreachable) || err.Error() != "winch: the login user needs passwordless sudo" {
+		if err == nil || errors.Is(err, ErrUnreachable) || err.Error() != "the login user needs passwordless sudo" {
 			t.Errorf("error %v, want the sudo failure, not unreachable", err)
 		}
 	})

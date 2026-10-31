@@ -30,9 +30,9 @@ func (u *Upgrade) args() []string {
 	return []string{"dist-upgrade"}
 }
 
-func (u *Upgrade) Check(ctx context.Context, st *State, note func(string)) (Result, error) {
+func (u *Upgrade) Check(ctx context.Context, st *State, say Say) (Result, error) {
 	if !st.Refreshed {
-		if err := waitIndexLock(ctx, note); err != nil {
+		if err := waitIndexLock(ctx, say.Progress); err != nil {
 			return Result{}, err
 		}
 		if _, err := aptGet(ctx, "update", "-q", "--error-on=any"); err != nil {
@@ -40,14 +40,14 @@ func (u *Upgrade) Check(ctx context.Context, st *State, note func(string)) (Resu
 		}
 	}
 	st.IndexFresh, st.Refreshed = true, true
-	pkgs, err := readDpkg(ctx, note)
+	pkgs, err := readDpkg(ctx, say.Progress)
 	if err != nil {
 		return Result{}, err
 	}
 	if err := othersHalfDone(pkgs, nil); err != nil {
 		return Result{}, err
 	}
-	unlock, err := lockFiles(ctx, dpkgLocks, note)
+	unlock, err := lockFiles(ctx, dpkgLocks, say.Progress)
 	if err != nil {
 		return Result{}, err
 	}
@@ -63,8 +63,8 @@ func (u *Upgrade) Check(ctx context.Context, st *State, note func(string)) (Resu
 	return Result{Status: Change, Action: Modify, Changes: changes}, nil
 }
 
-func (u *Upgrade) Apply(ctx context.Context, note func(string)) error {
-	if err := waitLocks(ctx, dpkgLocks, note); err != nil {
+func (u *Upgrade) Apply(ctx context.Context, say Say) error {
+	if err := waitLocks(ctx, dpkgLocks, say.Progress); err != nil {
 		return err
 	}
 	_, err := aptGet(ctx, slices.Concat(u.args(), aptApply)...)

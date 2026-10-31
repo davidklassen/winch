@@ -1,0 +1,13 @@
+text stderr:
+web1: base: failed: assert probe: port 25 is closed
+  open it in the firewall
+json stdout:
+{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hello"]}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#2","stage":"base","step":"assert probe","module":"assert","status":"ok"}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"change"}
+{"type":"applied","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"]}
+{"type":"applied","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#2","stage":"base","step":"assert probe","module":"assert","status":"failed","error":"port 25 is closed\nopen it in the firewall"}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"apply","host":"web1","status":"failed","error":"base: failed: assert probe: port 25 is closed\nopen it in the firewall"}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":1,"unchanged":0,"unknown":0,"failed":0},"apply":{"hosts":1,"changed":0,"unchanged":0,"failed":1},"hash":"29e8abaec4ad5a4f","exit_code":1}
+json stderr:

@@ -31,7 +31,7 @@ func TestFirewallModule(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "winch.yaml"), []byte("name: fw\nhosts:\n  firewall2: {}\nsteps:\n"+firewall+"        - tcp: 22\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if r := lab.Winch(t, dir, "plan"); r.Code != 0 || !strings.Contains(r.Stderr, "firewall2: nft is missing and no pkg step installs nftables\n") {
+	if r := lab.Winch(t, dir, "plan"); r.Code != 0 || !strings.Contains(r.Stderr, "firewall2: note: nft is missing and no pkg step installs nftables\n") {
 		t.Fatalf("plan without nftables: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	vm.MustRun(t, "[ ! -e /usr/sbin/nft.off ] || mv /usr/sbin/nft.off /usr/sbin/nft")

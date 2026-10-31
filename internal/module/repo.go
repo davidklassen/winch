@@ -214,7 +214,7 @@ func (r *Repo) source() []byte {
 	return []byte(b.String())
 }
 
-func (r *Repo) Check(_ context.Context, st *State, _ func(string)) (Result, error) {
+func (r *Repo) Check(_ context.Context, st *State, _ Say) (Result, error) {
 	if err := r.checkOthers(); err != nil {
 		return Result{}, err
 	}
@@ -430,7 +430,7 @@ func orNone(s string) string {
 
 // Apply writes the files that Check found different and refreshes the index
 // of the source. When the refresh fails, it puts the old files back.
-func (r *Repo) Apply(ctx context.Context, note func(string)) error {
+func (r *Repo) Apply(ctx context.Context, say Say) error {
 	for i, f := range r.writes {
 		if err := writeRoot(f.path, f.content, 0, 0, 0o644); err != nil {
 			return undo(r.writes[:i], err)
@@ -439,7 +439,7 @@ func (r *Repo) Apply(ctx context.Context, note func(string)) error {
 	if !r.refresh {
 		return nil
 	}
-	if err := waitIndexLock(ctx, note); err != nil {
+	if err := waitIndexLock(ctx, say.Progress); err != nil {
 		return undo(r.writes, err)
 	}
 	if err := r.update(ctx); err != nil {

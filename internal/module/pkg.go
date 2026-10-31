@@ -61,7 +61,7 @@ func (p *Pkg) Validate() error {
 	}
 	switch {
 	case p.Purge && !p.Absent:
-		return &yamlx.FieldError{Field: "purge", Msg: "purge: true needs absent: true"}
+		return &yamlx.FieldError{Field: "purge", Msg: "needs absent: true"}
 	case p.Absent && p.Recommends != nil:
 		return &yamlx.FieldError{Field: "recommends", Msg: "absent: true takes no recommends"}
 	}
@@ -88,8 +88,8 @@ func aptGet(ctx context.Context, args ...string) (string, error) {
 	return runLimited(ctx, 0, KillDelay, aptEnv, "", "apt-get", slices.Concat(args, []string{"-o", aptSolver})...)
 }
 
-func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, error) {
-	pkgs, err := readDpkg(ctx, note)
+func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
+	pkgs, err := readDpkg(ctx, say.Progress)
 	if err != nil {
 		return Result{}, err
 	}
@@ -121,7 +121,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 			return !e.IsDir() && strings.Contains(e.Name(), "_Packages")
 		}) {
 			for _, n := range unknown {
-				note("apt does not know " + n)
+				say.Note("apt does not know " + n)
 			}
 		}
 	}
@@ -160,7 +160,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 			return Result{}, err
 		}
 	} else {
-		mayBeProvided(missing, providers, note)
+		mayBeProvided(missing, providers, say.Note)
 	}
 	// apt-mark showauto with no names lists every automatic package.
 	if len(inst) > 0 {
@@ -178,7 +178,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	if len(p.todo) > 0 {
 		changes = []string{p.verb() + " " + strings.Join(p.todo, ", ")}
 		if p.Absent {
-			out, err := p.simulate(ctx, note)
+			out, err := p.simulate(ctx, say.Progress)
 			if err != nil {
 				return Result{}, err
 			}
@@ -205,7 +205,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 	case slices.ContainsFunc(p.todo, func(n string) bool { return !known[n] }):
 		changes = append(changes, OthersUnknown)
 	case len(p.todo) > 0 || len(p.configure) > 0:
-		others, err := p.others(ctx, note)
+		others, err := p.others(ctx, say.Progress)
 		if err != nil {
 			return Result{}, err
 		}
@@ -442,7 +442,7 @@ func parseRemovals(out string, own []string) []string {
 // locks, so it does not see the half-done packages of a running apt. apt reads
 // a copy of the dpkg status in which p.Installed are installed and p.Removed
 // are gone.
-func (p *Pkg) simulate(ctx context.Context, note func(string), flags ...string) (string, error) {
+func (p *Pkg) simulate(ctx context.Context, progress func(string), flags ...string) (string, error) {
 	// The copy has no stanza for a package that an earlier step removes, and
 	// apt fails on a name that neither the copy nor the index has.
 	todo := slices.DeleteFunc(slices.Clone(p.todo), func(n string) bool { return slices.Contains(p.Removed, n) })
@@ -453,7 +453,7 @@ func (p *Pkg) simulate(ctx context.Context, note func(string), flags ...string) 
 	if err != nil {
 		return "", err
 	}
-	unlock, err := lockFiles(ctx, dpkgLocks, note)
+	unlock, err := lockFiles(ctx, dpkgLocks, progress)
 	if err != nil {
 		return "", err
 	}
@@ -472,9 +472,9 @@ func (p *Pkg) simulate(ctx context.Context, note func(string), flags ...string) 
 
 // others returns the plan lines of the other packages that apt installs or
 // upgrades with the step's packages. A held one fails.
-func (p *Pkg) others(ctx context.Context, note func(string)) ([]string, error) {
+func (p *Pkg) others(ctx context.Context, progress func(string)) ([]string, error) {
 	// apt does not upgrade a held package and fails without its name.
-	out, err := p.simulate(ctx, note, append(p.installFlags(), "--remove", "-o", "APT::Ignore-Hold=true")...)
+	out, err := p.simulate(ctx, progress, append(p.installFlags(), "--remove", "-o", "APT::Ignore-Hold=true")...)
 	if err != nil {
 		return nil, err
 	}
@@ -544,9 +544,9 @@ func (p *Pkg) installFlags() []string {
 	return flags
 }
 
-func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
+func (p *Pkg) Apply(ctx context.Context, say Say) error {
 	if len(p.auto) > 0 {
-		if err := waitLocks(ctx, dpkgLocks, note); err != nil {
+		if err := waitLocks(ctx, dpkgLocks, say.Progress); err != nil {
 			return err
 		}
 		if _, err := run(ctx, nil, "apt-mark", append([]string{"manual", "-o", aptLock}, p.auto...)...); err != nil {
@@ -557,7 +557,7 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 		return nil
 	}
 	if p.refresh {
-		if err := waitIndexLock(ctx, note); err != nil {
+		if err := waitIndexLock(ctx, say.Progress); err != nil {
 			return err
 		}
 		if _, err := aptGet(ctx, "update", "-q", "--error-on=any"); err != nil {
@@ -577,7 +577,7 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 	}
 	// The check before the refresh read the old index.
 	if p.refresh {
-		if _, err := p.others(ctx, note); err != nil {
+		if _, err := p.others(ctx, say.Progress); err != nil {
 			return err
 		}
 	}
@@ -585,7 +585,7 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 	if p.verb() == "install" {
 		args = append(args, append(p.installFlags(), "--no-remove")...)
 	}
-	if err := waitLocks(ctx, dpkgLocks, note); err != nil {
+	if err := waitLocks(ctx, dpkgLocks, say.Progress); err != nil {
 		return err
 	}
 	_, err := aptGet(ctx, slices.Concat(args, p.todo, p.configure)...)
@@ -595,7 +595,7 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 // waitIndexLock waits until no other apt run holds the lock of the package
 // index. apt-get update does not wait for it. It creates a missing index
 // directory, where no other run holds the lock.
-func waitIndexLock(ctx context.Context, note func(string)) error {
+func waitIndexLock(ctx context.Context, progress func(string)) error {
 	_, err := os.Stat(filepath.Dir(indexLock))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -603,13 +603,13 @@ func waitIndexLock(ctx context.Context, note func(string)) error {
 	if err != nil {
 		return err
 	}
-	return waitLocks(ctx, []string{indexLock}, note)
+	return waitLocks(ctx, []string{indexLock}, progress)
 }
 
 // waitLocks waits until no other apt or dpkg run holds the locks. apt waits
 // for the dpkg locks too, but prints nothing while it waits.
-func waitLocks(ctx context.Context, names []string, note func(string)) error {
-	unlock, err := lockFiles(ctx, names, note)
+func waitLocks(ctx context.Context, names []string, progress func(string)) error {
+	unlock, err := lockFiles(ctx, names, progress)
 	if err != nil {
 		return err
 	}
@@ -653,12 +653,12 @@ const indexLock = "/var/lib/apt/lists/lock"
 // readDpkg returns every package that dpkg knows. It holds the locks of apt
 // and dpkg while it reads, so it does not see the half-done packages of a
 // running apt.
-func readDpkg(ctx context.Context, note func(string)) (map[string]dpkgPkg, error) {
+func readDpkg(ctx context.Context, progress func(string)) (map[string]dpkgPkg, error) {
 	native, err := run(ctx, nil, "dpkg", "--print-architecture")
 	if err != nil {
 		return nil, err
 	}
-	unlock, err := lockFiles(ctx, dpkgLocks, note)
+	unlock, err := lockFiles(ctx, dpkgLocks, progress)
 	if err != nil {
 		return nil, err
 	}
@@ -708,9 +708,9 @@ func othersHalfDone(pkgs map[string]dpkgPkg, names []string) error {
 }
 
 // lockFiles takes fcntl locks in order. It waits as long as aptLock for all of
-// them, and notes the first process that it waits for. unlock releases the
-// locks.
-func lockFiles(ctx context.Context, names []string, note func(string)) (unlock func(), err error) {
+// them, and tells progress the first process that it waits for. unlock
+// releases the locks.
+func lockFiles(ctx context.Context, names []string, progress func(string)) (unlock func(), err error) {
 	var files []*os.File
 	release := func() {
 		for _, f := range files {
@@ -751,7 +751,7 @@ func lockFiles(ctx context.Context, names []string, note func(string)) (unlock f
 					continue
 				}
 				holder = fmt.Sprintf("another apt run (pid %d)", lk.Pid)
-				note("waiting for " + holder)
+				progress("waiting for " + holder)
 			}
 			if time.Now().After(deadline) {
 				return nil, errors.New(holder + " held the package locks for 5 minutes")

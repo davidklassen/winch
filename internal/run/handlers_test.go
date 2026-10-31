@@ -1048,7 +1048,7 @@ func TestPendingThenWithoutItsStep(t *testing.T) {
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
-	if want := "web1: a pending then of file /etc/aliases matches no step and will not run\n"; errOut.String() != want {
+	if want := "web1: note: a pending then of file /etc/aliases matches no step and will not run\n"; errOut.String() != want {
 		t.Errorf("plan notes %q, want %q", errOut.String(), want)
 	}
 	if !strings.Contains(out.String(), "! then: newaliases") || !strings.Contains(out.String(), "! then: reindex") {
@@ -1092,12 +1092,12 @@ func TestGoneThenScopes(t *testing.T) {
 	}{
 		// A stage that the pipeline no longer has gives the note; a stage
 		// without the host, and a handler that does not run, do not.
-		{name: "all stages", want: "web1: a pending then of file /etc/old matches no step and will not run\n" +
-			"web1: a pending then of file /etc/apps matches no step and will not run\n" +
-			"web1: a pending then of file /etc/nginx/gone.conf matches no step and will not run\n"},
+		{name: "all stages", want: "web1: note: a pending then of file /etc/old matches no step and will not run\n" +
+			"web1: note: a pending then of file /etc/apps matches no step and will not run\n" +
+			"web1: note: a pending then of file /etc/nginx/gone.conf matches no step and will not run\n"},
 		// A skipped stage gives no note, and its recipe app does not run.
-		{name: "a skipped stage", stages: "web", want: "web1: a pending then of file /etc/old matches no step and will not run\n" +
-			"web1: a pending then of file /etc/nginx/gone.conf matches no step and will not run\n"},
+		{name: "a skipped stage", stages: "web", want: "web1: note: a pending then of file /etc/old matches no step and will not run\n" +
+			"web1: note: a pending then of file /etc/nginx/gone.conf matches no step and will not run\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := loadFiles(t, files)
@@ -1161,7 +1161,7 @@ func TestGoneRecordWithoutChange(t *testing.T) {
 				plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 				var out, errOut bytes.Buffer
 				plan.Write(plain(&out), plain(&errOut))
-				if want := "web1: " + tc.note + " and will not run\n"; errOut.String() != want {
+				if want := "web1: note: " + tc.note + " and will not run\n"; errOut.String() != want {
 					t.Errorf("plan notes %q, want %q", errOut.String(), want)
 				}
 				want := "2 hosts: 0 to change, 2 unchanged, 0 unknown\n"

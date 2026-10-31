@@ -466,6 +466,9 @@ func TestMatchConstantPattern(t *testing.T) {
 		{name: "unknown name", files: map[string]string{
 			"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mial\")))'\n",
 		}, want: content + `match("mial"): unknown host or group "mial" in inventories/test.yaml`},
+		{name: "empty part", files: map[string]string{
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(\"mon,,web\")))'\n",
+		}, want: content + `match("mon,,web"): an empty part`},
 		{name: "recipe step vars", files: map[string]string{
 			"pipelines/site.yaml": "stages:\n  - name: monit\n    hosts: all\n    steps:\n      - recipe: monit\n        vars:\n          monit_peers: !expr 'match(\"web\")'\n",
 		}, want: `pipelines/site.yaml:7:24: match("web"): unknown host or group "web"`},
