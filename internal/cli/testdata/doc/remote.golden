@@ -95,21 +95,26 @@ The session:
 
 How commands run:
   Every command on the host, also one that a module runs, such as
-  apt-get or systemctl, runs as root in /, with this environment:
+  apt-get or systemctl, runs as root in /, with only this environment:
 
-    LC_ALL  C.UTF-8
-    PATH    /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    HOME    /root
-    umask   022
+    LC_ALL   C.UTF-8
+    PATH     /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    HOME     /root
+    USER     root
+    LOGNAME  root
+    umask    022
+
+  Nothing comes from the login session, such as the TMPDIR that
+  libpam-tmpdir sets.
 
   The commands of cmd, assert, unless, validate, then, health, and the
   certbot hooks run through sh -e, with stdin from /dev/null. A command
   of several lines stops at its first failed line.
 
   A cmd with dir runs in that directory. A cmd with user runs as that
-  user, with the home of that user as HOME. It starts no login session:
-  PAM does not run, so the login umask and limits of the user do not
-  apply.
+  user, with the home of that user as HOME, and its name as USER and
+  LOGNAME. It starts no login session: PAM does not run, so the login
+  umask and limits of the user do not apply.
 
 The time limit:
   A command stops after 10 minutes, or after the timeout of a cmd step

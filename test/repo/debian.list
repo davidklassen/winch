@@ -43,3 +43,5 @@ pebble
 molly-guard
 # The one-file Caddy example.
 caddy
+# The clean environment of host commands.
+libpam-tmpdir
