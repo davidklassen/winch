@@ -129,6 +129,9 @@ type Plan struct {
 	gone map[string][]protocol.Check
 	// goneThens are the then records of each host that match no step.
 	goneThens map[string][]protocol.Then
+	// refreshed are the hosts whose package index a step refreshed in the
+	// plan.
+	refreshed map[string]bool
 	hash      string
 	opts      Options
 }
@@ -213,7 +216,8 @@ func (h HostPlan) deferred() bool {
 
 // hostRun is what the plan keeps about a host between its stages.
 type hostRun struct {
-	state module.State
+	state     module.State
+	refreshed bool
 	// env is nil until the first contact with the host.
 	env *project.Env
 	// dirs are the directories that checked steps create, and the parents of
@@ -428,7 +432,9 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	}
 	plan.gone = map[string][]protocol.Check{}
 	plan.goneThens = map[string][]protocol.Then{}
+	plan.refreshed = map[string]bool{}
 	for name, hr := range runs {
+		plan.refreshed[name] = hr.refreshed
 		if hr.pending != nil {
 			plan.Pending[name] = *hr.pending
 			if !p.Pipeline.AdHoc {
@@ -554,6 +560,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", where, err)
 		}
+		hr.refreshed = hr.refreshed || hr.state.Refreshed
 		hr.trackRemoved(p.Step.Args)
 		hr.trackUnitFile(p.Step.Args, steps[i].Result)
 		hr.dropCreated(&steps[i].Result)

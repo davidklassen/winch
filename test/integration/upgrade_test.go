@@ -58,11 +58,14 @@ const upgradeReset = "pkill -f 'fcntl[.]lockf'; rm -f /root/locked /etc/winch-fr
 	"while pgrep -x dpkg >/dev/null; do sleep 0.1; done; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --configure -a >/dev/null 2>&1; " +
 	"dpkg --purge winch-up winch-up-deps winch-up-new winch-up-conflict winch-up-old winch-fragile >/dev/null 2>&1; ucf --purge /etc/winch-up-ucf.conf 2>/dev/null; rm -f /etc/winch-up.conf* /etc/winch-up-ucf.conf*; true"
 
+// downSource adds a source that apt cannot fetch: nothing listens on port 9.
+const downSource = "printf 'Types: deb\\nURIs: http://127.0.0.1:9/winch-down\\nSuites: trixie\\nComponents: main\\nTrusted: yes\\n' > /etc/apt/sources.list.d/winch-down.sources"
+
 // spec: Modules/upgrade; Modules
 func TestUpgradeModule(t *testing.T) {
 	t.Parallel()
 	vm := upgradeVM(t, "upgrade")
-	fresh := module.State{IndexFresh: true}
+	fresh := module.State{IndexFresh: true, Refreshed: true}
 	safe := &module.Upgrade{Mode: "safe"}
 	full := &module.Upgrade{Mode: "full"}
 	vmtest.RunCases(t, vm, "upgrade", upgradeReset, []vmtest.Case{
@@ -82,6 +85,16 @@ func TestUpgradeModule(t *testing.T) {
 			WantState: fresh,
 			Unchanged: version("winch-up", "1"),
 			After:     version("winch-up", "2"),
+		},
+		{
+			Name: "the check skips the refresh after a refresh of the run",
+			// A refresh fails on this source, so an ok check did not refresh.
+			Setup:     downSource,
+			State:     module.State{Refreshed: true},
+			Args:      safe,
+			Want:      module.Result{Status: module.OK},
+			WantState: fresh,
+			After:     "rm /etc/apt/sources.list.d/winch-down.sources",
 		},
 		{
 			Name:      "changed conffile and ucf files stay, without a question",
@@ -144,9 +157,8 @@ func TestUpgradeModule(t *testing.T) {
 			WantErr: "winch-fragile is half configured: its configuration failed; fix the cause, then run dpkg --configure -a",
 		},
 		{
-			Name: "a source that apt cannot fetch fails the check",
-			// Nothing listens on port 9.
-			Setup:   installV1("winch-up") + " && printf 'Types: deb\\nURIs: http://127.0.0.1:9/winch-down\\nSuites: trixie\\nComponents: main\\nTrusted: yes\\n' > /etc/apt/sources.list.d/winch-down.sources",
+			Name:    "a source that apt cannot fetch fails the check",
+			Setup:   installV1("winch-up") + " && " + downSource,
 			Args:    safe,
 			WantErr: "Failed to fetch http://127.0.0.1:9/winch-down",
 		},

@@ -259,7 +259,7 @@ func (r *Repo) Check(_ context.Context, st *State, _ func(string)) (Result, erro
 	}
 	if r.refresh {
 		changes = append(changes, "refresh the index of source "+r.Name)
-		st.IndexFresh = false
+		st.IndexFresh, st.Refreshed = false, false
 	}
 	return Result{Status: Change, Action: action, Changes: changes}, nil
 }

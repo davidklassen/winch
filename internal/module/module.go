@@ -86,6 +86,9 @@ type State struct {
 	// IndexFresh is true after an install of the run refreshed the package
 	// index.
 	IndexFresh bool `json:"index_fresh,omitempty"`
+	// Refreshed is true after an upgrade step of the run, also in the plan,
+	// refreshed the package index, and no later step changed a source.
+	Refreshed bool `json:"refreshed,omitempty"`
 	// RemovedUsers are the users that earlier steps of the host remove.
 	RemovedUsers []string `json:"removed_users,omitempty"`
 	// LoginUID is the UID of the session's login user. The helper sets it.

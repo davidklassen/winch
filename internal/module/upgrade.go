@@ -31,13 +31,15 @@ func (u *Upgrade) args() []string {
 }
 
 func (u *Upgrade) Check(ctx context.Context, st *State, note func(string)) (Result, error) {
-	if err := waitIndexLock(ctx, note); err != nil {
-		return Result{}, err
+	if !st.Refreshed {
+		if err := waitIndexLock(ctx, note); err != nil {
+			return Result{}, err
+		}
+		if _, err := aptGet(ctx, "update", "-q", "--error-on=any"); err != nil {
+			return Result{}, err
+		}
 	}
-	if _, err := aptGet(ctx, "update", "-q", "--error-on=any"); err != nil {
-		return Result{}, err
-	}
-	st.IndexFresh = true
+	st.IndexFresh, st.Refreshed = true, true
 	pkgs, err := readDpkg(ctx, note)
 	if err != nil {
 		return Result{}, err
