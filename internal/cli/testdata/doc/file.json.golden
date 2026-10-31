@@ -50,7 +50,7 @@
       "default": "",
       "required": false,
       "line": "file on the host",
-      "text": "File on the host. Its bytes are the content, and its permission bits are the default mode. The default owner and group stay root: the owner of the source does not carry over.",
+      "text": "File on the host. Its bytes are the content. Its permission bits, without the write bits of the group and others, are the default mode. The default owner and group stay root: the owner of the source does not carry over.",
       "keys": []
     },
     {
@@ -90,7 +90,7 @@
       "default": "0644",
       "required": false,
       "line": "octal, in quotes",
-      "text": "Octal, in quotes: \"0640\". Without quotes, YAML reads it as a number. With stock, the package gives the default. With copy_from, the source gives it. A step without content has no default.",
+      "text": "Octal, in quotes: \"0640\". Without quotes, YAML reads it as a number. With stock, the package gives the default. With copy_from, the source gives it, without the write bits of the group and others. A step without content has no default.",
       "keys": []
     },
     {

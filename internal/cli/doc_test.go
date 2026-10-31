@@ -81,7 +81,8 @@ func TestDocKey(t *testing.T) {
 
 Octal, in quotes: "0640". Without quotes, YAML reads it as a number.
 With stock, the package gives the default. With copy_from, the source
-gives it. A step without content has no default.
+gives it, without the write bits of the group and others. A step without
+content has no default.
 `},
 		{"templates.has", `templates.has: function
 

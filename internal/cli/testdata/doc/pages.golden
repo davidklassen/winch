@@ -2225,9 +2225,10 @@ File in the recipe's files/ directory. Its bytes are the content.
 ==> winch doc file.copy_from
 file.copy_from: string
 
-File on the host. Its bytes are the content, and its permission bits are
-the default mode. The default owner and group stay root: the owner of
-the source does not carry over.
+File on the host. Its bytes are the content. Its permission bits,
+without the write bits of the group and others, are the default mode.
+The default owner and group stay root: the owner of the source does not
+carry over.
 ==> winch doc file.stock
 file.stock: boolean, default false
 
@@ -2246,7 +2247,8 @@ file.mode: string, default 0644
 
 Octal, in quotes: "0640". Without quotes, YAML reads it as a number.
 With stock, the package gives the default. With copy_from, the source
-gives it. A step without content has no default.
+gives it, without the write bits of the group and others. A step without
+content has no default.
 ==> winch doc file.validate
 file.validate: string
 
