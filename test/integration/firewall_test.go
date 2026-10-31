@@ -222,6 +222,78 @@ func TestFirewallModule(t *testing.T) {
 	vm.MustRun(t, "systemctl restart nftables")
 }
 
+// spec: Modules/firewall (other input chains)
+func TestFirewallOtherInputChains(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "fwother")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml": "name: fw\nhosts:\n  fwother: {}\nsteps:\n  - pkg:\n      name: nftables\n  - firewall:\n      allow:\n        - tcp: [22, 8080]\n",
+	})
+	note := func(table string) string {
+		return "fwother: note: the table " + table + " also filters input; its rules can drop what this step allows\n"
+	}
+	want := []string{note("inet drops"), note("inet vmaps"), note("inet strict")}
+	if osRelease().id == "ubuntu" {
+		vm.MustRun(t, "ufw default deny incoming && ufw allow 22/tcp && ufw --force enable")
+		want = append(want, note("ip filter"), note("ip6 filter"))
+	}
+	vm.MustRun(t, "apt-get update -q >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables >/dev/null")
+	vm.MustRun(t, "nft -f - <<'EOF'\n"+`table inet drops {
+	chain input {
+		type filter hook input priority 10; policy accept;
+		tcp dport 8080 drop
+		tcp dport 8081 drop
+	}
+}
+table inet vmaps {
+	chain input {
+		type filter hook input priority 11; policy accept;
+		tcp dport vmap { 8080 : drop }
+	}
+}
+table inet strict {
+	chain input {
+		type filter hook input priority 12; policy drop;
+		ct state established,related accept
+		tcp dport 22 accept
+		udp dport 68 accept
+	}
+}
+table inet accepts {
+	chain input {
+		type filter hook input priority 5; policy accept;
+		tcp dport 9 accept
+	}
+}
+table ip forwards {
+	chain forward {
+		type filter hook forward priority 0; policy drop;
+	}
+}
+`+"EOF")
+	// The notes do not change the result of the step.
+	var r vmtest.Result
+	for _, args := range [][]string{{"plan"}, {"apply", "--yes"}, {"plan"}} {
+		r = lab.Winch(t, dir, args...)
+		if r.Code != 0 {
+			t.Fatalf("%s: exit %d, stdout %q, stderr %q", args[0], r.Code, r.Stdout, r.Stderr)
+		}
+		for _, w := range want {
+			if strings.Count(r.Stderr, w) != 1 {
+				t.Errorf("%s: stderr %q, want %q once", args[0], r.Stderr, w)
+			}
+		}
+		for _, table := range []string{"inet accepts", "ip forwards", "inet winch"} {
+			if strings.Contains(r.Stderr, note(table)) {
+				t.Errorf("%s notes the table %s: stderr %q", args[0], table, r.Stderr)
+			}
+		}
+	}
+	if !unchanged(r.Stdout, 1) {
+		t.Errorf("plan after apply: stdout %q", r.Stdout)
+	}
+}
+
 // dhcp6Reply sends one UDP packet to port 546 of the host over a veth pair
 // from the network namespace wd, from the port in argv[1]. It prints
 // "received" or "dropped".
