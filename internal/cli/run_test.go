@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -80,9 +81,9 @@ func TestRunArgs(t *testing.T) {
 		{"a step field", []string{"web1", "when", "x=1"}, `winch run: unknown module "when"`},
 		{"unknown key", []string{"web1", "pkg", "nam=htop"}, `winch run: nam=htop: unknown key "nam"; did you mean "name"?`},
 		{"missing key", []string{"web1", "pkg"}, `winch run: pkg: missing key "name"`},
-		{"a map", []string{"web1", "file", "path=/x", "content={a: b}"}, `winch run: content={a: b}: YAML reads a map; quote it: "{a: b}"`},
-		{"a comment", []string{"web1", "file", "path=/x", "content=a #b"}, `winch run: content=a #b: YAML drops the comment; quote it: "a #b"`},
-		{"a number with other text", []string{"web1", "file", "path=/x", "content=x", "mode=0644"}, `winch run: mode=0644: YAML reads 0644 as 644; quote it: "0644"`},
+		{"a map", []string{"web1", "file", "path=/x", "content={a: b}"}, `winch run: content={a: b}: YAML reads a map; quote it: 'content="{a: b}"'`},
+		{"a comment", []string{"web1", "file", "path=/x", "content=a #b"}, `winch run: content=a #b: YAML drops the comment; quote it: 'content="a #b"'`},
+		{"a number with other text", []string{"web1", "file", "path=/x", "content=x", "mode=0644"}, `winch run: mode=0644: YAML reads 0644 as 644; quote it: 'mode="0644"'`},
 		{"null", []string{"web1", "file", "path=/x", "content="}, "winch run: content=: null is not a value"},
 		{"a tag", []string{"web1", "file", "path=/x", "content=!tpl x"}, "winch run: content=!tpl x: winch run gives no !tpl values"},
 		{"a wrong type", []string{"web1", "pkg", "name=htop", "recommends=yes"}, `winch run: recommends=yes: recommends: expected true or false, got the string "yes"`},
@@ -93,9 +94,9 @@ func TestRunArgs(t *testing.T) {
 		{"unit source", []string{"web1", "unit", "name=app.service", "source=app.service"}, "winch run: source=app.service: winch run cannot use source; use it in a recipe"},
 		{"unknown host", []string{"web9", "pkg", "name=htop"}, `winch run: unknown host or group "web9" in inventories/test.yaml; did you mean "web1"?`},
 		{"no host", []string{"none", "pkg", "name=htop"}, `winch run: the host pattern "none" matches no host in inventories/test.yaml`},
-		{"a YAML error", []string{"web1", "file", "path=/x", "content=[a"}, `winch run: content=[a: did not find expected ',' or ']'; quote it: "[a"`},
-		{"an alias", []string{"web1", "file", "path=/x", "content=*x"}, `; quote it: "*x"`},
-		{"a reserved character", []string{"web1", "file", "path=/x", "content=@x"}, `; quote it: "@x"`},
+		{"a YAML error", []string{"web1", "file", "path=/x", "content=[a"}, `winch run: content=[a: did not find expected ',' or ']'; quote it: 'content="[a"'`},
+		{"an alias", []string{"web1", "file", "path=/x", "content=*x"}, `; quote it: 'content="*x"'`},
+		{"a reserved character", []string{"web1", "file", "path=/x", "content=@x"}, `; quote it: 'content="@x"'`},
 		{"a bad hash", []string{"web1", "pkg", "name=htop", "--check", "xyz"}, "a plan hash has 16 hex characters"},
 		{"--hosts", []string{"web1", "pkg", "name=htop", "--hosts", "web1"}, "flag provided but not defined: -hosts"},
 		{"--set", []string{"web1", "pkg", "name=htop", "--set", "vars.x=1"}, "flag provided but not defined: -set"},
@@ -109,6 +110,25 @@ func TestRunArgs(t *testing.T) {
 			}
 			if len(h.Connects) != 0 {
 				t.Error("winch contacted a host")
+			}
+			_, fix, ok := strings.Cut(r.err, "; quote it: ")
+			if !ok {
+				return
+			}
+			fix, _, _ = strings.Cut(fix, "\n")
+			out, err := exec.Command("sh", "-c", `printf '%s\000' `+fix).Output()
+			if err != nil {
+				t.Fatalf("sh -c %q: %v", fix, err)
+			}
+			words := strings.Split(strings.TrimSuffix(string(out), "\000"), "\000")
+			if len(words) != 1 {
+				t.Fatalf("the fix %s gives the words %q", fix, words)
+			}
+			args := slices.Clone(tt.args)
+			args[len(args)-1] = words[0]
+			r = winch(t, dir, h, false, "", append([]string{"run"}, args...)...)
+			if r.code == exitInvalid {
+				t.Errorf("the fix %s: stderr %q", fix, r.err)
 			}
 		})
 	}

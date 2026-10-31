@@ -689,7 +689,7 @@ winch apply site --batch
 		doc.Paragraph(`A host is unreachable when ssh fails before the session starts: the name does not resolve, the connection is refused or takes more than 15 seconds, or the host key or the login fails. winch then exits 4 when no step failed. For an unknown host key, the error names the ssh command to run once. For a refused login, it names ssh-add.`),
 		doc.Paragraph(`Only one winch run works on a host at a time. When another run holds the host, the error names that run and the process ID of its helper. When that run is gone, end the process.`),
 		doc.Heading("The session"),
-		doc.Paragraph(`A session is one ssh process with the helper at the other end. All work on a host goes through it. It opens at the first work of the host and stays open across stages. It closes when the host has no more work, and at the apply question, which can wait for a long time. The access checks open their own connections.`),
+		doc.Paragraph(`A session is one ssh process with the helper at the other end. All work on a host goes through it. It opens at the first work of the host and stays open across stages and through the question. The host lock stays held while the question waits; Ctrl-C releases it. A session closes when its host has no more work. The access checks open their own connections.`),
 		doc.Paragraph(`winch keeps the helper in /var/lib/winch/bin/ and sends it when it is missing. The helper exits when the session ends and leaves no process, except a confirm_access timer until it ends.`),
 		doc.Paragraph(`The helpers for amd64 and arm64 are inside the winch binary. A winch built with go install has none: plan, apply, run, and exec fail before they contact a host. Install a release.`),
 		doc.Heading("How commands run"),

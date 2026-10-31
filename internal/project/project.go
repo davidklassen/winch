@@ -295,7 +295,7 @@ func (l *loader) commandPipeline(c Command) (*Pipeline, error) {
 			errs = append(errs, yamlx.Errorf(pos, "%s is given twice", key))
 			continue
 		}
-		n, err := parseValue(text, where.File)
+		n, err := parseValue(text, where.File, "", key)
 		if err != nil {
 			errs = append(errs, yamlx.Errorf(pos, "%s", err))
 			continue
@@ -406,6 +406,8 @@ func newLoader(dir string, cfg *Config) (*loader, error) {
 	return l, errors.Join(errs...)
 }
 
+var errNoHosts = errors.New("the project has no hosts; add hosts to winch.yaml or a file to inventories/")
+
 // loadInventories loads the inventory flag, the default from winch.yaml, or
 // the only inventory.
 // Without any of them, it loads every inventory when all is true. It returns the
@@ -425,11 +427,11 @@ func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setVa
 		}
 		return []*Inventory{inv}, nil
 	}
+	if len(l.layout.inventories) == 0 {
+		return nil, errNoHosts
+	}
 	if !all {
 		return nil, errors.New("no inventory: use --inventory, or set inventory in winch.yaml")
-	}
-	if len(l.layout.inventories) == 0 {
-		return nil, errors.New("no inventory: use --inventory, set inventory in winch.yaml, or add a file to inventories/")
 	}
 	var invs []*Inventory
 	var errs []error

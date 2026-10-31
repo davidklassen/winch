@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"unicode/utf8"
 
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/secret"
@@ -135,7 +136,7 @@ func (l *loader) parseSets(set []string) ([]setValue, error) {
 			errs = append(errs, fmt.Errorf("--set %s: use --set vars.<name>=<value>", s))
 			continue
 		}
-		n, err := parseValue(text, "--set")
+		n, err := parseValue(text, "--set", "--set ", key)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("--set %s: %w", s, err))
 			continue
@@ -231,64 +232,101 @@ func (l *loader) inventoryNames() map[string]bool {
 }
 
 // parseValue parses a value of the command line as YAML. what names the flag
-// or the command.
-func parseValue(text, what string) (*yamlx.Node, error) {
+// or the command. An error names the fix: flag, then key=value with the value
+// quoted, as one shell word.
+func parseValue(text, what, flag, key string) (*yamlx.Node, error) {
+	fix := func(value string) string { return flag + quote(key+"="+value) }
+	whole := fix(strconv.Quote(text))
 	n, err := yamlx.Parse(what, []byte(text))
 	if err != nil {
 		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
-			return nil, fmt.Errorf("%s; quote it: %q", ye.Msg, text)
+			problem, _, _ := strings.Cut(ye.Msg, "; ")
+			return nil, fmt.Errorf("%s; quote it: %s", problem, whole)
 		}
 		return nil, err
 	}
 	if yamlx.HasComment([]byte(text)) {
-		return nil, fmt.Errorf("YAML drops the comment; quote it: %q", text)
+		return nil, fmt.Errorf("YAML drops the comment; quote it: %s", whole)
 	}
 	if n.Kind == yamlx.Null && text == "" {
 		return nil, errors.New("null is not a value")
 	}
 	if n.Kind == yamlx.Null {
-		return nil, fmt.Errorf("YAML reads null; quote it: %q", text)
+		return nil, fmt.Errorf("YAML reads null; quote it: %s", whole)
 	}
 	if t := findTag(n); t != nil {
 		return nil, fmt.Errorf("%s gives no %s values", what, t.Tag)
 	}
 	if n.Kind == yamlx.Map {
-		return nil, fmt.Errorf("YAML reads a map; quote it: %q", text)
+		return nil, fmt.Errorf("YAML reads a map; quote it: %s", whole)
 	}
 	quoted := strings.HasPrefix(text, `"`) || strings.HasPrefix(text, "'")
 	if n.Kind == yamlx.Scalar && !quoted && n.Text != text || n.Kind == yamlx.List && !strings.HasPrefix(text, "[") {
-		return nil, fmt.Errorf("YAML changes the text; quote it: %q", text)
+		return nil, fmt.Errorf("YAML changes the text; quote it: %s", whole)
 	}
-	if msg := textChange(n); msg != "" {
-		return nil, errors.New(msg)
+	if cs := textChanges(n, nil); len(cs) > 0 {
+		return nil, fmt.Errorf("YAML reads %s as %s; quote it: %s", cs[0].Text, number(cs[0]), fix(quoteNumbers(text, cs)))
 	}
 	return n, nil
 }
 
-// textChange tells which number in a --set value YAML reads with other text,
-// and how to quote it. It is empty when all numbers keep their text.
-func textChange(n *yamlx.Node) string {
-	var number string
+// number returns the number that YAML reads in n when its text differs, else "".
+func number(n *yamlx.Node) string {
+	var s string
 	switch v := n.Value.(type) {
 	case int64:
-		number = strconv.FormatInt(v, 10)
+		s = strconv.FormatInt(v, 10)
 	case float64:
-		number = strconv.FormatFloat(v, 'f', -1, 64)
+		s = strconv.FormatFloat(v, 'f', -1, 64)
 	}
-	if number != "" && number != n.Text {
-		return fmt.Sprintf("YAML reads %s as %s; quote it: %q", n.Text, number, n.Text)
+	if s == n.Text {
+		return ""
+	}
+	return s
+}
+
+// textChanges appends to out the numbers in n that YAML reads with other text.
+func textChanges(n *yamlx.Node, out []*yamlx.Node) []*yamlx.Node {
+	if number(n) != "" {
+		out = append(out, n)
 	}
 	for _, item := range n.Items {
-		if msg := textChange(item); msg != "" {
-			return msg
-		}
+		out = textChanges(item, out)
 	}
 	for _, p := range n.Pairs {
-		if msg := textChange(p.Value); msg != "" {
-			return msg
-		}
+		out = textChanges(p.Value, out)
 	}
-	return ""
+	return out
+}
+
+// quoteNumbers returns text with the numbers cs in double quotes. An alias
+// gives a number twice.
+func quoteNumbers(text string, cs []*yamlx.Node) string {
+	at := map[int]string{}
+	for _, c := range cs {
+		i := offset(text, c.Pos)
+		// The position of a number with an anchor is the anchor.
+		at[i+strings.Index(text[i:], c.Text)] = c.Text
+	}
+	// From the end, so the offsets before stay valid.
+	for _, i := range slices.Backward(slices.Sorted(maps.Keys(at))) {
+		text = text[:i] + strconv.Quote(at[i]) + text[i+len(at[i]):]
+	}
+	return text
+}
+
+// offset returns the byte offset in text of pos, whose column counts
+// characters.
+func offset(text string, pos yamlx.Pos) int {
+	i := 0
+	for range pos.Line - 1 {
+		i += strings.IndexByte(text[i:], '\n') + 1
+	}
+	for range pos.Col - 1 {
+		_, size := utf8.DecodeRuneInString(text[i:])
+		i += size
+	}
+	return i
 }
 
 // findTag returns the first tagged scalar in n, or nil.

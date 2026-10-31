@@ -417,24 +417,32 @@ func TestSetValues(t *testing.T) {
 		want    any
 		wantErr string
 	}{
-		{set: "Hello # world", wantErr: `--set vars.domain=Hello # world: YAML drops the comment; quote it: "Hello # world"`},
-		{set: "[a, b] # c", wantErr: `--set vars.domain=[a, b] # c: YAML drops the comment; quote it: "[a, b] # c"`},
-		{set: "8.0", wantErr: `--set vars.domain=8.0: YAML reads 8.0 as 8; quote it: "8.0"`},
-		{set: "1.10", wantErr: `--set vars.domain=1.10: YAML reads 1.10 as 1.1; quote it: "1.10"`},
-		{set: "0123", wantErr: `--set vars.domain=0123: YAML reads 0123 as 123; quote it: "0123"`},
-		{set: "[1, 1.10]", wantErr: `--set vars.domain=[1, 1.10]: YAML reads 1.10 as 1.1; quote it: "1.10"`},
-		{set: "a: b", wantErr: `--set vars.domain=a: b: YAML reads a map; quote it: "a: b"`},
-		{set: `"8.0" # x`, wantErr: `--set vars.domain="8.0" # x: YAML drops the comment; quote it: "\"8.0\" # x"`},
-		{set: "#tag", wantErr: `--set vars.domain=#tag: YAML reads null; quote it: "#tag"`},
-		{set: "null", wantErr: `--set vars.domain=null: YAML reads null; quote it: "null"`},
-		{set: "Hello\nWorld", wantErr: "--set vars.domain=Hello\nWorld: YAML changes the text; quote it: \"Hello\\nWorld\""},
-		{set: "|", wantErr: `--set vars.domain=|: YAML changes the text; quote it: "|"`},
-		{set: "-", wantErr: `--set vars.domain=-: YAML changes the text; quote it: "-"`},
-		{set: "Hello ", wantErr: `--set vars.domain=Hello : YAML changes the text; quote it: "Hello "`},
-		{set: "[{a: 1.10}]", wantErr: `--set vars.domain=[{a: 1.10}]: YAML reads 1.10 as 1.1; quote it: "1.10"`},
-		{set: "0x1F", wantErr: `--set vars.domain=0x1F: YAML reads 0x1F as 31; quote it: "0x1F"`},
-		{set: "1e3", wantErr: `--set vars.domain=1e3: YAML reads 1e3 as 1000; quote it: "1e3"`},
-		{set: "+5", wantErr: `--set vars.domain=+5: YAML reads +5 as 5; quote it: "+5"`},
+		{set: "Hello # world", wantErr: `--set vars.domain=Hello # world: YAML drops the comment; quote it: --set 'vars.domain="Hello # world"'`},
+		{set: "[a, b] # c", wantErr: `--set vars.domain=[a, b] # c: YAML drops the comment; quote it: --set 'vars.domain="[a, b] # c"'`},
+		{set: "8.0", wantErr: `--set vars.domain=8.0: YAML reads 8.0 as 8; quote it: --set 'vars.domain="8.0"'`},
+		{set: "1.10", wantErr: `--set vars.domain=1.10: YAML reads 1.10 as 1.1; quote it: --set 'vars.domain="1.10"'`},
+		{set: "0123", wantErr: `--set vars.domain=0123: YAML reads 0123 as 123; quote it: --set 'vars.domain="0123"'`},
+		{set: "[1, 1.10]", wantErr: `--set vars.domain=[1, 1.10]: YAML reads 1.10 as 1.1; quote it: --set 'vars.domain=[1, "1.10"]'`},
+		{set: "[1,\n 1.10]", wantErr: "--set vars.domain=[1,\n 1.10]: YAML reads 1.10 as 1.1; quote it: --set 'vars.domain=[1,\n \"1.10\"]'"},
+		{set: "[1.10, 1.10]", wantErr: `--set vars.domain=[1.10, 1.10]: YAML reads 1.10 as 1.1; quote it: --set 'vars.domain=["1.10", "1.10"]'`},
+		{set: "[{a: 1.10}, {b: 08}]", wantErr: `--set vars.domain=[{a: 1.10}, {b: 08}]: YAML reads 1.10 as 1.1; quote it: --set 'vars.domain=[{a: "1.10"}, {b: "08"}]'`},
+		{set: "[&a 1.10, *a]", wantErr: `--set vars.domain=[&a 1.10, *a]: YAML reads 1.10 as 1.1; quote it: --set 'vars.domain=[&a "1.10", *a]'`},
+		{set: "99999999999999999999", wantErr: `--set vars.domain=99999999999999999999: the integer 99999999999999999999 is out of range (-9223372036854775808 to 9223372036854775807); quote it: --set 'vars.domain="99999999999999999999"'`},
+		{set: "!foo", wantErr: `--set vars.domain=!foo: unknown tag; quote it: --set 'vars.domain="!foo"'`},
+		{set: "[é, 1.10]", wantErr: `--set vars.domain=[é, 1.10]: YAML reads 1.10 as 1.1; quote it: --set 'vars.domain=[é, "1.10"]'`},
+		{set: "a: b", wantErr: `--set vars.domain=a: b: YAML reads a map; quote it: --set 'vars.domain="a: b"'`},
+		{set: `"8.0" # x`, wantErr: `--set vars.domain="8.0" # x: YAML drops the comment; quote it: --set 'vars.domain="\"8.0\" # x"'`},
+		{set: "it's # x", wantErr: `--set vars.domain=it's # x: YAML drops the comment; quote it: --set 'vars.domain="it'\''s # x"'`},
+		{set: "#tag", wantErr: `--set vars.domain=#tag: YAML reads null; quote it: --set 'vars.domain="#tag"'`},
+		{set: "null", wantErr: `--set vars.domain=null: YAML reads null; quote it: --set 'vars.domain="null"'`},
+		{set: "Hello\nWorld", wantErr: "--set vars.domain=Hello\nWorld: YAML changes the text; quote it: --set 'vars.domain=\"Hello\\nWorld\"'"},
+		{set: "|", wantErr: `--set vars.domain=|: YAML changes the text; quote it: --set 'vars.domain="|"'`},
+		{set: "-", wantErr: `--set vars.domain=-: YAML changes the text; quote it: --set 'vars.domain="-"'`},
+		{set: "Hello ", wantErr: `--set vars.domain=Hello : YAML changes the text; quote it: --set 'vars.domain="Hello "'`},
+		{set: "[{a: 1.10}]", wantErr: `--set vars.domain=[{a: 1.10}]: YAML reads 1.10 as 1.1; quote it: --set 'vars.domain=[{a: "1.10"}]'`},
+		{set: "0x1F", wantErr: `--set vars.domain=0x1F: YAML reads 0x1F as 31; quote it: --set 'vars.domain="0x1F"'`},
+		{set: "1e3", wantErr: `--set vars.domain=1e3: YAML reads 1e3 as 1000; quote it: --set 'vars.domain="1e3"'`},
+		{set: "+5", wantErr: `--set vars.domain=+5: YAML reads +5 as 5; quote it: --set 'vars.domain="+5"'`},
 		{set: `"Hello\nWorld"`, want: "Hello\nWorld"},
 		{set: `"-"`, want: "-"},
 		{set: "false", want: false},
@@ -457,6 +465,14 @@ func TestSetValues(t *testing.T) {
 				if err == nil || err.Error() != tt.wantErr {
 					t.Fatalf("error %v, want %q", err, tt.wantErr)
 				}
+				_, fix, _ := strings.Cut(tt.wantErr, "; quote it: ")
+				args := shellWords(t, fix)
+				if len(args) != 2 || args[0] != "--set" {
+					t.Fatalf("the fix gives the words %q", args)
+				}
+				if _, err := Load(t.Context(), writeProject(t, varsProject), "", "site", []string{args[1]}, Keys{}); err != nil {
+					t.Errorf("the fix: %v", err)
+				}
 				return
 			}
 			if err != nil {
@@ -467,6 +483,16 @@ func TestSetValues(t *testing.T) {
 			}
 		})
 	}
+}
+
+// shellWords returns the words that sh makes of line.
+func shellWords(t *testing.T, line string) []string {
+	t.Helper()
+	out, err := exec.Command("sh", "-c", `printf '%s\000' `+line).Output()
+	if err != nil {
+		t.Fatalf("sh -c %q: %v", line, err)
+	}
+	return strings.Split(strings.TrimSuffix(string(out), "\000"), "\000")
 }
 
 // spec: Templates and expressions/Data; Variables; Variables/Sources; Steps; Inventory
@@ -595,6 +621,18 @@ func TestQuote(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// spec: CLI/Messages; Templates and expressions
+func TestExprTypeError(t *testing.T) {
+	got := evalOne(t, "  port: 80\n", "  - file:\n      path: /a\n      content: !expr vars.port\n", nil)
+	want := "error: recipes/r/recipe.yaml:4:16: content: expected a string, got the integer 80; use string(...) in the expression to make it a string"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	if got := evalOne(t, "  port: 80\n", "  - file:\n      path: /a\n      content: !expr string(vars.port)\n", nil); got != "80" {
+		t.Errorf("the fix gives %q", got)
 	}
 }
 
