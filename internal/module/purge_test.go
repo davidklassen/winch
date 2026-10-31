@@ -304,11 +304,11 @@ func TestSSHDLoss(t *testing.T) {
 		want    string
 	}{
 		{"host keys", []string{"/etc/ssh/ssh_host_ed25519_key", "/etc/ssh/ssh_host_ed25519_key.pub", "/etc/ssh/ssh_host_rsa_key"},
-			"purge of /etc/ssh would remove files that sshd needs: /etc/ssh/ssh_host_ed25519_key, /etc/ssh/ssh_host_rsa_key; add them to keep, or purge a narrower directory"},
+			"purge of /etc/ssh would remove files that sshd needs: ssh_host_ed25519_key, ssh_host_rsa_key; add these names to keep, or purge a narrower directory"},
 		{"the main config", []string{"/etc/ssh/sshd_config"},
-			"purge of /etc/ssh would remove files that sshd needs: /etc/ssh/sshd_config; add them to keep, or purge a narrower directory"},
+			"purge of /etc/ssh would remove files that sshd needs: sshd_config; add these names to keep, or purge a narrower directory"},
 		{"a directory with a host key", []string{"/etc/ssh/keys"},
-			"purge of /etc/ssh would remove files that sshd needs: /etc/ssh/keys/ssh_host_ecdsa_key; add them to keep, or purge a narrower directory"},
+			"purge of /etc/ssh would remove files that sshd needs: keys; add these names to keep, or purge a narrower directory"},
 		{"the drop-in directory", []string{"/etc/ssh/sshd_config.d"}, ""},
 		{"names with a common prefix", []string{"/etc/ssh/ssh_host_ed25519_key.pub", "/etc/ssh/ssh_host_ed25519", "/etc/ssh/sshd", "/etc/ssh/key"}, ""},
 	} {

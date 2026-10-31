@@ -91,6 +91,7 @@ func TestRunArgs(t *testing.T) {
 		{"source", []string{"web1", "file", "path=/x", "source=a"}, "winch run: source=a: winch run cannot use source; use it in a recipe"},
 		{"assert", []string{"all", "assert", "command=systemctl is-active nginx", "message=down"}, "winch run: winch run cannot use assert; run a check with winch exec"},
 		{"assert with no argument", []string{"web1", "assert"}, "winch run: winch run cannot use assert; run a check with winch exec"},
+		{"a service step without an action", []string{"web1", "service", "name=nginx"}, "winch run: service: a service step needs running, enabled, reloaded, or restarted"},
 		{"unit source", []string{"web1", "unit", "name=app.service", "source=app.service"}, "winch run: source=app.service: winch run cannot use source; use it in a recipe"},
 		{"unknown host", []string{"web9", "pkg", "name=htop"}, `winch run: unknown host or group "web9" in inventories/test.yaml; did you mean "web1"?`},
 		{"no host", []string{"none", "pkg", "name=htop"}, `winch run: the host pattern "none" matches no host in inventories/test.yaml`},

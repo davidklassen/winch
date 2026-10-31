@@ -42,6 +42,7 @@ func TestRepoValidate(t *testing.T) {
 		{"space in suite", "name: a\nurl: https://example.com/apt\nsuite: trixie main\ncomponents: [main]\n", `t.yaml:3:8: suite: has white space or a control character`},
 		{"newline in suite", "name: a\nurl: https://example.com/apt\nsuite: \"trixie\\nmain\"\ncomponents: [main]\n", `t.yaml:3:8: suite: has white space or a control character`},
 		{"space in component", "name: a\nurl: https://example.com/apt\nsuite: trixie\ncomponents: [main, \"non free\"]\n", `t.yaml:4:13: components: element 2 has white space or a control character`},
+		{"empty component", "name: a\nurl: https://example.com/apt\nsuite: trixie\ncomponents: [main, \"\"]\n", `t.yaml:4:13: components: element 2 is empty`},
 		{"no components", "name: a\nurl: https://example.com/apt\nsuite: trixie\n", `t.yaml:3:8: suite: needs components, such as [main]; only a flat suite, which ends in "/", has none`},
 		{"empty components", "name: a\nurl: https://example.com/apt\nsuite: trixie\ncomponents: []\n", `t.yaml:3:8: suite: needs components, such as [main]; only a flat suite, which ends in "/", has none`},
 		{"flat with components", "name: a\nurl: https://example.com/apt\nsuite: ./\ncomponents: [main]\n", `t.yaml:4:13: components: a flat suite, which ends in "/", has no components`},

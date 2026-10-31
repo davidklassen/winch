@@ -320,7 +320,7 @@ func TestPurgeModule(t *testing.T) {
 		{
 			Name:      "a purge that removes the host keys fails",
 			Args:      &module.Dir{Path: "/etc/ssh", Purge: true},
-			WantErr:   "purge of /etc/ssh would remove files that sshd needs: /etc/ssh/ssh_host_ecdsa_key, /etc/ssh/ssh_host_ed25519_key, /etc/ssh/ssh_host_rsa_key, /etc/ssh/sshd_config; add them to keep, or purge a narrower directory",
+			WantErr:   "purge of /etc/ssh would remove files that sshd needs: ssh_host_ecdsa_key, ssh_host_ed25519_key, ssh_host_rsa_key, sshd_config; add these names to keep, or purge a narrower directory",
 			Unchanged: `[ -e /etc/ssh/ssh_host_ed25519_key ] && [ -e /etc/ssh/sshd_config ]`,
 		},
 		{

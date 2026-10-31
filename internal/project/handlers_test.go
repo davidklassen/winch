@@ -327,6 +327,27 @@ func TestThenEvalErrors(t *testing.T) {
 	}
 }
 
+// spec: Modules/service and unit; Handlers
+func TestHandlerServiceEvalError(t *testing.T) {
+	nginx := handlersProject["recipes/nginx/recipe.yaml"]
+	dir := writeProject(t, handlerFiles(map[string]string{
+		"recipes/nginx/recipe.yaml": strings.Replace(nginx, "        name: nginx\n        restarted: true\n", "        name: !expr '\"nginx\"'\n", 1),
+	}))
+	p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := p.Start(p.Inventory.Hosts[0], debian13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Pipeline.Stages[0].Steps[0].Recipe.Handlers[0].Steps[0].Eval(env)
+	want := "recipes/nginx/recipe.yaml:12:9: a service step needs running, enabled, reloaded, or restarted"
+	if err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %s", err, want)
+	}
+}
+
 // spec: Steps
 func TestThenOfAnEmptyLoop(t *testing.T) {
 	db := handlersProject["recipes/db/recipe.yaml"]

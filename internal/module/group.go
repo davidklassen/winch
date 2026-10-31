@@ -140,7 +140,7 @@ func (g *Group) removable(a accounts, cur groupEntry, st *State) error {
 	if login, ok := a.userByID(st.LoginUID); st.LoginUID != 0 && ok && (login.gid == cur.gid || slices.Contains(cur.members, login.name)) {
 		return fmt.Errorf("the login user %s is in group %s; removing it cuts off winch's access", login.name, g.Name)
 	}
-	users := slices.DeleteFunc(a.primaryUsers(cur.gid), func(u string) bool { return slices.Contains(st.RemovedUsers, u) })
+	users := slices.DeleteFunc(a.primaryUsers(cur.gid), func(u string) bool { return slices.Contains(st.RemovedUsers, u) || slices.Contains(st.MovedUsers, u) })
 	if len(users) > 0 {
 		return fmt.Errorf("%s is the primary group of %s; remove them or change their group first", g.Name, strings.Join(users, ", "))
 	}

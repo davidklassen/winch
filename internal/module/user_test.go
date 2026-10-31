@@ -301,24 +301,28 @@ func TestGroupRemovable(t *testing.T) {
 		group   string
 		login   uint32
 		removed []string
+		moved   []string
 		want    string
 	}{
-		{"a group with members", "web", 1000, nil, ""},
-		{"a primary group", "shared", 1000, nil, "shared is the primary group of u1, u2; remove them or change their group first"},
-		{"a primary group of removed users", "shared", 1000, []string{"u1", "u2"}, ""},
-		{"a primary group of one removed user", "shared", 1000, []string{"u2"}, "shared is the primary group of u1; remove them or change their group first"},
-		{"a group of the login user", "sudo", 1000, nil, "the login user admin is in group sudo; removing it cuts off winch's access"},
-		{"the primary group of the login user", "admin", 1000, nil, "the login user admin is in group admin; removing it cuts off winch's access"},
-		{"root as the login user", "root", 0, nil, "root is the primary group of root; remove them or change their group first"},
-		{"a group of root as the login user", "sudo", 0, nil, ""},
-		{"a login user that is not in passwd", "root", 4294967295, nil, "root is the primary group of root; remove them or change their group first"},
+		{"a group with members", "web", 1000, nil, nil, ""},
+		{"a primary group", "shared", 1000, nil, nil, "shared is the primary group of u1, u2; remove them or change their group first"},
+		{"a primary group of removed users", "shared", 1000, []string{"u1", "u2"}, nil, ""},
+		{"a primary group of one removed user", "shared", 1000, []string{"u2"}, nil, "shared is the primary group of u1; remove them or change their group first"},
+		{"a primary group of moved users", "shared", 1000, nil, []string{"u1", "u2"}, ""},
+		{"a primary group of a removed and a moved user", "shared", 1000, []string{"u1"}, []string{"u2"}, ""},
+		{"a primary group of one moved user", "shared", 1000, nil, []string{"u1"}, "shared is the primary group of u2; remove them or change their group first"},
+		{"a group of the login user", "sudo", 1000, nil, nil, "the login user admin is in group sudo; removing it cuts off winch's access"},
+		{"the primary group of the login user", "admin", 1000, nil, nil, "the login user admin is in group admin; removing it cuts off winch's access"},
+		{"root as the login user", "root", 0, nil, nil, "root is the primary group of root; remove them or change their group first"},
+		{"a group of root as the login user", "sudo", 0, nil, nil, ""},
+		{"a login user that is not in passwd", "root", 4294967295, nil, nil, "root is the primary group of root; remove them or change their group first"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := Group{Name: tt.group, Absent: true}
 			cur, _ := a.group(tt.group)
 			got := ""
-			if err := g.removable(a, cur, &State{LoginUID: tt.login, RemovedUsers: tt.removed}); err != nil {
+			if err := g.removable(a, cur, &State{LoginUID: tt.login, RemovedUsers: tt.removed, MovedUsers: tt.moved}); err != nil {
 				got = err.Error()
 			}
 			if got != tt.want {
@@ -528,7 +532,7 @@ func TestUserCheckExistingGroups(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, _, _, err := tt.user.checkExisting(a, alice)
+			res, _, _, err := tt.user.checkExisting(a, alice, &State{})
 			if err != nil {
 				t.Fatal(err)
 			}

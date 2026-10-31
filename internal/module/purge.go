@@ -166,17 +166,18 @@ func sshdNeeded(files []string) []string {
 }
 
 // sshdLoss fails when removed, the paths that a purge of dir removes, holds a
-// path of needed, the files that sshd needs.
+// path of needed, the files that sshd needs. It names the removed entries, as
+// keep takes them.
 func sshdLoss(dir string, removed, needed []string) error {
 	var lost []string
-	for _, n := range needed {
-		if slices.ContainsFunc(removed, func(r string) bool { return n == r || strings.HasPrefix(n, r+"/") }) {
-			lost = append(lost, n)
+	for _, r := range removed {
+		if slices.ContainsFunc(needed, func(n string) bool { return n == r || strings.HasPrefix(n, r+"/") }) {
+			lost = append(lost, filepath.Base(r))
 		}
 	}
 	if len(lost) == 0 {
 		return nil
 	}
 	slices.Sort(lost)
-	return fmt.Errorf("purge of %s would remove files that sshd needs: %s; add them to keep, or purge a narrower directory", dir, strings.Join(slices.Compact(lost), ", "))
+	return fmt.Errorf("purge of %s would remove files that sshd needs: %s; add these names to keep, or purge a narrower directory", dir, strings.Join(slices.Compact(lost), ", "))
 }
