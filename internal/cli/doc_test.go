@@ -724,10 +724,11 @@ func TestDocJSON(t *testing.T) {
 		names = append(names, c.Name)
 		checkDocCommand(t, dir, h, c)
 	}
-	// The commands come in the order of winch --help, each with its
-	// subcommands in the order of its own help.
+	// winch itself comes first, with an empty name. The commands follow in
+	// the order of winch --help, each with its subcommands in the order of
+	// its own help.
 	main := winch(t, dir, h, false, "", "--help").out
-	var want []string
+	want := []string{""}
 	for _, row := range docTable(main, "\nCommands:\n") {
 		want = append(want, row[0])
 		sub := winch(t, dir, h, false, "", row[0], "--help").out
@@ -735,7 +736,7 @@ func TestDocJSON(t *testing.T) {
 			want = append(want, row[0]+" "+row2[0])
 		}
 	}
-	if len(want) == 0 || !slices.Equal(names, want) {
+	if len(want) == 1 || !slices.Equal(names, want) {
 		t.Errorf("commands %q, want %q", names, want)
 	}
 }
@@ -745,8 +746,13 @@ func checkDocCommand(t *testing.T, dir string, h *fakehost.Hosts, c docJSONComma
 	t.Helper()
 	r := winch(t, dir, h, false, "", append(strings.Fields(c.Name), "--help")...)
 	help := r.out
-	if r.code != exitOK || c.Summary == "" || !strings.HasPrefix(help, "winch "+c.Name+": "+c.Summary+"\n\n") {
-		t.Errorf("winch %s --help: exit %d, the summary %q is not the first line:\n%s", c.Name, r.code, c.Summary, help)
+	first, _, _ := strings.Cut(help, "\n\n")
+	want := "winch " + c.Name + ": " + c.Summary
+	if c.Name == "" {
+		first, want = strings.Join(strings.Fields(first), " "), c.Summary
+	}
+	if r.code != exitOK || c.Summary == "" || first != want {
+		t.Errorf("winch %s --help: exit %d, the summary %q is not the first paragraph:\n%s", c.Name, r.code, c.Summary, help)
 		return
 	}
 	var examples []string
@@ -776,7 +782,7 @@ func checkDocCommand(t *testing.T, dir string, h *fakehost.Hosts, c docJSONComma
 		}
 		description = append(description, strings.Join(strings.Fields(para), " "))
 	}
-	if len(c.Description) == 0 || !slices.Equal(description, c.Description) {
+	if (c.Name != "" && len(c.Description) == 0) || !slices.Equal(description, c.Description) {
 		t.Errorf("winch %s: description %q, JSON %q", c.Name, description, c.Description)
 	}
 	var flags []string
