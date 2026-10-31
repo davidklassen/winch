@@ -19,7 +19,7 @@ reads and values, the expressions, and the templates.
 It loads the inventory of --inventory, or of inventory in winch.yaml.
 Without both, it checks every inventory.
 
-It does not decrypt secrets and needs no age identity. It checks that
+It does not decrypt secrets and needs no age key. It checks that
 each !secret is an age file. It warns about a secret whose number of
 recipients differs from the recipients list, and names winch secret
 rekey.

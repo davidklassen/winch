@@ -3,6 +3,7 @@ package secret
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,8 +64,33 @@ func TestDecryptWrongIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = Decrypt(text, []age.Identity{newIdentity(t)})
-	if err == nil || !strings.Contains(err.Error(), "the identity is not a recipient") {
+	if err == nil || !errors.Is(err, ErrNotRecipient) {
 		t.Errorf("Decrypt with another identity: %v", err)
+	}
+}
+
+// spec: Variables/Secrets; CLI/Messages
+func TestDecryptCutShort(t *testing.T) {
+	id := newIdentity(t)
+	rec, err := ParseRecipients([]string{id.Recipient().String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := Encrypt("hunter2", rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	short := base64.StdEncoding.EncodeToString(data[:40])
+	want := "the value is not a whole age file; encrypt the value again with winch secret encrypt"
+	if _, err := Decrypt(short, []age.Identity{id}); err == nil || err.Error() != want {
+		t.Errorf("Decrypt = %v, want %q", err, want)
+	}
+	if _, err := Stanzas(short); err == nil || err.Error() != want {
+		t.Errorf("Stanzas = %v, want %q", err, want)
 	}
 }
 
@@ -103,13 +129,14 @@ func TestIdentityRead(t *testing.T) {
 		wantErr string
 	}{
 		{"file", Identity{Path: good}, ""},
-		{"file that is not a key", Identity{Path: bad}, "read the age identity in " + bad + ": "},
-		{"missing file", Identity{Path: missing}, "no age key in " + missing + "\nSet WINCH_AGE_KEY"},
+		{"file that is not a key", Identity{Path: bad}, bad + " is not an age key file"},
+		{"a directory", Identity{Path: dir}, "read the age key " + dir + ": is a directory"},
+		{"missing file", Identity{Path: missing}, "no age key at " + missing + "\nset WINCH_AGE_KEY"},
 		{"no path", Identity{}, "no age key: the home directory is not known; set WINCH_AGE_KEY or WINCH_AGE_IDENTITY_CMD"},
 		{"command", Identity{Cmd: "cat age.key", Dir: dir}, ""},
-		{"failing command", Identity{Cmd: "echo locked >&2; exit 3"}, "read the age identity: echo locked >&2; exit 3: exit status 3: locked"},
-		{"failing command without stderr", Identity{Cmd: "exit 3"}, "read the age identity: exit 3: exit status 3"},
-		{"command that prints no key", Identity{Cmd: "echo not a key"}, "read the age identity from echo not a key: "},
+		{"failing command", Identity{Cmd: "echo locked >&2; exit 3"}, "WINCH_AGE_IDENTITY_CMD exited with status 3: echo locked >&2; exit 3: locked"},
+		{"failing command without stderr", Identity{Cmd: "exit 3"}, "WINCH_AGE_IDENTITY_CMD exited with status 3: exit 3"},
+		{"command that prints no key", Identity{Cmd: "echo not a key"}, "WINCH_AGE_IDENTITY_CMD printed no age key: echo not a key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -137,7 +137,7 @@ var commands = []command{
 reads and values, the expressions, and the templates.`,
 			`It loads the inventory of --inventory, or of inventory in winch.yaml.
 Without both, it checks every inventory.`,
-			`It does not decrypt secrets and needs no age identity. It checks that
+			`It does not decrypt secrets and needs no age key. It checks that
 each !secret is an age file. It warns about a secret whose number of
 recipients differs from the recipients list, and names winch secret
 rekey.`,
@@ -347,7 +347,7 @@ and winch connects to them in parallel.`,
 		usage: []string{"winch secret <command>"},
 		description: []string{
 			"Secret encrypts values with age for the recipients in winch.yaml.",
-			`winch reads the age identity from the stdout of the command in
+			`winch reads the age key from the stdout of the command in
 WINCH_AGE_IDENTITY_CMD, which runs through sh -c. Without it, winch
 reads the file that WINCH_AGE_KEY names, or else
 ~/.config/winch/age.key. Both variables set is an error.`,
@@ -432,7 +432,7 @@ rewrote.`,
 			"Run it after a change of the recipients.",
 			`It writes through a symbolic link to its target. When a secret does not
 decrypt, rekey changes no file.`,
-			`winch reads the age identity from the stdout of the command in
+			`winch reads the age key from the stdout of the command in
 WINCH_AGE_IDENTITY_CMD, which runs through sh -c. Without it, winch
 reads the file that WINCH_AGE_KEY names, or else
 ~/.config/winch/age.key. Both variables set is an error.`,

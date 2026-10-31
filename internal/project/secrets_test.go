@@ -378,7 +378,7 @@ func TestLoadSecretErrors(t *testing.T) {
 		{name: "set gives a secret", set: []string{"vars.pw=!secret abc"},
 			want: "--set vars.pw=!secret abc: --set gives no !secret values"},
 		{name: "wrong identity", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + newKey(t).encrypt(t, "x") + "\n"},
-			want: "inventories/test.yaml:4:11: !secret: the identity in " + k.path + " is not a recipient"},
+			want: "inventories/test.yaml:4:11: the secrets are not encrypted for the age key " + k.path + " yet; a member who can read them must run winch secret rekey"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -438,13 +438,13 @@ func TestLoadWarnings(t *testing.T) {
 	want := []string{
 		"inventories/test.yaml:5:14: this looks like a GitHub token; use !secret",
 		"inventories/test.yaml:6:19: this looks like a private key; use !secret",
-		"pipelines/other.yaml:1:3: this looks like a Slack token; use !secret",
-		"recipes/r/files/k.pem:1:1: this looks like a private key; use !secret",
-		"recipes/r/files/sub/deeper.key:2:1: this looks like a private key; use !secret",
-		"recipes/r/files/unused.pem:1:1: this looks like a private key; use !secret",
-		"recipes/r/templates/key.tmpl:2:1: this looks like a private key; use !secret",
-		"recipes/r/templates/t.tmpl:2:5: this looks like an AWS access key ID; use !secret",
-		"winch.yaml:10:3: this looks like a Slack token; use !secret",
+		"pipelines/other.yaml:1:3: this looks like a Slack token; put it in a variable with !secret, and read the variable here",
+		"recipes/r/files/k.pem:1:1: this looks like a private key; put it in a variable with !secret, move the file to templates/, and use template in place of source to read it with .vars",
+		"recipes/r/files/sub/deeper.key:2:1: this looks like a private key; put it in a variable with !secret, move the file to templates/, and use template in place of source to read it with .vars",
+		"recipes/r/files/unused.pem:1:1: this looks like a private key; put it in a variable with !secret, move the file to templates/, and use template in place of source to read it with .vars",
+		"recipes/r/templates/key.tmpl:2:1: this looks like a private key; put it in a variable with !secret, and read it with .vars",
+		"recipes/r/templates/t.tmpl:2:5: this looks like an AWS access key ID; put it in a variable with !secret, and read it with .vars",
+		"winch.yaml:10:3: this looks like a Slack token; put it in a variable with !secret, and read the variable here",
 	}
 	all := with(secretProject, files)
 	all["winch.yaml"] = strings.Replace(all["winch.yaml"], "RECIPIENT", k.id.Recipient().String(), 1) + "# " + slack + "\n"
@@ -689,7 +689,7 @@ func TestRekeyFailsWhole(t *testing.T) {
 	})
 	dir := writeProject(t, files)
 	_, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
-	if err == nil || !strings.HasPrefix(err.Error(), "inventories/test.yaml:4:11: !secret: the identity in "+k.path+" is not a recipient") {
+	if err == nil || err.Error() != "inventories/test.yaml:4:11: the secrets are not encrypted for the age key "+k.path+" yet; a member who can read them must run winch secret rekey" {
 		t.Errorf("Rekey = %v", err)
 	}
 	for name, want := range files {
@@ -1242,7 +1242,7 @@ func TestWriteSecretErrors(t *testing.T) {
 		{"two inventories and no default", "name: acme\nrecipients:\n  - KEY\ninventories:\n  prod:\n    hosts: {}\n", "", "", "pw", "no inventory: use --inventory, or set inventory in winch.yaml"},
 		{"a missing inventory", "", "prod", "", "pw", `unknown inventory "prod"`},
 		{"a null value", "", "", "web2", "pw", `variable "pw" is already in the vars of host "web2" in inventories/test.yaml`},
-		{"no recipients", "name: acme\ninventory: test\n", "", "", "pw", "winch.yaml has no recipients"},
+		{"no recipients", "name: acme\ninventory: test\n", "", "", "pw", "winch.yaml has no recipients; run winch secret init"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1467,9 +1467,9 @@ func TestValidateWarnsOldRecipients(t *testing.T) {
 		encrypted, listed int
 		want              string
 	}{
-		{"a member joined", 2, 3, "this secret is encrypted for 2 recipients; winch.yaml lists 3; run winch secret rekey"},
-		{"one recipient", 1, 2, "this secret is encrypted for 1 recipient; winch.yaml lists 2; run winch secret rekey"},
-		{"a member left", 3, 1, "this secret is encrypted for 3 recipients; winch.yaml lists 1; run winch secret rekey"},
+		{"a member joined", 2, 3, "this secret is encrypted for 2 public keys; winch.yaml lists 3; a member who can read it must run winch secret rekey"},
+		{"one recipient", 1, 2, "this secret is encrypted for 1 public key; winch.yaml lists 2; a member who can read it must run winch secret rekey"},
+		{"a member left", 3, 1, "this secret is encrypted for 3 public keys; winch.yaml lists 1; a member who can read it must run winch secret rekey"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1619,5 +1619,70 @@ func TestEvalRepoSecret(t *testing.T) {
 				t.Errorf("error = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// spec: Variables/Secrets in output (the load warning); CLI/Messages
+func TestScanProjectFix(t *testing.T) {
+	tok := fakeSecret(t, "ghp.txt")
+	vars := "use !secret"
+	step := "put it in a variable with !secret, and read the variable here"
+	inv := "move it into vars with !secret"
+	files := map[string]string{
+		"winch.yaml": "name: acme\nvars:\n  a: " + tok + "\nhosts:\n  web1:\n    vars:\n      b: " + tok + "\n" +
+			"inventories:\n  prod:\n    groups:\n      all:\n        vars:\n          c: " + tok + "\n" +
+			"recipes:\n  r:\n    vars:\n      r_d: " + tok + "\n    steps:\n      - file:\n          path: /a\n          content: " + tok + "\n",
+		"inventories/test.yaml":   "hosts:\n  web1:\n    address: " + tok + "\ngroups:\n  web:\n    vars:\n      e: " + tok + "\n",
+		"recipes/app/recipe.yaml": "vars:\n  app_f: " + tok + "\nsteps:\n  - file:\n      path: /a\n      content: " + tok + "\n",
+		"recipes/app/files/b.txt": tok + "\n",
+	}
+	dir := t.TempDir()
+	for name, text := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := scanProject(dir, "winch.yaml", func([]byte) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"inventories/test.yaml:3:14: this looks like a GitHub token; " + inv,
+		"inventories/test.yaml:7:10: this looks like a GitHub token; " + vars,
+		"recipes/app/files/b.txt:1:1: this looks like a GitHub token; put it in a variable with !secret, move the file to templates/, and use template in place of source to read it with .vars",
+		"recipes/app/recipe.yaml:2:10: this looks like a GitHub token; " + vars,
+		"recipes/app/recipe.yaml:6:16: this looks like a GitHub token; " + step,
+		"winch.yaml:3:6: this looks like a GitHub token; " + vars,
+		"winch.yaml:7:10: this looks like a GitHub token; " + vars,
+		"winch.yaml:13:14: this looks like a GitHub token; " + vars,
+		"winch.yaml:17:12: this looks like a GitHub token; " + vars,
+		"winch.yaml:21:20: this looks like a GitHub token; " + step,
+	}
+	var lines []string
+	for _, w := range got {
+		lines = append(lines, w.Error())
+	}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Errorf("warnings:\n%s\nwant:\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// spec: Variables/Secrets (winch secret rekey); CLI/Messages
+func TestRekeyCannotReadOnce(t *testing.T) {
+	k, other := newKey(t), newKey(t)
+	dir := writeProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: a\nrecipients: [" + k.id.Recipient().String() + "]\n",
+		"inventories/test.yaml": "",
+		"inventories/a.yaml":    "hosts:\n  web1:\n    vars:\n      pw: !secret " + other.encrypt(t, "x") + "\n",
+		"inventories/b.yaml":    "hosts:\n  web2:\n    vars:\n      pw: !secret " + other.encrypt(t, "y") + "\n",
+	})
+	_, _, err := Rekey(t.Context(), dir, secret.Identity{Path: k.path})
+	want := "inventories/a.yaml:4:11: the secrets are not encrypted for the age key " + k.path + " yet; a member who can read them must run winch secret rekey"
+	if err == nil || err.Error() != want {
+		t.Errorf("Rekey = %v, want %q", err, want)
 	}
 }

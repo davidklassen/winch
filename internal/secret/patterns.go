@@ -37,7 +37,7 @@ var patterns = []pattern{
 	}},
 	{"a GitHub token", regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{82}\b`), nil},
 	{"a Slack token", regexp.MustCompile(`\bxox[baprs]-[0-9]+-[A-Za-z0-9-]{10,}`), nil},
-	{"an age identity", regexp.MustCompile(`\bAGE-SECRET-KEY-1[0-9A-Z]{58}\b`), nil},
+	{"an age key", regexp.MustCompile(`\bAGE-SECRET-KEY-1[0-9A-Z]{58}\b`), nil},
 	{"a Slack webhook URL", regexp.MustCompile(`https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/+]{40,}`), nil},
 	{"a password in a URL", regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#@:"<>]*:([^\s/?#"<>]+)@`), func(m string) bool {
 		return strings.HasPrefix(m, "$") || strings.Contains(m, "{{")

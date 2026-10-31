@@ -52,7 +52,7 @@ func main() {
 		}()
 	}
 	// Without a home directory and the WINCH_AGE_ variables, only a project
-	// with secrets fails: it cannot read the identity.
+	// with secrets fails: it cannot read the age key.
 	home, _ := os.UserHomeDir()
 	// A binary that go build makes holds its build info.
 	info, _ := debug.ReadBuildInfo()

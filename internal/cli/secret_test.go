@@ -175,7 +175,7 @@ func TestSecretRekey(t *testing.T) {
 		t.Errorf("after rekey: %q, %v", got, err)
 	}
 	r = winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "rekey")
-	if r.code != exitInvalid || !strings.Contains(r.err, "inventories/test.yaml:4:11: !secret: the identity in "+identity+" is not a recipient") {
+	if r.code != exitInvalid || !strings.Contains(r.err, "inventories/test.yaml:4:11: the age key "+identity+" is not in recipients; ") {
 		t.Errorf("rekey with an old identity: exit %d, stderr %q", r.code, r.err)
 	}
 }
@@ -234,8 +234,8 @@ func TestAgeKey(t *testing.T) {
 		{"absolute path", "", identity, exitOK, ""},
 		{"path relative to the current directory", "", "demo.key", exitOK, ""},
 		{"home directory", home, "", exitOK, ""},
-		{"the variable before the home directory", home, missing, exitInvalid, "no age key in " + missing + "\n"},
-		{"missing relative path", "", "missing.key", exitInvalid, "no age key in " + filepath.Join(dir, "missing.key") + "\n"},
+		{"the variable before the home directory", home, missing, exitInvalid, "no age key at " + missing + "\n"},
+		{"missing relative path", "", "missing.key", exitInvalid, "no age key at " + filepath.Join(dir, "missing.key") + "\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -291,8 +291,8 @@ func TestAgeIdentityCmd(t *testing.T) {
 	}{
 		{"plan", "", "cat demo.key", []string{"plan", "site"}, exitOK, ""},
 		{"rekey", "", "cat demo.key", []string{"secret", "rekey"}, exitOK, ""},
-		{"a failing command", "", fail, []string{"plan", "site"}, exitInvalid, "read the age identity: " + fail + ": exit status 3: locked\n"},
-		{"not a recipient", "", "cat " + other, []string{"plan", "site"}, exitInvalid, "!secret: the identity from cat " + other + " is not a recipient"},
+		{"a failing command", "", fail, []string{"plan", "site"}, exitInvalid, "WINCH_AGE_IDENTITY_CMD exited with status 3: " + fail + ": locked\n"},
+		{"not a recipient", "", "cat " + other, []string{"plan", "site"}, exitInvalid, "inventories/test.yaml:4:11: the age key from WINCH_AGE_IDENTITY_CMD is not in recipients; "},
 		{"both variables", identity, "cat demo.key", []string{"plan", "site"}, exitInvalid, "WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set"},
 		{"both variables in rekey", identity, "cat demo.key", []string{"secret", "rekey"}, exitInvalid, "WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set"},
 	}
@@ -493,14 +493,15 @@ func TestSecretInit(t *testing.T) {
 		dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: acme\nrecipients: []\n"})
 		home := t.TempDir()
 		r := winchWith(t, dir, home, "", "", fakehost.New(), false, "", "secret", "init")
-		if r.code != exitInvalid || r.out != "" || !strings.Contains(r.err, "cannot add the public key to recipients in winch.yaml; add it by hand") {
+		key := filepath.Join(home, ".config", "winch", "age.key")
+		if r.code != exitInvalid || !strings.HasPrefix(r.out, "made the age key "+key+"\npublic key: age1") || r.err != "cannot add the public key to recipients in winch.yaml; add it by hand\n" {
 			t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 		}
 		if got := read(t, filepath.Join(dir, "winch.yaml")); got != "name: acme\nrecipients: []\n" {
 			t.Errorf("winch.yaml changed: %q", got)
 		}
-		if _, err := os.Stat(filepath.Join(home, ".config")); err == nil {
-			t.Errorf("init made a key")
+		if _, err := os.Stat(key); err != nil {
+			t.Errorf("init made no key: %v", err)
 		}
 	})
 
@@ -645,5 +646,114 @@ func TestSecretBase64Output(t *testing.T) {
 		if strings.Contains(r.out+r.err, "Zmlyc3Qt") {
 			t.Errorf("%v: the output shows the base64 of the secret:\n%s%s", args, r.out, r.err)
 		}
+	}
+}
+
+// spec: Variables/Secrets; CLI/Messages
+func TestAgeKeyCannotRead(t *testing.T) {
+	_, aliceID := newIdentity(t)
+	bob, _ := newIdentity(t)
+	carol, _ := newIdentity(t)
+	dir := secretProject(t, aliceID)
+	pw, token := encrypt(t, dir, "hunter2"), encrypt(t, dir, "token-1")
+	if err := os.WriteFile(filepath.Join(dir, "inventories/test.yaml"), []byte("hosts:\n  web1:\n    vars:\n      pw: "+pw+"\n      token: "+token+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pipelines/site.yaml"), []byte(secretPipeline+"      - file:\n          path: /etc/token\n          content: !expr vars.token\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := winchWith(t, dir, "", bob, "", fakehost.New(), false, "", "secret", "init"); r.code != exitOK {
+		t.Fatalf("secret init: exit %d, stderr %q", r.code, r.err)
+	}
+	notYet := "inventories/test.yaml:4:11: the secrets are not encrypted for the age key " + bob + " yet; a member who can read them must run winch secret rekey\n"
+	notIn := "inventories/test.yaml:4:11: the age key " + carol + " is not in recipients; set WINCH_AGE_KEY to an age key in recipients, or run winch secret init and ask a member to run winch secret rekey\n"
+	why := "winch exec needs the age key to hide the secrets of the project in its output\n"
+	tests := []struct {
+		name, key string
+		args      []string
+		want      string
+	}{
+		{"plan, in recipients", bob, []string{"plan", "site"}, notYet},
+		{"rekey, in recipients", bob, []string{"secret", "rekey"}, notYet},
+		{"exec, in recipients", bob, []string{"exec", "all", "--", "uptime"}, notYet + why},
+		{"plan, not in recipients", carol, []string{"plan", "site"}, notIn},
+		{"rekey, not in recipients", carol, []string{"secret", "rekey"}, notIn},
+		{"exec, not in recipients", carol, []string{"exec", "all", "--", "uptime"}, notIn + why},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := winchWith(t, dir, "", tt.key, "", fakehost.New(), false, "", tt.args...)
+			if r.code != exitInvalid || r.err != tt.want {
+				t.Errorf("exit %d, stderr %q; want %q", r.code, r.err, tt.want)
+			}
+		})
+	}
+	t.Run("a command not in recipients", func(t *testing.T) {
+		r := winchWith(t, dir, "", "", "cat "+carol, fakehost.New(), false, "", "plan", "site")
+		want := "inventories/test.yaml:4:11: the age key from WINCH_AGE_IDENTITY_CMD is not in recipients; set WINCH_AGE_IDENTITY_CMD to a command that prints an age key in recipients, or run winch secret init and ask a member to run winch secret rekey\n"
+		if r.code != exitInvalid || r.err != want {
+			t.Errorf("exit %d, stderr %q; want %q", r.code, r.err, want)
+		}
+	})
+	t.Run("exec without an age key", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "age.key")
+		r := winchWith(t, dir, "", missing, "", fakehost.New(), false, "", "exec", "all", "--", "uptime")
+		if r.code != exitInvalid || !strings.HasPrefix(r.err, "no age key at "+missing+"\n") || !strings.HasSuffix(r.err, why) {
+			t.Errorf("exit %d, stderr %q", r.code, r.err)
+		}
+	})
+}
+
+// spec: Variables/Secrets; CLI/Messages (the real project file)
+func TestSecretMessagesNameWinchYml(t *testing.T) {
+	_, id := newIdentity(t)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yml":             "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n",
+		"pipelines/site.yaml":   secretPipeline,
+	})
+	r := winch(t, dir, fakehost.New(), false, "x", "secret", "encrypt")
+	if want := "winch.yml has no recipients; run winch secret init\n"; r.code != exitInvalid || r.err != want {
+		t.Errorf("encrypt: exit %d, stderr %q; want %q", r.code, r.err, want)
+	}
+	home := t.TempDir()
+	r = winchWith(t, dir, home, "", "", fakehost.New(), false, "", "secret", "init")
+	if r.code != exitOK || !strings.Contains(r.out, "added the public key to recipients in winch.yml\n") {
+		t.Errorf("init: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	pw := encrypt(t, dir, "hunter2")
+	if err := os.WriteFile(filepath.Join(dir, "inventories/test.yaml"), []byte("hosts:\n  web1:\n    vars:\n      pw: "+pw+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "winch.yml")
+	if err := os.WriteFile(cfg, []byte(readFile(t, cfg)+"  - "+id.Recipient().String()+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r = winch(t, dir, fakehost.New(), false, "", "validate")
+	want := "inventories/test.yaml:4:11: warning: this secret is encrypted for 1 public key; winch.yml lists 2; a member who can read it must run winch secret rekey\n"
+	if r.code != exitOK || !strings.HasSuffix(r.err, want) {
+		t.Errorf("validate: exit %d, stderr %q; want %q", r.code, r.err, want)
+	}
+}
+
+// spec: Variables/Secrets in output (the load warning)
+func TestLoadWarningFix(t *testing.T) {
+	token := fakeSecret(t, "ghp.txt")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":                   "name: acme\nvars:\n  app_token: " + token + "\n  app_note: |\n    x\n    " + token + "\ninventory: test\n",
+		"inventories/test.yaml":        "hosts:\n  web1:\n",
+		"pipelines/site.yaml":          "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/token\n          content: " + token + "\n      - recipe: app\n",
+		"recipes/app/recipe.yaml":      "steps:\n  - file:\n      path: /etc/a\n      template: a.tmpl\n  - file:\n      path: /etc/b\n      source: b.txt\n",
+		"recipes/app/templates/a.tmpl": "token=" + token + "\n",
+		"recipes/app/files/b.txt":      "token=" + token + "\n",
+	})
+	r := winch(t, dir, fakehost.New(), false, "", "validate")
+	want := "pipelines/site.yaml:7:20: warning: this looks like a GitHub token; put it in a variable with !secret, and read the variable here\n" +
+		"recipes/app/files/b.txt:1:7: warning: this looks like a GitHub token; put it in a variable with !secret, move the file to templates/, and use template in place of source to read it with .vars\n" +
+		"recipes/app/templates/a.tmpl:1:7: warning: this looks like a GitHub token; put it in a variable with !secret, and read it with .vars\n" +
+		"winch.yaml:3:14: warning: this looks like a GitHub token; use !secret\n" +
+		"winch.yaml:6:5: warning: this looks like a GitHub token; use !secret\n"
+	if r.code != exitOK || r.err != want {
+		t.Errorf("validate: exit %d, stderr %q; want %q", r.code, r.err, want)
 	}
 }
