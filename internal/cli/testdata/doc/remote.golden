@@ -130,10 +130,10 @@ The time limit:
   step fails, and the error shows the last 10 lines of output. apt-get
   in pkg, repo, and upgrade has no time limit.
 
-  When the connection to winch ends, the helper lets the running command
-  finish within its limit, and then exits. A package install is not cut
-  off in the middle. winch exec is different: on Ctrl-C, or when its
-  session breaks, its command gets SIGINT, and SIGKILL after 10 seconds.
+  When the session ends, the helper lets the running command finish
+  within its limit, and then exits. A package install is not cut off in
+  the middle. winch exec is different: on Ctrl-C, or when its session
+  breaks, its command gets SIGINT, and SIGKILL after 10 seconds.
 
 What winch leaves on the host:
   winch keeps its files in /var/lib/winch/:

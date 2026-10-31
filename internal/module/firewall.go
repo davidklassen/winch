@@ -80,7 +80,7 @@ func (f *Firewall) Validate() error {
 		return absentTakesNone(arg{"allow", f.Allow != nil})
 	}
 	if f.Allow == nil {
-		return &yamlx.FieldError{Field: "allow", Msg: "a firewall step needs allow, or absent: true"}
+		return &yamlx.FieldError{Msg: "a firewall step needs allow, or absent: true"}
 	}
 	return nil
 }
@@ -88,7 +88,7 @@ func (f *Firewall) Validate() error {
 func (r *Rule) Validate() error {
 	switch {
 	case r.TCP != nil && r.UDP != nil:
-		return &yamlx.FieldError{Field: "udp", Msg: "a rule has one of tcp and udp, not both"}
+		return &yamlx.FieldError{At: "udp", Msg: "a rule has at most one of tcp and udp"}
 	case r.TCP == nil && r.UDP == nil:
 		return errors.New("a rule needs tcp or udp")
 	}
@@ -566,7 +566,7 @@ func (f *Firewall) Apply(ctx context.Context, _ Say) error {
 		return f.applyAbsent(ctx)
 	}
 	if _, err := exec.LookPath("nft"); err != nil {
-		return errors.New("nft not found; add a pkg step for the package nftables before this step")
+		return errors.New("nft is missing; install the package nftables in an earlier pkg step")
 	}
 	if f.writeFile {
 		if err := writeRoot(firewallFile, f.data, 0, 0, 0o644); err != nil {

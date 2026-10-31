@@ -58,21 +58,33 @@ func (d *Download) Main() string {
 
 var sha256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+// parseHTTPURL parses the url key of a step.
+func parseHTTPURL(s string) (*url.URL, error) {
+	u, err := url.Parse(s)
+	switch {
+	case err != nil || u.Scheme != "http" && u.Scheme != "https":
+		return nil, &yamlx.FieldError{Field: "url", Msg: "must start with http:// or https://"}
+	case u.Host == "":
+		return nil, &yamlx.FieldError{Field: "url", Msg: "has no host"}
+	}
+	return u, nil
+}
+
 var archiveTypes = []string{".tar.gz", ".tgz", ".tar.xz", ".zip"}
 
 func (d *Download) Validate() error {
 	if strings.ContainsFunc(d.URL, unicode.IsControl) {
 		return &yamlx.FieldError{Field: "url", Msg: "has a control character"}
 	}
-	if u, err := url.Parse(d.URL); err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
-		return &yamlx.FieldError{Field: "url", Msg: "must be an http or https URL"}
+	if _, err := parseHTTPURL(d.URL); err != nil {
+		return err
 	}
 	if !sha256Re.MatchString(d.SHA256) {
 		return &yamlx.FieldError{Field: "sha256", Msg: "must be 64 lowercase hexadecimal digits, as sha256sum prints them"}
 	}
 	switch {
 	case d.Path != "" && d.Unpack != "":
-		return &yamlx.FieldError{Field: "unpack", Msg: "a download step takes path or unpack, not both"}
+		return &yamlx.FieldError{At: "unpack", Msg: "a download step has at most one of path and unpack"}
 	case d.Path != "":
 		if err := checkPath(d.Path); err != nil {
 			return err
@@ -407,7 +419,7 @@ func (d *Download) get(ctx context.Context, w io.Writer, progress func(string)) 
 		return fmt.Errorf("download %s: %w", d.URL, err)
 	}
 	if sum != d.SHA256 {
-		return fmt.Errorf("download %s: the SHA-256 is %s, not %s", d.URL, sum, d.SHA256)
+		return fmt.Errorf("download %s: the sha256 is %s, not %s", d.URL, sum, d.SHA256)
 	}
 	return nil
 }
@@ -444,7 +456,7 @@ func fetch(ctx context.Context, url string, w io.Writer, stall time.Duration) (s
 	var cerr *tls.CertificateVerificationError
 	if errors.As(err, &cerr) {
 		if _, serr := os.Stat(caBundle); errors.Is(serr, fs.ErrNotExist) {
-			return "", errors.New("the host has no CA certificates; install the package ca-certificates with an earlier pkg step")
+			return "", errors.New("the host has no CA certificates; install the package ca-certificates in an earlier pkg step")
 		}
 	}
 	return sum, err

@@ -439,9 +439,9 @@ func TestSecretInit(t *testing.T) {
 	}
 	for _, c := range []struct{ name, file, text, hint string }{
 		{"no secret", "", "", ""},
-		{"a secret in winch.yaml", "winch.yaml", "name: acme\nvars:\n  pw: !secret YWdl\n", "a member who can read the secrets must now run winch secret rekey\n"},
-		{"a secret in an inventory", "inventories/test.yaml", "hosts:\n  web1:\n    vars:\n      pw: !secret YWdl\n", "a member who can read the secrets must now run winch secret rekey\n"},
-		{"a secret in a recipe", "recipes/r/recipe.yaml", "vars:\n  pw: !secret YWdl\nsteps:\n  - file:\n      path: /a\n      content: x\n", "a member who can read the secrets must now run winch secret rekey\n"},
+		{"a secret in winch.yaml", "winch.yaml", "name: acme\nvars:\n  pw: !secret YWdl\n", "a member who can read the secrets must run winch secret rekey\n"},
+		{"a secret in an inventory", "inventories/test.yaml", "hosts:\n  web1:\n    vars:\n      pw: !secret YWdl\n", "a member who can read the secrets must run winch secret rekey\n"},
+		{"a secret in a recipe", "recipes/r/recipe.yaml", "vars:\n  pw: !secret YWdl\nsteps:\n  - file:\n      path: /a\n      content: x\n", "a member who can read the secrets must run winch secret rekey\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			files := maps.Clone(plain)
@@ -579,12 +579,12 @@ func TestSecretGenerate(t *testing.T) {
 	}
 
 	r = winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw")
-	if r.code != exitInvalid || !strings.Contains(r.err, `variable "pw" is already in the vars of the group all in inventories/test.yaml`) {
+	if r.code != exitInvalid || !strings.Contains(r.err, `vars.pw is already in the vars of the group all in inventories/test.yaml`) {
 		t.Errorf("second run: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 
 	r = winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw", "--host", "web1")
-	if r.code != exitOK || r.out != "wrote vars.pw into the vars of host \"web1\" in inventories/test.yaml\n" {
+	if r.code != exitOK || r.out != "wrote vars.pw into the vars of host web1 in inventories/test.yaml\n" {
 		t.Fatalf("--host: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 	data, err := os.ReadFile(path)
@@ -599,7 +599,7 @@ func TestSecretGenerate(t *testing.T) {
 	}
 
 	r = winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw", "--host", "")
-	if r.code != exitInvalid || !strings.Contains(r.err, "winch secret generate: --host must not be empty") {
+	if r.code != exitInvalid || !strings.Contains(r.err, "winch secret generate: --host is empty") {
 		t.Errorf("--host \"\": exit %d, stderr %q", r.code, r.err)
 	}
 	r = winch(t, dir, fakehost.New(), false, "", "validate", "--host", "web1")

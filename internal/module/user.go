@@ -109,20 +109,18 @@ func (u *User) Validate() error {
 	field, groups := "groups", u.Groups
 	if u.AddGroups != nil {
 		if u.Groups != nil {
-			return &yamlx.FieldError{Field: "add_groups", Msg: "a step takes groups or add_groups, not both"}
+			return &yamlx.FieldError{At: "add_groups", Msg: "a user step has at most one of groups and add_groups"}
 		}
 		field, groups = "add_groups", u.AddGroups
 	}
 	if groups != nil {
-		seen := map[string]int{}
 		for i, g := range *groups {
 			if err := checkAccountName(field, "group", g); err != nil {
 				return err
 			}
-			if j, ok := seen[g]; ok {
-				return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf("element %d repeats element %d", i+1, j+1)}
+			if slices.Contains((*groups)[:i], g) {
+				return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf("%s is in the list twice", g)}
 			}
-			seen[g] = i
 		}
 	}
 	switch {
@@ -934,7 +932,7 @@ func prefixed(p string, fi fs.FileInfo, owner, group string, mode uint32) ([]str
 
 func (u *User) Apply(ctx context.Context, _ Say) error {
 	if u.missing {
-		return fmt.Errorf("user %s does not exist", u.Name)
+		return fmt.Errorf("user %s does not exist; a user step with only add_groups does not create it", u.Name)
 	}
 	if u.account != nil {
 		if _, err := run(ctx, nil, u.account[0], u.account[1:]...); err != nil {

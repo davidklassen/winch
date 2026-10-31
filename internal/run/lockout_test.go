@@ -121,7 +121,7 @@ func TestAccessFails(t *testing.T) {
 	if want := []string{"ssh reload", "access", "rollback"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
-	want := "web1: ssh: failed: handler ssh.reload: service ssh: no new SSH connection works: ssh: connect to host web1 port 22: Connection timed out; the old files are back"
+	want := "web1: ssh: failed: handler ssh.reload: service ssh: the access check failed: ssh: connect to host web1 port 22: Connection timed out; the old files are back"
 	if !strings.Contains(out, want) {
 		t.Errorf("output:\n%s\nwant %q", out, want)
 	}
@@ -519,7 +519,7 @@ func TestLostAccessAfterRun(t *testing.T) {
 	if o.OK() {
 		t.Fatal("apply succeeded without access")
 	}
-	if want := "web1: winch lost access after the run: ssh: connect to host web1 port 22: Connection timed out"; !strings.Contains(out, want) {
+	if want := "web1: the access check after the run failed: ssh: connect to host web1 port 22: Connection timed out"; !strings.Contains(out, want) {
 		t.Errorf("output:\n%s\nwant %q", out, want)
 	}
 	if want := []string{"access", "access"}; !slices.Equal(h.Log["web1"], want) {

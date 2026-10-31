@@ -84,11 +84,11 @@ func TestCertbotModule(t *testing.T) {
 		want        []string
 	}{
 		{"nginx without a pkg step", step, []string{
-			"certbot: note: certbot is missing and no pkg step installs certbot\n",
-			"certbot: note: /usr/lib/python3/dist-packages/certbot_nginx is missing and no pkg step installs python3-certbot-nginx\n",
+			"certbot: note: certbot is missing; install the package certbot in an earlier pkg step\n",
+			"certbot: note: /usr/lib/python3/dist-packages/certbot_nginx is missing; install the package python3-certbot-nginx in an earlier pkg step\n",
 		}},
 		{"apache after a pkg step for certbot", "  - pkg:\n      name: certbot\n" + step + "      authenticator: apache\n", []string{
-			"certbot: note: /usr/lib/python3/dist-packages/certbot_apache is missing and no pkg step installs python3-certbot-apache\n",
+			"certbot: note: /usr/lib/python3/dist-packages/certbot_apache is missing; install the package python3-certbot-apache in an earlier pkg step\n",
 		}},
 		{"standalone after a pkg step for certbot", "  - pkg:\n      name: certbot\n" + step + "      authenticator: standalone\n", nil},
 		{"nginx after a pkg step for both packages", "  - pkg:\n      name: [certbot, python3-certbot-nginx]\n" + step, nil},
@@ -96,7 +96,7 @@ func TestCertbotModule(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: certs\nhosts:\n  certbot: {}\nsteps:\n" + c.steps})
 			r := lab.Winch(t, dir, "plan")
-			notes := slices.DeleteFunc(strings.SplitAfter(r.Stderr, "\n"), func(l string) bool { return !strings.Contains(l, "is missing and no pkg step") })
+			notes := slices.DeleteFunc(strings.SplitAfter(r.Stderr, "\n"), func(l string) bool { return !strings.Contains(l, "is missing; install the package") })
 			if r.Code != 0 || !slices.Equal(notes, c.want) {
 				t.Fatalf("plan: exit %d, stdout %q, notes %q, want %q", r.Code, r.Stdout, notes, c.want)
 			}
@@ -141,13 +141,13 @@ func TestCertbotModule(t *testing.T) {
 			Name:    "an immutable renewal file fails a changed deploy_hook",
 			Setup:   issue(`--cert-name a.example.com -d a.example.com --deploy-hook "echo old >> /root/deployed"`) + "chattr +i /etc/letsencrypt/renewal/a.example.com.conf",
 			Args:    &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: &deployed},
-			WantErr: "/etc/letsencrypt/renewal/a.example.com.conf is immutable; chattr -i changes it",
+			WantErr: "/etc/letsencrypt/renewal/a.example.com.conf is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:    "an append-only renewal file fails a new domain",
 			Setup:   issue("--cert-name a.example.com -d a.example.com") + "chattr +a /etc/letsencrypt/renewal/a.example.com.conf",
 			Args:    &module.Certbot{Name: "a.example.com", Domains: ab, Email: "admin@example.com"},
-			WantErr: "/etc/letsencrypt/renewal/a.example.com.conf is append-only; chattr -a changes it",
+			WantErr: "/etc/letsencrypt/renewal/a.example.com.conf is append-only; chattr -a removes the flag",
 		},
 		{
 			Name:  "an immutable renewal file of a current certificate is ok",

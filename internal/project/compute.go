@@ -579,7 +579,7 @@ func (v *value) evalNode(n *yamlx.Node, e *Env, name string) (*yamlx.Node, error
 	if c := v.computed[n]; c != nil {
 		out, err := c.eval(e)
 		if err == nil && out == nil && v.args {
-			err = errors.New("the expression gave null")
+			err = errors.New("null is not a value")
 		}
 		if err != nil && e.failed != nil {
 			out, err = secret.Placeholder(e.n), nil

@@ -11,7 +11,7 @@ import (
 func TestServiceMissingUnitFile(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "servicemissing")
-	const note = "winch-missing.service: unit file not found"
+	const note = "winch-missing.service does not exist"
 	const stop = "      - service: {name: winch-missing, running: false}\n"
 	const remove = "      - file: {path: /etc/systemd/system/winch-missing.service, absent: true}\n"
 	dir := vmtest.WriteProject(t, map[string]string{

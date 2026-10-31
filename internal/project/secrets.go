@@ -818,10 +818,7 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	}
 	inventory = cmp.Or(inventory, cfg.Inventory, l.layout.only())
 	if inventory == "" {
-		if len(l.layout.inventories) == 0 {
-			return "", errNoHosts
-		}
-		return "", errors.New("no inventory: use --inventory, or set inventory in winch.yaml")
+		return "", l.noInventory()
 	}
 	inv, err := l.layout.inventory(inventory)
 	if err != nil {
@@ -854,13 +851,13 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	where := "the group all"
 	if host != "" {
 		keys = slices.Concat(prefix, []string{"hosts", host, "vars", name})
-		where = fmt.Sprintf("host %q", host)
+		where = "host " + host
 		if find(n, keys[:len(prefix)+2]) == nil {
-			return "", fmt.Errorf("host %q is not in %s", host, label)
+			return "", fmt.Errorf("host %s is not in %s", host, label)
 		}
 	}
 	if find(n, keys) != nil {
-		return "", fmt.Errorf("variable %q is already in the vars of %s in %s", name, where, label)
+		return "", fmt.Errorf("vars.%s is already in the vars of %s in %s", name, where, label)
 	}
 	text, err := secret.Encrypt(plain, recs)
 	if err != nil {

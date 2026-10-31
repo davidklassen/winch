@@ -383,7 +383,7 @@ func readsElem(n tparse.Node, v string, dot bool, fields *[]string) bool {
 // pipeline of the action.
 type nullError struct{ text string }
 
-func (nullError) Error() string { return "the value is null" }
+func (nullError) Error() string { return "null is not a value" }
 
 // failNull makes each action of t that prints fail on a null value: the
 // template package prints null as "<no value>". It adds the notNull function

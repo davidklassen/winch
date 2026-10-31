@@ -1,1 +1,1 @@
-recipes/web/recipe.yaml:3:3: variable "port": a variable of recipe web starts with "web_"
+recipes/web/recipe.yaml:3:3: vars.port: a variable of recipe web starts with web_

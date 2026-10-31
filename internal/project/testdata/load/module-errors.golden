@@ -1,4 +1,4 @@
 pipelines/site.yaml:6:17: name: "Nginx" is not a package name
 pipelines/site.yaml:8:17: path: must be an absolute path
-pipelines/site.yaml:10:11: target: a link needs a target, or absent: true
+pipelines/site.yaml:10:11: a link step needs target, or absent: true
 pipelines/site.yaml:12:11: a service step needs running or enabled

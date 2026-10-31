@@ -65,7 +65,7 @@ func TestMissingUnitNoteSelection(t *testing.T) {
 			}
 			var out, errOut bytes.Buffer
 			plan.Write(plain(&out), plain(&errOut))
-			got := strings.Contains(out.String()+errOut.String(), "app.service: unit file not found")
+			got := strings.Contains(out.String()+errOut.String(), "app.service does not exist")
 			if got != tt.note {
 				t.Errorf("note = %v, want %v; stdout %q, stderr %q", got, tt.note, out.String(), errOut.String())
 			}

@@ -274,7 +274,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 				if err == nil && final && (changed[i] || o.Changed[hosts[i].Name]) {
 					a.progress.Busy(a.host, "access check")
 					if aerr := a.access(context.WithoutCancel(ctx), time.Time{}); aerr != nil {
-						err = fmt.Errorf("winch lost access after the run: %w", aerr)
+						err = fmt.Errorf("the access check after the run failed: %w", aerr)
 					}
 				}
 				if err != nil || final {
@@ -566,9 +566,9 @@ func (a *hostApply) confirm(ctx context.Context, left time.Duration) error {
 		return a.conn.Confirm(ctx)
 	}
 	if rerr := a.conn.Rollback(ctx); rerr != nil {
-		return fmt.Errorf("no new SSH connection works: %w; the rollback failed: %w", err, rerr)
+		return fmt.Errorf("the access check failed: %w; the rollback failed: %w", err, rerr)
 	}
-	return fmt.Errorf("no new SSH connection works: %w; the old files are back", err)
+	return fmt.Errorf("the access check failed: %w; the old files are back", err)
 }
 
 // access checks the access with a second SSH connection, at most twice. With

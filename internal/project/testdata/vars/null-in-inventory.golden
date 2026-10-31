@@ -1,1 +1,1 @@
-inventories/test.yaml:11:14: variable "domain": null is not a value
+inventories/test.yaml:11:14: vars.domain: null is not a value

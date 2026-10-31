@@ -253,7 +253,7 @@ handlers:
 
 		// The access check after the change asks nothing on the hop.
 		r := lab.WinchTerminal(t, dir, append(env, "SSH_AUTH_SOCK="+sock), "apply", "keys", "--yes")
-		if r.Code != 1 || !strings.Contains(r.Stdout, "the access check cannot log in after this change: ") || !strings.Contains(r.Stdout, "; the old files are back") {
+		if r.Code != 1 || !strings.Contains(r.Stdout, "the access check failed: cannot log in after this change: ") || !strings.Contains(r.Stdout, "; the old files are back") {
 			t.Errorf("%s: apply of the other key: exit %d, want 1 and a rollback", jump, r.Code)
 		}
 		if n := questions(); n != 0 {

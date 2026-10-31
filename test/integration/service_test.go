@@ -188,7 +188,7 @@ func TestServiceModule(t *testing.T) {
 		vm.MustRun(t, "systemctl start winch-vendor && systemctl stop winch-vendor && systemctl mask --runtime winch-vendor")
 		defer vm.MustRun(t, "systemctl unmask --runtime winch-vendor")
 		_, err := vm.Session(t).Check(t.Context(), "service", &module.Service{Name: "winch-vendor", Running: new(true)}, &module.State{})
-		if want := `winch-vendor.service has the load state "masked"`; err == nil || err.Error() != want {
+		if want := `winch-vendor.service is masked; systemctl unmask winch-vendor.service removes the mask`; err == nil || err.Error() != want {
 			t.Errorf("check error = %v, want %q", err, want)
 		}
 	})
@@ -428,13 +428,13 @@ printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service
 			Name:    "a masked unit that must run fails",
 			Setup:   `systemctl mask winch-masked`,
 			Args:    &module.Service{Name: "winch-masked", Running: new(true)},
-			WantErr: `winch-masked.service has the load state "masked"`,
+			WantErr: `winch-masked.service is masked; systemctl unmask winch-masked.service removes the mask`,
 		},
 		{
 			Name:    "a masked unit that must be enabled fails",
 			Setup:   `systemctl mask winch-masked`,
 			Args:    &module.Service{Name: "winch-masked", Enabled: new(true)},
-			WantErr: `winch-masked.service has the load state "masked"`,
+			WantErr: `winch-masked.service is masked; systemctl unmask winch-masked.service removes the mask`,
 		},
 		{
 			Name:  "a masked unit that must not run is ok",

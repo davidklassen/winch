@@ -69,7 +69,7 @@ func TestHostnameModule(t *testing.T) {
 			Name:      "an immutable /etc/hostname",
 			Setup:     "chattr +i /etc/hostname",
 			Args:      &module.Hostname{Name: "wthost"},
-			WantErr:   "/etc/hostname is immutable; chattr -i changes it",
+			WantErr:   "/etc/hostname is immutable; chattr -i removes the flag",
 			Unchanged: `[ "$(hostname)" = base ]`,
 		},
 		{
@@ -83,7 +83,7 @@ func TestHostnameModule(t *testing.T) {
 			Name:    "an append-only /etc/hostname",
 			Setup:   "chattr +a /etc/hostname",
 			Args:    &module.Hostname{Name: "wthost"},
-			WantErr: "/etc/hostname is append-only; chattr -a changes it",
+			WantErr: "/etc/hostname is append-only; chattr -a removes the flag",
 		},
 		{
 			Name:  "the name with an immutable /etc/hostname",
@@ -144,7 +144,7 @@ func TestTimezoneModule(t *testing.T) {
 			Name:      "an immutable /etc/timezone",
 			Setup:     "echo Etc/UTC > /etc/timezone && chattr +i /etc/timezone",
 			Args:      &module.Timezone{Name: "Europe/Berlin"},
-			WantErr:   "/etc/timezone is immutable; chattr -i changes it",
+			WantErr:   "/etc/timezone is immutable; chattr -i removes the flag",
 			Unchanged: `[ "$(timedatectl show -p Timezone --value)" = Etc/UTC ]`,
 		},
 		{

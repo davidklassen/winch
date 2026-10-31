@@ -24,7 +24,7 @@ func TestCmdValidate(t *testing.T) {
 		{"timeout with user", "command: x\nuser: root\ntimeout: 0\n", `t.yaml:3:10: timeout: must be 1 or more seconds`},
 		{"all fields", "command: make install\ncreates: /usr/local/bin/app\nuser: deploy\ndir: /srv/app\n", ""},
 		{"no command", "creates: /x\n", `t.yaml:1:1: missing key "command"`},
-		{"empty command", "command: \"\"\n", `t.yaml:1:10: command: must not be empty`},
+		{"empty command", "command: \"\"\n", `t.yaml:1:10: command: is empty`},
 		{"relative creates", "command: x\ncreates: bin/app\n", `t.yaml:2:10: creates: must be an absolute path`},
 		{"unclean creates", "command: x\ncreates: /usr/local/bin/\n", `t.yaml:2:10: creates: must be a clean path, such as "/usr/local/bin"`},
 		{"creates with dots", "command: x\ncreates: /srv/../etc\n", `t.yaml:2:10: creates: ".." is not allowed; write the path without it`},
@@ -34,11 +34,11 @@ func TestCmdValidate(t *testing.T) {
 		{"creates with [", "command: x\ncreates: /opt/app[12]\n", `t.yaml:2:10: creates: names one path; "[" is not allowed`},
 		{"relative dir", "command: x\ndir: srv/app\n", `t.yaml:2:6: dir: must be an absolute path`},
 		{"Debian user", "command: x\nuser: Debian-exim\n", ""},
-		{"bad user", "command: x\nuser: \"a b\"\n", `t.yaml:2:7: user: "a b" is not a user name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
-		{"numeric user", "command: x\nuser: \"1000\"\n", `t.yaml:2:7: user: "1000" is not a user name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
+		{"bad user", "command: x\nuser: \"a b\"\n", `t.yaml:2:7: user: "a b" is not a user name; a name has letters, digits, _, ., and -, and starts with a letter or _`},
+		{"numeric user", "command: x\nuser: \"1000\"\n", `t.yaml:2:7: user: "1000" is not a user name; a name has letters, digits, _, ., and -, and starts with a letter or _`},
 		{"unless", "command: make install\nunless: test -x /usr/local/bin/app\nuser: deploy\n", ""},
-		{"empty unless", "command: x\nunless: \"\"\n", `t.yaml:2:9: unless: must not be empty`},
-		{"creates and unless", "command: x\ncreates: /x\nunless: \"true\"\n", `t.yaml:3:9: unless: a cmd has at most one of creates and unless`},
+		{"empty unless", "command: x\nunless: \"\"\n", `t.yaml:2:9: unless: is empty`},
+		{"creates and unless", "command: x\ncreates: /x\nunless: \"true\"\n", `t.yaml:3:9: a cmd step has at most one of creates and unless`},
 		{"unknown key", "command: x\ncreate: /x\n", `t.yaml:2:1: unknown key "create"; did you mean "creates"?`},
 	}
 	for _, tt := range tests {
@@ -56,8 +56,8 @@ func TestAssertValidate(t *testing.T) {
 		{"both", "command: systemctl is-active nginx\nmessage: nginx does not run\n", ""},
 		{"no message", "command: \"true\"\n", `t.yaml:1:1: missing key "message"`},
 		{"no command", "message: x\n", `t.yaml:1:1: missing key "command"`},
-		{"empty command", "command: \"\"\nmessage: x\n", `t.yaml:1:10: command: must not be empty`},
-		{"empty message", "command: \"true\"\nmessage: \"\"\n", `t.yaml:2:10: message: must not be empty`},
+		{"empty command", "command: \"\"\nmessage: x\n", `t.yaml:1:10: command: is empty`},
+		{"empty message", "command: \"true\"\nmessage: \"\"\n", `t.yaml:2:10: message: is empty`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Assert{}, tt.yaml, tt.want) })

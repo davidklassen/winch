@@ -105,7 +105,7 @@ func TestLineModule(t *testing.T) {
 			Name:         "a missing file is a change, and apply fails",
 			Args:         port("port 6380"),
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"/tmp/w/f does not exist yet"}, Old: new("")},
-			WantApplyErr: "/tmp/w/f does not exist; line does not create a file",
+			WantApplyErr: "/tmp/w/f does not exist; a line step does not create it",
 			After:        `[ ! -e /tmp/w/f ]`,
 			Fix:          "touch /tmp/w/f",
 		},
@@ -125,7 +125,7 @@ func TestLineModule(t *testing.T) {
 			Name:      "an immutable file fails",
 			Setup:     `printf 'port 1\n' > /tmp/w/f && chattr +i /tmp/w/f`,
 			Args:      port("port 6380"),
-			WantErr:   "/tmp/w/f is immutable; chattr -i changes it",
+			WantErr:   "/tmp/w/f is immutable; chattr -i removes the flag",
 			Unchanged: `[ "$(cat /tmp/w/f)" = "port 1" ]`,
 		},
 		{

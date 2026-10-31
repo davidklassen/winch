@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/url"
 	"os"
 	"path"
 	"regexp"
@@ -71,17 +70,15 @@ const spaceMsg = "has white space or a control character"
 
 func (r *Repo) Validate() error {
 	if !sourceNameRe.MatchString(r.Name) {
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf(`%q is not a source name; a name has letters, digits, "_", "-", and ".", and does not start with "."`, r.Name)}
+		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf(`%q is not a source name; a name has letters, digits, _, -, and ., and does not start with .`, r.Name)}
 	}
 	if hasSpace(r.URL) {
 		return &yamlx.FieldError{Field: "url", Msg: spaceMsg}
 	}
-	u, err := url.Parse(r.URL)
+	u, err := parseHTTPURL(r.URL)
 	switch {
-	case err != nil || u.Scheme != "http" && u.Scheme != "https":
-		return &yamlx.FieldError{Field: "url", Msg: "must start with http:// or https://"}
-	case u.Host == "":
-		return &yamlx.FieldError{Field: "url", Msg: "has no host"}
+	case err != nil:
+		return err
 	case u.User != nil:
 		return &yamlx.FieldError{Field: "url", Msg: fmt.Sprintf("holds a user name or password, and the source file is world-readable; put them in /etc/apt/auth.conf.d/%s.conf with mode 0600", r.Name)}
 	}
@@ -107,7 +104,7 @@ func (r *Repo) Validate() error {
 		return &yamlx.FieldError{Field: "suite", Msg: `needs components, such as [main]; only a flat suite, which ends in "/", has none`}
 	}
 	if r.KeyPos.Line > 0 && r.KeyContent != nil {
-		return &yamlx.FieldError{Field: "key_content", Msg: "a repo has at most one of key and key_content"}
+		return &yamlx.FieldError{At: "key_content", Msg: "a repo step has at most one of key and key_content"}
 	}
 	return CheckRelative("key", r.Key)
 }

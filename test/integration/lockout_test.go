@@ -82,7 +82,7 @@ func TestLockoutFirewall(t *testing.T) {
 	start := time.Now()
 	r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.nftables_tcp_ports=[80]")
 	took := time.Since(start)
-	if r.Code != 1 || !strings.Contains(r.Stderr, "firewall: nftables: failed: handler nftables.reload: service nftables: no new SSH connection works: ") ||
+	if r.Code != 1 || !strings.Contains(r.Stderr, "firewall: nftables: failed: handler nftables.reload: service nftables: the access check failed: ") ||
 		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply with SSH dropped: exit %d", r.Code)
 	}
@@ -162,7 +162,7 @@ handlers:
 	good := vm.MustRun(t, "cat /etc/nftables-ssh.nft")
 
 	r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.ssh_drop=true")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "notified-store: nftables: failed: handler nftables.reload: service nftables: no new SSH connection works: ") ||
+	if r.Code != 1 || !strings.Contains(r.Stderr, "notified-store: nftables: failed: handler nftables.reload: service nftables: the access check failed: ") ||
 		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply with SSH dropped: exit %d", r.Code)
 	}
@@ -200,8 +200,8 @@ func TestLockoutKeys(t *testing.T) {
 		t.Fatalf("plan: exit %d", r.Code)
 	}
 	r = lab.Winch(t, dir, "apply", "site", "--yes")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "keys: base: failed: user admin: no new SSH connection works: ") ||
-		!strings.Contains(r.Stderr, "the access check cannot log in after this change: ") || !strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+	if r.Code != 1 || !strings.Contains(r.Stderr, "keys: base: failed: user admin: the access check failed: ") ||
+		!strings.Contains(r.Stderr, "cannot log in after this change: ") || !strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply: exit %d", r.Code)
 	}
 	if got := vm.MustRun(t, keysState); got != before {
@@ -234,7 +234,7 @@ func TestLockoutGroups(t *testing.T) {
 		t.Fatalf("plan: exit %d", r.Code)
 	}
 	r = lab.Winch(t, dir, "apply", "site", "--yes")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "groups: admin: failed: user admin: no new SSH connection works: ") ||
+	if r.Code != 1 || !strings.Contains(r.Stderr, "groups: admin: failed: user admin: the access check failed: ") ||
 		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply: exit %d", r.Code)
 	}
@@ -263,7 +263,7 @@ handlers:
 `
 	dir = vmtest.WriteProject(t, files)
 	r = lab.Winch(t, dir, "apply", "site", "--yes")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "no new SSH connection works: ") || strings.Contains(r.Stderr, "the rollback failed") {
+	if r.Code != 1 || !strings.Contains(r.Stderr, "the access check failed: ") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply with sshd on port 2222: exit %d", r.Code)
 	}
 	if got := vm.MustRun(t, "id -nG admin; getent group wtnew | cut -d: -f1; test ! -e /etc/ssh/sshd_config.d/port.conf"); got != "admin wtok\nwtnew\n" {
@@ -319,9 +319,9 @@ func TestLockoutSSHPort(t *testing.T) {
 	// Only the new port: the access check fails, and the old port is back.
 	// With ssh.socket, the file step moves the port, and its own access
 	// check fails.
-	failed := "ssh-port: sshd: failed: handler sshd.restart: service ssh: no new SSH connection works: "
+	failed := "ssh-port: sshd: failed: handler sshd.restart: service ssh: the access check failed: "
 	if socket {
-		failed = "ssh-port: sshd: failed: file /etc/ssh/sshd_config.d/port.conf: no new SSH connection works: "
+		failed = "ssh-port: sshd: failed: file /etc/ssh/sshd_config.d/port.conf: the access check failed: "
 	}
 	r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.sshd_ports=[2222]")
 	if r.Code != 1 || !strings.Contains(r.Stderr, failed) ||
@@ -726,7 +726,7 @@ func TestLockoutPAM(t *testing.T) {
 		t.Fatalf("plan: exit %d", r.Code)
 	}
 	r = lab.Winch(t, dir, "apply", "site", "--yes")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "pam: base: failed: file /etc/pam.d/common-account: no new SSH connection works: ") ||
+	if r.Code != 1 || !strings.Contains(r.Stderr, "pam: base: failed: file /etc/pam.d/common-account: the access check failed: ") ||
 		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply: exit %d", r.Code)
 	}
@@ -762,7 +762,7 @@ func TestLockoutAfterRun(t *testing.T) {
 `,
 	})
 	r := lab.Winch(t, dir, "apply", "site", "--yes")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "after-run: winch lost access after the run: ") {
+	if r.Code != 1 || !strings.Contains(r.Stderr, "after-run: the access check after the run failed: ") {
 		t.Errorf("apply: exit %d", r.Code)
 	}
 }

@@ -1,1 +1,1 @@
-recipes/web/recipe.yaml:2:3: variable "web_port" is declared twice; it is first declared at winch.yaml:7:3
+recipes/web/recipe.yaml:2:3: vars.web_port has two defaults; the first is at winch.yaml:7:3

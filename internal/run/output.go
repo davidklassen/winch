@@ -172,14 +172,14 @@ func (p *Plan) Notes() []Note {
 				note := func(text string) { add(host.Host.Name, text) }
 				if len(step.Result.MissingUnitFiles) > 0 {
 					s := module.Service{Name: step.Step.ShownMain()}
-					note(s.Unit() + ": unit file not found")
+					note(s.Unit() + " does not exist")
 				}
 				for _, m := range step.Result.Missing {
 					kind, _, _ := strings.Cut(m, " ")
 					note(fmt.Sprintf("%s does not exist yet and no %s step creates it", m, kind))
 				}
 				for _, t := range step.Result.MissingTools {
-					note(fmt.Sprintf("%s is missing and no pkg step installs %s", t.Name, t.Package))
+					note(fmt.Sprintf("%s is missing; install the package %s in an earlier pkg step", t.Name, t.Package))
 				}
 			}
 		}

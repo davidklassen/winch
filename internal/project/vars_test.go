@@ -718,7 +718,7 @@ func TestGet(t *testing.T) {
 	tests := []struct{ name, text, want string }{
 		{"optional key", `{{ range .vars.peers }}{{ .name }}{{ with get . "endpoint" }} {{ . }}{{ end }};{{ end }}`, "a;b 192.0.2.2:51820;"},
 		{"missing key prints null", `{{ range .vars.peers }}{{ get . "endpoint" }}{{ end }}`,
-			`error: recipes/r/recipe.yaml:4:16: content: get . "endpoint": the value is null`},
+			`error: recipes/r/recipe.yaml:4:16: content: get . "endpoint": null is not a value`},
 		{"not a map", `{{ get .vars.l "endpoint" }}`,
 			`error: recipes/r/recipe.yaml:4:16: content: get .vars.l "endpoint": error calling get: get: a list is not a map`},
 	}
@@ -769,13 +769,13 @@ func TestEvalErrors(t *testing.T) {
 		want  string
 	}{
 		{name: "when is a string", step: "  - file:\n      path: /a\n      content: x\n    when: !expr vars.s\n",
-			want: `error: recipes/r/recipe.yaml:5:11: when: must be true or false, got the string "yes"`},
+			want: `error: recipes/r/recipe.yaml:5:11: when: expected true or false, got the string "yes"`},
 		{name: "when is false", step: "  - file:\n      path: /a\n      content: !expr 1 + vars.s\n    when: !expr vars.s == \"no\"\n",
 			want: "no steps"},
 		{name: "loop is nil", step: "  - file:\n      path: /a\n      content: x\n    loop: !expr vars.m.nope\n",
-			want: "error: recipes/r/recipe.yaml:5:11: loop: must be a list, got null"},
+			want: "error: recipes/r/recipe.yaml:5:11: loop: expected a list, got null"},
 		{name: "loop is a map", step: "  - file:\n      path: /a\n      content: x\n    loop: !expr vars.m\n",
-			want: "error: recipes/r/recipe.yaml:5:11: loop: must be a list, got a map"},
+			want: "error: recipes/r/recipe.yaml:5:11: loop: expected a list, got a map"},
 		{name: "empty loop", step: "  - file:\n      path: /a\n      content: x\n    loop: []\n",
 			want: "no steps"},
 		{name: "path not absolute", step: "  - file:\n      path: !tpl '{{ .vars.s }}'\n      content: x\n",
@@ -795,7 +795,7 @@ func TestEvalErrors(t *testing.T) {
 		{name: "json of infinity", vars: "  inf: .inf\n", step: "  - file:\n      path: /a\n      content: !expr json(vars.inf)\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: json: unsupported value: +Inf\n | json(vars.inf)\n | ^"},
 		{name: "default fails", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n",
-			want: "error: winch.yaml:15:8: variable \"bad\": + cannot take a number and a string\n | 1 + vars.s\n | ..^"},
+			want: "error: winch.yaml:15:8: vars.bad: + cannot take a number and a string\n | 1 + vars.s\n | ..^"},
 		{name: "when fails before a default", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n    when: !expr 'vars.l[5] == \"x\"'\n",
 			want: "error: recipes/r/recipe.yaml:5:11: when: index out of range: 5 (array length is 2)\n | vars.l[5] == \"x\"\n | ......^"},
 		{name: "computed template", step: "  - file:\n      path: /a\n      template: !tpl '{{ .vars.s }}.tmpl'\n",
@@ -846,15 +846,15 @@ func TestArgNull(t *testing.T) {
 		want string
 	}{
 		{name: "service running", step: "  - service:\n      name: app\n      enabled: true\n      running: !expr vars.m.runing\n",
-			want: "error: recipes/r/recipe.yaml:5:16: running: the expression gave null"},
+			want: "error: recipes/r/recipe.yaml:5:16: running: null is not a value"},
 		{name: "pointer", step: "  - file:\n      path: /a\n      content: x\n      validate: !expr vars.nothing\n",
-			want: "error: recipes/r/recipe.yaml:5:17: validate: the expression gave null"},
+			want: "error: recipes/r/recipe.yaml:5:17: validate: null is not a value"},
 		{name: "string", step: "  - file:\n      path: !expr vars.nothing\n      content: x\n",
-			want: "error: recipes/r/recipe.yaml:3:13: path: the expression gave null"},
+			want: "error: recipes/r/recipe.yaml:3:13: path: null is not a value"},
 		{name: "list", step: "  - user:\n      name: a\n      authorized_keys: !expr vars.nothing\n",
-			want: "error: recipes/r/recipe.yaml:4:24: authorized_keys: the expression gave null"},
+			want: "error: recipes/r/recipe.yaml:4:24: authorized_keys: null is not a value"},
 		{name: "list element", step: "  - pkg:\n      name: [a, !expr vars.nothing]\n",
-			want: "error: recipes/r/recipe.yaml:3:17: name: the expression gave null"},
+			want: "error: recipes/r/recipe.yaml:3:17: name: null is not a value"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -877,12 +877,12 @@ func TestTemplateNull(t *testing.T) {
 		// col is the column of the error in the template file.
 		col int
 	}{
-		{"depth 0", "{{ range .vars.nl }}{{ . }}{{ end }}", ".: the value is null", 24},
-		{"depth 1", "{{ .vars.nm.k }}", ".vars.nm.k: the value is null", 4},
-		{"depth 1 list", "{{ index .vars.nl 1 }}", "index .vars.nl 1: the value is null", 4},
-		{"depth 2", "{{ .vars.nm.d.j }}", ".vars.nm.d.j: the value is null", 4},
-		{"variable", "{{ $x := .vars.nm.k }}{{ $x }}", "$x: the value is null", 26},
-		{"defined template", "{{ define \"x\" }}{{ .k }}{{ end }}{{ template \"x\" .vars.nm }}", ".k: the value is null", 20},
+		{"depth 0", "{{ range .vars.nl }}{{ . }}{{ end }}", ".: null is not a value", 24},
+		{"depth 1", "{{ .vars.nm.k }}", ".vars.nm.k: null is not a value", 4},
+		{"depth 1 list", "{{ index .vars.nl 1 }}", "index .vars.nl 1: null is not a value", 4},
+		{"depth 2", "{{ .vars.nm.d.j }}", ".vars.nm.d.j: null is not a value", 4},
+		{"variable", "{{ $x := .vars.nm.k }}{{ $x }}", "$x: null is not a value", 26},
+		{"defined template", "{{ define \"x\" }}{{ .k }}{{ end }}{{ template \"x\" .vars.nm }}", ".k: null is not a value", 20},
 		{"join", "{{ join .vars.nl \",\" }}", "join .vars.nl \",\": error calling join: join: element 2 is null", 4},
 		{"condition", "{{ if .vars.nm.k }}set{{ else }}null{{ end }}", "null", 0},
 	}
@@ -973,7 +973,7 @@ func TestStartRecipeWhen(t *testing.T) {
 		}
 	}
 	_, err = p.Start(p.Inventory.Hosts[1], debian13)
-	if want := `recipes/r/recipe.yaml:2:5: variable "r_x" has no value on host web2`; err == nil || err.Error() != want {
+	if want := `recipes/r/recipe.yaml:2:5: vars.r_x has no value on host web2`; err == nil || err.Error() != want {
 		t.Errorf("web2: got %v, want %s", err, want)
 	}
 }
@@ -1194,7 +1194,7 @@ func TestReadsDeclare(t *testing.T) {
 			want: `--set vars.domian=x: vars.domian is set but nothing reads it; did you mean "domain"?`},
 		{name: "a declaration without a default", files: map[string]string{
 			"winch.yaml": "name: acme\ninventory: test\nvars:\n  port: 80\n  domain:\n",
-		}, want: `winch.yaml:5:3: variable "domain": a variable without a default has no declaration; remove it`},
+		}, want: `winch.yaml:5:3: vars.domain: null is not a value; give it a default, or remove it`},
 		{name: "with .vars in a step", files: map[string]string{
 			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/w\n      content: !tpl '{{ with .vars }}{{ .domain }}{{ end }}'\n",
 		}, want: `recipes/r/recipe.yaml:14:16: a read of vars names the variable, such as vars.nginx_port`},
@@ -1252,10 +1252,10 @@ func TestReadsDeclare(t *testing.T) {
 		{name: "a value name with upper case", files: map[string]string{
 			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      Port: 1", 1),
 			"recipes/r/recipe.yaml": strings.Replace(r, "string(vars.port)", "string(vars.Port)", 1),
-		}, want: `inventories/test.yaml:6:7: variable "Port": a variable name has only lowercase letters, digits, and _`},
+		}, want: `inventories/test.yaml:6:7: "Port" is not a variable name; a variable name has only lowercase letters, digits, and _`},
 		{name: "a --set name with upper case", set: []string{"vars.Port=1"}, files: map[string]string{
 			"recipes/r/recipe.yaml": strings.Replace(r, "string(vars.port)", "string(vars.Port)", 1),
-		}, want: `--set vars.Port=1: variable "Port": a variable name has only lowercase letters, digits, and _`},
+		}, want: `--set vars.Port=1: "Port" is not a variable name; a variable name has only lowercase letters, digits, and _`},
 		{name: "a value read only in a broken pipeline that does not run", files: map[string]string{
 			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      relay2: x", 1),
 			"pipelines/other.yaml":  "bogus: 1\nstages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: !expr vars.relay2\n",
@@ -1283,15 +1283,15 @@ func TestReadsNeedValue(t *testing.T) {
 		want           []string
 	}{
 		{"both hosts read", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: r\n",
-			[]string{"web1: <nil>", `web2: recipes/r/recipe.yaml:2:5: variable "domain" has no value on host web2`}},
+			[]string{"web1: <nil>", `web2: recipes/r/recipe.yaml:2:5: vars.domain has no value on host web2`}},
 		{"one host reads", "stages:\n  - name: a\n    hosts: web1\n    steps:\n      - recipe: r\n",
 			[]string{"web1: <nil>", "web2: <nil>"}},
 		{"when skips the recipe", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: r\n        when: !expr 'host.name == \"web1\"'\n",
 			[]string{"web1: <nil>", "web2: <nil>"}},
 		{"a when reads", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: x\n        when: !expr vars.domain != \"\"\n",
-			[]string{"web1: <nil>", `web2: pipelines/site.yaml:8:15: variable "domain" has no value on host web2`}},
+			[]string{"web1: <nil>", `web2: pipelines/site.yaml:8:15: vars.domain has no value on host web2`}},
 		{"a default reads", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: !expr vars.url\n",
-			[]string{"web1: <nil>", `web2: pipelines/site.yaml:5:9: variable "domain" has no value on host web2`}},
+			[]string{"web1: <nil>", `web2: pipelines/site.yaml:5:9: vars.domain has no value on host web2`}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

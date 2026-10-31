@@ -259,7 +259,7 @@ func printError(w *color.Writer, msg string) {
 // not select every host.
 func notEmpty(p *string, name, v string) error {
 	if strings.TrimSpace(v) == "" {
-		return usage("%s must not be empty", name)
+		return usage("%s is empty", name)
 	}
 	*p = v
 	return nil

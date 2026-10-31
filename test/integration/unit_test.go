@@ -103,7 +103,7 @@ test "$(systemctl show -P MainPID winch-u)" = "$(cat /root/pid)"`,
 			Name:      "an immutable unit file fails",
 			Setup:     write + "chattr +i " + path,
 			Args:      &module.Unit{Name: "winch-u.service", Data: []byte(unitTwo)},
-			WantErr:   path + " is immutable; chattr -i changes it",
+			WantErr:   path + " is immutable; chattr -i removes the flag",
 			Unchanged: "grep -qx Environment=WINCH=one " + path,
 		},
 	})

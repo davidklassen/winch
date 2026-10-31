@@ -58,7 +58,7 @@ func secretInit(ctx context.Context, env Env, f *flags, args []string) int {
 	}
 	fmt.Fprintf(env.stdout, "added the public key to recipients in %s\n", edit.File)
 	if sealed {
-		fmt.Fprintln(env.stdout, "a member who can read the secrets must now run winch secret rekey")
+		fmt.Fprintln(env.stdout, "a member who can read the secrets must run winch secret rekey")
 	}
 	return exitOK
 }
@@ -79,7 +79,7 @@ func secretGenerate(ctx context.Context, env Env, f *flags, args []string) int {
 	}
 	where := "the group all"
 	if f.host != "" {
-		where = fmt.Sprintf("host %q", f.host)
+		where = "host " + f.host
 	}
 	fmt.Fprintf(env.stdout, "wrote vars.%s into the vars of %s in %s\n", name, where, file)
 	return exitOK

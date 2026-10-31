@@ -50,7 +50,7 @@ func (d *Dir) Validate() error {
 	}
 	for _, pattern := range d.KeepPatterns {
 		if pattern == "" {
-			return &yamlx.FieldError{Field: "keep", Msg: "a pattern must not be empty"}
+			return &yamlx.FieldError{Field: "keep", Msg: "a pattern is empty"}
 		}
 		if strings.Contains(pattern, "/") {
 			return &yamlx.FieldError{Field: "keep", Msg: fmt.Sprintf("pattern %q has a /; keep matches names in the directory", pattern)}
