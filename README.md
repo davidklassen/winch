@@ -1,6 +1,6 @@
 # winch
 
-Winch is a server configuration tool. It describes the desired state
+winch is a server configuration tool. It describes the desired state
 of your servers in declarative YAML and provides commands to manage
 that state.
 
