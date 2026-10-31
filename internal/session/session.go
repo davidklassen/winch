@@ -169,20 +169,20 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	}
 	batch := cfg
 	batch.Batch = true
-	s, exit, err := dial(ctx, batch)
+	s, exit, err := dial(ctx, batch, r.proxyJump)
 	if !exit.started && Dropped(exit.code, exit.stderr, r.logLevel) {
 		select {
 		case <-ctx.Done():
 			return nil, err
 		case <-time.After(cfg.retryDelay()):
 		}
-		s, exit, err = dial(ctx, batch)
+		s, exit, err = dial(ctx, batch, r.proxyJump)
 	}
 	login := strings.Contains(exit.stderr, "Permission denied (")
 	// A changed host key is no question that ssh asks.
 	hostKey := strings.Contains(exit.stderr, "Host key verification failed.") && !strings.Contains(exit.stderr, "HAS CHANGED")
 	if err != nil && !cfg.Batch && (login || hostKey) {
-		s, _, err = dial(ctx, cfg)
+		s, _, err = dial(ctx, cfg, r.proxyJump)
 	}
 	if err != nil {
 		return nil, err
@@ -231,13 +231,13 @@ func Resolve(ctx context.Context, cfg Config) (hostName, port, jump string, err 
 }
 
 type resolved struct {
-	hostName, port, jump, user, logLevel string
+	hostName, port, jump, proxyJump, user, logLevel string
 }
 
 // resolve reads the SSH config of the host of cfg with ssh -G. It fails when
 // the host name, port, or jump host differs from cfg.Want.
 func resolve(ctx context.Context, cfg Config) (resolved, error) {
-	out, err := exec.CommandContext(ctx, "ssh", append([]string{"-G"}, argv(cfg)...)...).Output()
+	out, err := exec.CommandContext(ctx, "ssh", append([]string{"-G"}, argv(cfg, "")...)...).Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
@@ -253,7 +253,9 @@ func resolve(ctx context.Context, cfg Config) (resolved, error) {
 			r.hostName = value
 		case "port":
 			r.port = value
-		case "proxyjump", "proxycommand":
+		case "proxyjump":
+			r.jump, r.proxyJump = value, value
+		case "proxycommand":
 			r.jump = value
 		case "user":
 			r.user = value
@@ -270,12 +272,17 @@ func resolve(ctx context.Context, cfg Config) (resolved, error) {
 }
 
 // argv returns the arguments of ssh for the host of cfg, up to the target.
-func argv(cfg Config) []string {
+// The ssh of a ProxyJump hop gets none of the options, so a jump, the
+// ProxyJump that ssh resolves, becomes a ProxyCommand that passes them on.
+func argv(cfg Config, jump string) []string {
 	args := []string{"-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
 		"-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "RemoteCommand=none", "-o", "PermitLocalCommand=no",
 		"-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
 	if cfg.Batch {
 		args = append(args, "-o", "BatchMode=yes")
+	}
+	if jump != "" {
+		args = append(args, "-o", "ProxyCommand="+proxyCommand(args, jump))
 	}
 	// The host name stays the target, so the Host blocks of the SSH config
 	// match it. ssh expands % tokens in HostName.
@@ -288,6 +295,42 @@ func argv(cfg Config) []string {
 	return append(args, "--", cfg.Host)
 }
 
+// proxyCommand returns the ProxyCommand of a ProxyJump list: an ssh with opts
+// to the last hop, through the hops before it. ssh expands % in a
+// ProxyCommand, so the command of a hop doubles the % of what it nests. A hop
+// is [user@]host[:port], as ssh -G prints it; the user ends at the last @,
+// and an IPv6 host is in brackets.
+func proxyCommand(opts []string, jump string) string {
+	double := func(s string) string { return strings.ReplaceAll(s, "%", "%%") }
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+	ssh := "ssh"
+	for _, o := range opts {
+		ssh += " " + quote(o)
+	}
+	var cmd string
+	for hop := range strings.SplitSeq(jump, ",") {
+		c := ssh
+		if cmd != "" {
+			c += " -o " + quote("ProxyCommand="+double(cmd))
+		}
+		c += " -W '[%h]:%p'"
+		if i := strings.LastIndex(hop, "@"); i >= 0 {
+			c += " -l " + quote(double(hop[:i]))
+			hop = hop[i+1:]
+		}
+		host, port, _ := strings.Cut(hop, ":")
+		if rest, ok := strings.CutPrefix(hop, "["); ok {
+			host, port, _ = strings.Cut(rest, "]")
+			port = strings.TrimPrefix(port, ":")
+		}
+		if port != "" {
+			c += " -p " + quote(port)
+		}
+		cmd = c + " -- " + quote(double(host))
+	}
+	return cmd
+}
+
 // sshExit is how ssh ended after a failed dial.
 type sshExit struct {
 	code   int
@@ -298,12 +341,12 @@ type sshExit struct {
 
 // dial starts ssh and the helper. When it fails after ssh started, it also
 // returns how ssh ended.
-func dial(ctx context.Context, cfg Config) (*Session, sshExit, error) {
+func dial(ctx context.Context, cfg Config, jump string) (*Session, sshExit, error) {
 	dir := cfg.Dir
 	if dir == "" {
 		dir = StateDir
 	}
-	args := append(argv(cfg), command(Script(cfg.Binaries, dir)))
+	args := append(argv(cfg, jump), command(Script(cfg.Binaries, dir)))
 	// ssh keeps an ignored SIGINT ignored, so a Ctrl-C in the terminal reaches
 	// only winch. ssh stays in the terminal's process group and can still ask
 	// for a host key or a passphrase.
@@ -607,7 +650,7 @@ func (s *Session) Access(ctx context.Context) error {
 		now.User = r.user
 		return DestinationChanged(s.dest, now)
 	}
-	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, append(argv(cfg), accessCommand)...)...)
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, append(argv(cfg, r.proxyJump), accessCommand)...)...)
 	stdout, stderr := &limitedBuffer{max: 4 << 10}, &limitedBuffer{max: 4 << 10}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = 5 * time.Second
@@ -673,7 +716,7 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 		if err != nil {
 			return protocol.Boot{}, err
 		}
-		n, exit, err := dial(s.ctx, cfg)
+		n, exit, err := dial(s.ctx, cfg, r.proxyJump)
 		if err != nil {
 			if refused(exit.stderr) {
 				return protocol.Boot{}, fmt.Errorf("connect after the reboot: %w", err)

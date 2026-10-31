@@ -1110,3 +1110,20 @@ func TestOpenHelperSendsText(t *testing.T) {
 		t.Errorf("error = %v, want %q", err, want)
 	}
 }
+
+// spec: Remote execution/Sessions (the access check of lockout protection
+// always uses BatchMode=yes)
+func TestProxyCommand(t *testing.T) {
+	opts := []string{"-o", "BatchMode=yes"}
+	tests := []struct{ jump, want string }{
+		{"a", `ssh '-o' 'BatchMode=yes' -W '[%h]:%p' -- 'a'`},
+		{"u%x@[2001:db8::1]", `ssh '-o' 'BatchMode=yes' -W '[%h]:%p' -l 'u%%x' -- '2001:db8::1'`},
+		{"jdoe@corp@[fe80::1%en0]:2222", `ssh '-o' 'BatchMode=yes' -W '[%h]:%p' -l 'jdoe@corp' -p '2222' -- 'fe80::1%%en0'`},
+		{"u@b:2222,c", `ssh '-o' 'BatchMode=yes' -o 'ProxyCommand=ssh '\''-o'\'' '\''BatchMode=yes'\'' -W '\''[%%h]:%%p'\'' -l '\''u'\'' -p '\''2222'\'' -- '\''b'\''' -W '[%h]:%p' -- 'c'`},
+	}
+	for _, tt := range tests {
+		if got := proxyCommand(opts, tt.jump); got != tt.want {
+			t.Errorf("proxyCommand(%q)\n got %s\nwant %s", tt.jump, got, tt.want)
+		}
+	}
+}
