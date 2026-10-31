@@ -491,12 +491,46 @@ func TestSecretInit(t *testing.T) {
 
 	t.Run("a flow list", func(t *testing.T) {
 		dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: acme\nrecipients: []\n"})
-		r := winchWith(t, dir, t.TempDir(), "", "", fakehost.New(), false, "", "secret", "init")
-		if r.code != exitInvalid || !strings.Contains(r.err, "cannot add the public key to recipients in winch.yaml; add it by hand") {
+		home := t.TempDir()
+		r := winchWith(t, dir, home, "", "", fakehost.New(), false, "", "secret", "init")
+		if r.code != exitInvalid || r.out != "" || !strings.Contains(r.err, "cannot add the public key to recipients in winch.yaml; add it by hand") {
 			t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 		}
 		if got := read(t, filepath.Join(dir, "winch.yaml")); got != "name: acme\nrecipients: []\n" {
 			t.Errorf("winch.yaml changed: %q", got)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".config")); err == nil {
+			t.Errorf("init made a key")
+		}
+	})
+
+	t.Run("the key cannot be written", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: acme\n"})
+		home := t.TempDir()
+		keyDir := filepath.Join(home, ".config", "winch")
+		if err := os.MkdirAll(keyDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(keyDir, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		r := winchWith(t, dir, home, "", "", fakehost.New(), false, "", "secret", "init")
+		if r.code != exitInvalid || r.out != "" || !strings.Contains(r.err, "make the age key") {
+			t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+		}
+		if got := read(t, filepath.Join(dir, "winch.yaml")); got != "name: acme\n" {
+			t.Errorf("winch.yaml changed: %q", got)
+		}
+	})
+
+	t.Run("no project", func(t *testing.T) {
+		home := t.TempDir()
+		r := winchWith(t, t.TempDir(), home, "", "", fakehost.New(), false, "", "secret", "init")
+		if r.code != exitInvalid || r.out != "" || !strings.Contains(r.err, "run winch in the project directory") {
+			t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".config")); err == nil {
+			t.Errorf("init made a key")
 		}
 	})
 }

@@ -1087,19 +1087,24 @@ func TestAddRecipient(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tt.cfg), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			added, err := AddRecipient(dir, key)
-			got, rerr := os.ReadFile(path)
-			if rerr != nil {
-				t.Fatal(rerr)
+			edit, err := AddRecipient(dir, key)
+			if got, _ := os.ReadFile(path); string(got) != tt.cfg {
+				t.Fatalf("AddRecipient wrote winch.yaml: %q", got)
 			}
 			if tt.want == "" {
-				if err == nil || !strings.Contains(err.Error(), "cannot add the public key to recipients in winch.yaml; add it by hand") || string(got) != tt.cfg {
-					t.Errorf("err %v, winch.yaml %q; want an error and no change", err, got)
+				if err == nil || !strings.Contains(err.Error(), "cannot add the public key to recipients in winch.yaml; add it by hand") {
+					t.Errorf("err %v; want an error", err)
 				}
 				return
 			}
-			if err != nil || !added || string(got) != tt.want {
-				t.Errorf("added %v, err %v, winch.yaml %q; want %q", added, err, got, tt.want)
+			if err != nil || edit == nil {
+				t.Fatalf("edit %v, err %v", edit, err)
+			}
+			if err := edit.Write(); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := os.ReadFile(path); string(got) != tt.want {
+				t.Errorf("winch.yaml %q; want %q", got, tt.want)
 			}
 		})
 	}
@@ -1112,7 +1117,11 @@ func TestAddRecipient(t *testing.T) {
 		if err := os.Symlink(target, filepath.Join(dir, "winch.yaml")); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := AddRecipient(dir, key); err != nil {
+		edit, err := AddRecipient(dir, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := edit.Write(); err != nil {
 			t.Fatal(err)
 		}
 		if got, _ := os.ReadFile(target); string(got) != "name: acme\nrecipients:\n  - "+key+"\n" {
@@ -1306,8 +1315,12 @@ func TestWinchYML(t *testing.T) {
 	})
 	t.Run("add recipient", func(t *testing.T) {
 		dir := write(t, "name: acme\n"+inv)
-		if added, err := AddRecipient(dir, k.id.Recipient().String()); err != nil || !added {
-			t.Fatalf("AddRecipient = %v, %v", added, err)
+		edit, err := AddRecipient(dir, k.id.Recipient().String())
+		if err != nil || edit == nil {
+			t.Fatalf("AddRecipient = %v, %v", edit, err)
+		}
+		if err := edit.Write(); err != nil {
+			t.Fatal(err)
 		}
 		if got := read(t, dir); !strings.Contains(got, "recipients:\n  - "+k.id.Recipient().String()) {
 			t.Errorf("winch.yml:\n%s", got)

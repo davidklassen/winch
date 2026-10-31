@@ -130,54 +130,59 @@ func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
 }
 
 // Init returns the public key of the identity. When the source is a file and
-// no file is there, it first writes a new key, in the format of age-keygen;
-// made is true then.
-func (id Identity) Init(ctx context.Context) (key string, made bool, err error) {
+// no file is there, it makes a new key and returns it in made; WriteKey
+// writes it.
+func (id Identity) Init(ctx context.Context) (key string, made *age.X25519Identity, err error) {
 	if id.Cmd == "" && id.Path != "" {
-		if made, err = makeKey(id.Path); err != nil {
-			return "", false, fmt.Errorf("make the age key: %w", err)
+		if _, err := os.Stat(id.Path); errors.Is(err, fs.ErrNotExist) {
+			made, err := age.GenerateX25519Identity()
+			if err != nil {
+				return "", nil, fmt.Errorf("make the age key: %w", err)
+			}
+			return made.Recipient().String(), made, nil
 		}
 	}
 	ids, err := id.Read(ctx)
 	if err != nil {
-		return "", made, err
+		return "", nil, err
 	}
 	if len(ids) != 1 {
-		return "", made, fmt.Errorf("the age identity %s holds %d keys; winch needs one", id, len(ids))
+		return "", nil, fmt.Errorf("the age identity %s holds %d keys; winch needs one", id, len(ids))
 	}
 	switch i := ids[0].(type) {
 	case *age.X25519Identity:
-		return i.Recipient().String(), made, nil
+		return i.Recipient().String(), nil, nil
 	case *age.HybridIdentity:
-		return i.Recipient().String(), made, nil
+		return i.Recipient().String(), nil, nil
 	}
-	return "", made, fmt.Errorf("the age identity %s has no public key", id)
+	return "", nil, fmt.Errorf("the age identity %s has no public key", id)
 }
 
-func makeKey(path string) (bool, error) {
-	id, err := age.GenerateX25519Identity()
-	if err != nil {
-		return false, err
+// WriteKey writes k to the file Path in the format of age-keygen. It fails
+// when the file exists.
+func (id Identity) WriteKey(k *age.X25519Identity) error {
+	if err := writeKey(id.Path, k); err != nil {
+		return fmt.Errorf("make the age key: %w", err)
 	}
+	return nil
+}
+
+func writeKey(path string, k *age.X25519Identity) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return false, err
+		return err
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
-		return false, nil
-	}
 	if err != nil {
-		return false, err
+		return err
 	}
-	_, err = fmt.Fprintf(f, "# created: %s\n# public key: %s\n%s\n", time.Now().Format(time.RFC3339), id.Recipient(), id)
+	_, err = fmt.Fprintf(f, "# created: %s\n# public key: %s\n%s\n", time.Now().Format(time.RFC3339), k.Recipient(), k)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
 		os.Remove(path)
-		return false, err
 	}
-	return true, nil
+	return err
 }
 
 const ageHeader = "age-encryption.org/v1\n"
