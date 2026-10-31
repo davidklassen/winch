@@ -525,7 +525,8 @@ func TestPkgModule(t *testing.T) {
 			// index before the refresh, as on a new host.
 			Setup: "mkdir -p /root/virt/pkg/DEBIAN && " +
 				`printf 'Package: winch-virt\nVersion: 1\nArchitecture: all\nProvides: winch-virtual\nMaintainer: winch\nDescription: test\n' > /root/virt/pkg/DEBIAN/control && ` +
-				"dpkg-deb -b /root/virt/pkg /root/virt/winch-virt.deb >/dev/null && cd /root/virt && apt-ftparchive packages . > Packages 2>/dev/null && " +
+				"dpkg-deb -b /root/virt/pkg /root/virt/winch-virt.deb >/dev/null && cd /root/virt && " +
+				`{ cat pkg/DEBIAN/control && printf 'Filename: winch-virt.deb\nSize: %s\nSHA256: %s\n' "$(stat -c %s winch-virt.deb)" "$(sha256sum winch-virt.deb | cut -d' ' -f1)"; } > Packages && ` +
 				`printf 'Types: deb\nURIs: file:/root/virt\nSuites: ./\nTrusted: yes\n' > /etc/apt/sources.list.d/winch-virt.sources && ` +
 				"! apt-cache showpkg winch-virtual 2>/dev/null | grep -q '^winch-virt '",
 			Args:         &module.Pkg{Name: []string{"hello", "winch-virtual"}},
