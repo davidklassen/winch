@@ -35,8 +35,9 @@ type hostContent struct {
 	missing error
 	sum     string
 	// owner and group are those of the archive entry of stock. They are
-	// empty for copy_from, and its mode has no setuid, setgid, or sticky
-	// bit: a user's file must not give that user a root config.
+	// empty for copy_from. The mode of copy_from has no setuid, setgid,
+	// sticky, or group and others write bit: a user's file must not give
+	// that user a root config.
 	owner string
 	group string
 	mode  uint32
@@ -76,7 +77,7 @@ func copySource(p string) (*hostContent, error) {
 		f.Close()
 		return nil, fmt.Errorf("read %s: %w", p, err)
 	}
-	h.mode = uint32(fi.Mode().Perm())
+	h.mode = uint32(fi.Mode().Perm()) &^ 0o022
 	return h, nil
 }
 

@@ -127,6 +127,28 @@ func TestStockModule(t *testing.T) {
 			After: `[ "$(stat -c '%U %G %a' /tmp/w/f)" = "root root 755" ]`,
 		},
 		{
+			Name:  "copy_from drops the write bits of the group and others",
+			Setup: `printf 'src\n' > /tmp/w/src && chmod 666 /tmp/w/src`,
+			Args:  &module.File{Path: "/tmp/w/f", CopyFrom: "/tmp/w/src"},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"content from /tmp/w/src", "owner root, group root, mode 0644"}},
+			After: `[ "$(stat -c '%U %G %a' /tmp/w/f)" = "root root 644" ]`,
+		},
+		{
+			Name:  "copy_from with a given group write mode",
+			Setup: `printf 'src\n' > /tmp/w/src && chmod 666 /tmp/w/src`,
+			Args:  &module.File{Path: "/tmp/w/f", CopyFrom: "/tmp/w/src", Mode: "0664"},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"content from /tmp/w/src", "owner root, group root, mode 0664"}},
+			After: `[ "$(stat -c '%U %G %a' /tmp/w/f)" = "root root 664" ]`,
+		},
+		{
+			Name:      "copy_from drops the write bits of the group and others of a target that exists",
+			Setup:     `printf 'src\n' > /tmp/w/src && chmod 666 /tmp/w/src && cp -p /tmp/w/src /tmp/w/f`,
+			Args:      &module.File{Path: "/tmp/w/f", CopyFrom: "/tmp/w/src"},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"mode 0666 → 0644"}},
+			Unchanged: `[ "$(stat -c '%U %G %a' /tmp/w/f)" = "root root 666" ]`,
+			After:     `[ "$(stat -c '%U %G %a' /tmp/w/f)" = "root root 644" ]`,
+		},
+		{
 			Name:  "copy_from with a given setuid mode",
 			Setup: `printf 'src\n' > /tmp/w/src && chown nobody:nogroup /tmp/w/src && chmod 4755 /tmp/w/src`,
 			Args:  &module.File{Path: "/tmp/w/f", CopyFrom: "/tmp/w/src", Mode: "4755"},
