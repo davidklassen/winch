@@ -36,11 +36,6 @@ func secretInit(ctx context.Context, env Env, f *flags, args []string) int {
 		printError(env.stderr, fmt.Sprintf("winch: %v", err))
 		return exitInvalid
 	}
-	edit, err := project.AddRecipient(env.Dir, key)
-	if err != nil {
-		printError(env.stderr, err.Error())
-		return exitInvalid
-	}
 	if made != nil {
 		if err := identity.WriteKey(made); err != nil {
 			printError(env.stderr, fmt.Sprintf("winch: %v", err))
@@ -49,6 +44,11 @@ func secretInit(ctx context.Context, env Env, f *flags, args []string) int {
 		fmt.Fprintf(env.stdout, "made the age key %s\n", identity.Path)
 	}
 	fmt.Fprintf(env.stdout, "public key: %s\n", key)
+	edit, err := project.AddRecipient(env.Dir, key)
+	if err != nil {
+		printError(env.stderr, err.Error())
+		return exitInvalid
+	}
 	if edit == nil {
 		return exitOK
 	}
@@ -56,7 +56,7 @@ func secretInit(ctx context.Context, env Env, f *flags, args []string) int {
 		printError(env.stderr, err.Error())
 		return exitInvalid
 	}
-	fmt.Fprintln(env.stdout, "added the public key to recipients in winch.yaml")
+	fmt.Fprintf(env.stdout, "added the public key to recipients in %s\n", edit.File)
 	if sealed {
 		fmt.Fprintln(env.stdout, "a member who can read the secrets must now run winch secret rekey")
 	}
