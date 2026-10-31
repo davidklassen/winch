@@ -164,7 +164,7 @@ func (l *loader) checkNames(sets []setValue) error {
 	var errs []error
 	for _, r := range l.reads {
 		if !given[r.name] {
-			errs = append(errs, yamlx.Errorf(r.pos, "%s%s", unknownVariable(r.name, given), r.snippet))
+			errs = append(errs, yamlx.Errorf(r.pos, "vars.%s has no value: set it in the inventory, or give it a default%s%s", r.name, yamlx.Suggest(r.name, slices.Sorted(maps.Keys(given))), r.snippet))
 		}
 	}
 	for _, v := range l.given {
@@ -186,7 +186,7 @@ func unreadValue(name string, read map[string]bool) string {
 	case !varNameRe.MatchString(name):
 		return fmt.Sprintf("variable %q: a variable name has only lowercase letters, digits, and _", name)
 	case !read[name]:
-		return unknownVariable(name, read)
+		return fmt.Sprintf("vars.%s is set but nothing reads it%s", name, yamlx.Suggest(name, slices.Sorted(maps.Keys(read))))
 	}
 	return ""
 }

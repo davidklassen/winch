@@ -170,7 +170,7 @@ func TestValidateSet(t *testing.T) {
 		"pipelines/site.yaml":   strings.Replace(motd, `"hello\n"`, "!expr vars.release", 1),
 	})
 	r := winch(t, dir, fakehost.New(), false, "", "validate")
-	if r.code != exitInvalid || !strings.Contains(r.err, `pipelines/site.yaml:7:20: unknown variable "release"`) {
+	if r.code != exitInvalid || !strings.Contains(r.err, `pipelines/site.yaml:7:20: vars.release has no value: set it in the inventory, or give it a default`) {
 		t.Errorf("without --set: exit %d, stderr %q", r.code, r.err)
 	}
 	r = winch(t, dir, fakehost.New(), false, "", "validate", "--set", "vars.release=1.4.2")
@@ -430,7 +430,7 @@ func TestSet(t *testing.T) {
 		t.Errorf("plan with the last --set: exit %d, stdout %q", r.code, r.out)
 	}
 	r = winch(t, dir, fakehost.New(), false, "", "plan", "site", "--set", "vars.greting=x")
-	if r.code != exitInvalid || !strings.Contains(r.err, `--set vars.greting=x: unknown variable "greting"; did you mean "greeting"?`) {
+	if r.code != exitInvalid || !strings.Contains(r.err, `--set vars.greting=x: vars.greting is set but nothing reads it; did you mean "greeting"?`) {
 		t.Errorf("unknown variable: exit %d, stderr %q", r.code, r.err)
 	}
 	h := fakehost.New()
@@ -443,7 +443,7 @@ func TestSet(t *testing.T) {
 		t.Errorf("apply: exit %d, /etc/motd %q", r.code, c)
 	}
 	r = winch(t, dir, fakehost.New(), false, "", "validate", "--set", "vars.greting=x")
-	if r.code != exitInvalid || !strings.Contains(r.err, `--set vars.greting=x: unknown variable "greting"; did you mean "greeting"?`) {
+	if r.code != exitInvalid || !strings.Contains(r.err, `--set vars.greting=x: vars.greting is set but nothing reads it; did you mean "greeting"?`) {
 		t.Errorf("validate with an unknown variable: exit %d, stderr %q", r.code, r.err)
 	}
 }

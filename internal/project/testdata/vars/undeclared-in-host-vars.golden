@@ -1,1 +1,1 @@
-winch.yaml:6:13: unknown variable "domian"; did you mean "domain"?
+winch.yaml:6:13: vars.domian has no value: set it in the inventory, or give it a default; did you mean "domain"?

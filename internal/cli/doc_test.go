@@ -202,6 +202,11 @@ func TestDocInvalid(t *testing.T) {
 		{"topic name and key path", []string{"doc", "recipes"}, `winch doc: unknown topic or module "recipes"; did you mean "recipe" or "project.recipes"?`},
 		{"topic name and key paths", []string{"doc", "steps"}, `winch doc: unknown topic or module "steps"; did you mean "step", "project.steps", "pipeline.steps", or "recipe.steps"?`},
 		{"unknown module of a key", []string{"doc", "fiel.mode"}, `winch doc: unknown topic or module "fiel"; did you mean "file"?`},
+		{"command", []string{"doc", "exec"}, "winch doc: unknown topic or module \"exec\"\nRun \"winch exec --help\" for the command."},
+		{"command and a topic", []string{"doc", "secret"}, "winch doc: unknown topic or module \"secret\"; did you mean \"secrets\"?\nRun \"winch secret --help\" for the command."},
+		{"subcommand as a key", []string{"doc", "secrets.generate"}, "winch doc: secrets has no key \"generate\"\nRun \"winch secret generate --help\" for the command."},
+		{"subcommand with a dot", []string{"doc", "secret.generate"}, "winch doc: unknown topic or module \"secret\"; did you mean \"secrets\"?\nRun \"winch secret generate --help\" for the command."},
+		{"command word as a module key", []string{"doc", "file.apply"}, `winch doc: file has no key "apply"`},
 		{"two arguments", []string{"doc", "file", "dir"}, "winch: doc takes one topic, module, or key"},
 		{"json with a module", []string{"doc", "file", "--json"}, "winch: doc --json takes no topic, module, or key"},
 	}

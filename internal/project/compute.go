@@ -348,10 +348,6 @@ func constKey(n ast.Node) (ast.Node, string, bool) {
 	return nil, "", false
 }
 
-func unknownVariable(name string, known map[string]bool) string {
-	return fmt.Sprintf("unknown variable %q%s", name, yamlx.Suggest(name, slices.Sorted(maps.Keys(known))))
-}
-
 var (
 	unknownNameRe  = regexp.MustCompile(`^unknown name (\w+)$`)
 	unknownFieldRe = regexp.MustCompile(`^type (\w+\.\w+) has no field (\w+)$`)

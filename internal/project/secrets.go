@@ -678,7 +678,7 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	l, lErr := newLoader(dir, cfg)
 	_, plErr := l.otherPipelines("")
 	if read := l.readNames(); !read[name] {
-		return "", errors.Join(errors.New(unknownVariable(name, read)), lErr, plErr)
+		return "", errors.Join(fmt.Errorf("nothing reads vars.%s%s", name, yamlx.Suggest(name, slices.Sorted(maps.Keys(read)))), lErr, plErr)
 	}
 	inventory = cmp.Or(inventory, cfg.Inventory, l.layout.only())
 	if inventory == "" {

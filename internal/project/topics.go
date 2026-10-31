@@ -58,7 +58,7 @@ var templateFunctions = []doc.Key{
 	{Name: "call", Text: "call f args: the result of the function f. Project data holds no functions."},
 	{Name: "eq", Text: "eq a b: true when a equals b. With more arguments, true when a equals any of them. In an expression, use ==."},
 	{Name: "ge", Text: "ge a b: true when a >= b."},
-	{Name: "get", Text: "get m key: the value of key in the map m, or nothing when m has no such key. It reads a key that a map may leave out: {{ with get . \"endpoint\" }}Endpoint = {{ . }}{{ end }}."},
+	{Name: "get", Text: "get m key: the value of key in the map m, or nothing when m has no such key. It reads a key that a map may leave out: {{ with get . \"endpoint\" }}Endpoint = {{ . }}{{ end }}. It does not read the host's own .vars: a variable that may have no value needs a default."},
 	{Name: "gt", Text: "gt a b: true when a > b."},
 	{Name: "has", Text: "has list v: true when list contains v. In an expression, use v in list."},
 	{Name: "html", Text: "html s: s with the special characters of HTML escaped."},

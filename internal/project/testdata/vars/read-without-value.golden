@@ -1,4 +1,4 @@
-recipes/web/recipe.yaml:4:13: unknown variable "domain"
+recipes/web/recipe.yaml:4:13: vars.domain has no value: set it in the inventory, or give it a default
  | vars.mail_server ? vars.domain : host.name
  | ........................^
-pipelines/site.yaml:19:19: unknown variable "domain"
+pipelines/site.yaml:19:19: vars.domain has no value: set it in the inventory, or give it a default

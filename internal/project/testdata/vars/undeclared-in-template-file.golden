@@ -1,1 +1,1 @@
-recipes/web/templates/site.tmpl:1:9: unknown variable "web_prot"; did you mean "web_port"?
+recipes/web/templates/site.tmpl:1:9: vars.web_prot has no value: set it in the inventory, or give it a default; did you mean "web_port"?

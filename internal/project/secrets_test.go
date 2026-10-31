@@ -1228,7 +1228,7 @@ func TestWriteSecretErrors(t *testing.T) {
 	}{
 		{"a value in all", "", "", "", "token", `variable "token" is already in the vars of the group all in inventories/test.yaml`},
 		{"a value in the host", "", "", "web1", "pw", `variable "pw" is already in the vars of host "web1" in inventories/test.yaml`},
-		{"not read", "", "", "", "tokn", `unknown variable "tokn"; did you mean "token"?`},
+		{"not read", "", "", "", "tokn", `nothing reads vars.tokn; did you mean "token"?`},
 		{"an unknown host", "", "", "web9", "token", `host "web9" is not in inventories/test.yaml`},
 		{"two inventories and no default", "name: acme\nrecipients:\n  - KEY\ninventories:\n  prod:\n    hosts: {}\n", "", "", "pw", "no inventory: use --inventory, or set inventory in winch.yaml"},
 		{"a missing inventory", "", "prod", "", "pw", `unknown inventory "prod"`},
@@ -1388,7 +1388,7 @@ func TestWriteSecretReadInBrokenRecipe(t *testing.T) {
 		"recipes/db/recipe.yaml": "steps:\n  - file:\n      path: /x\n      content: !expr vars.db_password\n  - file: {path: /y\n",
 	})
 	_, err := WriteSecret(dir, "", "", "db_password", "hunter2")
-	if err == nil || !strings.Contains(err.Error(), `unknown variable "db_password"`) || !strings.Contains(err.Error(), "recipes/db/recipe.yaml:4:1: did not find expected") {
+	if err == nil || !strings.Contains(err.Error(), `nothing reads vars.db_password`) || !strings.Contains(err.Error(), "recipes/db/recipe.yaml:4:1: did not find expected") {
 		t.Errorf("err %v; want the unknown variable and the parse error", err)
 	}
 }

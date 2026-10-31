@@ -1,1 +1,1 @@
-recipes/web/recipe.yaml:14:16: unknown variable "web_titel"; did you mean "web_title"?
+recipes/web/recipe.yaml:14:16: vars.web_titel has no value: set it in the inventory, or give it a default; did you mean "web_title"?
