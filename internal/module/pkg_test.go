@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"testing/fstest"
 	"testing/synctest"
 	"time"
 )
@@ -279,5 +280,68 @@ func TestProvidedNameWaitsForTheRefresh(t *testing.T) {
 	providers, _, _ = parseShowpkg(fresh)
 	if err := providedOnly([]string{"php-mbstring"}, providers); err != nil {
 		t.Errorf("providedOnly after the refresh = %v, want nil", err)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection
+func TestCutsOff(t *testing.T) {
+	a := accounts{users: []passwdEntry{
+		{name: "root", uid: 0, shell: "/bin/bash"},
+		{name: "admin", uid: 1000, shell: "/bin/zsh"},
+		{name: "ksh", uid: 1001, shell: "/usr/bin/ksh"},
+		{name: "rs", uid: 1002, shell: "/usr/bin/fish"},
+	}}
+	links := map[string]string{"/usr/bin/ksh": "/usr/bin/ksh93"}
+	sudoRS := map[string]string{"/usr/bin/sudo": "/usr/lib/cargo/bin/sudo"}
+	info := fstest.MapFS{
+		"bash.list":         {Data: []byte("/.\n/usr/bin/bash\n")},
+		"zsh.list":          {Data: []byte("/.\n/bin/zsh\n")},
+		"fish.list":         {Data: []byte("/.\n/bin/fish\n")},
+		"ksh93u+m.list":     {Data: []byte("/.\n/bin/ksh93\n")},
+		"sudo.list":         {Data: []byte("/.\n/etc/sudoers\n/usr/bin/sudo\n")},
+		"sudo-rs.list":      {Data: []byte("/.\n/usr/lib/cargo/bin/sudo\n")},
+		"sudo-ws.list":      {Data: []byte("/.\n/usr/bin/sudo.ws\n")},
+		"conffiles.list":    {Data: []byte("/.\n/etc/sudoers\n")},
+		"zsh-dev:i386.list": {Data: []byte("/.\n/usr/include/zsh.h\n")},
+	}
+	tests := []struct {
+		name    string
+		removed []string
+		uid     uint32
+		links   map[string]string
+		want    bool
+	}{
+		{"openssh-server", []string{"hello", "openssh-server"}, 0, nil, true},
+		{"openssh-server of another architecture", []string{"openssh-server:arm64"}, 0, nil, true},
+		{"sudo for admin", []string{"sudo"}, 1000, nil, true},
+		{"sudo for root", []string{"sudo"}, 0, nil, false},
+		{"sudo-rs for admin, where sudo is sudo-rs", []string{"sudo-rs"}, 1002, sudoRS, true},
+		{"the other sudo for admin, where sudo is sudo-rs", []string{"sudo-ws"}, 1002, sudoRS, false},
+		{"the shell of admin", []string{"zsh"}, 1000, nil, true},
+		{"the shell of admin, of another architecture", []string{"zsh:i386"}, 1000, nil, true},
+		{"the shell of root, in /usr", []string{"bash"}, 0, nil, true},
+		{"the shell in /usr, listed in /bin", []string{"fish"}, 1002, sudoRS, true},
+		{"the file behind a link to the shell", []string{"ksh93u+m"}, 1001, links, true},
+		{"the shell of another user", []string{"bash"}, 1000, nil, false},
+		{"a login user the host does not know", []string{"zsh"}, 3000, nil, false},
+		{"another package", []string{"hello", "conffiles", "zsh-dev:i386"}, 1000, nil, false},
+		{"nothing", nil, 1000, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolve := func(p string) (string, error) {
+				if r, ok := tt.links[p]; ok {
+					return r, nil
+				}
+				return p, nil
+			}
+			err := cutsOff(tt.removed, accessPaths(tt.uid, a, resolve), info)
+			if got := err != nil; got != tt.want {
+				t.Fatalf("error = %v, want an error: %v", err, tt.want)
+			}
+			if err != nil && err.Error() != "this cuts off winch's access" {
+				t.Errorf("error = %q", err)
+			}
+		})
 	}
 }

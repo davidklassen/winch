@@ -9,10 +9,11 @@ import (
 )
 
 // upgradeDebs builds version 1 of the upgrade test packages in /root/debs.
-// The lab's test source has version 2 of winch-up, winch-up-deps, and
-// winch-up-conflict, and version 1 of winch-up-new. Version 2 of winch-up
-// changes its conffile; version 2 of winch-up-deps depends on winch-up-new;
-// version 2 of winch-up-conflict conflicts with winch-up-old. Both versions
+// The lab's test source has version 2 of winch-up, winch-up-deps,
+// winch-up-conflict, and winch-up-nossh, and version 1 of winch-up-new.
+// Version 2 of winch-up changes its conffile; version 2 of winch-up-deps
+// depends on winch-up-new; version 2 of winch-up-conflict conflicts with
+// winch-up-old; version 2 of winch-up-nossh conflicts with openssh-server. Both versions
 // of winch-up install /etc/winch-up-ucf.conf through ucf.
 const upgradeDebs = `set -e
 deb() {
@@ -30,6 +31,7 @@ chmod 755 /root/debs/winch-up/DEBIAN/postinst
 deb winch-up-deps
 deb winch-up-conflict
 deb winch-up-old
+deb winch-up-nossh
 for d in /root/debs/*/; do dpkg-deb -b "$d" "${d%/}.deb" >/dev/null; done`
 
 // installV1 installs version 1 of the named test packages.

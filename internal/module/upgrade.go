@@ -57,6 +57,9 @@ func (u *Upgrade) Check(ctx context.Context, st *State, say Say) (Result, error)
 		return Result{}, err
 	}
 	changes := parseUpgrade(out)
+	if err := checkAccess(parseRemovals(out, nil), st.LoginUID); err != nil {
+		return Result{}, err
+	}
 	if len(changes) == 0 {
 		return Result{Status: OK}, nil
 	}

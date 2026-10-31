@@ -1790,7 +1790,9 @@ Access to the host:
   winch keeps its access to each host.
 
     - A step that stops, disables, masks, or removes the SSH server
-      fails: "this cuts off winch's access".
+      fails: "this cuts off winch's access". So does a pkg or upgrade
+      step that removes sudo while the login user is not root, or the
+      package of the login user's shell.
     - Some steps get the rollback of confirm_access without it: a change
       of the login user's authorized_keys, ~/.ssh, or home directory,
       groups added to the login user, a change of /etc/pam.d, and a

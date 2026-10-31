@@ -597,7 +597,7 @@ var workflowTopic = doc.Topic{
 		doc.Heading("Access to the host"),
 		doc.Paragraph(`winch keeps its access to each host.`),
 		doc.List(
-			`A step that stops, disables, masks, or removes the SSH server fails: "this cuts off winch's access".`,
+			`A step that stops, disables, masks, or removes the SSH server fails: "this cuts off winch's access". So does a pkg or upgrade step that removes sudo while the login user is not root, or the package of the login user's shell.`,
 			`Some steps get the rollback of confirm_access without it: a change of the login user's authorized_keys, ~/.ssh, or home directory, groups added to the login user, a change of /etc/pam.d, and a change of /etc/sudoers or /etc/sudoers.d when the login user is not root. Every firewall step gets it too. The plan marks such a step. Run winch doc step.confirm_access.`,
 			`A step that changes sshd's config while ssh.socket is active, as on Ubuntu, restarts ssh.socket. It gets the same protection.`,
 			`After the last step of a host that changed something, winch checks the access once more. When it fails, the host fails, and nothing rolls back.`,
