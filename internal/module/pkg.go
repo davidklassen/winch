@@ -536,15 +536,10 @@ func parseSimulation(out string, own []string) (installs, upgrades []string) {
 
 // installFlags are the flags of an install that change what apt installs.
 func (p *Pkg) installFlags() []string {
-	var flags []string
-	switch {
-	case p.Recommends == nil:
-	case *p.Recommends:
-		flags = append(flags, "--install-recommends")
-	default:
-		flags = append(flags, "--no-install-recommends")
+	if p.Recommends != nil && !*p.Recommends {
+		return []string{"--no-install-recommends"}
 	}
-	return flags
+	return []string{"--install-recommends"}
 }
 
 func (p *Pkg) Apply(ctx context.Context, say Say) error {
