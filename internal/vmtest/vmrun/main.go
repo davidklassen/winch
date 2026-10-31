@@ -63,6 +63,9 @@ func run() error {
 		}
 		defer vm.Stop()
 		names = append(names, name)
+		for _, f := range vm.Forwards() {
+			fmt.Printf("  %s port %d is 127.0.0.1:%d\n", f.Proto, f.Guest, f.Host)
+		}
 	}
 	fmt.Printf("VMs %s are ready. In another terminal:\n  export PATH=%s/bin:$PATH\n  ssh %s\nCtrl-C stops them.\n", strings.Join(names, ", "), dir, names[0])
 	<-ctx.Done()
