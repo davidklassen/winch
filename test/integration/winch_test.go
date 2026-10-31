@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -366,7 +365,7 @@ func TestWinch(t *testing.T) {
 		vm.MustRun(t, "sed -i 1d /home/nosudo/.bashrc")
 	})
 
-	t.Run("closing a session with ControlPersist does not wait", func(t *testing.T) {
+	t.Run("a session with ControlMaster in the SSH config starts no master", func(t *testing.T) {
 		// A unix socket path must be short, and the lab directory is long on macOS.
 		ctl, err := os.MkdirTemp("/tmp", "winch-")
 		if err != nil {
@@ -381,16 +380,11 @@ func TestWinch(t *testing.T) {
 			os.Remove(conf)
 			os.RemoveAll(ctl)
 		})
-		s := vm.Session(t)
-		start := time.Now()
-		if err := s.Close(); err != nil {
+		if err := vm.Session(t).Close(); err != nil {
 			t.Fatal(err)
 		}
-		if d := time.Since(start); d > 2*time.Second {
-			t.Errorf("close took %v", d)
-		}
-		if out, err := exec.Command("ssh", "-O", "check", vm.Name).CombinedOutput(); err != nil {
-			t.Errorf("no ssh master runs: %v: %s", err, out)
+		if out, err := exec.Command("ssh", "-O", "check", vm.Name).CombinedOutput(); err == nil {
+			t.Errorf("an ssh master runs: %s", out)
 		}
 	})
 

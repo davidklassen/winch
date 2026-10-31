@@ -536,8 +536,8 @@ func sshArgs(t *testing.T, host, address string) (options, target string) {
 // spec: Remote execution/Sessions
 func TestOpenOptions(t *testing.T) {
 	options, _ := sshArgs(t, "web1", "web1")
-	for _, want := range []string{"ConnectTimeout=15", "ServerAliveInterval=15", "ServerAliveCountMax=3", "RemoteCommand=none",
-		"PermitLocalCommand=no", "ClearAllForwardings=yes", "ForwardAgent=no", "ForwardX11=no"} {
+	for _, want := range []string{"ConnectTimeout=15", "ServerAliveInterval=15", "ServerAliveCountMax=3", "ControlMaster=no",
+		"ControlPath=none", "RemoteCommand=none", "PermitLocalCommand=no", "ClearAllForwardings=yes", "ForwardAgent=no", "ForwardX11=no"} {
 		if !strings.Contains(options, "-o\n"+want+"\n") {
 			t.Errorf("ssh arguments have no -o %s", want)
 		}

@@ -88,6 +88,27 @@ func TestSilentAddressFails(t *testing.T) {
 func TestFrozenHostFails(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "frozen")
+	// A unix socket path must be short, and the lab directory is long on macOS.
+	ctl, err := os.MkdirTemp("/tmp", "winch-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf, err := lab.WriteHost(vm.Name+"-mux", "Host "+vm.Name+"\n  ControlMaster auto\n  ControlPath "+ctl+"/%C\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		exec.Command("ssh", "-O", "exit", vm.Name).Run() //nolint:errcheck // the master may be gone
+		os.Remove(conf)
+		os.RemoveAll(ctl)
+	})
+	// A master from the SSH config sends no keepalives.
+	if out, err := exec.Command("ssh", "-fN", "-o", "ControlMaster=yes", "-o", "ControlPersist=yes", "-o", "ServerAliveInterval=0", vm.Name).CombinedOutput(); err != nil {
+		t.Fatalf("start a master: %v: %s", err, out)
+	}
+	if out, err := exec.Command("ssh", "-O", "check", vm.Name).CombinedOutput(); err != nil {
+		t.Fatalf("no master runs: %v: %s", err, out)
+	}
 	s := vm.Session(t)
 	if err := vm.Freeze(); err != nil {
 		t.Fatal(err)
