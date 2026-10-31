@@ -277,6 +277,66 @@ func TestDocTopicLayout(t *testing.T) {
 }
 
 // spec: CLI
+func TestDocBlocks(t *testing.T) {
+	long := "A long paragraph has more words than one line of the terminal can hold, so the renderer breaks it at spaces."
+	tests := []struct {
+		name   string
+		blocks []doc.Block
+		want   string
+	}{
+		{"paragraph wraps", []doc.Block{doc.Paragraph(long)}, `A long paragraph has more words than one line of the terminal can hold,
+so the renderer breaks it at spaces.
+`},
+		{"paragraph under a heading wraps with its indent", []doc.Block{doc.Heading("Head"), doc.Paragraph(long)}, `Head:
+  A long paragraph has more words than one line of the terminal can
+  hold, so the renderer breaks it at spaces.
+`},
+		{"list item wraps under its text", []doc.Block{doc.Paragraph("Text:"), doc.List(long, "short")}, `Text:
+
+  - A long paragraph has more words than one line of the terminal can
+    hold, so the renderer breaks it at spaces.
+  - short
+`},
+		{"list, table, and code after a heading", []doc.Block{
+			doc.Heading("Head"),
+			doc.OrderedList("one", "two"),
+			doc.Table([][]string{{"a", "first"}, {"bb", "second"}}),
+			doc.Code("x: 1\n"),
+		}, `Head:
+    1. one
+    2. two
+
+    a   first
+    bb  second
+
+    x: 1
+`},
+		{"table cells wrap in their columns", []doc.Block{doc.Table([][]string{
+			{"ConnectTimeout=15 ServerAliveInterval=15 ServerAliveCountMax=3", "a host that does not answer fails and does not hang the run"},
+			{"ForwardX11=no", "the SSH config does not replace or add to the command of winch"},
+		})}, `  ConnectTimeout=15       a host that does not answer fails
+  ServerAliveInterval=15  and does not hang the run
+  ServerAliveCountMax=3
+  ForwardX11=no           the SSH config does not replace or
+                          add to the command of winch
+`},
+		{"a table row fills the page", []doc.Block{doc.Table([][]string{{"a", "word word word word word word word word word word word word word ab"}})}, `  a  word word word word word word word word word word word word word ab
+`},
+		{"a word longer than the page stays on its line", []doc.Block{doc.Table([][]string{{"a", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}})}, `  a  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var b strings.Builder
+			writeBlocks(&b, tt.blocks)
+			if b.String() != tt.want {
+				t.Errorf("got\n%s\nwant\n%s", b.String(), tt.want)
+			}
+		})
+	}
+}
+
+// spec: CLI
 func TestDocExamples(t *testing.T) {
 	key, err := os.ReadFile(filepath.Join("..", "module", "testdata", "key.asc"))
 	if err != nil {
@@ -558,12 +618,10 @@ func checkDocKeys(t *testing.T, dir string, h *fakehost.Hosts, keys []docJSONKey
 }
 
 // docBlockWords returns the words of the blocks before the example, with a
-// heading as it shows on the page. The JSON joins the lines of a table cell,
-// so the words of a table come from src, the blocks in the source, line by
-// line as the page shows them.
-func docBlockWords(blocks []docJSONBlock, src []doc.Block) []string {
+// heading as it shows on the page.
+func docBlockWords(blocks []docJSONBlock) []string {
 	var words []string
-	for i, b := range blocks {
+	for _, b := range blocks {
 		switch b.Type {
 		case "heading":
 			words = append(words, strings.Fields(b.Text+":")...)
@@ -579,19 +637,9 @@ func docBlockWords(blocks []docJSONBlock, src []doc.Block) []string {
 				words = append(words, strings.Fields(item)...)
 			}
 		case "table":
-			for _, row := range src[i].Rows {
-				lines := make([][]string, len(row))
-				n := 0
-				for c, cell := range row {
-					lines[c] = strings.Split(cell, "\n")
-					n = max(n, len(lines[c]))
-				}
-				for l := range n {
-					for c := range row {
-						if l < len(lines[c]) {
-							words = append(words, strings.Fields(lines[c][l])...)
-						}
-					}
+			for _, row := range b.Rows {
+				for _, cell := range row {
+					words = append(words, strings.Fields(cell)...)
 				}
 			}
 		}
@@ -663,19 +711,13 @@ func TestDocJSON(t *testing.T) {
 			if b.Type != "table" {
 				continue
 			}
-			var rows [][]string
-			for _, row := range src[i].Rows {
-				var cells []string
-				for _, cell := range row {
-					cells = append(cells, oneLine(cell))
-				}
-				rows = append(rows, cells)
-			}
-			if !slices.EqualFunc(b.Rows, rows, slices.Equal) {
-				t.Errorf("winch doc %s: table %q, source %q", tp.Name, b.Rows, rows)
+			if !slices.EqualFunc(b.Rows, src[i].Rows, slices.Equal) {
+				t.Errorf("winch doc %s: table %q, source %q", tp.Name, b.Rows, src[i].Rows)
 			}
 		}
-		if got, want := strings.Fields(body), docBlockWords(blocks, src); !slices.Equal(got, want) {
+		// A table wraps its cells into lines, so the words of a row mix on
+		// the page: compare the words, not their order.
+		if got, want := slices.Sorted(slices.Values(strings.Fields(body))), slices.Sorted(slices.Values(docBlockWords(blocks))); !slices.Equal(got, want) {
 			t.Errorf("winch doc %s: body\n%s\nJSON\n%q", tp.Name, body, want)
 		}
 		if got := docSection(page, "\nExample:\n", "\nRun \"winch doc"); got != indentDoc(example) {
