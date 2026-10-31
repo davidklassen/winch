@@ -74,6 +74,9 @@ type Options struct {
 	Serial bool
 	// Progress is nil, or shows the busy hosts.
 	Progress Progress
+	// Keep keeps the sessions of the hosts with work open after the plan,
+	// for Apply. The caller closes the plan.
+	Keep bool
 }
 
 // Progress shows what each host does now. The text of a step is its scope
@@ -135,6 +138,9 @@ type Plan struct {
 	refreshed map[string]bool
 	hash      string
 	opts      Options
+	// mu guards conns, the sessions that the plan kept for Apply.
+	mu    sync.Mutex
+	conns map[string]Conn
 }
 
 type StagePlan struct {
@@ -348,6 +354,43 @@ func (hr *hostRun) close() error {
 	return err
 }
 
+// Close closes the sessions that the plan kept and Apply did not take.
+func (p *Plan) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, c := range p.conns {
+		wg.Go(func() {
+			c.Close() //nolint:errcheck // the run does not use the session
+		})
+	}
+	wg.Wait()
+	clear(p.conns)
+}
+
+// take returns the session that the plan kept for host, or nil. The caller
+// closes it.
+func (p *Plan) take(host string) Conn {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	c := p.conns[host]
+	delete(p.conns, host)
+	return c
+}
+
+// changed returns the hosts with changes in the plan.
+func (p *Plan) changed() map[string]bool {
+	hosts := map[string]bool{}
+	for _, sp := range p.Stages {
+		for _, hp := range sp.Hosts {
+			if hp.changes() {
+				hosts[hp.Host.Name] = true
+			}
+		}
+	}
+	return hosts
+}
+
 // MakePlan checks every step on every host, stage by stage. The hosts of a
 // stage run at the same time. At the first contact with a host, it reads the
 // facts and starts the host's evaluation. A host that fails stops there.
@@ -412,7 +455,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 					err = errors.Join(err, s.err)
 				}
 			}
-			if err != nil || last[hosts[i].Name] == si {
+			if err != nil || !opts.Keep && last[hosts[i].Name] == si {
 				if cerr := hr.close(); err == nil {
 					err = cerr
 				}
@@ -445,6 +488,31 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		}
 		plan.Destinations[name] = hr.dest
 	}
+	plan.conns = map[string]Conn{}
+	changed := plan.changed()
+	var idle []string
+	for name, hr := range runs {
+		if hr.conn == nil {
+			continue
+		}
+		if plan.Failed[name] == nil && (changed[name] || plan.removes(name)) {
+			plan.conns[name] = hr.conn
+		} else {
+			idle = append(idle, name)
+		}
+	}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, name := range idle {
+		wg.Go(func() {
+			if err := runs[name].close(); err != nil {
+				mu.Lock()
+				plan.Failed[name] = err
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
 	for _, h := range p.Inventory.Hosts {
 		if inStages[h.Name] {
 			plan.Hosts = append(plan.Hosts, h)

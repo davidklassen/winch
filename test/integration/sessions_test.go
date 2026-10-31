@@ -8,8 +8,7 @@ import (
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
-// spec: Remote execution/Sessions ("plan and apply each make one handshake
-// per host")
+// spec: Remote execution/Sessions ("winch apply logs in once per host")
 func TestOneHandshakePerHost(t *testing.T) {
 	t.Parallel()
 	vms := []*vmtest.VM{lab.StartVM(t, "sess-a"), lab.StartVM(t, "sess-b")}
@@ -55,8 +54,8 @@ func TestOneHandshakePerHost(t *testing.T) {
 		t.Fatalf("apply: exit %d", r.Code)
 	}
 	for i, vm := range vms {
-		if n := logins(vm) - before[i]; n != 3 {
-			t.Errorf("%s: %d handshakes, want 3: one in plan, one in apply, one for the access check after the run", vm.Name, n)
+		if n := logins(vm) - before[i]; n != 2 {
+			t.Errorf("%s: %d handshakes, want 2: one for plan and apply, one for the access check after the run", vm.Name, n)
 		}
 	}
 }

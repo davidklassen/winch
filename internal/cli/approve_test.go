@@ -220,10 +220,12 @@ func TestUnreachableExit(t *testing.T) {
 // spec: CLI/Exit codes; Running a pipeline/Failures
 func TestUnreachableDuringApply(t *testing.T) {
 	h := fakehost.New()
-	// web2 goes down after its check, before apply connects again.
+	// web2 goes down after its check: its session dies, and apply cannot
+	// connect again.
 	h.OnCheck = func(host, _ string) {
 		if host == "web2" {
 			h.SetUnreachable("web2")
+			h.Kill("web2")
 		}
 	}
 	r := winch(t, writeProject(t, motd), h, false, "", "apply", "site", "--yes", "--json")
@@ -244,6 +246,10 @@ func TestInterruptAtQuestion(t *testing.T) {
 	})
 	if code != exitOK || h.Applies != 0 || !strings.HasSuffix(errOut.String(), "Apply these changes? [y/N] \nNothing changed.\n") {
 		t.Errorf("exit %d, applies %d, stderr %q", code, h.Applies, errOut.String())
+	}
+	// spec: Remote execution/Sessions
+	if h.Open != 0 {
+		t.Errorf("%d sessions stay open", h.Open)
 	}
 }
 
@@ -273,6 +279,9 @@ func TestInterruptDuringPlan(t *testing.T) {
 	})
 	if code != exitFailed || h.Applies != 0 || strings.Contains(errOut.String(), "Apply these changes?") {
 		t.Errorf("exit %d, applies %d, stderr %q", code, h.Applies, errOut.String())
+	}
+	if h.Open != 0 {
+		t.Errorf("%d sessions stay open", h.Open)
 	}
 }
 

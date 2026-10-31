@@ -92,6 +92,9 @@ type Hosts struct {
 	dests map[string]protocol.Destination
 	// jumps holds the jump hosts that SetJump set.
 	jumps map[string]string
+	// kills counts the Kill calls per host. A session of an earlier count is
+	// dead.
+	kills map[string]int
 }
 
 func New() *Hosts {
@@ -129,6 +132,7 @@ func New() *Hosts {
 		boots:        map[string]protocol.Boot{},
 		dests:        map[string]protocol.Destination{},
 		jumps:        map[string]string{},
+		kills:        map[string]int{},
 	}
 }
 
@@ -372,7 +376,15 @@ func (h *Hosts) Connect(ctx context.Context, host project.Host, want *protocol.D
 	h.Connects[host.Name]++
 	h.Users[host.Name] = host.User
 	h.Trace = append(h.Trace, "connect "+host.Name)
-	return &Conn{hosts: h, host: host.Name, dest: h.dest(host)}, nil
+	return &Conn{hosts: h, host: host.Name, dest: h.dest(host), kill: h.kills[host.Name]}, nil
+}
+
+// Kill ends the open sessions of host, as a network change does: each of
+// their calls but Close fails.
+func (h *Hosts) Kill(host string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.kills[host]++
 }
 
 // dest returns the destination of host, with the jump host that SetJump set.
@@ -441,11 +453,25 @@ type Conn struct {
 	hosts *Hosts
 	host  string
 	dest  protocol.Destination
+	kill  int
+}
+
+// dead returns the error of a session that Kill ended, or nil.
+func (c *Conn) dead() error {
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	if c.kill != c.hosts.kills[c.host] {
+		return errors.New("session: write |1: broken pipe")
+	}
+	return nil
 }
 
 func (c *Conn) Destination() protocol.Destination { return c.dest }
 
 func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
+	if err := c.dead(); err != nil {
+		return module.Result{}, err
+	}
 	if c.hosts.OnCheck != nil {
 		c.hosts.OnCheck(c.host, m.Main())
 	}
@@ -732,6 +758,9 @@ func serviceAction(s *module.Service) string {
 // Apply starts a rollback timer that ends at once for a changed step with
 // confirm_access, or a result with Guard.
 func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard) (module.Result, error) {
+	if err := c.dead(); err != nil {
+		return module.Result{}, err
+	}
 	res, err := c.apply(ctx, name, m, st, notify, then, check)
 	c.hosts.mu.Lock()
 	c.hosts.Guards[c.host+" "+m.Main()] = guard
@@ -877,6 +906,9 @@ func (c *Conn) log(entry string) {
 }
 
 func (c *Conn) Access(ctx context.Context) error {
+	if err := c.dead(); err != nil {
+		return err
+	}
 	c.log("access")
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
@@ -888,11 +920,17 @@ func (c *Conn) Access(ctx context.Context) error {
 }
 
 func (c *Conn) Confirm(ctx context.Context) error {
+	if err := c.dead(); err != nil {
+		return err
+	}
 	c.log("confirm")
 	return nil
 }
 
 func (c *Conn) Rollback(ctx context.Context) error {
+	if err := c.dead(); err != nil {
+		return err
+	}
 	c.log("rollback")
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
@@ -902,6 +940,9 @@ func (c *Conn) Rollback(ctx context.Context) error {
 // Reboot boots the kernel of SetBoot. The host still needs a reboot when that
 // is not the newest one, or when packages ask for one.
 func (c *Conn) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error) {
+	if err := c.dead(); err != nil {
+		return protocol.Boot{}, err
+	}
 	c.log("reboot " + wait.String())
 	c.hosts.mu.Lock()
 	b, ok := c.hosts.boots[c.host]
@@ -917,6 +958,9 @@ func (c *Conn) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, e
 }
 
 func (c *Conn) Facts(ctx context.Context) (facts.Facts, error) {
+	if err := c.dead(); err != nil {
+		return facts.Facts{}, err
+	}
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
 	c.hosts.FactsReads[c.host]++
@@ -927,10 +971,16 @@ func (c *Conn) Facts(ctx context.Context) (facts.Facts, error) {
 }
 
 func (c *Conn) Pending(ctx context.Context) (protocol.Pending, error) {
+	if err := c.dead(); err != nil {
+		return protocol.Pending{}, err
+	}
 	return protocol.Pending{Handlers: c.hosts.PendingOf(c.host), Then: c.hosts.ThenOf(c.host), Checks: c.hosts.ChecksOf(c.host)}, nil
 }
 
 func (c *Conn) Pend(ctx context.Context, check protocol.Check) error {
+	if err := c.dead(); err != nil {
+		return err
+	}
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
 	if !slices.Contains(c.hosts.checks[c.host], check) {
@@ -940,6 +990,9 @@ func (c *Conn) Pend(ctx context.Context, check protocol.Check) error {
 }
 
 func (c *Conn) Passed(ctx context.Context, check protocol.Check) error {
+	if err := c.dead(); err != nil {
+		return err
+	}
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
 	c.hosts.checks[c.host] = slices.DeleteFunc(c.hosts.checks[c.host], func(k protocol.Check) bool { return k == check })
@@ -947,6 +1000,9 @@ func (c *Conn) Passed(ctx context.Context, check protocol.Check) error {
 }
 
 func (c *Conn) Handled(ctx context.Context, handler string) error {
+	if err := c.dead(); err != nil {
+		return err
+	}
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
 	c.hosts.pending[c.host] = slices.DeleteFunc(c.hosts.pending[c.host], func(n string) bool { return n == handler })
@@ -954,6 +1010,9 @@ func (c *Conn) Handled(ctx context.Context, handler string) error {
 }
 
 func (c *Conn) Command(ctx context.Context, command string, then protocol.Then) error {
+	if err := c.dead(); err != nil {
+		return err
+	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
 	}
@@ -968,6 +1027,9 @@ func (c *Conn) Command(ctx context.Context, command string, then protocol.Then) 
 }
 
 func (c *Conn) DropThen(ctx context.Context, then protocol.Then) error {
+	if err := c.dead(); err != nil {
+		return err
+	}
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
 	c.hosts.thens[c.host] = slices.DeleteFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return reflect.DeepEqual(t, then) })
@@ -977,6 +1039,9 @@ func (c *Conn) DropThen(ctx context.Context, then protocol.Then) error {
 // Health records the gate in Trace. A command that FailCommand names fails;
 // a gate that passes removes its record.
 func (c *Conn) Health(ctx context.Context, h protocol.Health) error {
+	if err := c.dead(); err != nil {
+		return err
+	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
 	}
@@ -1014,6 +1079,9 @@ func (h *Hosts) SetExec(host string, res module.ExecResult) {
 
 // Exec records the command in Log and returns the result that SetExec set.
 func (c *Conn) Exec(ctx context.Context, command string) (module.ExecResult, error) {
+	if err := c.dead(); err != nil {
+		return module.ExecResult{}, err
+	}
 	if ctx.Err() != nil {
 		return module.ExecResult{}, fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
 	}

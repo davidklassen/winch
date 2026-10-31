@@ -140,22 +140,25 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 	for name, err := range plan.Failed {
 		o.Failed[name] = err
 	}
-	toApply := map[string]bool{}
-	for _, sp := range plan.Stages {
-		for _, hp := range sp.Hosts {
-			if hp.changes() {
-				toApply[hp.Host.Name] = true
+	toApply := plan.changed()
+	// dial takes the session of the plan, or opens a new one when the plan
+	// kept none or its session died during the question. It then removes the
+	// records of the host that the plan found gone.
+	dial := func(h project.Host) (Conn, error) {
+		c := plan.take(h.Name)
+		if c != nil {
+			if _, err := c.Pending(context.WithoutCancel(ctx)); err != nil {
+				c.Close() //nolint:errcheck // the session died
+				c = nil
 			}
 		}
-	}
-	// dial opens a session and removes the records of the host that the plan
-	// found gone.
-	dial := func(h project.Host) (Conn, error) {
-		plan.opts.progress().Busy(h.Name, "connecting")
-		want := plan.Destinations[h.Name]
-		c, err := connect.Open(context.WithoutCancel(ctx), plan.Project, h, &want)
-		if err != nil {
-			return nil, fmt.Errorf("failed: %w", err)
+		if c == nil {
+			plan.opts.progress().Busy(h.Name, "connecting")
+			want := plan.Destinations[h.Name]
+			var err error
+			if c, err = connect.Open(context.WithoutCancel(ctx), plan.Project, h, &want); err != nil {
+				return nil, fmt.Errorf("failed: %w", err)
+			}
 		}
 		for _, gone := range plan.gone[h.Name] {
 			if err := c.Passed(context.WithoutCancel(ctx), gone); err != nil {
