@@ -440,8 +440,8 @@ func TestSSHDConfig(t *testing.T) {
 		{"/etc/ssh/sshd_config.d.old/port.conf", false},
 	}
 	for _, tt := range tests {
-		if got := sshdConfig(tt.path); got != tt.want {
-			t.Errorf("sshdConfig(%q) = %v, want %v", tt.path, got, tt.want)
+		if got := SSHDConfig(tt.path); got != tt.want {
+			t.Errorf("SSHDConfig(%q) = %v, want %v", tt.path, got, tt.want)
 		}
 	}
 }

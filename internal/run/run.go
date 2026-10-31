@@ -128,6 +128,7 @@ type Plan struct {
 	// Destinations are the destinations of the hosts, as their sessions
 	// reported them.
 	Destinations map[string]protocol.Destination
+	Warnings     []*yamlx.Error
 	// gone are the records of each host for gates and asserts that the
 	// pipeline no longer has.
 	gone map[string][]protocol.Check
@@ -519,6 +520,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		}
 	}
 	plan.suppressMissingUnitFiles()
+	plan.Warnings = plan.sshdWarnings()
 	plan.hash = sumBytes(plan.HashInput())[:16]
 	return plan
 }

@@ -282,7 +282,7 @@ func Restore(ctx context.Context, saved []Saved) error {
 		}
 	}
 	var socket bool
-	if slices.ContainsFunc(saved, func(s Saved) bool { return sshdConfig(s.Path) }) {
+	if slices.ContainsFunc(saved, func(s Saved) bool { return SSHDConfig(s.Path) }) {
 		var err error
 		if socket, err = sshSocketUp(ctx); err != nil {
 			errs = append(errs, err)
@@ -448,7 +448,7 @@ func reloads(saved []Saved) bool {
 // into ssh.socket at daemon-reload. A socket that failed, for example on a
 // port that another program holds, counts as active.
 func SSHSocket(ctx context.Context, touches []Touch) (bool, error) {
-	if !slices.ContainsFunc(touches, func(t Touch) bool { return sshdConfig(t.Path) }) {
+	if !slices.ContainsFunc(touches, func(t Touch) bool { return SSHDConfig(t.Path) }) {
 		return false, nil
 	}
 	return sshSocketUp(ctx)
@@ -482,6 +482,8 @@ func restartSSHSocket(ctx context.Context) error {
 	return err
 }
 
-func sshdConfig(p string) bool {
+// SSHDConfig reports whether p is sshd's config: sshd_config, sshd_config.d,
+// or a file in it.
+func SSHDConfig(p string) bool {
 	return p == "/etc/ssh/sshd_config" || p == "/etc/ssh/sshd_config.d" || strings.HasPrefix(p, "/etc/ssh/sshd_config.d/")
 }
