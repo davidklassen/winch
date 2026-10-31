@@ -1140,19 +1140,19 @@ func TestReadsDeclare(t *testing.T) {
 		{name: "reads without declarations"},
 		{name: "an unread inventory value", files: map[string]string{
 			"inventories/test.yaml": inv + "groups:\n  all:\n    vars:\n      domian: b.com\n",
-		}, want: `inventories/test.yaml:10:7: unknown variable "domian"; did you mean "domain"?`},
+		}, want: `inventories/test.yaml:10:7: vars.domian is set but nothing reads it; did you mean "domain"?`},
 		{name: "a misspelled read", files: map[string]string{
 			"recipes/r/recipe.yaml": strings.Replace(r, "vars.domain +", "vars.domian +", 1),
-		}, want: `recipes/r/recipe.yaml:4:16: unknown variable "domian"; did you mean "domain"?`},
+		}, want: `recipes/r/recipe.yaml:4:16: vars.domian has no value: set it in the inventory, or give it a default; did you mean "domain"?`},
 		{name: "a misspelled read in a template", files: map[string]string{
 			"recipes/r/recipe.yaml":      r + "  - file:\n      path: /etc/t\n      template: t.tmpl\n",
 			"recipes/r/templates/t.tmpl": "x {{ .vars.domian }}\n",
-		}, want: `recipes/r/templates/t.tmpl:1:11: unknown variable "domian"; did you mean "domain"?`},
+		}, want: `recipes/r/templates/t.tmpl:1:11: vars.domian has no value: set it in the inventory, or give it a default; did you mean "domain"?`},
 		{name: "an unread value of a recipe step", files: map[string]string{
 			"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: web1\n    steps:\n      - recipe: r\n        vars:\n          domian: x\n",
-		}, want: `pipelines/site.yaml:7:11: unknown variable "domian"; did you mean "domain"?`},
+		}, want: `pipelines/site.yaml:7:11: vars.domian is set but nothing reads it; did you mean "domain"?`},
 		{name: "an unread --set value", set: []string{"vars.domian=x"},
-			want: `--set vars.domian=x: unknown variable "domian"; did you mean "domain"?`},
+			want: `--set vars.domian=x: vars.domian is set but nothing reads it; did you mean "domain"?`},
 		{name: "a declaration without a default", files: map[string]string{
 			"winch.yaml": "name: acme\ninventory: test\nvars:\n  port: 80\n  domain:\n",
 		}, want: `winch.yaml:5:3: variable "domain": a variable without a default has no declaration; remove it`},
@@ -1178,7 +1178,7 @@ func TestReadsDeclare(t *testing.T) {
 		{name: "a misspelled peer read under filter of match", files: map[string]string{
 			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      peer_key: p1", 1),
 			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/p\n      content: !expr 'join(map(filter(match(\"all\"), .name != host.name), .vars.peer_kye), \",\")'\n",
-		}, want: `recipes/r/recipe.yaml:14:16: unknown variable "peer_kye"; did you mean "peer_key"?`},
+		}, want: `recipes/r/recipe.yaml:14:16: vars.peer_kye has no value: set it in the inventory, or give it a default; did you mean "peer_key"?`},
 		{name: "keys of a peer's vars", files: map[string]string{
 			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'join(map(match(\"all\"), join(keys(.vars), \" \")), \",\")'\n",
 		}, want: `recipes/r/recipe.yaml:14:16: a read of vars names the variable, such as vars.nginx_port`},
@@ -1202,7 +1202,7 @@ func TestReadsDeclare(t *testing.T) {
 		{name: "a misspelled get of a peer's vars", files: map[string]string{
 			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      peer_key: p1", 1),
 			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'join(map(match(\"all\"), string(get(.vars, \"peer_kye\"))), \",\")'\n",
-		}, want: `recipes/r/recipe.yaml:14:16: unknown variable "peer_kye"; did you mean "peer_key"?`},
+		}, want: `recipes/r/recipe.yaml:14:16: vars.peer_kye has no value: set it in the inventory, or give it a default; did you mean "peer_key"?`},
 		{name: "a variable named vars", files: map[string]string{
 			"inventories/test.yaml": strings.Replace(inv, "key: k1", "key: k1\n      vars: {a: 1}", 1),
 			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/k\n      content: !expr 'string(vars.vars) + string(vars.vars.a)'\n",

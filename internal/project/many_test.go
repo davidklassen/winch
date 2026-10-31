@@ -363,7 +363,7 @@ func TestStepVarsLoad(t *testing.T) {
 		{name: "module step", pipeline: "      - file:\n          path: /x\n          content: x\n        vars:\n          site_port: 1\n",
 			want: "pipelines/site.yaml:8:9: vars: only a recipe step has vars"},
 		{name: "undeclared", pipeline: "      - recipe: site\n        vars:\n          site_prot: 1\n",
-			want: `pipelines/site.yaml:7:11: unknown variable "site_prot"; did you mean "site_port"?`},
+			want: `pipelines/site.yaml:7:11: vars.site_prot is set but nothing reads it; did you mean "site_port"?`},
 		{name: "null", pipeline: "      - recipe: site\n        vars:\n          site_port:\n",
 			want: `pipelines/site.yaml:7:21: variable "site_port": null is not a value`},
 		{name: "not a map", pipeline: "      - recipe: site\n        vars: [a]\n",

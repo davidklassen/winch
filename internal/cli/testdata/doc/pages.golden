@@ -244,9 +244,10 @@ Keys:
 inventory.hosts.address: string
 
 Host name or IP for SSH. Without it, the SSH config decides the host
-name. The Host blocks of the SSH config match the host name, also with
-address. A port goes in the SSH config. Two hosts cannot have the same
-SSH host name, port, and jump host.
+name, and host.address is the name of the host. The Host blocks of the
+SSH config match the host name, also with address. A port goes in the
+SSH config. Two hosts cannot have the same SSH host name, port, and jump
+host.
 ==> winch doc inventory.hosts.user
 inventory.hosts.user: string
 
@@ -652,8 +653,9 @@ recipe, vars, and when. A recipe runs at most once per host in a run.
 ==> winch doc step.vars
 step.vars: map
 
-Variable values for this recipe step. They beat the inventory, and --set
-beats them. Only a recipe step has vars.
+Variable values for this recipe step. A value can be an !expr or a !tpl,
+and an !expr can use match(). They beat the inventory, and --set beats
+them. Only a recipe step has vars.
 ==> winch doc step.when
 step.when: expression
 
@@ -858,7 +860,8 @@ Data:
 
     .vars   the variables of the host, with the vars of the recipe step
     .facts  the facts of the host; run winch doc facts
-    .host   name, short, address, groups, and vars of the host
+    .host   name, short, address, groups, and vars of the host; address
+            is the name when the host has no address
     .item   the current element in a step with loop
 
   Inside range, "." is the element. $.vars reads the variables.
@@ -874,14 +877,21 @@ Functions and actions:
   and continue, and the variables $x := value.
 
 Missing values:
-  A template that reads a missing map key fails. Use get for a key that
-  may be missing. A template that prints a null value fails.
+  A template that reads a missing map key fails. Use get for a map key
+  that may be missing. A variable needs a value or a default; get does
+  not read the host's own .vars. A template that prints a null value
+  fails.
 
 Quoting:
   A value goes into a command as it is. Quote a value that must stay one
   word with quote. Quote a YAML value that starts with a quote, [, {, &,
   *, or !, or that contains ": " or " #". A template that starts with {{
   needs quotes.
+
+Other hosts:
+  Templates have no match(). To list other hosts, give a recipe step a
+  variable with an !expr that uses match(), and range over it in a
+  template of the recipe.
 
 When they run:
   winch evaluates templates on the machine that runs winch, during the
@@ -923,6 +933,7 @@ Example:
   name: demo
   hosts:
     web1.acme.com: {}
+    web2.acme.com: {}
   vars:
     sites: [blog, shop]
     admins: [ann, bob]
@@ -936,6 +947,16 @@ Example:
       file:
         path: /etc/ssh/sshd_config.d/admins.conf
         content: !tpl "AllowUsers{{ range .vars.admins }} {{ . }}{{ end }}\n"
+    - name: List the other hosts
+      recipe: peers
+      vars:
+        peers_hosts: !expr filter(match("all"), .name != host.name)
+  recipes:
+    peers:
+      steps:
+        - file:
+            path: /etc/peers
+            content: !tpl "{{ range .vars.peers_hosts }}{{ .name }} {{ .address }}\n{{ end }}"
 
 Run "winch doc templates.<function>" for the full text of a function.
 ==> winch doc templates.and
@@ -962,7 +983,8 @@ templates.get: function
 
 get m key: the value of key in the map m, or nothing when m has no such
 key. It reads a key that a map may leave out: {{ with get . "endpoint"
-}}Endpoint = {{ . }}{{ end }}.
+}}Endpoint = {{ . }}{{ end }}. It does not read the host's own .vars: a
+variable that may have no value needs a default.
 ==> winch doc templates.gt
 templates.gt: function
 
@@ -1078,7 +1100,8 @@ Data:
     vars      the variables of the host, with the vars of the recipe
               step
     facts     the facts of the host; run winch doc facts
-    host      name, short, address, groups, and vars of the host
+    host      name, short, address, groups, and vars of the host;
+              address is the name when the host has no address
     item      the current element in a step with loop
     match(p)  the hosts that match the host pattern p, with the fields
               of host
@@ -1724,6 +1747,13 @@ Plan and apply:
   host. Apply checks each step again right before it changes it. The
   second check decides.
 
+Apply output:
+  Apply prints a line for each step that changes or fails, then the
+  summary. A step that checks as ok prints nothing: a planned change
+  that the second check finds made, an assert that passes, and a handler
+  restart that checks as ok. The summary line of plan and of apply
+  counts hosts, not steps.
+
 Plan marks:
     +  create
     ~  change
@@ -2120,10 +2150,13 @@ Absolute target of a single file. A step has path or unpack.
 download.unpack: string
 
 Directory for the unpacked archive. The path of the URL ends in .tar.gz,
-.tgz, .tar.xz, or .zip. The step unpacks again when sha256, owner,
-group, or the directory changes. A new archive replaces the whole tree.
-Keep the files that a program writes, such as its config, data, and
-logs, outside the directory.
+.tgz, .tar.xz, or .zip. The directory holds the entries of the archive
+as they are: a top directory of the archive stays, as in
+<unpack>/app-1.2/bin. The step unpacks again when sha256, owner, group,
+or the directory changes. Each unpack replaces the whole tree, also the
+first: it removes the files that are already in the directory. Keep the
+files that a program writes, such as its config, data, and logs, outside
+the directory.
 ==> winch doc download.owner
 download.owner: name or ID, default root
 

@@ -63,7 +63,7 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 			}
 			suggest = yamlx.DidYouMean(paths...)
 		}
-		printError(env.stderr, fmt.Sprintf("winch doc: unknown topic or module %q%s", name, suggest))
+		printError(env.stderr, fmt.Sprintf("winch doc: unknown topic or module %q%s%s", name, suggest, commandHint(path)))
 		return exitInvalid
 	}
 	if len(path) == 1 && i >= 0 {
@@ -89,7 +89,7 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 			for _, k := range keys {
 				names = append(names, k.Name)
 			}
-			printError(env.stderr, fmt.Sprintf("winch doc: %s has no key %q%s", strings.Join(path[:j+1], "."), key, yamlx.Suggest(key, names)))
+			printError(env.stderr, fmt.Sprintf("winch doc: %s has no key %q%s%s", strings.Join(path[:j+1], "."), key, yamlx.Suggest(key, names), commandHint(path[:j+2])))
 			return exitInvalid
 		}
 		k, keys = keys[i], keys[i].Keys
@@ -112,6 +112,22 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 		writeKeys(env.stdout, k.Keys)
 	}
 	return exitOK
+}
+
+// commandHint points to the --help of the command that path names, such as
+// exec, secret.generate, or secrets.generate. Commands have no doc pages.
+func commandHint(path []string) string {
+	words := slices.Clone(path)
+	for range 2 {
+		if c, ok := commandNamed(strings.Join(words, " ")); ok {
+			return fmt.Sprintf("\nRun \"winch %s --help\" for the command.", c.name)
+		}
+		words[0] = strings.TrimSuffix(words[0], "s")
+	}
+	if len(path) > 1 {
+		return commandHint(path[:1])
+	}
+	return ""
 }
 
 // hasKeyPath reports whether path names a key in keys, one part per level.
