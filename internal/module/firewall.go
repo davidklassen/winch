@@ -345,12 +345,19 @@ func loadedTable(ctx context.Context) (exists bool, comment string, err error) {
 	return false, "", nil
 }
 
-func (f *Firewall) Check(ctx context.Context, st *State, _ Say) (Result, error) {
+func (f *Firewall) Check(ctx context.Context, st *State, say Say) (Result, error) {
 	if f.Absent {
 		return f.checkAbsent(ctx)
 	}
 	if err := f.checkSSH(st.SSHConnection); err != nil {
 		return Result{}, err
+	}
+	tables, err := droppingTables(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	for _, t := range tables {
+		say.Note("the table " + t + " also filters input; its rules can drop what this step allows")
 	}
 	id := f.id()
 	f.data = f.render(id)
@@ -412,6 +419,78 @@ func (f *Firewall) Check(ctx context.Context, st *State, _ Say) (Result, error) 
 		res.MissingTools = []Tool{{Name: "nft", Package: "nftables"}}
 	}
 	return res, nil
+}
+
+// droppingTables returns the tables other than inet winch with an input base
+// chain whose policy or rules drop packets, once for each drop. nftables passes a packet only when
+// every input chain accepts it. Without nft, there are no tables.
+func droppingTables(ctx context.Context) ([]string, error) {
+	if _, err := exec.LookPath("nft"); err != nil {
+		return nil, nil
+	}
+	out, err := run(ctx, nil, "nft", "-j", "list", "ruleset")
+	if err != nil {
+		return nil, err
+	}
+	var list struct {
+		Nftables []struct {
+			Chain *struct {
+				Family string `json:"family"`
+				Table  string `json:"table"`
+				Name   string `json:"name"`
+				Hook   string `json:"hook"`
+				Policy string `json:"policy"`
+			} `json:"chain"`
+			Rule *struct {
+				Family string `json:"family"`
+				Table  string `json:"table"`
+				Chain  string `json:"chain"`
+				Expr   any    `json:"expr"`
+			} `json:"rule"`
+		} `json:"nftables"`
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		return nil, fmt.Errorf("read the output of nft list ruleset: %w", err)
+	}
+	input := map[[3]string]bool{}
+	var tables []string
+	for _, e := range list.Nftables {
+		c := e.Chain
+		if c == nil || c.Hook != "input" || c.Family == "inet" && c.Table == "winch" {
+			continue
+		}
+		switch c.Family {
+		case "ip", "ip6", "inet":
+		default:
+			continue
+		}
+		input[[3]string{c.Family, c.Table, c.Name}] = true
+		if c.Policy == "drop" {
+			tables = append(tables, c.Family+" "+c.Table)
+		}
+	}
+	for _, e := range list.Nftables {
+		if r := e.Rule; r != nil && input[[3]string{r.Family, r.Table, r.Chain}] && hasDrop(r.Expr) {
+			tables = append(tables, r.Family+" "+r.Table)
+		}
+	}
+	return tables, nil
+}
+
+// hasDrop reports whether the JSON expression v of a rule holds the verdict
+// drop, also inside a verdict map.
+func hasDrop(v any) bool {
+	switch v := v.(type) {
+	case map[string]any:
+		for k, x := range v {
+			if k == "drop" || hasDrop(x) {
+				return true
+			}
+		}
+	case []any:
+		return slices.ContainsFunc(v, hasDrop)
+	}
+	return false
 }
 
 // tableStale reports whether the table on the host is missing, holds the
