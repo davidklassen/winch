@@ -406,7 +406,9 @@ func checkHash(o *output, f *flags) bool {
 func (o *output) apply(ctx context.Context, f *flags, p *project.Project, words []string) int {
 	env := o.env
 	connect, opts := env.sessions(f)
+	opts.Keep = true
 	pl := run.MakePlan(ctx, p, connect, opts)
+	defer pl.Close()
 	o.plan(pl)
 	s := summary{plan: pl}
 	code := failedCode(pl.Failed)

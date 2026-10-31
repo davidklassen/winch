@@ -310,6 +310,9 @@ func TestApply(t *testing.T) {
 		if !strings.Contains(r.err, "Apply these changes? [y/N] ") || !strings.Contains(r.err, "Nothing changed.") {
 			t.Errorf("stderr = %q", r.err)
 		}
+		if h.Open != 0 {
+			t.Errorf("%d sessions stay open", h.Open)
+		}
 	})
 	t.Run("answer yes", func(t *testing.T) {
 		h := fakehost.New()
@@ -323,8 +326,8 @@ func TestApply(t *testing.T) {
 			t.Errorf("exit %d, applies %d", code, h.Applies)
 		}
 		// spec: Remote execution/Sessions
-		if in.open != 0 {
-			t.Errorf("%d sessions were open at the question", in.open)
+		if in.open != 2 || h.Connects["web1"] != 1 || h.Connects["web2"] != 1 || h.Open != 0 {
+			t.Errorf("%d sessions open at the question, connects %v, %d open at the end; want 2, one per host, 0", in.open, h.Connects, h.Open)
 		}
 	})
 	t.Run("a failed host wins over confirmation", func(t *testing.T) {
