@@ -349,7 +349,7 @@ func TestHandlers(t *testing.T) {
 		fails(gone)
 		dir := project(strings.Replace(added, "x\\n", "y\\n", 1))
 		r := lab.Winch(t, dir, "plan", "site")
-		if want := "handlers: a pending then of file /root/t/gone matches no step and will not run\n"; r.Code != 0 || r.Stderr != want {
+		if want := "handlers: note: a pending then of file /root/t/gone matches no step and will not run\n"; r.Code != 0 || r.Stderr != want {
 			t.Fatalf("plan: exit %d, stderr %q, want %q", r.Code, r.Stderr, want)
 		}
 		if r = lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
@@ -365,7 +365,7 @@ func TestHandlers(t *testing.T) {
 		// Apply removes the record also when the host has no change.
 		fails(strings.Replace(gone, "/root/t/gone", "/root/t/gone2", 1))
 		r = lab.Winch(t, dir, "plan", "site")
-		if want := "handlers: a pending then of file /root/t/gone2 matches no step and will not run\n"; r.Code != 0 || r.Stderr != want || !strings.Contains(r.Stdout, "0 to change") {
+		if want := "handlers: note: a pending then of file /root/t/gone2 matches no step and will not run\n"; r.Code != 0 || r.Stderr != want || !strings.Contains(r.Stdout, "0 to change") {
 			t.Fatalf("plan: exit %d, stderr %q, want %q\n%s", r.Code, r.Stderr, want, r.Stdout)
 		}
 		// A plan with only gone records asks nothing.

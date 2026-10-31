@@ -249,7 +249,7 @@ func ids(owner, group string) (uid, gid int, err error) {
 	return uid, gid, nil
 }
 
-func (f *File) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+func (f *File) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	dir, missing, err := openParent(f.Path)
 	if _, ok := errors.AsType[*noPathError](err); ok && f.Absent {
 		return Result{Status: OK}, nil
@@ -492,7 +492,7 @@ func attrChanges(fi fs.FileInfo, owner, group string, mode uint32) ([]string, er
 	return changes, nil
 }
 
-func (f *File) Apply(ctx context.Context, _ func(string)) error {
+func (f *File) Apply(ctx context.Context, _ Say) error {
 	name := path.Base(f.Path)
 	if f.Absent {
 		dir, err := openDir(f.Path)

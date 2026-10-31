@@ -157,23 +157,23 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			want := plan.Destinations[h.Name]
 			var err error
 			if c, err = connect.Open(context.WithoutCancel(ctx), plan.Project, h, &want); err != nil {
-				return nil, fmt.Errorf("failed: %w", err)
+				return nil, err
 			}
 		}
 		if toApply[h.Name] && c.Prompted(context.WithoutCancel(ctx)) {
 			c.Close() //nolint:errcheck // the host fails already
-			return nil, errors.New("failed: the access check cannot log in without a prompt; add the key to the agent with ssh-add")
+			return nil, errors.New("the access check cannot log in without a prompt; add the key to the agent with ssh-add")
 		}
 		for _, gone := range plan.gone[h.Name] {
 			if err := c.Passed(context.WithoutCancel(ctx), gone); err != nil {
 				c.Close() //nolint:errcheck // the host fails already
-				return nil, fmt.Errorf("failed: %w", err)
+				return nil, err
 			}
 		}
 		for _, gone := range plan.goneThens[h.Name] {
 			if err := c.DropThen(context.WithoutCancel(ctx), gone); err != nil {
 				c.Close() //nolint:errcheck // the host fails already
-				return nil, fmt.Errorf("failed: %w", err)
+				return nil, err
 			}
 		}
 		return c, nil
@@ -185,10 +185,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 		}
 	}
 	for i, err := range rollout(ctx, "", remove, 0, plan.opts, dial, func(_ int, c Conn) error {
-		if err := c.Close(); err != nil {
-			return fmt.Errorf("failed: %w", err)
-		}
-		return nil
+		return c.Close()
 	}) {
 		if err != nil {
 			o.Failed[remove[i].Name] = err
@@ -263,12 +260,12 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 				if err == nil && final && (changed[i] || o.Changed[hosts[i].Name]) {
 					a.progress.Busy(a.host, "access check")
 					if aerr := a.access(context.WithoutCancel(ctx), time.Time{}); aerr != nil {
-						err = fmt.Errorf("failed: winch lost access after the run: %w", aerr)
+						err = fmt.Errorf("winch lost access after the run: %w", aerr)
 					}
 				}
 				if err != nil || final {
 					if cerr := a.close(); err == nil && cerr != nil {
-						err = fmt.Errorf("failed: %w", cerr)
+						err = cerr
 					}
 				}
 				return err

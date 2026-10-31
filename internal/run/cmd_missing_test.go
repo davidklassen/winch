@@ -20,16 +20,16 @@ func TestCmdMissingNote(t *testing.T) {
 		host  func(h *fakehost.Hosts)
 		want  string
 	}{
-		{"a user that does not exist", cmdUser, nil, "web1: user deploy does not exist yet and no user step creates it\n"},
+		{"a user that does not exist", cmdUser, nil, "web1: note: user deploy does not exist yet and no user step creates it\n"},
 		{"a user that an earlier step creates", "      - user: {name: deploy}\n" + cmdUser, nil, ""},
 		{"a user that exists", cmdUser, func(h *fakehost.Hosts) { h.SetUser("web1", "deploy") }, ""},
-		{"a dir that does not exist", cmdDir, func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, "web1: dir /srv/app does not exist yet and no dir step creates it\n"},
+		{"a dir that does not exist", cmdDir, func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, "web1: note: dir /srv/app does not exist yet and no dir step creates it\n"},
 		{"a dir that an earlier step creates", "      - dir: {path: /srv/app}\n" + cmdDir, func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, ""},
 		{"a dir that an earlier step creates as a parent", "      - file: {path: /srv/app/env, content: x}\n" + cmdDir, func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, ""},
 		{"a dir that exists", cmdDir, nil, ""},
 		{"a cmd that does not run", "      - cmd: {command: make install, user: deploy, creates: /srv/made}\n", func(h *fakehost.Hosts) { h.SetFile("web1", "/srv/made", "") }, ""},
 		{"a user and a dir", "      - cmd: {command: make install, user: deploy, dir: /srv/app}\n", func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") },
-			"web1: user deploy does not exist yet and no user step creates it\nweb1: dir /srv/app does not exist yet and no dir step creates it\n"},
+			"web1: note: user deploy does not exist yet and no user step creates it\nweb1: note: dir /srv/app does not exist yet and no dir step creates it\n"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{

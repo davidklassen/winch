@@ -14,7 +14,7 @@ import (
 // spec: Modules/firewall
 func TestToolMissingNote(t *testing.T) {
 	const firewall = "      - firewall: {allow: [{tcp: 22}]}\n"
-	const note = "web1: nft is missing and no pkg step installs nftables\n"
+	const note = "web1: note: nft is missing and no pkg step installs nftables\n"
 	for _, tt := range []struct {
 		name  string
 		steps string

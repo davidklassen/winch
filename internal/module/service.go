@@ -105,7 +105,7 @@ func (s *Service) Validate() error {
 	return nil
 }
 
-func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,FragmentPath,DropInPaths,NeedDaemonReload,Type,RemainAfterExit,TriggeredBy", "--", s.Name)
 	if err != nil {
 		return Result{}, err
@@ -340,7 +340,7 @@ func (s *Service) Undo() *Service {
 // command.
 var planLabels = map[string]string{"try-restart": "restart", "try-reload-or-restart": "reload"}
 
-func (s *Service) Apply(ctx context.Context, _ func(string)) error {
+func (s *Service) Apply(ctx context.Context, _ Say) error {
 	for _, c := range s.todo {
 		if c == "disable" && s.links != nil {
 			for _, l := range s.links {

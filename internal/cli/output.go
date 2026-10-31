@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/davidklassen/winch/internal/run"
@@ -16,11 +17,14 @@ type output struct {
 	env Env
 	// ev is nil without --json.
 	ev *run.Events
+	mu sync.Mutex
+	// noted holds the notes that the run showed.
+	noted map[run.Note]bool
 }
 
 // newOutput writes the version event with --json.
 func newOutput(env Env, f *flags) *output {
-	o := &output{env: env}
+	o := &output{env: env, noted: map[run.Note]bool{}}
 	if f.json {
 		now := env.Now
 		if now == nil {
@@ -36,6 +40,7 @@ func newOutput(env Env, f *flags) *output {
 
 type diagnostic struct {
 	Severity string `json:"severity"`
+	Host     string `json:"host,omitempty"`
 	File     string `json:"file,omitempty"`
 	Line     int    `json:"line,omitempty"`
 	Col      int    `json:"col,omitempty"`
@@ -47,7 +52,7 @@ type diagnostic struct {
 // fail reports an error: on stderr, or as diagnostic events.
 func (o *output) fail(err error) {
 	if o.ev == nil {
-		printError(o.env.stderr, err.Error())
+		o.env.fail(err)
 		return
 	}
 	for _, e := range leaves(err) {
@@ -72,7 +77,7 @@ func newDiagnostic(severity string, err error) diagnostic {
 	d := diagnostic{Severity: severity, Message: err.Error()}
 	// An error of a command-line argument has no line; its message keeps the
 	// argument.
-	if e, ok := err.(*yamlx.Error); ok && e.Pos.Line > 0 {
+	if e, ok := err.(*yamlx.Error); ok && !commandLine(e) {
 		d.File, d.Line, d.Col, d.Message = e.Pos.File, e.Pos.Line, e.Pos.Col, e.Msg
 	}
 	d.File, d.Message = secret.Printable(d.File), secret.PrintableLines(d.Message)
@@ -88,7 +93,11 @@ func newDiagnostic(severity string, err error) diagnostic {
 func (o *output) warn(warnings []*yamlx.Error) {
 	for _, w := range warnings {
 		if o.ev == nil {
-			fmt.Fprint(o.env.stderr, secret.PrintableLines(fmt.Sprintf("%s: warning: %s\n", w.Pos, w.Msg)))
+			line := fmt.Sprintf("%s: warning: %s\n", w.Pos, w.Msg)
+			if commandLine(w) {
+				line = "winch " + o.env.name + ": " + line
+			}
+			fmt.Fprint(o.env.stderr, secret.PrintableLines(line))
 			continue
 		}
 		o.ev.Write("diagnostic", newDiagnostic("warning", w))
@@ -102,8 +111,27 @@ func (o *output) plan(pl *run.Plan) {
 		pl.Write(o.env.stdout, o.env.stderr)
 		return
 	}
-	pl.WriteNotes(o.env.stderr)
+	for _, n := range pl.Notes() {
+		o.note(n.Host, n.Text)
+	}
 	pl.WriteJSON(o.ev)
+}
+
+// note shows a note about host once per run: on stderr, or as a diagnostic
+// event.
+func (o *output) note(host, text string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	n := run.Note{Host: host, Text: text}
+	if o.noted[n] {
+		return
+	}
+	o.noted[n] = true
+	if o.ev == nil {
+		run.WriteNote(o.env.stderr, host, text)
+		return
+	}
+	o.ev.Write("diagnostic", diagnostic{Severity: "note", Host: host, Message: secret.Printable(text)})
 }
 
 type summary struct {

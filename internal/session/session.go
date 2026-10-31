@@ -49,6 +49,9 @@ type Config struct {
 	Binaries []helperbin.Binary
 	Hello    protocol.Hello
 	Progress *color.Writer
+	// Note takes the notes of the helper: facts about the host that need no
+	// fix.
+	Note func(text string)
 	// Hold is nil, or hides the progress until the function it returns runs.
 	// It covers the login, where ssh can ask a question on the terminal.
 	Hold func() func()
@@ -110,7 +113,7 @@ func Script(bins []helperbin.Binary, dir string) string {
 	for _, bin := range bins {
 		fmt.Fprintf(&b, "%s) a=%s h=%s n=%d ;;\n", archNames[bin.Arch], bin.Arch, bin.SHA256, len(bin.Data))
 	}
-	b.WriteString(`*) echo "winch: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+	b.WriteString(`*) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
 esac
 mkdir -p -m 700 "$d" "$d/bin"
 b=$d/bin/$h
@@ -118,10 +121,10 @@ for p in "$d/" "$d/bin/" "$b"; do
   [ -e "$p" ] || continue
   set -- $(ls -ldn "$p")
   case $1 in
-  [!d-]*) echo "winch: ${p%/} is not a directory or a regular file" >&2; exit 1 ;;
+  [!d-]*) echo "${p%/} is not a directory or a regular file" >&2; exit 1 ;;
   ?????[!w]??[!w]*) [ "$3" = 0 ] && continue ;;
   esac
-  echo "winch: ${p%/} is not owned by root, or the group or others can write it" >&2; exit 1
+  echo "${p%/} is not owned by root, or the group or others can write it" >&2; exit 1
 done
 if [ -x "$b" ] && [ "$(sha256sum < "$b")" = "$h  -" ]; then
   echo have
@@ -131,7 +134,7 @@ else
   echo "need $a"
   head -c "$n" > "$t"
   set -- $(sha256sum "$t")
-  if [ "$1" != "$h" ]; then rm -f "$t"; echo "winch: the helper has the wrong hash" >&2; exit 1; fi
+  if [ "$1" != "$h" ]; then rm -f "$t"; echo "the helper has the wrong hash" >&2; exit 1; fi
   chmod 755 "$t"
   mv "$t" "$b"
   echo got
@@ -146,7 +149,7 @@ exec "$b" "$c"
 // environment.
 func command(script string) string {
 	return "s='" + script + `'; if [ "$(id -u)" -eq 0 ]; then exec sh -c "$s" sh "$SSH_CONNECTION"; fi; ` +
-		`e=$(sudo -n true 2>&1) || { printf "winch: the login user needs passwordless sudo%s\n" "${e:+: $e}" >&2; exit 1; }; ` +
+		`e=$(sudo -n true 2>&1) || { printf "the login user needs passwordless sudo%s\n" "${e:+: $e}" >&2; exit 1; }; ` +
 		`exec sudo -n sh -c "$s" sh "$SSH_CONNECTION"`
 }
 
@@ -525,10 +528,14 @@ func (s *Session) receive(result any) error {
 		if resp.ID != s.id {
 			return fmt.Errorf("response %d to request %d", resp.ID, s.id)
 		}
-		if resp.Note == "" {
+		if resp.Note == "" && resp.Progress == "" {
 			break
 		}
-		fmt.Fprintf(s.progress, "%s: %s\n", s.host, secret.Printable(resp.Note))
+		if resp.Note != "" {
+			s.cfg.Note(resp.Note)
+		} else {
+			fmt.Fprintf(s.progress, "%s: %s\n", s.host, secret.Printable(resp.Progress))
+		}
 	}
 	if resp.NeedContent {
 		return errNeedContent

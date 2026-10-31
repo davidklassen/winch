@@ -105,11 +105,11 @@ func TestSecretEncrypt(t *testing.T) {
 		t.Errorf("no recipients: exit %d, stderr %q", r.code, r.err)
 	}
 	r = winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "nope")
-	if r.code != exitInvalid || !strings.Contains(r.err, `unknown secret command "nope"`) {
+	if r.code != exitInvalid || !strings.Contains(r.err, `winch secret: unknown command "nope"`) {
 		t.Errorf("unknown command: exit %d, stderr %q", r.code, r.err)
 	}
 	r = winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "encrypt", "extra")
-	if r.code != exitInvalid || !strings.Contains(r.err, "secret encrypt takes no arguments") {
+	if r.code != exitInvalid || !strings.Contains(r.err, "winch secret encrypt: takes no arguments") {
 		t.Errorf("argument: exit %d, stderr %q", r.code, r.err)
 	}
 }
@@ -609,7 +609,7 @@ func TestSecretGenerate(t *testing.T) {
 
 	for _, args := range [][]string{{}, {"pw"}, {"vars.pw", "vars.x"}, {"vars."}} {
 		r = winch(t, dir, fakehost.New(), false, "", append([]string{"secret", "generate"}, args...)...)
-		if r.code != exitInvalid || !strings.Contains(r.err, "winch: secret generate needs one variable: vars.<name>") {
+		if r.code != exitInvalid || !strings.Contains(r.err, "winch secret generate: needs one variable: vars.<name>") {
 			t.Errorf("args %q: exit %d, stderr %q", args, r.code, r.err)
 		}
 	}

@@ -201,7 +201,7 @@ func TestPackageSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = lab.Winch(t, dir, "plan", "site")
-	if r.Code != 0 || !strings.Contains(r.Stdout, `answer "hi from winch" → "hello again"`) || !strings.Contains(r.Stderr, note) {
+	if r.Code != 0 || !strings.Contains(r.Stdout, `answer "hi from winch" → "hello again"`) || !strings.Contains(r.Stderr, "sources: note: "+note+"\n") {
 		t.Errorf("a changed answer of an installed package: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 }

@@ -30,7 +30,7 @@ func (p *Project) Select(sel Selection) error {
 		flags = append(flags, "--hosts "+sel.Hosts)
 		hosts, err := p.Inventory.Match(sel.Hosts)
 		if err != nil {
-			return fmt.Errorf("--hosts %s: %w", sel.Hosts, err)
+			return fmt.Errorf("--hosts %s: %s", sel.Hosts, problem(err))
 		}
 		for i := range p.Pipeline.Stages {
 			s := &p.Pipeline.Stages[i]

@@ -19,14 +19,14 @@ func (inv *Inventory) Match(pattern string) ([]Host, error) {
 	selected := map[string]bool{}
 	for part := range strings.SplitSeq(pattern, ",") {
 		if strings.TrimSpace(part) == "" {
-			return nil, fmt.Errorf("host pattern %q: an empty part", pattern)
+			return nil, &patternError{pattern, "an empty part"}
 		}
 		var in, out []map[string]bool
 		for term := range strings.SplitSeq(part, "&") {
 			name, neg := strings.CutPrefix(strings.TrimSpace(term), "!")
 			name = strings.TrimSpace(name)
 			if name == "" {
-				return nil, fmt.Errorf("host pattern %q: an empty name", pattern)
+				return nil, &patternError{pattern, "an empty name"}
 			}
 			hosts, err := inv.named(name)
 			if err != nil {
@@ -39,7 +39,7 @@ func (inv *Inventory) Match(pattern string) ([]Host, error) {
 			}
 		}
 		if len(in) == 0 {
-			return nil, fmt.Errorf("host pattern %q: the part %q needs a host or group without !, such as all & %s", pattern, strings.TrimSpace(part), strings.TrimSpace(part))
+			return nil, &patternError{pattern, fmt.Sprintf("the part %q needs a host or group without !, such as all & %s", strings.TrimSpace(part), strings.TrimSpace(part))}
 		}
 		for name := range in[0] {
 			if !slices.ContainsFunc(in, func(s map[string]bool) bool { return !s[name] }) &&
@@ -55,6 +55,24 @@ func (inv *Inventory) Match(pattern string) ([]Host, error) {
 		}
 	}
 	return hosts, nil
+}
+
+// patternError is an error in the syntax of a host pattern.
+type patternError struct {
+	pattern, msg string
+}
+
+func (e *patternError) Error() string {
+	return fmt.Sprintf("host pattern %q: %s", e.pattern, e.msg)
+}
+
+// problem returns the text of an error of Match for a place that names the
+// pattern already.
+func problem(err error) string {
+	if pe, ok := errors.AsType[*patternError](err); ok {
+		return pe.msg
+	}
+	return err.Error()
 }
 
 // named returns the hosts of a group, or the host of that name.

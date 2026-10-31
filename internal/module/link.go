@@ -70,7 +70,7 @@ func dotDotAfterPart(target string) bool {
 	return false
 }
 
-func (l *Link) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+func (l *Link) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	dir, missing, err := openParent(l.Path)
 	if _, ok := errors.AsType[*noPathError](err); ok && l.Absent {
 		return Result{Status: OK}, nil
@@ -112,7 +112,7 @@ func (l *Link) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	return Result{Status: Change, Action: Modify, Changes: []string{"target " + cur + " → " + *l.Target}, Validates: l.Validation != nil}, nil
 }
 
-func (l *Link) Apply(ctx context.Context, _ func(string)) error {
+func (l *Link) Apply(ctx context.Context, _ Say) error {
 	name := path.Base(l.Path)
 	if l.Absent {
 		dir, err := openDir(l.Path)

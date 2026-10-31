@@ -207,8 +207,8 @@ func TestDocInvalid(t *testing.T) {
 		{"subcommand as a key", []string{"doc", "secrets.generate"}, "winch doc: secrets has no key \"generate\"\nRun \"winch secret generate --help\" for the command."},
 		{"subcommand with a dot", []string{"doc", "secret.generate"}, "winch doc: unknown topic or module \"secret\"; did you mean \"secrets\"?\nRun \"winch secret generate --help\" for the command."},
 		{"command word as a module key", []string{"doc", "file.apply"}, `winch doc: file has no key "apply"`},
-		{"two arguments", []string{"doc", "file", "dir"}, "winch: doc takes one topic, module, or key"},
-		{"json with a module", []string{"doc", "file", "--json"}, "winch: doc --json takes no topic, module, or key"},
+		{"two arguments", []string{"doc", "file", "dir"}, "winch doc: takes one topic, module, or key"},
+		{"json with a module", []string{"doc", "file", "--json"}, "winch doc: --json takes no topic, module, or key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

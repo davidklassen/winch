@@ -462,9 +462,9 @@ func runJob(ctx context.Context, path string) error {
 		return errors.Join(err, uerr)
 	}
 	// The timer has no session, so no login user: uid -1 is no user.
-	res, cerr := m.Check(ctx, &module.State{LoginUID: math.MaxUint32}, func(string) {})
+	res, cerr := m.Check(ctx, &module.State{LoginUID: math.MaxUint32}, module.Silent{})
 	if cerr == nil && res.Status != module.OK {
-		cerr = m.Apply(ctx, func(string) {})
+		cerr = m.Apply(ctx, module.Silent{})
 	}
 	if cerr != nil {
 		cerr = fmt.Errorf("%s %s: %w", j.Undo.Module, m.Main(), cerr)

@@ -519,7 +519,7 @@ func TestLostAccessAfterRun(t *testing.T) {
 	if o.OK() {
 		t.Fatal("apply succeeded without access")
 	}
-	if want := "web1: failed: winch lost access after the run: ssh: connect to host web1 port 22: Connection timed out"; !strings.Contains(out, want) {
+	if want := "web1: winch lost access after the run: ssh: connect to host web1 port 22: Connection timed out"; !strings.Contains(out, want) {
 		t.Errorf("output:\n%s\nwant %q", out, want)
 	}
 	if want := []string{"access", "access"}; !slices.Equal(h.Log["web1"], want) {
@@ -544,7 +544,7 @@ func TestApplyAfterPrompt(t *testing.T) {
 	if o.OK() {
 		t.Fatal("apply succeeded after a login with a prompt")
 	}
-	if want := "web1: failed: the access check cannot log in without a prompt; add the key to the agent with ssh-add"; !strings.Contains(out, want) {
+	if want := "web1: the access check cannot log in without a prompt; add the key to the agent with ssh-add"; !strings.Contains(out, want) {
 		t.Errorf("output:\n%s\nwant %q", out, want)
 	}
 	if _, ok := h.File("web1", "/etc/motd"); ok {

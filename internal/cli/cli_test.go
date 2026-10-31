@@ -82,10 +82,13 @@ func TestInvalid(t *testing.T) {
 		{"no command", nil, "Commands:"},
 		{"unknown command", []string{"aply", "site"}, `unknown command "aply"; did you mean "apply"?`},
 		{"unknown flag", []string{"plan", "site", "--nope"}, "flag provided but not defined: -nope"},
-		{"no pipeline", []string{"plan"}, "name a pipeline: site; only steps at the top of winch.yaml run without a name"},
-		{"two pipelines", []string{"apply", "site", "other"}, "apply takes one pipeline"},
-		{"unknown pipeline", []string{"plan", "sit"}, `unknown pipeline "sit"; did you mean "site"?`},
-		{"validate with argument", []string{"validate", "site"}, "validate takes no arguments"},
+		{"no pipeline", []string{"plan"}, "winch plan: name a pipeline: site; only steps at the top of winch.yaml run without a name\n"},
+		{"two pipelines", []string{"apply", "site", "other"}, "winch apply: takes at most one pipeline"},
+		{"unknown pipeline", []string{"plan", "sit"}, "winch plan: unknown pipeline \"sit\"; did you mean \"site\"?\n"},
+		{"validate with argument", []string{"validate", "site"}, "winch validate: takes no arguments"},
+		{"unknown inventory", []string{"plan", "site", "--inventory", "tset"}, "winch plan: unknown inventory \"tset\"; did you mean \"test\"?\n"},
+		{"--set without vars.", []string{"plan", "site", "--set", "x=1"}, "winch plan: --set x=1: use --set vars.<name>=<value>\n"},
+		{"a host pattern with an empty part", []string{"plan", "site", "--hosts", "web1,,web2"}, "winch plan: --hosts web1,,web2: an empty part\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -532,7 +535,7 @@ func TestHelpOnError(t *testing.T) {
 		{"no command", nil, "", "winch"},
 		{"unknown command", []string{"aply"}, "winch: unknown command \"aply\"; did you mean \"apply\"?\n\n", "winch"},
 		{"no secret command", []string{"secret"}, "", "secret"},
-		{"unknown secret command", []string{"secret", "nope"}, "winch: unknown secret command \"nope\"\n\n", "secret"},
+		{"unknown secret command", []string{"secret", "nope"}, "winch secret: unknown command \"nope\"\n\n", "secret"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -551,7 +554,7 @@ func TestHelpOnError(t *testing.T) {
 // spec: Remote execution/Helper
 func TestNoHelpers(t *testing.T) {
 	dir := writeProject(t, motd)
-	const msg = `winch: this binary has no host helpers, so it cannot work on hosts
+	const msg = `this binary has no host helpers, so it cannot work on hosts
 go install builds winch without them; install a release:
 curl -fsSL https://winchstack.app/install.sh | sh
 `
@@ -561,23 +564,23 @@ curl -fsSL https://winchstack.app/install.sh | sh
 		out  string
 		err  string
 	}{
-		{[]string{"plan", "site"}, exitFailed, "", msg},
-		{[]string{"apply", "site", "--yes"}, exitFailed, "", msg},
-		{[]string{"run", "all", "file", "path=/etc/motd", "content=hi"}, exitFailed, "", msg},
-		{[]string{"exec", "all", "--", "uptime"}, exitFailed, "", msg},
+		{[]string{"plan", "site"}, exitFailed, "", "winch plan: " + msg},
+		{[]string{"apply", "site", "--yes"}, exitFailed, "", "winch apply: " + msg},
+		{[]string{"run", "all", "file", "path=/etc/motd", "content=hi"}, exitFailed, "", "winch run: " + msg},
+		{[]string{"exec", "all", "--", "uptime"}, exitFailed, "", "winch exec: " + msg},
 		{[]string{"validate"}, exitOK, "ok\n", ""},
 		{[]string{"version"}, exitOK, "winch v0.1.0 " + runtime.GOOS + "/" + runtime.GOARCH + " (built without host helpers)\n", ""},
 		{[]string{"--version"}, exitOK, "winch v0.1.0 " + runtime.GOOS + "/" + runtime.GOARCH + " (built without host helpers)\n", ""},
 		{[]string{"plan", "site", "--json"}, exitFailed, `{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
-{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","message":"winch: this binary has no host helpers, so it cannot work on hosts\ngo install builds winch without them; install a release:\ncurl -fsSL https://winchstack.app/install.sh | sh"}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","message":"this binary has no host helpers, so it cannot work on hosts\ngo install builds winch without them; install a release:\ncurl -fsSL https://winchstack.app/install.sh | sh"}
 {"type":"summary","time":"2026-10-26T12:00:00Z","exit_code":1}
 `, ""},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
-			connect := func(bool) run.Connect {
+			connect := func(bool, func(string, string)) run.Connect {
 				t.Error("winch contacted a host")
-				return fakehost.New().ConnectorFor(false)
+				return fakehost.New().ConnectorFor(false, nil)
 			}
 			var out, errOut bytes.Buffer
 			code := Main(context.Background(), tt.args, Env{
@@ -619,7 +622,7 @@ func TestVersion(t *testing.T) {
 // spec: CLI/Exit codes
 func TestVersionArgs(t *testing.T) {
 	r := winch(t, t.TempDir(), fakehost.New(), false, "", "version", "x")
-	if r.code != exitInvalid || r.out != "" || r.err != "winch: version takes no arguments\n" {
+	if r.code != exitInvalid || r.out != "" || r.err != "winch version: takes no arguments\n" {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 }

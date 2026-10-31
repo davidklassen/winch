@@ -72,7 +72,7 @@ func (l *Line) Text() ([]byte, string) {
 	return []byte(l.Line + "\n"), ""
 }
 
-func (l *Line) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+func (l *Line) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	dir, missing, err := openParent(l.Path)
 	if _, ok := errors.AsType[*noPathError](err); ok && l.Absent {
 		return Result{Status: OK}, nil
@@ -108,7 +108,7 @@ func (l *Line) Check(ctx context.Context, _ *State, _ func(string)) (Result, err
 	return res, nil
 }
 
-func (l *Line) Apply(ctx context.Context, _ func(string)) error {
+func (l *Line) Apply(ctx context.Context, _ Say) error {
 	dir, missing, err := openParent(l.Path)
 	if err != nil {
 		return err

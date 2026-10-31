@@ -159,7 +159,7 @@ func (u *User) Validate() error {
 	return nil
 }
 
-func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, error) {
+func (u *User) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	a, err := readAccounts()
 	if err != nil {
 		return Result{}, err
@@ -916,7 +916,7 @@ func prefixed(p string, fi fs.FileInfo, owner, group string, mode uint32) ([]str
 	return changes, err
 }
 
-func (u *User) Apply(ctx context.Context, _ func(string)) error {
+func (u *User) Apply(ctx context.Context, _ Say) error {
 	if u.missing {
 		return fmt.Errorf("user %s does not exist", u.Name)
 	}

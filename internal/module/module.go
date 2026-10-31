@@ -103,13 +103,28 @@ type State struct {
 
 // Module is the decoded arguments of one step. Main returns the main
 // argument for the plan. Check updates the state. Apply runs on the value
-// that Check returned a change for, and does what Check decided. Both call
-// note with a line for the person while they wait for the host.
+// that Check returned a change for, and does what Check decided. Both tell
+// say the lines for the person while they wait for the host.
 type Module interface {
 	Main() string
-	Check(ctx context.Context, st *State, note func(string)) (Result, error)
-	Apply(ctx context.Context, note func(string)) error
+	Check(ctx context.Context, st *State, say Say) (Result, error)
+	Apply(ctx context.Context, say Say) error
 }
+
+// Say takes the lines for the person while a step works on the host.
+type Say interface {
+	// Note tells a fact about the host that needs no fix.
+	Note(text string)
+	// Progress tells what the host does now.
+	Progress(text string)
+}
+
+// Silent is a Say that drops the lines.
+type Silent struct{}
+
+func (Silent) Note(string) {}
+
+func (Silent) Progress(string) {}
 
 // WithText is a module whose plan shows a diff from the old text of a check
 // result. Text returns the new text and the reason the plan shows no diff to

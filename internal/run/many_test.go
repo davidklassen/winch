@@ -562,8 +562,8 @@ func TestSessionErrorInApplyHasNoScope(t *testing.T) {
 		fail func(*fakehost.Hosts)
 		want string
 	}{
-		{"connect", func(h *fakehost.Hosts) { h.SetUnreachable("web1") }, "web1: failed: ssh: connect to host web1: Connection refused\n"},
-		{"close", func(h *fakehost.Hosts) { h.FailClose("web1") }, "web1: failed: session: exit status 255\n"},
+		{"connect", func(h *fakehost.Hosts) { h.SetUnreachable("web1") }, "web1: ssh: connect to host web1: Connection refused\n"},
+		{"close", func(h *fakehost.Hosts) { h.FailClose("web1") }, "web1: session: exit status 255\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := manyProject(t, motdStage)

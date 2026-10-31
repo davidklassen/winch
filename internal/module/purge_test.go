@@ -284,7 +284,7 @@ func TestCopyFromResultNamesTheSource(t *testing.T) {
 		if err := os.WriteFile(src, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		res, err := f.Check(t.Context(), &State{}, func(string) {})
+		res, err := f.Check(t.Context(), &State{}, Silent{})
 		if err != nil {
 			t.Fatal(err)
 		}

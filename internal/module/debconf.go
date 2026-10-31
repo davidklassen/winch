@@ -48,8 +48,8 @@ func (d *Debconf) Validate() error {
 // Check reads the answer and the template of the question while it holds the
 // dpkg locks, so no apt run changes them. A changed answer of an installed
 // package gives a note.
-func (d *Debconf) Check(ctx context.Context, _ *State, note func(string)) (Result, error) {
-	unlock, err := lockFiles(ctx, dpkgLocks, note)
+func (d *Debconf) Check(ctx context.Context, _ *State, say Say) (Result, error) {
+	unlock, err := lockFiles(ctx, dpkgLocks, say.Progress)
 	if err != nil {
 		return Result{}, err
 	}
@@ -93,7 +93,7 @@ func (d *Debconf) Check(ctx context.Context, _ *State, note func(string)) (Resul
 		return Result{}, err
 	}
 	if slices.Contains(strings.Fields(status), "installed") {
-		note(d.Package + " is installed; the new answer has no effect until dpkg-reconfigure runs")
+		say.Note(d.Package + " is installed; the new answer has no effect until dpkg-reconfigure runs")
 	}
 	action, old := Modify, fmt.Sprintf("%q", cur)
 	if !exists {
@@ -126,8 +126,8 @@ func (d *Debconf) checkChoices(choices []string) error {
 	return nil
 }
 
-func (d *Debconf) Apply(ctx context.Context, note func(string)) error {
-	unlock, err := lockFiles(ctx, dpkgLocks, note)
+func (d *Debconf) Apply(ctx context.Context, say Say) error {
+	unlock, err := lockFiles(ctx, dpkgLocks, say.Progress)
 	if err != nil {
 		return err
 	}

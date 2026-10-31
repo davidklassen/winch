@@ -85,7 +85,7 @@ func TestRestartSSHSocketResetsSSHService(t *testing.T) {
 	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 	s := &Service{Name: "ssh.socket", Restarted: true, todo: []string{"try-restart"}}
-	if err := s.Apply(t.Context(), func(string) {}); err != nil {
+	if err := s.Apply(t.Context(), Silent{}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(log)
@@ -126,7 +126,7 @@ func TestStartWatch(t *testing.T) {
 			}
 			t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 			s := &Service{Name: "app", todo: []string{c.cmd}, up: true}
-			if err := s.Apply(t.Context(), func(string) {}); err != nil {
+			if err := s.Apply(t.Context(), Silent{}); err != nil {
 				t.Fatal(err)
 			}
 			data, err := os.ReadFile(log)

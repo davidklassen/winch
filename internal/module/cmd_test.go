@@ -91,7 +91,7 @@ func TestCmdCheck(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := (&Cmd{Command: command, Creates: tt.creates}).Check(t.Context(), &State{}, func(string) {})
+			got, err := (&Cmd{Command: command, Creates: tt.creates}).Check(t.Context(), &State{}, Silent{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +123,7 @@ func TestCmdCheckMissingDir(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := (&Cmd{Command: "true", Dir: tt.dir, Creates: tt.creates}).Check(t.Context(), &State{}, func(string) {})
+			got, err := (&Cmd{Command: "true", Dir: tt.dir, Creates: tt.creates}).Check(t.Context(), &State{}, Silent{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -157,7 +157,7 @@ func TestCmdUnless(t *testing.T) {
 			if tt.timeout != 0 {
 				c.Timeout = &tt.timeout
 			}
-			got, err := c.Check(t.Context(), &State{}, func(string) {})
+			got, err := c.Check(t.Context(), &State{}, Silent{})
 			if tt.wantErr != "" {
 				if err == nil || err.Error() != tt.wantErr {
 					t.Fatalf("check error = %v, want %q", err, tt.wantErr)
@@ -181,7 +181,7 @@ func TestCmdUnless(t *testing.T) {
 func TestCmdApply(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out")
-	if err := (&Cmd{Command: "pwd > " + out}).Apply(t.Context(), func(string) {}); err != nil {
+	if err := (&Cmd{Command: "pwd > " + out}).Apply(t.Context(), Silent{}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(out); string(got) != "/\n" {
@@ -191,30 +191,30 @@ func TestCmdApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (&Cmd{Command: "pwd -P > out", Dir: dir}).Apply(t.Context(), func(string) {}); err != nil {
+	if err := (&Cmd{Command: "pwd -P > out", Dir: dir}).Apply(t.Context(), Silent{}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(out); string(got) != real+"\n" {
 		t.Errorf("with dir: pwd = %q, want %q", got, real)
 	}
-	err = (&Cmd{Command: "echo the cause; exit 3"}).Apply(t.Context(), func(string) {})
+	err = (&Cmd{Command: "echo the cause; exit 3"}).Apply(t.Context(), Silent{})
 	if want := "echo the cause; exit 3: exit status 3: the cause"; err == nil || err.Error() != want {
 		t.Errorf("a failing command: %v, want %q", err, want)
 	}
 	missing := filepath.Join(dir, "missing")
-	err = (&Cmd{Command: "true", Dir: missing}).Apply(t.Context(), func(string) {})
+	err = (&Cmd{Command: "true", Dir: missing}).Apply(t.Context(), Silent{})
 	if want := "dir " + missing + ": no such file or directory"; err == nil || err.Error() != want {
 		t.Errorf("a missing dir: %v, want %q", err, want)
 	}
-	err = (&Cmd{Command: "true", Creates: missing}).Apply(t.Context(), func(string) {})
+	err = (&Cmd{Command: "true", Creates: missing}).Apply(t.Context(), Silent{})
 	if want := "the command did not create " + missing; err == nil || err.Error() != want {
 		t.Errorf("creates is missing after the command: %v, want %q", err, want)
 	}
-	if err := (&Cmd{Command: "touch " + missing, Creates: missing}).Apply(t.Context(), func(string) {}); err != nil {
+	if err := (&Cmd{Command: "touch " + missing, Creates: missing}).Apply(t.Context(), Silent{}); err != nil {
 		t.Errorf("a command that creates creates: %v", err)
 	}
 	os.Remove(missing)
-	err = (&Cmd{Command: "true", Dir: out}).Apply(t.Context(), func(string) {})
+	err = (&Cmd{Command: "true", Dir: out}).Apply(t.Context(), Silent{})
 	if want := "dir " + out + ": not a directory"; err == nil || err.Error() != want {
 		t.Errorf("a dir that is a file: %v, want %q", err, want)
 	}
@@ -225,20 +225,20 @@ func TestAssert(t *testing.T) {
 	dir := t.TempDir()
 	ran := filepath.Join(dir, "ran")
 	a := &Assert{Command: "touch " + ran + "; exit 3", Message: "port 25 is blocked"}
-	got, err := a.Check(t.Context(), &State{}, func(string) {})
+	got, err := a.Check(t.Context(), &State{}, Silent{})
 	if err != nil || got.Status != OK || !got.Deferred || got.Action != "" {
 		t.Errorf("check = %+v, %v; want ok and deferred", got, err)
 	}
 	if _, err := os.Stat(ran); err == nil {
 		t.Error("the check ran the command")
 	}
-	if err := a.Apply(t.Context(), func(string) {}); err == nil || err.Error() != "port 25 is blocked" {
+	if err := a.Apply(t.Context(), Silent{}); err == nil || err.Error() != "port 25 is blocked" {
 		t.Errorf("a failing assert: %v, want the message", err)
 	}
 	if _, err := os.Stat(ran); err != nil {
 		t.Error("apply did not run the command")
 	}
-	if err := (&Assert{Command: "true", Message: "x"}).Apply(t.Context(), func(string) {}); err != nil {
+	if err := (&Assert{Command: "true", Message: "x"}).Apply(t.Context(), Silent{}); err != nil {
 		t.Errorf("a passing assert: %v", err)
 	}
 }

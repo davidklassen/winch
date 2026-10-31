@@ -21,13 +21,17 @@ func (p Pos) String() string {
 	return fmt.Sprintf("%s:%d:%d", p.File, p.Line, p.Col)
 }
 
-// Error is a problem in a project file. Its text is "file:line:col: message".
+// Error is a problem in a project file. Its text is "file:line:col: message",
+// or the message alone without a position.
 type Error struct {
 	Pos Pos
 	Msg string
 }
 
 func (e *Error) Error() string {
+	if e.Pos == (Pos{}) {
+		return e.Msg
+	}
 	return e.Pos.String() + ": " + e.Msg
 }
 

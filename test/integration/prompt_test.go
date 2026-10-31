@@ -61,7 +61,7 @@ func TestPromptedLogin(t *testing.T) {
 	if r := lab.WinchTerminal(t, dir, env, "plan", "site"); r.Code != 0 || !strings.Contains(r.Stdout, "1 to change") {
 		t.Fatalf("plan: exit %d", r.Code)
 	}
-	const msg = "prompt: failed: the access check cannot log in without a prompt; add the key to the agent with ssh-add"
+	const msg = "prompt: the access check cannot log in without a prompt; add the key to the agent with ssh-add"
 	if r := lab.WinchTerminal(t, dir, env, "apply", "site", "--yes"); r.Code != 1 || !strings.Contains(r.Stdout, msg) {
 		t.Errorf("apply: exit %d, want 1 and %q", r.Code, msg)
 	}

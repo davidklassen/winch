@@ -345,7 +345,7 @@ func loadedTable(ctx context.Context) (exists bool, comment string, err error) {
 	return false, "", nil
 }
 
-func (f *Firewall) Check(ctx context.Context, st *State, _ func(string)) (Result, error) {
+func (f *Firewall) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	if f.Absent {
 		return f.checkAbsent(ctx)
 	}
@@ -482,7 +482,7 @@ func (f *Firewall) checkAbsent(ctx context.Context) (Result, error) {
 	return Result{Status: Change, Action: Remove, Changes: changes, Guard: true}, nil
 }
 
-func (f *Firewall) Apply(ctx context.Context, _ func(string)) error {
+func (f *Firewall) Apply(ctx context.Context, _ Say) error {
 	if f.Absent {
 		return f.applyAbsent(ctx)
 	}

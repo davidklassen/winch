@@ -48,7 +48,7 @@ func TestCheck(t *testing.T) {
 		if r.code != exitHash || h.Applies != 0 {
 			t.Errorf("exit %d, applies %d", r.code, h.Applies)
 		}
-		want := "winch: the plan hash is " + planHash(t, r.out) + ", not " + hash + "; nothing changed\n"
+		want := "winch apply: the plan hash is " + planHash(t, r.out) + ", not " + hash + "; nothing changed\n"
 		if r.err != want {
 			t.Errorf("stderr = %q, want %q", r.err, want)
 		}

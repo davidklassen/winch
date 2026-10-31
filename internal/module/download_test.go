@@ -127,7 +127,7 @@ func TestDownloadShortBody(t *testing.T) {
 	}
 	d := &Download{URL: srv.URL, SHA256: strings.Repeat("0", 64), Path: p,
 		Owner: yamlx.NameOrID(strconv.Itoa(os.Getuid())), Group: yamlx.NameOrID(strconv.Itoa(os.Getgid()))}
-	if err := d.Apply(t.Context(), func(string) {}); err == nil || !strings.Contains(err.Error(), "unexpected EOF") {
+	if err := d.Apply(t.Context(), Silent{}); err == nil || !strings.Contains(err.Error(), "unexpected EOF") {
 		t.Errorf("apply = %v, want an unexpected EOF", err)
 	}
 	if b, err := os.ReadFile(p); err != nil || string(b) != "old\n" {

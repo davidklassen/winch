@@ -9,12 +9,12 @@ import (
 
 func format(ctx context.Context, env Env, f *flags, args []string) int {
 	if len(args) != 0 {
-		printError(env.stderr, "winch: fmt takes no arguments")
+		env.fail(usage("takes no arguments"))
 		return exitInvalid
 	}
 	files, err := project.Format(env.Dir)
 	if err != nil {
-		printError(env.stderr, err.Error())
+		env.fail(err)
 		return exitInvalid
 	}
 	for _, file := range files {

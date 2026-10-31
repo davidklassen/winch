@@ -18,14 +18,14 @@ import (
 func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	if f.json {
 		if len(args) > 0 {
-			printError(env.stderr, "winch: doc --json takes no topic, module, or key")
+			env.fail(usage("--json takes no topic, module, or key"))
 			return exitInvalid
 		}
 		writeDocJSON(env.stdout)
 		return exitOK
 	}
 	if len(args) > 1 {
-		printError(env.stderr, "winch: doc takes one topic, module, or key")
+		env.fail(usage("takes one topic, module, or key"))
 		return exitInvalid
 	}
 	if len(args) == 0 {
@@ -63,7 +63,7 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 			}
 			suggest = yamlx.DidYouMean(paths...)
 		}
-		printError(env.stderr, fmt.Sprintf("winch doc: unknown topic or module %q%s%s", name, suggest, commandHint(path)))
+		env.fail(usage("unknown topic or module %q%s%s", name, suggest, commandHint(path)))
 		return exitInvalid
 	}
 	if len(path) == 1 && i >= 0 {
@@ -89,7 +89,7 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 			for _, k := range keys {
 				names = append(names, k.Name)
 			}
-			printError(env.stderr, fmt.Sprintf("winch doc: %s has no key %q%s%s", strings.Join(path[:j+1], "."), key, yamlx.Suggest(key, names), commandHint(path[:j+2])))
+			env.fail(usage("%s has no key %q%s%s", strings.Join(path[:j+1], "."), key, yamlx.Suggest(key, names), commandHint(path[:j+2])))
 			return exitInvalid
 		}
 		k, keys = keys[i], keys[i].Keys

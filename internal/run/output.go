@@ -149,23 +149,37 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 		hosts(len(p.Hosts)), change, unchanged, unknown, failures(failed), p.Hash())
 }
 
-func (p *Plan) WriteNotes(out *color.Writer) {
+// Note is a fact about a host that needs no fix.
+type Note struct {
+	Host, Text string
+}
+
+// Notes returns the notes of the plan about the hosts that did not fail, each
+// once.
+func (p *Plan) Notes() []Note {
+	var notes []Note
+	add := func(host, text string) {
+		if n := (Note{host, text}); !slices.Contains(notes, n) {
+			notes = append(notes, n)
+		}
+	}
 	for _, stage := range p.Stages {
 		for _, host := range stage.Hosts {
 			for _, step := range host.Steps {
 				if p.Failed[host.Host.Name] != nil {
 					continue
 				}
+				note := func(text string) { add(host.Host.Name, text) }
 				if len(step.Result.MissingUnitFiles) > 0 {
 					s := module.Service{Name: step.Step.ShownMain()}
-					fmt.Fprintf(out, "%s: %s: unit file not found\n", host.Host.Name, secret.Printable(s.Unit()))
+					note(s.Unit() + ": unit file not found")
 				}
 				for _, m := range step.Result.Missing {
 					kind, _, _ := strings.Cut(m, " ")
-					fmt.Fprintf(out, "%s: %s does not exist yet and no %s step creates it\n", host.Host.Name, secret.Printable(m), kind)
+					note(fmt.Sprintf("%s does not exist yet and no %s step creates it", m, kind))
 				}
 				for _, t := range step.Result.MissingTools {
-					fmt.Fprintf(out, "%s: %s is missing and no pkg step installs %s\n", host.Host.Name, t.Name, t.Package)
+					note(fmt.Sprintf("%s is missing and no pkg step installs %s", t.Name, t.Package))
 				}
 			}
 		}
@@ -175,12 +189,24 @@ func (p *Plan) WriteNotes(out *color.Writer) {
 			continue
 		}
 		for _, t := range p.goneThens[h.Name] {
-			fmt.Fprintf(out, "%s: a pending then of %s %s matches no step and will not run\n", h.Name, secret.Printable(t.Module), secret.Printable(strings.Join(t.Mains, ", ")))
+			add(h.Name, fmt.Sprintf("a pending then of %s %s matches no step and will not run", t.Module, strings.Join(t.Mains, ", ")))
 		}
 		for _, c := range p.gone[h.Name] {
-			fmt.Fprintf(out, "%s: %s and will not run\n", h.Name, secret.Printable(goneNote(c)))
+			add(h.Name, goneNote(c)+" and will not run")
 		}
 	}
+	return notes
+}
+
+func (p *Plan) WriteNotes(out *color.Writer) {
+	for _, n := range p.Notes() {
+		WriteNote(out, n.Host, n.Text)
+	}
+}
+
+// WriteNote writes a note about host.
+func WriteNote(out *color.Writer, host, text string) {
+	fmt.Fprintf(out, "%s: note: %s\n", host, secret.Printable(text))
 }
 
 // goneNote names the gate or assert of record c that the project no longer
@@ -226,9 +252,11 @@ func header(t *color.Text, indent, name string) {
 	t.Add(color.Plain, "\n")
 }
 
-// hostError writes the error of a host in red.
+// hostError writes the error of a host in red, with its later lines
+// indented under the first.
 func hostError(w *color.Writer, host, err string) {
-	color.Fprint(w, color.Text{{Style: color.Red, Text: host + ": " + secret.PrintableLines(err) + "\n"}})
+	first, rest, _ := strings.Cut(secret.PrintableLines(err), "\n")
+	color.Fprint(w, color.Text{{Style: color.Red, Text: host + ": " + first + lines(rest, "  ") + "\n"}})
 }
 
 // command returns a command for the end of a line: after a space when it has

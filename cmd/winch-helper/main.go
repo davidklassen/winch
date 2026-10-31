@@ -33,7 +33,7 @@ func main() {
 		err = helper.Serve(context.Background(), os.Stdin, os.Stdout, filepath.Dir(filepath.Dir(self)), self, login)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "winch helper:", err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

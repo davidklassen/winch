@@ -27,7 +27,7 @@ func TestWriteStepNamesLink(t *testing.T) {
 // spec: CLI/Output
 func TestHostErrorControlCharacters(t *testing.T) {
 	err := "base: failed: file /tmp/x: then: exit status 1: one\n\x1b[2K\x1b[1Atwo\tz\u202E\r"
-	want := "web1: base: failed: file /tmp/x: then: exit status 1: one\n?[2K?[1Atwo\tz??\n"
+	want := "web1: base: failed: file /tmp/x: then: exit status 1: one\n  ?[2K?[1Atwo\tz??\n"
 	var out, errOut strings.Builder
 	w := func(b *strings.Builder) *color.Writer { return color.NewWriter(b, secret.NewFilter().Parts, false) }
 	Text(w(&out), w(&errOut)).Host(HostEvent{Phase: "apply", Host: "web1", Status: "failed", Error: err})

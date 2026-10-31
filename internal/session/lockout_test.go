@@ -339,7 +339,7 @@ func TestRebootRetry(t *testing.T) {
 		{"too many keys", "", "Received disconnect from 192.0.2.10 port 22:2: Too many authentication failures\nDisconnected from 192.0.2.10 port 22", 255, false},
 		{"host key", "", "Host key verification failed.", 255, false},
 		{"connection lost after the login", "have", "Connection to web1 closed by remote host.", 255, true},
-		{"missing sudo", "", "winch: the login user needs passwordless sudo", 1, true},
+		{"missing sudo", "", "the login user needs passwordless sudo", 1, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -464,8 +464,8 @@ func TestAccessBatchHint(t *testing.T) {
 	}{
 		{"refused login", "admin@web1: Permission denied (publickey).", 255,
 			"the access check cannot log in after this change: admin@web1: Permission denied (publickey)."},
-		{"login without a home directory", "Could not chdir to home directory /home/admin: Permission denied\nwinch: the login user needs passwordless sudo", 1,
-			"Could not chdir to home directory /home/admin: Permission denied\nwinch: the login user needs passwordless sudo"},
+		{"login without a home directory", "Could not chdir to home directory /home/admin: Permission denied\nthe login user needs passwordless sudo", 1,
+			"Could not chdir to home directory /home/admin: Permission denied\nthe login user needs passwordless sudo"},
 		{"unknown host key", "Host key verification failed.", 255,
 			"Host key verification failed. (in batch mode ssh asks nothing; accept the host key once with: ssh web1)"},
 		{"no text", "", 255, "exit status 255"},

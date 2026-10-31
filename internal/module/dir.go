@@ -45,7 +45,7 @@ func (d *Dir) Validate() error {
 		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"recurse", d.Recurse}, arg{"replace", d.Replace}, arg{"purge", d.Purge}, arg{"keep", d.KeepPatterns != nil})
 	}
 	if d.KeepPatterns != nil && !d.Purge {
-		return &yamlx.FieldError{Field: "keep", Msg: "keep needs purge: true"}
+		return &yamlx.FieldError{Field: "keep", Msg: "needs purge: true"}
 	}
 	for _, pattern := range d.KeepPatterns {
 		if pattern == "" {
@@ -97,7 +97,7 @@ func (d *Dir) ModeWarning() string {
 	return fmt.Sprintf("%s can read the directory but not enter it; use \"%04o\"", who, fixed)
 }
 
-func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
+func (d *Dir) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	dir, missing, err := openParent(d.Path)
 	if _, ok := errors.AsType[*noPathError](err); ok && d.Absent {
 		return Result{Status: OK}, nil
@@ -316,7 +316,7 @@ func (d *Dir) chownContent(dir *os.Root, name string, fi fs.FileInfo, uid, gid i
 	})
 }
 
-func (d *Dir) Apply(ctx context.Context, _ func(string)) error {
+func (d *Dir) Apply(ctx context.Context, _ Say) error {
 	name := path.Base(d.Path)
 	if d.Absent {
 		dir, err := openDir(d.Path)
