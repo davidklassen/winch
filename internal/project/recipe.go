@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"syscall"
 	"text/template"
+	tparse "text/template/parse"
 	"time"
 
 	"github.com/expr-lang/expr"
@@ -335,8 +337,8 @@ func (r *Recipe) key(k *module.Repo) ([]*yamlx.Error, error) {
 
 // fileTemplates returns the templates of the file step st with the
 // arguments n. A computed template name gives all templates of the recipe,
-// unless it reads only item and the loop is a literal list: then it gives the
-// templates that the items name.
+// unless it reads only item. Then a literal loop gives the templates that the
+// items name, and a !tpl name gives the templates that match its text.
 func (r *Recipe) fileTemplates(st Step, n *yamlx.Node) []*tmplFile {
 	i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "template" })
 	if i < 0 {
@@ -347,10 +349,16 @@ func (r *Recipe) fileTemplates(st Step, n *yamlx.Node) []*tmplFile {
 	if v.Tag == "" {
 		name, _ := v.Value.(string)
 		names = []string{name}
-	} else if l, ok := loopNames(st, v); ok {
+	} else if c := st.args.computed[v]; st.loop == nil || c.data {
+		names = slices.Collect(maps.Keys(r.templates))
+	} else if l, ok := loopNames(st.loop, c); ok {
 		names = l
 	} else {
 		names = slices.Collect(maps.Keys(r.templates))
+		if c.tmpl != nil {
+			re := namePattern(c.tmpl)
+			names = slices.DeleteFunc(names, func(n string) bool { return !re.MatchString(n) })
+		}
 	}
 	var out []*tmplFile
 	for _, name := range names {
@@ -361,15 +369,14 @@ func (r *Recipe) fileTemplates(st Step, n *yamlx.Node) []*tmplFile {
 	return out
 }
 
-// loopNames returns the value of the computed scalar v of the step st for
-// each item, when v reads only item and the loop is a literal list.
-func loopNames(st Step, v *yamlx.Node) ([]string, bool) {
-	c := st.args.computed[v]
-	if st.loop == nil || st.loop.computed != nil || c.data {
+// loopNames returns the value of c for each item of loop, when the loop is a
+// literal list.
+func loopNames(loop *value, c *computed) ([]string, bool) {
+	if loop.computed != nil {
 		return nil, false
 	}
 	var out []string
-	for _, item := range st.loop.node.Items {
+	for _, item := range loop.node.Items {
 		name, err := c.evalItem(yamlx.Value(item))
 		s, ok := name.(string)
 		if err != nil || !ok {
@@ -378,6 +385,20 @@ func loopNames(st Step, v *yamlx.Node) ([]string, bool) {
 		out = append(out, s)
 	}
 	return out, true
+}
+
+// namePattern returns a pattern for the values of the template t: each
+// action can give any text.
+func namePattern(t *template.Template) *regexp.Regexp {
+	var b strings.Builder
+	for _, n := range t.Root.Nodes {
+		if t, ok := n.(*tparse.TextNode); ok {
+			b.WriteString(regexp.QuoteMeta(string(t.Text)))
+		} else {
+			b.WriteString(".*")
+		}
+	}
+	return regexp.MustCompile("^" + b.String() + "$")
 }
 
 // readFile reads name in the directory sub of r. It does not follow a

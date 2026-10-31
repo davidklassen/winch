@@ -473,6 +473,10 @@ func TestLoadWarnings(t *testing.T) {
 // spec: Variables/Secrets in output
 func TestLoadSecretFileModeWarning(t *testing.T) {
 	const msg = "the file holds a secret and others can read it; set mode"
+	base := with(secretProject, map[string]string{
+		"winch.yaml":            strings.Replace(secretProject["winch.yaml"], "  users: {}\n", "  users: {}\n  keys: []\n  zones: []\n  cfg: {}\n", 1),
+		"inventories/test.yaml": secretProject["inventories/test.yaml"] + "      keys:\n        - name: ddns\n          secret: {{secret:tsig-secret}}\n      cfg:\n        zone:\n          k:\n            inner:\n              secret: {{secret:cfg-secret}}\n",
+	})
 	loopTemplates := map[string]string{
 		"recipes/r/templates/http.conf.tmpl":   "{{ .vars.short }}\n",
 		"recipes/r/templates/https.conf.tmpl":  "x\n",
@@ -504,6 +508,17 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 		{"template assigns the values of a secret map", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ $k := \"\" }}{{ $v := \"\" }}{{ range $k, $v = .vars.users }}{{ $k }}{{ end }}{{ $v }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"default reads the values of a secret map", "content: !expr vars.r_vals\nvars:\n  r_vals: !tpl \"{{ range $k, $v := .vars.users }}{{ $v }}{{ end }}\"", nil, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"default reads the keys of a secret map", "content: !expr vars.r_names\nvars:\n  r_names: !tpl \"{{ range $k, $v := .vars.users }}{{ $k }}{{ end }}\"", nil, ""},
+		{"template reads a plain field of secret elements", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.keys }}{{ .name }}{{ end }}\n"}, ""},
+		{"template reads a plain field of secret elements by variable", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range $i, $k := .vars.keys }}{{ $k.name }}{{ end }}\n"}, ""},
+		{"template reads the secret field of elements", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.keys }}{{ .name }}={{ .secret }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads the secret field of elements by variable", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range $k := .vars.keys }}{{ $k.secret }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads secret elements whole", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.keys }}{{ json . }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads the secret field of elements in with", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.keys }}{{ with .secret }}{{ . }}{{ end }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"inline template reads a plain field of secret elements", `content: !tpl "{{ range .vars.keys }}{{ .name }}{{ end }}"`, nil, ""},
+		{"default reads a plain field of secret elements", "content: !expr vars.r_names\nvars:\n  r_names: !tpl \"{{ range .vars.keys }}{{ .name }}{{ end }}\"", nil, ""},
+		{"default reads the secret field of elements", "content: !expr vars.r_vals\nvars:\n  r_vals: !tpl \"{{ range .vars.keys }}{{ .secret }}{{ end }}\"", nil, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads a field of elements of a nested value", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.cfg.zone }}{{ .secret }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads a field of secret map values", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.users }}{{ .name }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"absent", "absent: true", nil, ""},
 		{"loop over secrets", "content: !expr item\n    loop: !expr values(vars.users)", nil, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"plain content in loop over secrets", "content: x\n    loop: !expr values(vars.users)", nil, ""},
@@ -515,6 +530,9 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 		{"computed template name reads a fact", "template: !expr 'facts.os.id + item + \".conf.tmpl\"'\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"computed template name reads a variable in a branch", "template: !tpl \"{{ if eq .item \\\"none\\\" }}{{ .vars.short }}{{ end }}{{ .item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"computed template name in a loop with a computed element", "template: !tpl \"{{ .item }}.conf.tmpl\"\n    loop: [http, !expr '\"secret\"']", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name in a computed loop", "template: !tpl \"zones/{{ .item.name }}.zone\"\n    loop: !expr vars.zones", with(loopTemplates, map[string]string{"recipes/r/templates/zones/a.zone": "x\n"}), ""},
+		{"computed template name in a computed loop matches a secret", "template: !tpl \"{{ .item.name }}.conf.tmpl\"\n    loop: !expr vars.zones", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name by expr in a computed loop", "template: !expr '\"zones/\" + item.name + \".zone\"'\n    loop: !expr vars.zones", with(loopTemplates, map[string]string{"recipes/r/templates/zones/a.zone": "x\n"}), "recipes/r/recipe.yaml:2:5: " + msg},
 		{"computed template name reads the host", "template: !tpl \"{{ .host.short }}{{ .item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"handler", "content: x\nhandlers:\n  h:\n    - file:\n        path: /etc/h\n        content: !expr vars.token", nil, "recipes/r/recipe.yaml:7:7: " + msg},
 		{"recipe step value", "", map[string]string{
@@ -530,7 +548,7 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			k := newKey(t)
-			all := with(secretProject, with(map[string]string{"recipes/r/recipe.yaml": recipe("  - file:\n      path: /etc/app.conf\n      " + tt.file + "\n")}, tt.files))
+			all := with(base, with(map[string]string{"recipes/r/recipe.yaml": recipe("  - file:\n      path: /etc/app.conf\n      " + tt.file + "\n")}, tt.files))
 			all["winch.yaml"] = strings.Replace(all["winch.yaml"], "RECIPIENT", k.id.Recipient().String(), 1)
 			dir := writeProject(t, k.sealFiles(t, all))
 			p, err := Load(t.Context(), dir, "", "site", nil, k.keys())

@@ -1144,14 +1144,25 @@ func hookReads(st Step, n *yamlx.Node) []readsAt {
 // each certbot hook that reads a secret variable. The steps
 // are those of the stages of pls and of every recipe. A variable is secret
 // when a value or a default holds a !secret, or when a default or a value of
-// a recipe step reads a secret variable.
+// a recipe step reads a secret variable. A read of a field of the elements of
+// a variable is secret when that field holds a secret in an element.
 func (l *loader) secretChecks(invs []*Inventory, pls []*Pipeline) ([]*yamlx.Error, error) {
-	secret := map[string]bool{}
+	// whole is true for a secret variable whose secrets are not all in
+	// fields of its elements. fields are the secret fields of each secret
+	// variable.
+	whole := map[string]bool{}
+	fields := map[string]map[string]bool{}
 	for _, inv := range invs {
 		for _, h := range inv.Hosts {
 			for name, v := range h.Vars {
-				if hasSealed(v) {
-					secret[name] = true
+				if !hasSealed(v) {
+					continue
+				}
+				if fields[name] == nil {
+					fields[name] = map[string]bool{}
+				}
+				if !sealedFields(v, fields[name]) {
+					whole[name] = true
 				}
 			}
 		}
@@ -1175,19 +1186,25 @@ func (l *loader) secretChecks(invs []*Inventory, pls []*Pipeline) ([]*yamlx.Erro
 	for _, v := range l.decls {
 		walkTags(v.node, func(t *yamlx.Node) {
 			if t.Tag == "!secret" {
-				secret[v.Name] = true
+				whole[v.Name] = true
 			}
 		})
 	}
 	for _, st := range steps {
 		vars = append(vars, st.vars...)
 	}
-	isSecret := func(name string) bool { return secret[name] }
+	isSecret := func(read string) bool {
+		name, field, ok := strings.Cut(read, ".")
+		if !ok {
+			return whole[name] || fields[name] != nil
+		}
+		return whole[name] || fields[name][field]
+	}
 	for changed := true; changed; {
 		changed = false
 		for _, v := range vars {
-			if !secret[v.Name] && v.computed != nil && slices.ContainsFunc(v.computed.values(), isSecret) {
-				secret[v.Name], changed = true, true
+			if !whole[v.Name] && v.computed != nil && slices.ContainsFunc(v.computed.values(), isSecret) {
+				whole[v.Name], changed = true, true
 			}
 		}
 	}
