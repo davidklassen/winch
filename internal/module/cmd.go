@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"math"
 	"os"
 	"os/exec"
 	"slices"
@@ -40,11 +39,8 @@ func (c *Cmd) Validate() error {
 		return err
 	}
 	if c.Timeout != nil {
-		if *c.Timeout < 1 {
-			return &yamlx.FieldError{Field: "timeout", Msg: "must be 1 or more seconds"}
-		}
-		if int64(*c.Timeout) > math.MaxInt64/int64(time.Second) {
-			return &yamlx.FieldError{Field: "timeout", Msg: fmt.Sprintf("must be at most %d seconds", math.MaxInt64/int64(time.Second))}
+		if err := CheckSeconds("timeout", *c.Timeout); err != nil {
+			return err
 		}
 	}
 	if err := checkCommand("unless", c.Unless); err != nil {

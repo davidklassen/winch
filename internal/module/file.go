@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"os/user"
 	"path"
@@ -19,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -137,6 +139,20 @@ var modeRe = regexp.MustCompile(`^[0-7]{3,4}$`)
 func checkMode(mode, example string) error {
 	if mode != "" && !modeRe.MatchString(mode) {
 		return &yamlx.FieldError{Field: "mode", Msg: fmt.Sprintf("must be an octal mode such as %q", example)}
+	}
+	return nil
+}
+
+const maxSeconds = math.MaxInt64 / int64(time.Second)
+
+// CheckSeconds checks a limit in seconds: at least 1, and small enough to fit
+// a time.Duration.
+func CheckSeconds(field string, n int) error {
+	if n < 1 {
+		return &yamlx.FieldError{Field: field, Msg: "must be 1 or more seconds"}
+	}
+	if int64(n) > maxSeconds {
+		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf("must be at most %d seconds", maxSeconds)}
 	}
 	return nil
 }
