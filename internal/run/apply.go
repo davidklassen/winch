@@ -184,7 +184,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			remove = append(remove, h)
 		}
 	}
-	for i, err := range rollout(ctx, "", remove, 0, plan.opts, dial, func(_ int, c Conn) error {
+	for i, err := range rollout(ctx, "", remove, 0, nil, plan.opts, dial, func(_ int, c Conn) error {
 		return c.Close()
 	}) {
 		if err != nil {
@@ -210,11 +210,26 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			last[hp.Host.Name] = i
 		}
 	}
+	// stopped are the hosts that failed in the plan at this or an earlier stage.
+	stopped := map[string]bool{}
 	for si, sp := range plan.Stages {
+		planned := map[string]HostPlan{}
+		for _, hp := range sp.Hosts {
+			planned[hp.Host.Name] = hp
+		}
+		stage := sp.Stage
 		var hps []HostPlan
 		var hosts []project.Host
-		for _, hp := range sp.Hosts {
-			name := hp.Host.Name
+		for _, h := range stage.Targets {
+			name := h.Name
+			hp, ok := planned[name]
+			if !ok {
+				if !stopped[name] && stage.Parallelism > 0 {
+					hps, hosts = append(hps, HostPlan{Host: h}), append(hosts, h)
+				}
+				stopped[name] = true
+				continue
+			}
 			if !toApply[name] || o.Failed[name] != nil {
 				continue
 			}
@@ -227,7 +242,6 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 		}
 		changed := make([]bool, len(hps))
-		stage := sp.Stage
 		// With parallelism, the hosts with a pending gate run first, and the
 		// others start only after those gates pass.
 		var pending, others []int
@@ -251,7 +265,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			for _, i := range group {
 				gh = append(gh, hosts[i])
 			}
-			ge := rollout(ctx, stage.Name, gh, stage.Parallelism, plan.opts, open, func(j int, _ Conn) error {
+			ge := rollout(ctx, stage.Name, gh, stage.Parallelism, plan.Failed, plan.opts, open, func(j int, _ Conn) error {
 				i := group[j]
 				a := runs[hosts[i].Name]
 				var err error
@@ -279,7 +293,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 		}
 		for i, h := range hosts {
-			if err := errs[i]; err != nil {
+			if err := errs[i]; err != nil && plan.Failed[h.Name] == nil {
 				runs[h.Name].close() //nolint:errcheck // the host failed already
 				o.Failed[h.Name] = err
 				delete(o.Changed, h.Name)

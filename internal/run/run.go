@@ -447,7 +447,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 		}
 		steps := make([][]Planned, len(hosts))
-		errs := rollout(ctx, stage.Name, hosts, 0, opts, open, func(i int, conn Conn) error {
+		errs := rollout(ctx, stage.Name, hosts, 0, nil, opts, open, func(i int, conn Conn) error {
 			hr := runs[hosts[i].Name]
 			var err error
 			steps[i], err = check(ctx, conn, opts.progress(), p, hosts[i], stage, hr)

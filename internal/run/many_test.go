@@ -227,6 +227,79 @@ func TestParallelismFailure(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Failures ("With parallelism, a failure, also one in the plan, stops new hosts from starting")
+func TestParallelismPlanFailure(t *testing.T) {
+	p := manyProject(t, strings.Replace(motdStage, "    hosts: all\n", "    hosts: all\n    parallelism: 1\n", 1))
+	h := fakehost.New()
+	h.FailCheck("web2 /etc/motd")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	planErr := plan.Failed["web2"]
+	if planErr == nil {
+		t.Fatal("web2 did not fail in the plan")
+	}
+	var out, errOut bytes.Buffer
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	if _, ok := h.File("web1", "/etc/motd"); !ok || o.Failed["web1"] != nil {
+		t.Errorf("web1 did not run: %v", o.Failed["web1"])
+	}
+	if o.Failed["web2"] != planErr {
+		t.Errorf("web2: error %v, want the plan error %v", o.Failed["web2"], planErr)
+	}
+	if _, ok := h.File("web3", "/etc/motd"); ok {
+		t.Error("web3 started")
+	}
+	if err := o.Failed["web3"]; err == nil || err.Error() != "not started: web2 failed in stage base" {
+		t.Errorf("web3: error %v", err)
+	}
+	if n := strings.Count(errOut.String(), "web2:"); n != 0 {
+		t.Errorf("apply reported web2 %d times: %q", n, errOut.String())
+	}
+}
+
+// spec: Running a pipeline/Failures ("With parallelism, a failure, also one in the plan, stops new hosts from starting")
+func TestParallelismPlanFailureFirstHost(t *testing.T) {
+	for _, serial := range []bool{false, true} {
+		t.Run(map[bool]string{false: "batch", true: "serial"}[serial], func(t *testing.T) {
+			p := manyProject(t, strings.Replace(motdStage, "    hosts: all\n", "    hosts: all\n    parallelism: 2\n", 1))
+			h := fakehost.New()
+			h.FailCheck("web1 /etc/motd")
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: serial})
+			var out, errOut bytes.Buffer
+			o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+			for _, host := range []string{"web2", "web3"} {
+				if _, ok := h.File(host, "/etc/motd"); ok {
+					t.Errorf("%s started", host)
+				}
+				if err := o.Failed[host]; err == nil || err.Error() != "not started: web1 failed in stage base" {
+					t.Errorf("%s: error %v", host, err)
+				}
+			}
+		})
+	}
+}
+
+// spec: Running a pipeline/Failures ("A failed host takes no part in later stages; later stages still run on the other hosts")
+func TestParallelismAfterPlanFailure(t *testing.T) {
+	p := manyProject(t, motdStage+`  - name: next
+    hosts: all
+    parallelism: 1
+    steps:
+      - file:
+          path: /etc/issue
+          content: "x\n"
+`)
+	h := fakehost.New()
+	h.FailCheck("web2 /etc/motd")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	for _, host := range []string{"web1", "web3"} {
+		if _, ok := h.File(host, "/etc/issue"); !ok || o.Failed[host] != nil {
+			t.Errorf("%s did not run stage next: %v", host, o.Failed[host])
+		}
+	}
+}
+
 const healthStage = `  - name: base
     hosts: all
     parallelism: 1
