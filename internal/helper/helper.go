@@ -591,7 +591,10 @@ func readFacts() (facts.Facts, error) {
 		return f, err
 	}
 	f.RebootRequired, err = module.RebootRequired()
-	return f, err
+	if err != nil {
+		return f, fmt.Errorf("read facts: %w", err)
+	}
+	return f, nil
 }
 
 func readPending(handlers, thens, checks records) (protocol.Pending, error) {

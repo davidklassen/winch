@@ -67,7 +67,7 @@ func TestColorStreams(t *testing.T) {
 		t.Errorf("a load error is not red: %q", errOut)
 	}
 	_, errOut = run(true, true, "plan", "site", "--nope")
-	if !strings.HasPrefix(errOut, "\x1b[31mwinch plan: flag provided but not defined: -nope\x1b[0m\nRun ") {
+	if !strings.HasPrefix(errOut, "\x1b[31mwinch plan: unknown flag --nope\x1b[0m\nRun ") {
 		t.Errorf("a flag error is not red: %q", errOut)
 	}
 }

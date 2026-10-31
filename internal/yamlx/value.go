@@ -1,7 +1,7 @@
 package yamlx
 
 import (
-	"fmt"
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
@@ -63,7 +63,7 @@ func FromValue(v any, pos Pos) (*Node, error) {
 		}
 	case reflect.Map:
 		if rv.Type().Key().Kind() != reflect.String {
-			return nil, fmt.Errorf("a map key must be a string, got %s", rv.Type().Key())
+			return nil, errors.New("a map key must be a string")
 		}
 		n.Kind = Map
 		keys := rv.MapKeys()
@@ -80,8 +80,10 @@ func FromValue(v any, pos Pos) (*Node, error) {
 			return n, nil
 		}
 		return FromValue(rv.Elem().Interface(), pos)
+	case reflect.Func:
+		return nil, errors.New(`the expression gives a function; call it, such as match("web")`)
 	default:
-		return nil, fmt.Errorf("cannot use a value of type %s", rv.Type())
+		return nil, errors.New("the expression gives a set of fields; use one of them, such as facts.os.id")
 	}
 	return n, nil
 }

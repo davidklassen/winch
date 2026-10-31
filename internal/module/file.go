@@ -500,7 +500,7 @@ func (f *File) Apply(ctx context.Context, _ Say) error {
 			return err
 		}
 		defer dir.Close()
-		return dir.Remove(name)
+		return pathError("remove", f.Path, dir.Remove(name))
 	}
 	if !f.hasContent() {
 		return f.applyAttrs(name)
@@ -545,7 +545,7 @@ func (f *File) Apply(ctx context.Context, _ Say) error {
 			return err
 		}
 		if sum == wantSum {
-			return setAttrs(r, uid, gid, mode)
+			return pathError("set the owner, group, and mode of", f.Path, setAttrs(r, uid, gid, mode))
 		}
 	}
 	var content io.Reader
@@ -569,9 +569,10 @@ func (f *File) Apply(ctx context.Context, _ Say) error {
 		return err
 	}
 	defer sub.Close()
-	return writeFile(sub, name, content, uid, gid, mode, func(tmp string) error {
+	err = writeFile(sub, name, content, uid, gid, mode, func(tmp string) error {
 		return put(ctx, dir, missing, sub, tmp, name, f.Validation)
 	})
+	return pathError("write", f.Path, err)
 }
 
 func (f *File) sum() string {
@@ -798,7 +799,7 @@ func mkdirs(dir *os.Root, missing []string) (*os.Root, error) {
 		next, err := mkdir(cur, path.Base(m), 0, 0, 0o755)
 		cur.Close()
 		if err != nil {
-			return nil, err
+			return nil, pathError("create directory", m, err)
 		}
 		cur = next
 	}
@@ -931,6 +932,22 @@ func writeFile(dir *os.Root, name string, content io.Reader, uid, gid int, mode 
 		return err
 	}
 	return put(tmpName)
+}
+
+// pathError replaces the system call and the relative or temporary name in a
+// file system error with the action and the path p, such as "write
+// /etc/motd: read-only file system". Other errors stay as they are.
+func pathError(action, p string, err error) error {
+	var inner error
+	switch e := err.(type) {
+	case *fs.PathError:
+		inner = e.Err
+	case *os.LinkError:
+		inner = e.Err
+	default:
+		return err
+	}
+	return fmt.Errorf("%s %s: %w", action, p, inner)
 }
 
 // fileMode converts a numeric mode such as 04755 to a Go file mode.

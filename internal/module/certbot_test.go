@@ -593,3 +593,13 @@ func TestParseConfobjTripleQuotes(t *testing.T) {
 		}
 	}
 }
+
+// spec: CLI/Messages
+func TestCertbotApplyMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	c := &Certbot{Name: "example.com", Domains: []string{"example.com"}, Email: "a@example.com", issue: true}
+	err := c.Apply(t.Context(), Silent{})
+	if want := "certbot is missing; install the package certbot in an earlier pkg step"; err == nil || err.Error() != want {
+		t.Errorf("got %v, want %s", err, want)
+	}
+}

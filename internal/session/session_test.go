@@ -1079,3 +1079,34 @@ func TestHoldDuringLogin(t *testing.T) {
 		t.Errorf("holds after a failed login %q, want %q", log, want)
 	}
 }
+
+// spec: CLI/Messages
+func TestOpenHelperEndsSilently(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	_, err := open(t, t.TempDir(), []helperbin.Binary{helperbin.New("arm64", []byte("#!/bin/sh\nexit 1\n"))})
+	want := "the session ended without an error message (ssh: exit status 1)"
+	if err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+}
+
+// spec: CLI/Messages
+func TestOpenLoginShellTextWithQuotes(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	t.Setenv("SSH_BANNER", `say "hi"`)
+	_, err := open(t, t.TempDir(), []helperbin.Binary{fakeHelper("arm64")})
+	want := `the login shell printed "say "hi"" before winch started; remove it from the shell startup files, such as ~/.bashrc`
+	if err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+}
+
+// spec: CLI/Messages
+func TestOpenHelperSendsText(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	_, err := open(t, t.TempDir(), []helperbin.Binary{helperbin.New("arm64", []byte("#!/bin/sh\nread line\necho 'not json'\n"))})
+	want := "the helper sent a line that is not a response: not json"
+	if err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+}

@@ -969,7 +969,7 @@ func makeHome(home string, uid, gid int) error {
 	defer parent.Close()
 	sub, err := mkdir(parent, path.Base(home), uid, gid, 0o700)
 	if err != nil {
-		return err
+		return pathError("create directory", home, err)
 	}
 	return sub.Close()
 }
@@ -977,7 +977,8 @@ func makeHome(home string, uid, gid int) error {
 // writeKeys writes ~/.ssh/authorized_keys of the user e, and sets the owner,
 // group, and mode of both.
 func (u *User) writeKeys(e passwdEntry) error {
-	dir, missing, err := openParent(path.Join(e.home, ".ssh", "authorized_keys"))
+	keys := path.Join(e.home, ".ssh", "authorized_keys")
+	dir, missing, err := openParent(keys)
 	if err != nil {
 		return err
 	}
@@ -988,7 +989,7 @@ func (u *User) writeKeys(e passwdEntry) error {
 	case len(missing) == 1:
 		sub, err := mkdir(dir, ".ssh", int(e.uid), int(e.gid), 0o700)
 		if err != nil {
-			return err
+			return pathError("create directory", path.Dir(keys), err)
 		}
 		defer sub.Close()
 		dir = sub
@@ -997,7 +998,8 @@ func (u *User) writeKeys(e passwdEntry) error {
 			return err
 		}
 	}
-	return writeFile(dir, "authorized_keys", bytes.NewReader(u.keyText()), int(e.uid), int(e.gid), 0o600, func(tmp string) error {
+	err = writeFile(dir, "authorized_keys", bytes.NewReader(u.keyText()), int(e.uid), int(e.gid), 0o600, func(tmp string) error {
 		return dir.Rename(tmp, "authorized_keys")
 	})
+	return pathError("write", keys, err)
 }

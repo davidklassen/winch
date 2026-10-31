@@ -2,6 +2,7 @@ package module
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"os"
@@ -259,6 +260,58 @@ func TestCheckNamesWhyNoDiff(t *testing.T) {
 		}
 		if res.OldReason != tt.want || res.Changes != nil || res.Old != nil {
 			t.Errorf("%s: old reason %q, changes %q, old %v; want %q, nil, nil", tt.name, res.OldReason, res.Changes, res.Old, tt.want)
+		}
+	}
+}
+
+// spec: CLI/Messages
+func TestApplyNamesThePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only directory")
+	}
+	dir := t.TempDir()
+	for _, err := range []error{
+		os.WriteFile(dir+"/old", nil, 0o644),
+		os.Symlink("/etc/hosts", dir+"/oldlink"),
+		os.Chmod(dir, 0o555),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Error(err)
+		}
+	})
+	owner, group := yamlx.NameOrID(strconv.Itoa(os.Getuid())), yamlx.NameOrID(strconv.Itoa(os.Getgid()))
+	tests := []struct{ path, want string }{
+		{dir + "/motd", "write " + dir + "/motd: permission denied"},
+		{dir + "/sub/motd", "create directory " + dir + "/sub: permission denied"},
+	}
+	for _, tt := range tests {
+		f := &File{Path: tt.path, Data: []byte("hi\n"), Mode: "0644", Owner: owner, Group: group}
+		if err := f.Apply(t.Context(), Silent{}); err == nil || err.Error() != tt.want {
+			t.Errorf("%s: got %v, want %s", tt.path, err, tt.want)
+		}
+	}
+	target := "/etc/hosts"
+	err := (&Link{Path: dir + "/l", Target: &target}).Apply(t.Context(), Silent{})
+	if want := "create link " + dir + "/l: permission denied"; err == nil || err.Error() != want {
+		t.Errorf("link: got %v, want %s", err, want)
+	}
+	for _, tt := range []struct {
+		m interface {
+			Apply(context.Context, Say) error
+		}
+		want string
+	}{
+		{&Dir{Path: dir + "/new", Owner: owner, Group: group, Mode: "0755"}, "create directory " + dir + "/new: permission denied"},
+		{&File{Path: dir + "/old", Absent: true}, "remove " + dir + "/old: permission denied"},
+		{&Link{Path: dir + "/oldlink", Absent: true}, "remove " + dir + "/oldlink: permission denied"},
+	} {
+		if err := tt.m.Apply(t.Context(), Silent{}); err == nil || err.Error() != tt.want {
+			t.Errorf("got %v, want %s", err, tt.want)
 		}
 	}
 }

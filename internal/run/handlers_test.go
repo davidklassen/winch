@@ -658,7 +658,7 @@ func TestCommandLines(t *testing.T) {
 	h.FailCommand("web1", "systemctl is-active nginx\n\ncurl -sf http://localhost/\n")
 	plan = run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
-	want := "base: failed: health:\n    systemctl is-active nginx\n\n    curl -sf http://localhost/\ndid not pass within 1m0s: exit status 1"
+	want := "base: failed: health:\n    systemctl is-active nginx\n\n    curl -sf http://localhost/\ndid not pass within 60s: exit status 1"
 	if err := o.Failed["web1"]; err == nil || err.Error() != want {
 		t.Errorf("web1: error %q, want %q", err, want)
 	}
@@ -1249,7 +1249,7 @@ func TestGoneRecordRemovalFails(t *testing.T) {
 	h.FailClose("web1")
 	errOut.Reset()
 	o = run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
-	if o.Failed["web1"] == nil || !strings.Contains(errOut.String(), "session: exit status 255") {
+	if o.Failed["web1"] == nil || !strings.Contains(errOut.String(), "the session ended without an error message (ssh: exit status 255)") {
 		t.Errorf("apply did not fail web1: %v, stderr %q", o.Failed, errOut.String())
 	}
 }

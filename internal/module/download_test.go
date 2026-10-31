@@ -3,6 +3,7 @@ package module
 import (
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -65,7 +66,7 @@ func TestFetchStall(t *testing.T) {
 		want string
 	}{
 		{"data in time", stall / 4, ""},
-		{"no data", 2 * stall, "no data for 200ms"},
+		{"no data", 2 * stall, "no data for 0.2s"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,8 +128,8 @@ func TestDownloadShortBody(t *testing.T) {
 	}
 	d := &Download{URL: srv.URL, SHA256: strings.Repeat("0", 64), Path: p,
 		Owner: yamlx.NameOrID(strconv.Itoa(os.Getuid())), Group: yamlx.NameOrID(strconv.Itoa(os.Getgid()))}
-	if err := d.Apply(t.Context(), Silent{}); err == nil || !strings.Contains(err.Error(), "unexpected EOF") {
-		t.Errorf("apply = %v, want an unexpected EOF", err)
+	if err := d.Apply(t.Context(), Silent{}); err == nil || !strings.HasSuffix(err.Error(), ": the server ended the body after 5 of 100 bytes") {
+		t.Errorf("apply = %v, want the end of the body", err)
 	}
 	if b, err := os.ReadFile(p); err != nil || string(b) != "old\n" {
 		t.Errorf("file = %q, %v; want the old file", b, err)
@@ -188,5 +189,74 @@ func TestUnpackZipModes(t *testing.T) {
 				t.Errorf("mode %s, want %s", fi.Mode(), tt.want)
 			}
 		})
+	}
+}
+
+// spec: CLI/Messages
+func TestUnpackNotAnArchive(t *testing.T) {
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	if _, err := zw.Write(bytes.Repeat([]byte("<html></html>\n"), 100)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, typ string
+		data      []byte
+		want      string
+	}{
+		{"an HTML page as .tar.gz", ".tar.gz", []byte("<html></html>\n"), "the file is not a .tar.gz archive"},
+		{"a gzip file without tar as .tgz", ".tgz", gz.Bytes(), "the file is not a .tgz archive"},
+		{"an HTML page as .zip", ".zip", []byte("<html></html>\n"), "the file is not a .zip archive"},
+		{"a cut .tar.gz", ".tar.gz", gz.Bytes()[:gz.Len()/2], "the .tar.gz archive ends early"},
+		// A deflate block of the reserved type 3.
+		{"a damaged .tar.gz", ".tar.gz", []byte{0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3, 7}, "the .tar.gz archive is damaged"},
+	}
+	for _, tt := range tests {
+		p := filepath.Join(t.TempDir(), "a")
+		if err := os.WriteFile(p, tt.data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := (unpacker{}).read(t.Context(), f, tt.typ); err == nil || err.Error() != tt.want {
+			t.Errorf("%s: got %v, want %s", tt.name, err, tt.want)
+		}
+	}
+}
+
+// spec: CLI/Messages
+func TestDownloadNamesThePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only directory")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Error(err)
+		}
+	})
+	owner, group := yamlx.NameOrID(strconv.Itoa(os.Getuid())), yamlx.NameOrID(strconv.Itoa(os.Getgid()))
+	tests := []struct {
+		d    *Download
+		want string
+	}{
+		{&Download{URL: srv.URL + "/f", Path: dir + "/f", Owner: owner, Group: group}, "write " + dir + "/f: permission denied"},
+		{&Download{URL: srv.URL + "/a.zip", Unpack: dir + "/app", Owner: owner, Group: group}, "unpack into " + dir + "/app: permission denied"},
+	}
+	for _, tt := range tests {
+		if err := tt.d.Apply(t.Context(), Silent{}); err == nil || err.Error() != tt.want {
+			t.Errorf("got %v, want %s", err, tt.want)
+		}
 	}
 }

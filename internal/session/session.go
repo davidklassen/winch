@@ -424,7 +424,7 @@ func (s *Session) start(cfg Config, line string) error {
 			return s.fail(err)
 		}
 		if got = strings.TrimSpace(got); got != "got" {
-			return fmt.Errorf("unexpected output from the host: %q", got)
+			return fmt.Errorf("unexpected output from the host: %s", got)
 		}
 	} else if line != "have" {
 		return s.printed(line)
@@ -442,7 +442,7 @@ func (s *Session) start(cfg Config, line string) error {
 // another command than winch's printed line.
 func (s *Session) printed(line string) error {
 	shell := func(text string) error {
-		return fmt.Errorf("the login shell printed %q before winch started; remove it from the shell startup files, such as ~/.bashrc", text)
+		return fmt.Errorf(`the login shell printed "%s" before winch started; remove it from the shell startup files, such as ~/.bashrc`, text)
 	}
 	// Text without a newline comes before the line of the script.
 	for _, end := range []string{"have", "need amd64", "need arm64"} {
@@ -488,7 +488,12 @@ func (s *Session) fail(err error) error {
 	if msg := strings.TrimSpace(s.stderr.String()); msg != "" {
 		return errors.New(msg)
 	}
-	return fmt.Errorf("session: %w", errors.Join(err, waitErr))
+	// err is a read or a write on a pipe of ssh, which only says that the
+	// session ended.
+	if ee, ok := errors.AsType[*exec.ExitError](waitErr); ok {
+		return fmt.Errorf("the session ended without an error message (ssh: %s)", ee)
+	}
+	return errors.New("the session ended without an error message")
 }
 
 func (s *Session) call(method string, params, result any) error {
@@ -523,7 +528,7 @@ func (s *Session) receive(result any) error {
 		}
 		resp = protocol.Response{}
 		if err := json.Unmarshal(line, &resp); err != nil {
-			return fmt.Errorf("bad response from the helper: %w", err)
+			return fmt.Errorf("the helper sent a line that is not a response: %s", bytes.TrimSpace(line))
 		}
 		if resp.ID != s.id {
 			return fmt.Errorf("response %d to request %d", resp.ID, s.id)
@@ -623,7 +628,7 @@ func (s *Session) Access(ctx context.Context) error {
 	case !ok:
 		return errors.New("the login did not run winch's command")
 	case extra != "":
-		return fmt.Errorf("the login shell printed %q; remove it from the shell startup files, such as ~/.bashrc", extra)
+		return fmt.Errorf(`the login shell printed "%s"; remove it from the shell startup files, such as ~/.bashrc`, extra)
 	}
 	return nil
 }
@@ -662,7 +667,7 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 		case <-time.After(cfg.retryDelay()):
 		}
 		if time.Now().After(deadline) {
-			return protocol.Boot{}, fmt.Errorf("the host did not come back within %s: %w", wait, last)
+			return protocol.Boot{}, fmt.Errorf("the host did not come back within %s: %w", module.Seconds(wait), last)
 		}
 		r, err := resolve(s.ctx, cfg)
 		if err != nil {
@@ -698,7 +703,7 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 		s.cmd, s.stdin, s.stdout, s.stderr, s.id = n.cmd, n.stdin, n.stdout, n.stderr, n.id
 		s.waitOnce, s.waitErr = sync.Once{}, nil
 		if b.State != "running" && b.State != "degraded" {
-			return b, fmt.Errorf("the host did not start within %s: systemctl is-system-running says %s", wait, b.State)
+			return b, fmt.Errorf("the host did not start within %s: systemctl is-system-running says %s", module.Seconds(wait), b.State)
 		}
 		return b, nil
 	}

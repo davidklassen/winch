@@ -292,7 +292,7 @@ func TestRebootTimeout(t *testing.T) {
 	}
 	defer s.Close()
 	_, err = s.Reboot(context.Background(), 200*time.Millisecond)
-	if err == nil || !strings.Contains(err.Error(), "the host did not come back within 200ms") {
+	if err == nil || !strings.Contains(err.Error(), "the host did not come back within 0.2s") {
 		t.Errorf("Reboot = %v", err)
 	}
 }

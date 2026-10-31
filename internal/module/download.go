@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -273,7 +274,7 @@ func (d *Download) Apply(ctx context.Context, say Say) error {
 		return err
 	}
 	if d.Unpack != "" {
-		return d.applyUnpack(ctx, uid, gid, say.Progress)
+		return pathError("unpack into", d.Unpack, d.applyUnpack(ctx, uid, gid, say.Progress))
 	}
 	dir, missing, err := openParent(d.Path)
 	if err != nil {
@@ -296,7 +297,7 @@ func (d *Download) Apply(ctx context.Context, say Say) error {
 				return err
 			}
 			defer r.Close()
-			return setAttrs(r, uid, gid, mode)
+			return pathError("set the owner, group, and mode of", d.Path, setAttrs(r, uid, gid, mode))
 		}
 	}
 	sub, err := mkdirs(dir, missing)
@@ -307,23 +308,24 @@ func (d *Download) Apply(ctx context.Context, say Say) error {
 	tmpName := ".winch-" + rand.Text()
 	tmp, err := sub.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return err
+		return pathError("write", d.Path, err)
 	}
 	defer sub.Remove(tmpName)
 	defer tmp.Close()
-	if err := d.get(ctx, tmp, say.Progress); err != nil {
-		return err
+	err = d.get(ctx, pathWriter{tmp, "write", d.Path}, say.Progress)
+	if err == nil {
+		err = tmp.Chown(uid, gid)
 	}
-	if err := tmp.Chown(uid, gid); err != nil {
-		return err
+	if err == nil {
+		err = tmp.Chmod(fileMode(mode))
 	}
-	if err := tmp.Chmod(fileMode(mode)); err != nil {
-		return err
+	if err == nil {
+		err = tmp.Sync()
 	}
-	if err := tmp.Sync(); err != nil {
-		return err
+	if err == nil {
+		err = sub.Rename(tmpName, name)
 	}
-	return sub.Rename(tmpName, name)
+	return pathError("write", d.Path, err)
 }
 
 // applyUnpack downloads the archive to a temporary file next to the unpack
@@ -349,7 +351,7 @@ func (d *Download) applyUnpack(ctx context.Context, uid, gid int, progress func(
 	}
 	defer sub.Remove(tmpName)
 	defer tmp.Close()
-	if err := d.get(ctx, tmp, progress); err != nil {
+	if err := d.get(ctx, pathWriter{tmp, "unpack into", d.Unpack}, progress); err != nil {
 		return err
 	}
 	progress("unpack into " + d.Unpack)
@@ -410,6 +412,18 @@ func (d *Download) get(ctx context.Context, w io.Writer, progress func(string)) 
 	return nil
 }
 
+// pathWriter gives the errors of a write to w the action and the path p, in
+// place of the name of a temporary file.
+type pathWriter struct {
+	w         io.Writer
+	action, p string
+}
+
+func (pw pathWriter) Write(b []byte) (int, error) {
+	n, err := pw.w.Write(b)
+	return n, pathError(pw.action, pw.p, err)
+}
+
 // stallLimit is the time without data after which a download fails.
 const stallLimit = 2 * time.Minute
 
@@ -418,7 +432,7 @@ const stallLimit = 2 * time.Minute
 func fetch(ctx context.Context, url string, w io.Writer, stall time.Duration) (string, error) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	timer := time.AfterFunc(stall, func() { cancel(fmt.Errorf("no data for %s", stall)) })
+	timer := time.AfterFunc(stall, func() { cancel(fmt.Errorf("no data for %s", Seconds(stall))) })
 	defer timer.Stop()
 	sum, err := fetchBody(ctx, url, io.MultiWriter(w, writerFunc(func(p []byte) (int, error) {
 		timer.Reset(stall)
@@ -483,7 +497,14 @@ func fetchBody(ctx context.Context, url string, w io.Writer) (string, error) {
 		return "", errors.New(resp.Status)
 	}
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(w, h), resp.Body); err != nil {
+	n, err := io.Copy(io.MultiWriter(w, h), resp.Body)
+	if errors.Is(err, io.ErrUnexpectedEOF) && resp.ContentLength > 0 {
+		return "", fmt.Errorf("the server ended the body after %d of %d bytes", n, resp.ContentLength)
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return "", fmt.Errorf("the server ended the body after %d bytes, before its end", n)
+	}
+	if err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -499,6 +520,19 @@ type unpacker struct {
 
 // read reads the archive f of the type typ from its start.
 func (u unpacker) read(ctx context.Context, f *os.File, typ string) error {
+	err := u.readType(ctx, f, typ)
+	switch {
+	case errors.Is(err, gzip.ErrHeader), errors.Is(err, tar.ErrHeader), errors.Is(err, zip.ErrFormat):
+		return fmt.Errorf("the file is not a %s archive", typ)
+	case errors.Is(err, zip.ErrChecksum), errors.As(err, new(flate.CorruptInputError)):
+		return fmt.Errorf("the %s archive is damaged", typ)
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return fmt.Errorf("the %s archive ends early", typ)
+	}
+	return err
+}
+
+func (u unpacker) readType(ctx context.Context, f *os.File, typ string) error {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
@@ -526,7 +560,7 @@ func (u unpacker) read(ctx context.Context, f *os.File, typ string) error {
 
 // tarXZ reads the archive through xz, from the package xz-utils.
 func (u unpacker) tarXZ(ctx context.Context, f *os.File) error {
-	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
+	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, noResult(commandLimit))
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "xz", "-dc")
 	cmd.Dir = "/"
@@ -538,7 +572,7 @@ func (u unpacker) tarXZ(ctx context.Context, f *os.File) error {
 		return err
 	}
 	if err := cmd.Start(); errors.Is(err, exec.ErrNotFound) {
-		return errors.New("xz is missing; install the package xz-utils with an earlier pkg step")
+		return errors.New("xz is missing; install the package xz-utils in an earlier pkg step")
 	} else if err != nil {
 		return err
 	}
@@ -677,7 +711,7 @@ func (u unpacker) dir(name string, mode uint32) error {
 		return err
 	}
 	if err := u.root.Mkdir(name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
-		return err
+		return pathError("create directory", path.Join(u.path, name), err)
 	}
 	fi, err := u.root.Lstat(name)
 	if err != nil {
@@ -700,26 +734,28 @@ func (u unpacker) file(name string, r io.Reader, mode uint32) error {
 	if err := u.parents(name); err != nil {
 		return err
 	}
-	return writeFile(u.root, name, r, u.uid, u.gid, mode, func(tmp string) error {
+	err := writeFile(u.root, name, r, u.uid, u.gid, mode, func(tmp string) error {
 		return u.root.Rename(tmp, name)
 	})
+	return pathError("write", path.Join(u.path, name), err)
 }
 
 func (u unpacker) symlink(name, target string) error {
 	if err := u.replace(name); err != nil {
 		return err
 	}
-	if err := u.root.Symlink(target, name); err != nil {
-		return err
+	err := u.root.Symlink(target, name)
+	if err == nil {
+		err = u.root.Lchown(name, u.uid, u.gid)
 	}
-	return u.root.Lchown(name, u.uid, u.gid)
+	return pathError("create link", path.Join(u.path, name), err)
 }
 
 func (u unpacker) link(name, target string) error {
 	if err := u.replace(name); err != nil {
 		return err
 	}
-	return u.root.Link(target, name)
+	return pathError("create link", path.Join(u.path, name), u.root.Link(target, name))
 }
 
 // replace creates the parents of name and removes an entry at name that is

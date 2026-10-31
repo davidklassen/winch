@@ -20,6 +20,16 @@ const (
 	KillDelay = 10 * time.Second
 )
 
+// noResult is the cause of a command that ran longer than limit.
+func noResult(limit time.Duration) error {
+	return fmt.Errorf("no result after %s", Seconds(limit))
+}
+
+// Seconds formats d in seconds for a message: 600s, 0.3s.
+func Seconds(d time.Duration) string {
+	return fmt.Sprintf("%gs", d.Seconds())
+}
+
 // run runs a command and returns its output. On a failure, the error holds
 // the end of the output.
 func run(ctx context.Context, env []string, name string, args ...string) (string, error) {
@@ -36,7 +46,7 @@ func runInput(ctx context.Context, env []string, input, name string, args ...str
 func runLimited(ctx context.Context, limit, killDelay time.Duration, env []string, input, name string, args ...string) (string, error) {
 	if limit > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
+		ctx, cancel = context.WithTimeoutCause(ctx, limit, noResult(limit))
 		defer cancel()
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -46,7 +56,9 @@ func runLimited(ctx context.Context, limit, killDelay time.Duration, env []strin
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := wait(ctx, cmd, killDelay); err != nil {
+	if err := wait(ctx, cmd, killDelay); errors.Is(err, exec.ErrNotFound) {
+		return "", fmt.Errorf("%s is missing", name)
+	} else if err != nil {
 		what := name
 		if len(args) > 0 {
 			what += " " + args[0]
@@ -102,7 +114,7 @@ func shellLimit(ctx context.Context, command, dir string, env []string, as *runA
 // the arguments of a process. A script file does not work for a user other
 // than root: the file would have to be readable by that user.
 func shell(ctx context.Context, options, command, dir string, env []string, as *runAs, limit, killDelay time.Duration, out *tailBuffer) error {
-	ctx, cancel := context.WithTimeoutCause(ctx, limit, fmt.Errorf("no result after %s", limit))
+	ctx, cancel := context.WithTimeoutCause(ctx, limit, noResult(limit))
 	defer cancel()
 	r, w, err := os.Pipe()
 	if err != nil {

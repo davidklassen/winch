@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"regexp/syntax"
 	"strconv"
 	"strings"
 	"syscall"
@@ -42,8 +43,10 @@ func (l *Line) Validate() error {
 		return &yamlx.FieldError{Field: "match", Msg: "must not be empty"}
 	}
 	re, err := regexp.Compile(l.Match)
-	if err != nil {
-		return &yamlx.FieldError{Field: "match", Msg: err.Error()}
+	if se, ok := errors.AsType[*syntax.Error](err); ok && se.Code == syntax.ErrInvalidPerlOp {
+		return &yamlx.FieldError{Field: "match", Msg: se.Expr + " is not supported; match has the RE2 syntax, without lookahead, lookbehind, or backreferences"}
+	} else if ok {
+		return &yamlx.FieldError{Field: "match", Msg: "not a regular expression: " + string(se.Code) + ": " + se.Expr}
 	}
 	if re.MatchString("") {
 		return &yamlx.FieldError{Field: "match", Msg: "matches an empty line"}
@@ -127,9 +130,10 @@ func (l *Line) Apply(ctx context.Context, _ Say) error {
 		return err
 	}
 	st := fi.Sys().(*syscall.Stat_t)
-	return writeFile(dir, name, bytes.NewReader(out), int(st.Uid), int(st.Gid), uint32(st.Mode)&0o7777, func(tmp string) error {
+	err = writeFile(dir, name, bytes.NewReader(out), int(st.Uid), int(st.Gid), uint32(st.Mode)&0o7777, func(tmp string) error {
 		return put(ctx, dir, missing, dir, tmp, name, l.Validation)
 	})
+	return pathError("write", l.Path, err)
 }
 
 // read returns the info and the content of the file name in dir.

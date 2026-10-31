@@ -429,3 +429,44 @@ func TestPosWithoutLine(t *testing.T) {
 		t.Errorf("error = %q", got)
 	}
 }
+
+// spec: CLI/Messages
+func TestParseTab(t *testing.T) {
+	tests := []struct {
+		name, yaml, want string
+	}{
+		{"a tab before a key", "a:\n\tb: 1\n", "t.yaml:2:1: a tab indents this line; YAML indents with spaces"},
+		{"a tab after spaces", "a:\n  b:\n  \tc: 1\n", "t.yaml:3:3: a tab indents this line; YAML indents with spaces"},
+		{"a tab below the line of the error", "a:\n  b: 1\n\tc: 2\n", "t.yaml:3:1: a tab indents this line; YAML indents with spaces"},
+		{"a tab on line 1", "\ta: 1\n", "t.yaml:1:1: a tab indents this line; YAML indents with spaces"},
+		{"a tab in a block scalar", "a: |\n  x\n\ty\n", "t.yaml:3:1: a tab indents this line; YAML indents with spaces"},
+		{"no tab", "a: @x\n", "t.yaml:1:1: found character that cannot start any token"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse("t.yaml", []byte(tt.yaml))
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("got  %v\nwant %s", err, tt.want)
+			}
+		})
+	}
+}
+
+// spec: CLI/Messages
+func TestFromValueKinds(t *testing.T) {
+	tests := []struct {
+		name string
+		v    any
+		want string
+	}{
+		{"a function", func(string) ([]any, error) { return nil, nil }, `the expression gives a function; call it, such as match("web")`},
+		{"a struct", struct{ ID string }{}, "the expression gives a set of fields; use one of them, such as facts.os.id"},
+		{"a map with number keys", map[int]string{1: "a"}, "a map key must be a string"},
+	}
+	for _, tt := range tests {
+		_, err := FromValue(tt.v, Pos{})
+		if err == nil || err.Error() != tt.want {
+			t.Errorf("%s: got %v, want %s", tt.name, err, tt.want)
+		}
+	}
+}

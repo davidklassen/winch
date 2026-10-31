@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/expr-lang/expr"
 	"go.yaml.in/yaml/v3"
 
 	"github.com/davidklassen/winch/internal/facts"
@@ -786,7 +787,7 @@ func TestEvalErrors(t *testing.T) {
 		{name: "content not a string", step: "  - file:\n      path: /a\n      content: !expr vars.l\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: expected a string, got a list"},
 		{name: "expression fails", step: "  - file:\n      path: /a\n      content: !expr 1 + vars.s\n",
-			want: "error: recipes/r/recipe.yaml:4:16: content: invalid operation: int + string\n | 1 + vars.s\n | ..^"},
+			want: "error: recipes/r/recipe.yaml:4:16: content: + cannot take a number and a string\n | 1 + vars.s\n | ..^"},
 		{name: "quote of a number", step: "  - file:\n      path: /a\n      content: !expr quote(vars.i)\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: quote: the integer 80 is not a string\n | quote(vars.i)\n | ^"},
 		{name: "sqlquote of a number", step: "  - file:\n      path: /a\n      content: !expr sqlquote(vars.i)\n",
@@ -794,7 +795,7 @@ func TestEvalErrors(t *testing.T) {
 		{name: "json of infinity", vars: "  inf: .inf\n", step: "  - file:\n      path: /a\n      content: !expr json(vars.inf)\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: json: unsupported value: +Inf\n | json(vars.inf)\n | ^"},
 		{name: "default fails", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n",
-			want: "error: winch.yaml:15:8: variable \"bad\": invalid operation: int + string\n | 1 + vars.s\n | ..^"},
+			want: "error: winch.yaml:15:8: variable \"bad\": + cannot take a number and a string\n | 1 + vars.s\n | ..^"},
 		{name: "when fails before a default", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n    when: !expr 'vars.l[5] == \"x\"'\n",
 			want: "error: recipes/r/recipe.yaml:5:11: when: index out of range: 5 (array length is 2)\n | vars.l[5] == \"x\"\n | ......^"},
 		{name: "computed template", step: "  - file:\n      path: /a\n      template: !tpl '{{ .vars.s }}.tmpl'\n",
@@ -1310,5 +1311,46 @@ func TestReadsNeedValue(t *testing.T) {
 				t.Errorf("got  %q\nwant %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// spec: CLI/Messages
+func TestExprTypeMessage(t *testing.T) {
+	tests := []struct{ src, want string }{
+		{"facts.os.version == 13", `facts.os.version is a string; compare it with a string, such as "13"`},
+		{"24.04 <= facts.os.version", `facts.os.version is a string; compare it with a string, such as "24.04"`},
+		{`facts.reboot_required != "yes"`, "facts.reboot_required is a boolean; compare it with true or false"},
+		{"facts.os.version == -13", `facts.os.version is a string; compare it with a string, such as "-13"`},
+		{"facts.os.version + 1", "+ cannot take a string and a number"},
+	}
+	for _, tt := range tests {
+		_, err := expr.Compile(tt.src, exprOptions...)
+		if err == nil {
+			t.Fatalf("%s: no error", tt.src)
+		}
+		if got := exprMessage(err, tt.src, exprNames); !strings.HasPrefix(got, tt.want+"\n") {
+			t.Errorf("%s:\ngot  %s\nwant %s", tt.src, got, tt.want)
+		}
+	}
+	// A variable has its type only when the expression runs.
+	const src = "vars.v < 13"
+	prog, err := expr.Compile(src, exprOptions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = expr.Run(prog, exprEnv{Vars: map[string]any{"v": "12"}})
+	want := `vars.v is a string; compare it with a string, such as "13"`
+	if got := exprMessage(err, src, exprNames); !strings.HasPrefix(got, want+"\n") {
+		t.Errorf("%s:\ngot  %s\nwant %s", src, got, want)
+	}
+}
+
+// spec: CLI/Messages
+func TestDescribeValueKinds(t *testing.T) {
+	if got := describeValue(func(string) ([]any, error) { return nil, nil }); got != "a function" {
+		t.Errorf("a function: got %s", got)
+	}
+	if got := describeValue(facts.OS{}); got != "a set of fields" {
+		t.Errorf("a struct: got %s", got)
 	}
 }

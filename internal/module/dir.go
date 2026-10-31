@@ -331,7 +331,7 @@ func (d *Dir) Apply(ctx context.Context, _ Say) error {
 		if err := noMount(dir, name, fi, d.Path); err != nil {
 			return err
 		}
-		return dir.RemoveAll(name)
+		return pathError("remove", d.Path, dir.RemoveAll(name))
 	}
 	owner, group, mode, err := attrs(d.Owner, d.Group, d.Mode, "0755")
 	if err != nil {
@@ -383,11 +383,11 @@ func (d *Dir) Apply(ctx context.Context, _ Say) error {
 		return d.chownContent(behind, ".", fi, uid, gid)
 	case d.Replace && (fi.Mode()&fs.ModeSymlink != 0 || fi.Mode().IsRegular()):
 		if err := sub.Remove(name); err != nil {
-			return err
+			return pathError("remove", d.Path, err)
 		}
 	}
 	if err := sub.Mkdir(name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
-		return err
+		return pathError("create directory", d.Path, err)
 	}
 	fi, err = sub.Lstat(name)
 	if err != nil {

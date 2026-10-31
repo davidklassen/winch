@@ -120,7 +120,7 @@ func (l *Link) Apply(ctx context.Context, _ Say) error {
 			return err
 		}
 		defer dir.Close()
-		return dir.Remove(name)
+		return pathError("remove", l.Path, dir.Remove(name))
 	}
 	dir, missing, err := openParent(l.Path)
 	if err != nil {
@@ -144,8 +144,8 @@ func (l *Link) Apply(ctx context.Context, _ Say) error {
 	// A new link replaces the old one in one rename.
 	tmp := ".winch-" + rand.Text()
 	if err := sub.Symlink(*l.Target, tmp); err != nil {
-		return err
+		return pathError("create link", l.Path, err)
 	}
 	defer sub.Remove(tmp)
-	return put(ctx, dir, missing, sub, tmp, name, l.Validation)
+	return pathError("create link", l.Path, put(ctx, dir, missing, sub, tmp, name, l.Validation))
 }

@@ -405,7 +405,7 @@ func (c *Certbot) HooksToRun() []string {
 }
 
 func (c *Certbot) Apply(ctx context.Context, _ Say) error {
-	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
+	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, noResult(commandLimit))
 	defer cancel()
 	if !c.issue {
 		var errs []error
@@ -431,6 +431,9 @@ func (c *Certbot) Apply(ctx context.Context, _ Say) error {
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := wait(ctx, cmd, KillDelay)
+	if errors.Is(err, exec.ErrNotFound) {
+		return errors.New("certbot is missing; install the package certbot in an earlier pkg step")
+	}
 	output := out.String()
 	pending := c.PendingHooks
 	if err != nil {

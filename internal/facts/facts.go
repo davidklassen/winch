@@ -36,6 +36,9 @@ func Read(paths ...string) (Facts, error) {
 			break
 		}
 	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return Facts{}, fmt.Errorf("read facts: neither %s exists", strings.Join(paths, " nor "))
+	}
 	if err != nil {
 		return Facts{}, fmt.Errorf("read facts: %w", err)
 	}

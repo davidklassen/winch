@@ -236,7 +236,7 @@ func download(ctx context.Context, spec, deb string) error {
 		}
 	}
 	defer os.RemoveAll(dir)
-	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
+	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, noResult(commandLimit))
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "apt-get", "download", "-q", "-o", "APT::Sandbox::User=root", spec)
 	cmd.Dir = dir
