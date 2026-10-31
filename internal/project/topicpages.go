@@ -909,7 +909,7 @@ do not apply.`),
 step in seconds. The helper sends SIGTERM to the command and its
 child processes, and SIGKILL 10 seconds later to those that still
 run. The step fails, and the error shows the last 10 lines of
-output. apt-get in pkg and upgrade has no time limit.`),
+output. apt-get in pkg, repo, and upgrade has no time limit.`),
 		doc.Paragraph(`When the connection to winch ends, the helper lets the running
 command finish within its limit, and then exits. A package install
 is not cut off in the middle. winch exec is different: on Ctrl-C, or

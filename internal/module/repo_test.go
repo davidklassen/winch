@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -636,5 +637,30 @@ func TestSourceHas(t *testing.T) {
 		if got := s.has(tt.uri, tt.suite); got != tt.want {
 			t.Errorf("has(%q, %q) = %v, want %v", tt.uri, tt.suite, got, tt.want)
 		}
+	}
+}
+
+// spec: Remote execution (the 10-minute limit)
+func TestRepoUpdateUsesAptGet(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	script := "#!/bin/sh\necho \"$*\" > " + log + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "apt-get"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	r := &Repo{Name: "x"}
+	if err := r.update(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(string(data))
+	want := "update -q --error-on=any -o Dir::Etc::SourceList=/etc/apt/sources.list.d/x.sources -o Dir::Etc::SourceParts=-" +
+		" -o APT::Get::List-Cleanup=0 -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= -o " + aptSolver
+	if got != want {
+		t.Errorf("apt-get %s, want the refresh of this source only, through aptGet as pkg's refresh", got)
 	}
 }

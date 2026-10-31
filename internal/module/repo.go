@@ -439,13 +439,18 @@ func (r *Repo) Apply(ctx context.Context, note func(string)) error {
 	if err := waitIndexLock(ctx, note); err != nil {
 		return undo(r.writes, err)
 	}
-	_, err := run(ctx, aptEnv, "apt-get", "update", "-q", "--error-on=any",
-		"-o", "Dir::Etc::SourceList="+r.sourcePath(), "-o", "Dir::Etc::SourceParts=-",
-		"-o", "APT::Get::List-Cleanup=0", "-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=")
-	if err != nil {
+	if err := r.update(ctx); err != nil {
 		return undo(r.writes, fmt.Errorf("refresh the index of source %s: %w; the old files are back", r.Name, err))
 	}
 	return nil
+}
+
+// update refreshes the index of this source only.
+func (r *Repo) update(ctx context.Context) error {
+	_, err := aptGet(ctx, "update", "-q", "--error-on=any",
+		"-o", "Dir::Etc::SourceList="+r.sourcePath(), "-o", "Dir::Etc::SourceParts=-",
+		"-o", "APT::Get::List-Cleanup=0", "-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=")
+	return err
 }
 
 // undo puts the files back as Check found them, the last first.
