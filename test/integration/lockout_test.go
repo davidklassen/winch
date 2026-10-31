@@ -427,6 +427,59 @@ func TestLockoutRollbackStart(t *testing.T) {
 	}
 }
 
+const failedRollbackPipeline = `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/winch-frb.conf
+          content: !tpl "{{ .vars.conf }}\n"
+      - service:
+          name: winch-frb
+          running: true
+        then: echo then >> /root/frb-then
+        confirm_access: true
+        notify: done
+    handlers:
+      done:
+        - cmd:
+            command: echo done >> /root/frb-done
+`
+
+// spec: Running a pipeline/Lockout protection (when a rollback fails, the
+// step's pending handlers and then commands stay recorded)
+func TestLockoutFailedRollbackKeepsTheRecords(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "failed-rollback")
+	// A start with a bad config makes the config immutable, so the rollback
+	// cannot put back the old file.
+	vm.MustRun(t, `printf '[Service]\nExecStartPre=/bin/sh -c "grep -qx ok /etc/winch-frb.conf || { chattr +i /etc/winch-frb.conf; exit 1; }"\nExecStart=/bin/sleep infinity\n' > /etc/systemd/system/winch-frb.service && echo ok > /etc/winch-frb.conf && systemctl daemon-reload`)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\nvars:\n  conf: ok\n",
+		"inventories/test.yaml": "hosts:\n  failed-rollback: {}\n",
+		"pipelines/site.yaml":   failedRollbackPipeline,
+	})
+
+	r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.conf=bad")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "service winch-frb: ") || !strings.Contains(r.Stderr, "; the rollback failed: ") {
+		t.Fatalf("apply with a bad config: exit %d, want the failed rollback\n%s", r.Code, r.Stderr)
+	}
+	if got := vm.MustRun(t, "cat /etc/winch-frb.conf"); got != "bad\n" {
+		t.Fatalf("config after the failed rollback = %q, want the new file", got)
+	}
+	// With the config fixed by hand, only the records show in the plan.
+	vm.MustRun(t, "chattr -i /etc/winch-frb.conf && echo ok > /etc/winch-frb.conf && systemctl start winch-frb")
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || strings.Contains(r.Stdout, "~ service") {
+		t.Errorf("plan after the fix by hand: exit %d, want only the records\n%s", r.Code, r.Stdout)
+	}
+	for _, want := range []string{"! then: echo then >> /root/frb-then\n", "! handler base.done\n"} {
+		if !strings.Contains(r.Stdout, want) {
+			t.Errorf("plan after the failed rollback: want %q\n%s", want, r.Stdout)
+		}
+	}
+}
+
 const pendingConfirmPipeline = `stages:
   - name: base
     hosts: all

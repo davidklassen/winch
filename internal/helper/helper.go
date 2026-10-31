@@ -424,10 +424,9 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	if err != nil {
 		if guard {
 			if rerr := rb.rollback(ctx); rerr != nil {
-				err = fmt.Errorf("%w; the rollback failed: %w", err, rerr)
-			} else {
-				err = fmt.Errorf("%w; the old files are back", err)
+				return out, fmt.Errorf("%w; the rollback failed: %w", err, rerr)
 			}
+			err = fmt.Errorf("%w; the old files are back", err)
 		}
 		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 	}
