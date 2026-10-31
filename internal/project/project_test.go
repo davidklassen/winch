@@ -567,6 +567,9 @@ func TestLoadRecipes(t *testing.T) {
 		{name: "assert-notify", files: map[string]string{
 			"recipes/nginx/recipe.yaml": recipe("  - assert:\n      command: \"true\"\n      message: x\n    notify: reload\nhandlers:\n  reload:\n    - service:\n        name: nginx\n        reloaded: true\n"),
 		}},
+		{name: "service-handler-nothing", files: map[string]string{
+			"recipes/nginx/recipe.yaml": recipe("  - pkg:\n      name: nginx\n    notify: reload\nhandlers:\n  reload:\n    - service:\n        name: nginx\n"),
+		}},
 		{name: "unit-missing-source", files: map[string]string{
 			"recipes/nginx/recipe.yaml": recipe("  - unit:\n      name: app.service\n      source: nope.service\n"),
 		}},

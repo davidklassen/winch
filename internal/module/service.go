@@ -33,6 +33,9 @@ type Service struct {
 	// the handler changed anything, and the step has no confirm_access. A
 	// restart or a reload then checks as ok. The controller sets it.
 	Started bool `json:"started,omitempty"`
+	// Actions is set on a handler step and on the step of winch run, which
+	// can use reloaded and restarted. The loader sets it.
+	Actions bool `json:"-"`
 
 	// Check sets these for Apply: the systemctl commands, in order.
 	todo    []string
@@ -94,6 +97,8 @@ func (s *Service) Validate() error {
 			action = "restarted"
 		}
 		return takesNone(action, arg{"running", s.Running != nil}, arg{"enabled", s.Enabled != nil})
+	case s.Running == nil && s.Enabled == nil && s.Actions:
+		return &yamlx.FieldError{Msg: "a service step needs running, enabled, reloaded, or restarted"}
 	case s.Running == nil && s.Enabled == nil:
 		return &yamlx.FieldError{Msg: "a service step needs running or enabled"}
 	}

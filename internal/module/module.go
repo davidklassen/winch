@@ -91,6 +91,9 @@ type State struct {
 	Refreshed bool `json:"refreshed,omitempty"`
 	// RemovedUsers are the users that earlier steps of the host remove.
 	RemovedUsers []string `json:"removed_users,omitempty"`
+	// MovedUsers are the users that earlier steps of the host move to
+	// another primary group.
+	MovedUsers []string `json:"moved_users,omitempty"`
 	// LoginUID is the UID of the session's login user. The helper sets it.
 	LoginUID uint32 `json:"-"`
 	// SSHConnection is the SSH_CONNECTION of the session's login. The helper

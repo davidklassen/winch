@@ -252,7 +252,8 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			Want: change("uid 2200 → 2300, also of the files in the home; other files keep the old uid", "group wtalice → wtgrp, also of the files in the home", "home /home/wtalice → /srv/w/alice",
 				"create directory /srv/w (owner root, group root, mode 0755)", "create home /srv/w/alice (owner wtalice, group wtgrp, mode 0700)",
 				"shell /bin/sh → /bin/bash"),
-			After: `[ "$(getent passwd wtalice | cut -d: -f3,6,7)" = "2300:/srv/w/alice:/bin/bash" ] && [ "$(id -gn wtalice)" = wtgrp ] && [ "$(stat -c '%U %G %a' /srv/w/alice)" = "wtalice wtgrp 700" ]`,
+			After:     `[ "$(getent passwd wtalice | cut -d: -f3,6,7)" = "2300:/srv/w/alice:/bin/bash" ] && [ "$(id -gn wtalice)" = wtgrp ] && [ "$(stat -c '%U %G %a' /srv/w/alice)" = "wtalice wtgrp 700" ]`,
+			WantState: module.State{MovedUsers: []string{"wtalice"}},
 		},
 		{
 			Name:    "a uid of another user",
@@ -617,7 +618,8 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Want: change("group wtalice → wtnew, also of the files in the home",
 				"create directory /home/wtalice/.ssh (owner wtalice, group wtnew, mode 0700)",
 				"create file /home/wtalice/.ssh/authorized_keys (owner wtalice, group wtnew, mode 0600)", "add key "+keyLine(k1)),
-			After: `[ "$(stat -c '%G %a' /home/wtalice)" = "wtnew 775" ]`,
+			After:     `[ "$(stat -c '%G %a' /home/wtalice)" = "wtnew 775" ]`,
+			WantState: module.State{MovedUsers: []string{"wtalice"}},
 		},
 		{
 			Name:    "a root home that the user's old private group can write with StrictModes",
@@ -1158,6 +1160,37 @@ func TestGroupAbsentAfterUser(t *testing.T) {
 		t.Fatalf("apply: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
 	}
 	vm.MustRun(t, `! getent passwd wtapp && ! getent group wtapp && ! getent passwd wtu1 && ! getent group wtshared`)
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+}
+
+// spec: Modules/user and group
+func TestGroupAbsentAfterMove(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "group-move")
+	vm.MustRun(t, `groupadd wtold && useradd -M -g wtold wtu1`)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  " + vm.Name + ": {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: s
+    hosts: all
+    steps:
+      - group: {name: wtnew}
+      - user: {name: wtu1, group: wtnew}
+      - group: {name: wtold, absent: true}
+`,
+	})
+	r := lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "- group wtold") {
+		t.Fatalf("plan: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, `[ "$(id -gn wtu1)" = wtnew ] && ! getent group wtold`)
 	r = lab.Winch(t, dir, "plan", "site")
 	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)

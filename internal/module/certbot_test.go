@@ -329,7 +329,10 @@ func TestCertbotCheckExpiry(t *testing.T) {
 				t.Fatalf("got %+v, %v; want ok", res, err)
 			}
 			var want []string
-			if tt.note {
+			switch {
+			case tt.left < 0:
+				want = []string{"the certificate a expired on " + notAfter.UTC().Format(time.DateOnly) + "; check its renewal"}
+			case tt.note:
 				want = []string{"the certificate a expires on " + notAfter.UTC().Format(time.DateOnly) + "; check its renewal"}
 			}
 			if !slices.Equal(notes, want) {

@@ -91,7 +91,10 @@ func (r *Repo) Validate() error {
 		return &yamlx.FieldError{Field: "suite", Msg: spaceMsg}
 	}
 	for i, c := range r.Components {
-		if c == "" || hasSpace(c) {
+		switch {
+		case c == "":
+			return &yamlx.FieldError{Field: "components", Msg: fmt.Sprintf("element %d is empty", i+1)}
+		case hasSpace(c):
 			return &yamlx.FieldError{Field: "components", Msg: fmt.Sprintf("element %d %s", i+1, spaceMsg)}
 		}
 	}

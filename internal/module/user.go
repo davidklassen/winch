@@ -184,7 +184,7 @@ func (u *User) Check(ctx context.Context, st *State, _ func(string)) (Result, er
 		if err := u.checkLogin(a, cur, st.LoginUID); err != nil {
 			return Result{}, err
 		}
-		res, home, group, err = u.checkExisting(a, cur)
+		res, home, group, err = u.checkExisting(a, cur, st)
 	} else if u.OnlyAddsGroups() {
 		return u.checkMissing(a), nil
 	} else {
@@ -459,7 +459,7 @@ func (u *User) checkNew(a accounts) (Result, string, string, error) {
 
 // checkExisting plans usermod and a missing home. It returns the home and the
 // name of the primary group after the step.
-func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, string, error) {
+func (u *User) checkExisting(a accounts, cur passwdEntry, st *State) (Result, string, string, error) {
 	args := []string{"usermod"}
 	var changes []string
 	if u.UID != "" && u.uid() != cur.uid {
@@ -477,6 +477,7 @@ func (u *User) checkExisting(a accounts, cur passwdEntry) (Result, string, strin
 			}
 			changes = append(changes, "group "+old+" → "+group+note+", also of the files in the home")
 			args = append(args, "-g", string(u.Group))
+			st.MovedUsers = append(st.MovedUsers, u.Name)
 		}
 	}
 	home := cur.home

@@ -151,6 +151,8 @@ type Step struct {
 	Secret bool
 	// in is the recipe that holds the step, or nil in a stage.
 	in *Recipe
+	// actions is set on a handler step and on the step of winch run.
+	actions bool
 	// vars are the vars of a recipe step.
 	vars []*Var
 	args *value
@@ -864,12 +866,21 @@ const (
 	runStep
 )
 
+// newModule returns the empty arguments of the module name for the step.
+func (st Step) newModule(name string) (module.Module, bool) {
+	m, ok := module.New(name)
+	if s, isService := m.(*module.Service); isService {
+		s.Actions = st.actions
+	}
+	return m, ok
+}
+
 // loadStep loads a step of a stage, or of the recipe r.
 func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error) {
 	if n.Kind != yamlx.Map {
 		return Step{}, yamlx.Errorf(n.Pos, "a step must be a map, got %s", yamlx.Describe(n))
 	}
-	st := Step{Pos: n.Pos, in: r}
+	st := Step{Pos: n.Pos, in: r, actions: kind != plainStep}
 	isRecipe := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "recipe" })
 	hasLoop := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "loop" })
 	sc := scope{reads: &l.reads}
@@ -939,7 +950,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 			errs = append(errs, err)
 			continue
 		}
-		m, ok := module.New(p.Key)
+		m, ok := st.newModule(p.Key)
 		if !ok {
 			errs = append(errs, yamlx.Errorf(p.KeyPos, "unknown module %q%s", p.Key, yamlx.Suggest(p.Key, append(module.Names(), stepFields...))))
 			continue
@@ -1579,7 +1590,7 @@ func (st Step) instance(e *Env) (Step, any, error) {
 			return Step{}, nil, err
 		}
 		args = yamlx.Value(n)
-		m, _ := module.New(st.Module)
+		m, _ := st.newModule(st.Module)
 		if err := yamlx.Decode(n, m); err != nil {
 			return Step{}, args, err
 		}

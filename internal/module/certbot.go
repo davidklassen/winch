@@ -312,7 +312,11 @@ func (c *Certbot) check(dir string, note func(string)) (Result, error) {
 		return Result{}, fmt.Errorf("certificate %s: %s exists, but its certificate does not; certbot would make a new certificate %s-0001 on each run; remove the rest with certbot delete --cert-name %s", c.Name, renewalPath(dir, c.Name), c.Name, c.Name)
 	}
 	if cur != nil && time.Until(cur.notAfter) < 14*24*time.Hour {
-		note("the certificate " + c.Name + " expires on " + cur.notAfter.UTC().Format(time.DateOnly) + "; check its renewal")
+		verb := " expires on "
+		if time.Now().After(cur.notAfter) {
+			verb = " expired on "
+		}
+		note("the certificate " + c.Name + verb + cur.notAfter.UTC().Format(time.DateOnly) + "; check its renewal")
 	}
 	changes := c.changes(cur)
 	c.issue = changes != nil
