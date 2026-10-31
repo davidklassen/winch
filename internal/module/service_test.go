@@ -97,3 +97,47 @@ func TestRestartSSHSocketResetsSSHService(t *testing.T) {
 		t.Errorf("systemctl calls %q, want a reset of both SSH units before the restart", got)
 	}
 }
+
+// spec: Modules/service and unit (the watch after a start)
+func TestStartWatch(t *testing.T) {
+	for _, c := range []struct {
+		typ, cmd, canReload string
+		watch               bool
+	}{
+		{"simple", "start", "yes", true},
+		{"forking", "try-restart", "yes", true},
+		{"notify", "start", "yes", false},
+		{"notify-reload", "try-restart", "yes", false},
+		{"dbus", "start", "yes", false},
+		{"oneshot", "start", "yes", false},
+		{"simple", "try-reload-or-restart", "yes", false},
+		// A unit that cannot reload restarts.
+		{"simple", "try-reload-or-restart", "no", true},
+		// A socket or a timer has no type.
+		{"", "start", "no", false},
+	} {
+		t.Run(c.typ+" "+c.cmd+" "+c.canReload, func(t *testing.T) {
+			dir := t.TempDir()
+			log := filepath.Join(dir, "log")
+			script := "#!/bin/sh\necho \"$*\" >> " + log + "\n" +
+				"case \"$*\" in show*) echo Id=app.service; echo LoadState=loaded; echo ActiveState=active; echo SubState=running; echo InvocationID=1; echo Type=" + c.typ + "; echo CanReload=" + c.canReload + ";; esac\n"
+			if err := os.WriteFile(filepath.Join(dir, "systemctl"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+			s := &Service{Name: "app", todo: []string{c.cmd}, up: true}
+			if err := s.Apply(t.Context(), func(string) {}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The watch reads the unit state again after it.
+			shows := strings.Count(string(data), "show ")
+			if watched := shows == 2; watched != c.watch {
+				t.Errorf("%d systemctl show calls, want the watch %v", shows, c.watch)
+			}
+		})
+	}
+}

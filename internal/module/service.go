@@ -162,7 +162,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		}
 	}
 	// A oneshot unit without RemainAfterExit is up only while its job runs.
-	s.up = u.up() && !u.restarting() && (!u.oneshot || u.remain)
+	s.up = u.up() && !u.restarting() && (u.typ != "oneshot" || u.remain)
 	if u.reload {
 		s.todo = append(s.todo, "daemon-reload")
 	}
@@ -218,7 +218,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 		}
 	}
 	if s.Running != nil {
-		if *s.Running && u.oneshot && !u.remain {
+		if *s.Running && u.typ == "oneshot" && !u.remain {
 			return Result{}, fmt.Errorf("%s is a oneshot unit without RemainAfterExit=yes, so it is never running after its job; start its timer, or use cmd", u.id)
 		}
 		up := u.up()
@@ -371,7 +371,7 @@ func (s *Service) Apply(ctx context.Context, _ func(string)) error {
 		_, err := run(ctx, nil, "systemctl", args...)
 		switch {
 		case err == nil && starts && (c == "start" || s.up):
-			if err := checkStarted(ctx, s.Unit(), action); err != nil {
+			if err := checkStarted(ctx, s.Unit(), action, c == "try-reload-or-restart"); err != nil {
 				return err
 			}
 		case err == nil:
@@ -416,10 +416,14 @@ func resetFailed(ctx context.Context, unit string) error {
 // process exits a moment later.
 const startWatch = 2 * time.Second
 
+// watchTypes are the service types that do not report readiness.
+var watchTypes = []string{"simple", "exec", "forking", "idle"}
+
 // checkStarted fails when unit is not running after action. systemctl exits
 // 0 also when a Condition failed, and when the unit ended or crashed right
-// after its start.
-func checkStarted(ctx context.Context, unit, action string) error {
+// after its start. A unit whose type does not report readiness must keep
+// running for startWatch, unless reload kept its process.
+func checkStarted(ctx context.Context, unit, action string, reload bool) error {
 	deadline := time.Now().Add(commandLimit)
 	u, err := showUnit(ctx, unit)
 	invocation := u.invocation
@@ -431,7 +435,7 @@ func checkStarted(ctx context.Context, unit, action string) error {
 		}
 		u, err = showUnit(ctx, unit)
 	}
-	if err == nil && u.up() && !u.restarting() {
+	if err == nil && u.up() && !u.restarting() && (!reload || !u.canReload) && slices.Contains(watchTypes, u.typ) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -594,8 +598,14 @@ func (u *unitState) fromFiles(files [][]byte) error {
 	}
 	if strings.HasSuffix(u.id, ".service") {
 		sv := sectionKeys(files, "Service")
-		typ := sv["Type"]
-		u.oneshot = len(typ) > 0 && typ[len(typ)-1] == "oneshot" || len(typ) == 0 && len(sv["ExecStart"]) == 0
+		switch typ := sv["Type"]; {
+		case len(typ) > 0:
+			u.typ = typ[len(typ)-1]
+		case len(sv["ExecStart"]) == 0:
+			u.typ = "oneshot"
+		default:
+			u.typ = "simple"
+		}
 		remain := sv["RemainAfterExit"]
 		u.remain = len(remain) > 0 && slices.Contains([]string{"1", "yes", "y", "true", "t", "on"}, strings.ToLower(remain[len(remain)-1]))
 	}
@@ -638,9 +648,9 @@ func sectionKeys(files [][]byte, section string) map[string][]string {
 }
 
 type unitState struct {
-	id, load, active, sub, file, fragment, dropIns, invocation string
-	triggeredBy                                                []string
-	reload, oneshot, remain                                    bool
+	id, load, active, sub, file, fragment, dropIns, invocation, typ string
+	triggeredBy                                                     []string
+	reload, remain, canReload                                       bool
 }
 
 func (u unitState) up() bool {
@@ -652,10 +662,10 @@ func (u unitState) restarting() bool {
 	return strings.HasPrefix(u.sub, "auto-restart")
 }
 
-// showUnit returns the load, active, and sub state of unit, and its
-// invocation, which changes with each start.
+// showUnit returns the load, active, and sub state of unit, its invocation,
+// which changes with each start, its type, and whether it can reload.
 func showUnit(ctx context.Context, unit string) (unitState, error) {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,InvocationID", "--", unit)
+	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,InvocationID,Type,CanReload", "--", unit)
 	if err != nil {
 		return unitState{}, err
 	}
@@ -698,7 +708,9 @@ func parseShow(out string) (unitState, error) {
 		case "NeedDaemonReload":
 			u.reload = v == "yes"
 		case "Type":
-			u.oneshot = v == "oneshot"
+			u.typ = v
+		case "CanReload":
+			u.canReload = v == "yes"
 		case "RemainAfterExit":
 			u.remain = v == "yes"
 		case "TriggeredBy":
