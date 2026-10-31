@@ -294,3 +294,60 @@ func TestCopyFromResultNamesTheSource(t *testing.T) {
 		t.Errorf("source sums %q: want two different ones", sums)
 	}
 }
+
+// spec: Modules/file, dir, link (dir purge: the files that sshd needs)
+func TestSSHDLoss(t *testing.T) {
+	needed := []string{"/etc/ssh/sshd_config", "/etc/ssh/ssh_host_ed25519_key", "/etc/ssh/ssh_host_rsa_key", "/etc/ssh/keys/ssh_host_ecdsa_key"}
+	for _, tt := range []struct {
+		name    string
+		removed []string
+		want    string
+	}{
+		{"host keys", []string{"/etc/ssh/ssh_host_ed25519_key", "/etc/ssh/ssh_host_ed25519_key.pub", "/etc/ssh/ssh_host_rsa_key"},
+			"purge of /etc/ssh would remove files that sshd needs: /etc/ssh/ssh_host_ed25519_key, /etc/ssh/ssh_host_rsa_key; add them to keep, or purge a narrower directory"},
+		{"the main config", []string{"/etc/ssh/sshd_config"},
+			"purge of /etc/ssh would remove files that sshd needs: /etc/ssh/sshd_config; add them to keep, or purge a narrower directory"},
+		{"a directory with a host key", []string{"/etc/ssh/keys"},
+			"purge of /etc/ssh would remove files that sshd needs: /etc/ssh/keys/ssh_host_ecdsa_key; add them to keep, or purge a narrower directory"},
+		{"the drop-in directory", []string{"/etc/ssh/sshd_config.d"}, ""},
+		{"names with a common prefix", []string{"/etc/ssh/ssh_host_ed25519_key.pub", "/etc/ssh/ssh_host_ed25519", "/etc/ssh/sshd", "/etc/ssh/key"}, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ""
+			if err := sshdLoss("/etc/ssh", tt.removed, needed); err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Modules/file, dir, link (dir purge: the files that sshd needs, behind
+// a symbolic link)
+func TestSSHDNeeded(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "key"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real", filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real/key", filepath.Join(dir, "keylink")); err != nil {
+		t.Fatal(err)
+	}
+	real, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := sshdNeeded([]string{filepath.Join(dir, "link", "key"), filepath.Join(dir, "keylink"), filepath.Join(dir, "missing")})
+	want := []string{filepath.Join(dir, "link", "key"), filepath.Join(real, "key"), filepath.Join(dir, "keylink"), filepath.Join(real, "key")}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

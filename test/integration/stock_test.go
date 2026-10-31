@@ -267,6 +267,10 @@ func TestPurgeModule(t *testing.T) {
 	vm := lab.StartVM(t, "purge")
 	vm.MustRun(t, "apt-get update -q >/dev/null && "+installStock)
 	attrs := "owner root, group root, mode 0755"
+	dropIn := []string{"remove file /etc/ssh/sshd_config.d/junk.conf"}
+	if osRelease().id == "ubuntu" {
+		dropIn = []string{"changes the ports of ssh.socket, which winch connects to", dropIn[0], "daemon-reload", "restart ssh.socket"}
+	}
 	reset := "[ ! -d /tmp/w ] || find /tmp/w -depth -mindepth 1 -type d -exec mountpoint -q {} \\; -exec umount {} \\;\n[ ! -e /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w && mkdir /tmp/w && mkdir /tmp/w/d"
 	vmtest.RunCases(t, vm, "dir", reset, []vmtest.Case{
 		{
@@ -312,6 +316,26 @@ func TestPurgeModule(t *testing.T) {
 			Args:  &module.Dir{Path: "/etc/winch-stock.d", Purge: true},
 			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove file /etc/winch-stock.d/unknown"}},
 			After: `[ -f /etc/winch-stock.d/README ] && [ ! -e /etc/winch-stock.d/unknown ]`,
+		},
+		{
+			Name:      "a purge that removes the host keys fails",
+			Args:      &module.Dir{Path: "/etc/ssh", Purge: true},
+			WantErr:   "purge of /etc/ssh would remove files that sshd needs: /etc/ssh/ssh_host_ecdsa_key, /etc/ssh/ssh_host_ed25519_key, /etc/ssh/ssh_host_rsa_key, /etc/ssh/sshd_config; add them to keep, or purge a narrower directory",
+			Unchanged: `[ -e /etc/ssh/ssh_host_ed25519_key ] && [ -e /etc/ssh/sshd_config ]`,
+		},
+		{
+			Name:  "a purge with sshd's files in keep passes",
+			Setup: `touch /etc/ssh/junk`,
+			Args:  &module.Dir{Path: "/etc/ssh", Purge: true, KeepPatterns: []string{"ssh_host_*", "sshd_config"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove file /etc/ssh/junk"}},
+			After: `[ -e /etc/ssh/sshd_config ] && [ -e /etc/ssh/ssh_host_ed25519_key ] && [ ! -e /etc/ssh/junk ]`,
+		},
+		{
+			Name:  "removes an sshd drop-in",
+			Setup: `touch /etc/ssh/sshd_config.d/junk.conf`,
+			Args:  &module.Dir{Path: "/etc/ssh/sshd_config.d", Purge: true, KeepPatterns: []string{"*cloud*"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: dropIn},
+			After: `[ ! -e /etc/ssh/sshd_config.d/junk.conf ]`,
 		},
 		{
 			Name:  "keeps the enable links of units",

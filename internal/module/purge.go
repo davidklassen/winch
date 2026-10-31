@@ -1,9 +1,12 @@
 package module
 
 import (
+	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -110,4 +113,70 @@ func enableLink(dir, name string, link bool) bool {
 		return link
 	}
 	return false
+}
+
+// sshdSafe fails when rs, the removals of the purge, hold a file that sshd
+// needs.
+func (d *Dir) sshdSafe(ctx context.Context, rs []removal) error {
+	needed, err := sshdFiles(ctx)
+	if err != nil || len(needed) == 0 {
+		return err
+	}
+	dir, err := filepath.EvalSymlinks(d.Path)
+	if err != nil {
+		return err
+	}
+	removed := make([]string, len(rs))
+	for i, r := range rs {
+		removed[i] = filepath.Join(dir, r.name)
+	}
+	return sshdLoss(d.Path, removed, needed)
+}
+
+// sshdFiles returns the files without which sshd does not start: its main
+// config and its host keys.
+func sshdFiles(ctx context.Context) ([]string, error) {
+	if _, err := os.Stat("/usr/sbin/sshd"); err != nil {
+		return nil, nil
+	}
+	out, err := run(ctx, nil, "/usr/sbin/sshd", "-T")
+	if err != nil {
+		return nil, fmt.Errorf("find the files that sshd needs: %w", err)
+	}
+	files := []string{"/etc/ssh/sshd_config"}
+	for line := range strings.Lines(out) {
+		if key, value, _ := strings.Cut(strings.TrimSpace(line), " "); key == "hostkey" {
+			files = append(files, value)
+		}
+	}
+	return sshdNeeded(files), nil
+}
+
+// sshdNeeded returns each file of files that exists twice: as given, and
+// with every symbolic link resolved. A purge that removes a link on either
+// path loses the file.
+func sshdNeeded(files []string) []string {
+	var out []string
+	for _, f := range files {
+		if resolved, err := filepath.EvalSymlinks(f); err == nil {
+			out = append(out, f, resolved)
+		}
+	}
+	return out
+}
+
+// sshdLoss fails when removed, the paths that a purge of dir removes, holds a
+// path of needed, the files that sshd needs.
+func sshdLoss(dir string, removed, needed []string) error {
+	var lost []string
+	for _, n := range needed {
+		if slices.ContainsFunc(removed, func(r string) bool { return n == r || strings.HasPrefix(n, r+"/") }) {
+			lost = append(lost, n)
+		}
+	}
+	if len(lost) == 0 {
+		return nil
+	}
+	slices.Sort(lost)
+	return fmt.Errorf("purge of %s would remove files that sshd needs: %s; add them to keep, or purge a narrower directory", dir, strings.Join(slices.Compact(lost), ", "))
 }
