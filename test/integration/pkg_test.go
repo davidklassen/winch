@@ -243,6 +243,15 @@ func TestPkgModule(t *testing.T) {
 			After:     `dpkg-query -W -f='${db:Status-Abbrev}' fortunes-min | grep -q '^ii'`,
 		},
 		{
+			Name:      "the default overrides the apt config",
+			State:     module.State{IndexFresh: true},
+			Setup:     `echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/99norecommends`,
+			Args:      &module.Pkg{Name: []string{"fortune-mod"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install fortune-mod", "also install " + librecode + ", fortunes-min"}},
+			WantState: module.State{IndexFresh: true},
+			After:     `dpkg-query -W -f='${db:Status-Abbrev}' fortunes-min | grep -q '^ii'`,
+		},
+		{
 			Name:      "absent lists the packages that depend on it",
 			Setup:     install + " fortune-mod",
 			Args:      &module.Pkg{Name: []string{librecode}, Absent: true},
