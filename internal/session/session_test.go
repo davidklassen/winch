@@ -460,6 +460,51 @@ func TestDestinationBadSSHConfig(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Plan (apply fails a host whose resolved host
+// name, port, jump host, or login user differs from the plan's)
+func TestOpenDestinationChanged(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	helper := helperbin.New("arm64", []byte("#!/bin/sh\nread line\necho \"{\\\"id\\\":1,\\\"result\\\":$WELCOME}\"\ncat >/dev/null\n"))
+	want := protocol.Destination{User: "deploy", UID: 1001, HostName: "192.0.2.10", Port: "22"}
+	tests := []struct {
+		name, sshG, welcome string
+		wantErr             string
+		login               bool
+	}{
+		{"same", "hostname 192.0.2.10\nport 22", `{"login":"deploy","login_uid":1001}`, "", true},
+		{"host name", "hostname 192.0.2.11\nport 22", `{"login":"deploy","login_uid":1001}`, "deploy@192.0.2.11:22 (uid 1001)", false},
+		{"port", "hostname 192.0.2.10\nport 2222", `{"login":"deploy","login_uid":1001}`, "deploy@192.0.2.10:2222 (uid 1001)", false},
+		{"jump host", "hostname 192.0.2.10\nport 22\nproxyjump bastion", `{"login":"deploy","login_uid":1001}`, "deploy@192.0.2.10:22 (uid 1001) through bastion", false},
+		{"user", "hostname 192.0.2.10\nport 22", `{"login":"admin","login_uid":1000}`, "admin@192.0.2.10:22 (uid 1000)", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SSH_G", tt.sshG)
+			t.Setenv("WELCOME", tt.welcome)
+			argsFile := filepath.Join(t.TempDir(), "args")
+			t.Setenv("SSH_ARGS", argsFile)
+			s, err := Open(context.Background(), Config{
+				Host: "web1", Address: "web1", Dir: stateDir,
+				Binaries: []helperbin.Binary{helper},
+				Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
+				Want: &want,
+			})
+			if s != nil {
+				s.Close()
+			}
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Errorf("Open = %v", err)
+			case tt.wantErr != "" && (err == nil || err.Error() != "the SSH destination changed since the plan: deploy@192.0.2.10:22 (uid 1001) → "+tt.wantErr):
+				t.Errorf("Open = %v, want the changed destination %s", err, tt.wantErr)
+			}
+			if _, err := os.Stat(argsFile); (err == nil) != tt.login {
+				t.Errorf("ssh logged in: %v, want %v", err == nil, tt.login)
+			}
+		})
+	}
+}
+
 // spec: Remote execution/Facts
 func TestFacts(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)

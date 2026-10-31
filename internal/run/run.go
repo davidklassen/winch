@@ -108,8 +108,9 @@ type Connect struct {
 	// Resolve returns the route that ssh resolves for h, without a contact
 	// with the host.
 	Resolve func(ctx context.Context, h project.Host) (Route, error)
-	// Open opens a session with h for the project named proj.
-	Open func(ctx context.Context, proj string, h project.Host) (Conn, error)
+	// Open opens a session with h for the project named proj. When want is
+	// not nil, the session fails when its destination differs from want.
+	Open func(ctx context.Context, proj string, h project.Host, want *protocol.Destination) (Conn, error)
 }
 
 type Plan struct {
@@ -358,7 +359,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		hr := runs[h.Name]
 		if hr.conn == nil {
 			opts.progress().Busy(h.Name, "connecting")
-			c, err := connect.Open(context.WithoutCancel(ctx), p.Name, h)
+			c, err := connect.Open(context.WithoutCancel(ctx), p.Name, h, nil)
 			if err != nil {
 				return nil, err
 			}

@@ -102,7 +102,7 @@ func connect(sessions context.Context, notes *color.Writer, display *progress.Di
 		}
 		return run.Route{HostName: hostName, Port: port, Jump: jump}, nil
 	}
-	open := func(_ context.Context, proj string, h project.Host) (run.Conn, error) {
+	open := func(_ context.Context, proj string, h project.Host, want *protocol.Destination) (run.Conn, error) {
 		hello := hello
 		hello.Project = proj
 		s, err := session.Open(sessions, session.Config{
@@ -114,6 +114,7 @@ func connect(sessions context.Context, notes *color.Writer, display *progress.Di
 			Progress: notes,
 			Hold:     hold,
 			Batch:    batch,
+			Want:     want,
 		})
 		if errors.Is(err, session.ErrUnreachable) {
 			err = run.MarkUnreachable(err)

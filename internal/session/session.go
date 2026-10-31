@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os/exec"
 	"slices"
 	"strings"
@@ -58,6 +59,11 @@ type Config struct {
 	// reconnect after a reboot always set it: they can run on several hosts
 	// at once.
 	Batch bool
+	// Want is nil, or the destination of the plan. A login fails before it
+	// starts when ssh resolves another host name, port, or jump host, and
+	// after the hello when the login user differs. A check of the access and
+	// a reconnect after a reboot want the destination of their session.
+	Want *protocol.Destination
 }
 
 // Session is one ssh process with the helper at the other end.
@@ -160,8 +166,38 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.dest.HostName, s.dest.Port = r.hostName, r.port
+	s.dest.HostName, s.dest.Port, s.dest.Jump = r.hostName, r.port, r.jump
+	if err := s.changed(cfg.Want); err != nil {
+		return nil, err
+	}
 	return s, nil
+}
+
+// changed ends s and returns an error when want is not nil and the
+// destination of s differs from it.
+func (s *Session) changed(want *protocol.Destination) error {
+	if want == nil || s.dest == *want {
+		return nil
+	}
+	s.Close() //nolint:errcheck // the host fails already
+	return DestinationChanged(*want, s.dest)
+}
+
+// DestinationChanged is the error of a login whose destination differs from
+// the plan's.
+func DestinationChanged(old, now protocol.Destination) error {
+	return fmt.Errorf("the SSH destination changed since the plan: %s → %s", destination(old), destination(now))
+}
+
+func destination(d protocol.Destination) string {
+	s := fmt.Sprintf("%s (uid %d)", net.JoinHostPort(d.HostName, d.Port), d.UID)
+	if d.User != "" {
+		s = d.User + "@" + s
+	}
+	if d.Jump != "" {
+		s += " through " + d.Jump
+	}
+	return s
 }
 
 // Resolve returns the host name, the port, and the jump host that ssh
@@ -173,10 +209,11 @@ func Resolve(ctx context.Context, cfg Config) (hostName, port, jump string, err 
 }
 
 type resolved struct {
-	hostName, port, jump, logLevel string
+	hostName, port, jump, user, logLevel string
 }
 
-// resolve reads the SSH config of the host of cfg with ssh -G.
+// resolve reads the SSH config of the host of cfg with ssh -G. It fails when
+// the host name, port, or jump host differs from cfg.Want.
 func resolve(ctx context.Context, cfg Config) (resolved, error) {
 	out, err := exec.CommandContext(ctx, "ssh", append([]string{"-G"}, argv(cfg)...)...).Output()
 	if err != nil {
@@ -196,9 +233,16 @@ func resolve(ctx context.Context, cfg Config) (resolved, error) {
 			r.port = value
 		case "proxyjump", "proxycommand":
 			r.jump = value
+		case "user":
+			r.user = value
 		case "loglevel":
 			r.logLevel = value
 		}
+	}
+	if w := cfg.Want; w != nil && (r.hostName != w.HostName || r.port != w.Port || r.jump != w.Jump) {
+		now := *w
+		now.HostName, now.Port, now.Jump = r.hostName, r.port, r.jump
+		return r, DestinationChanged(*w, now)
 	}
 	return r, nil
 }
@@ -479,7 +523,18 @@ var accessCommand = command("echo " + accessMarker)
 // Like the session start, it fails when the login prints to stdout.
 func (s *Session) Access(ctx context.Context) error {
 	cfg := s.cfg
-	cfg.Batch = true
+	cfg.Batch, cfg.Want = true, &s.dest
+	r, err := resolve(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	// This login has no hello, so ssh's user stands for the login user. The
+	// helper may not know the name of the login user, as for an LDAP account.
+	if s.dest.User != "" && r.user != s.dest.User {
+		now := s.dest
+		now.User = r.user
+		return DestinationChanged(s.dest, now)
+	}
 	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, append(argv(cfg), accessCommand)...)...)
 	stdout, stderr := &limitedBuffer{max: 4 << 10}, &limitedBuffer{max: 4 << 10}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -534,6 +589,7 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 	cfg := s.cfg
 	cfg.Batch, cfg.Hold = true, nil
 	cfg.Hello.Resume = true
+	cfg.Want = &s.dest
 	last := errors.New("no connection yet")
 	for {
 		select {
@@ -544,6 +600,10 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 		if time.Now().After(deadline) {
 			return protocol.Boot{}, fmt.Errorf("the host did not come back within %s: %w", wait, last)
 		}
+		r, err := resolve(s.ctx, cfg)
+		if err != nil {
+			return protocol.Boot{}, err
+		}
 		n, exit, err := dial(s.ctx, cfg)
 		if err != nil {
 			if refused(exit.stderr) {
@@ -551,6 +611,10 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 			}
 			last = err
 			continue
+		}
+		n.dest.HostName, n.dest.Port, n.dest.Jump = r.hostName, r.port, r.jump
+		if err := n.changed(cfg.Want); err != nil {
+			return protocol.Boot{}, err
 		}
 		var b protocol.Boot
 		if err := n.call("booted", protocol.Booted{Old: id, Wait: time.Until(deadline)}, &b); err != nil {

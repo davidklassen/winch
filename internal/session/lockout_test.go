@@ -54,18 +54,57 @@ func TestAccess(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection, Plan (the access check fails
+// before the login when the host name, port, or user differs from the plan's;
+// a login name that the helper could not read is not compared)
+func TestAccessDestinationChanged(t *testing.T) {
+	admin := protocol.Destination{User: "admin", UID: 1000, HostName: "192.0.2.10", Port: "22"}
+	noName := protocol.Destination{UID: 1000, HostName: "192.0.2.10", Port: "22"}
+	tests := []struct {
+		name, sshG string
+		dest       protocol.Destination
+		wantErr    string
+	}{
+		{"same", "user admin\nhostname 192.0.2.10\nport 22", admin, ""},
+		{"no login name", "user root\nhostname 192.0.2.10\nport 22", noName, ""},
+		{"port", "user admin\nhostname 192.0.2.10\nport 2222", admin, "admin@192.0.2.10:2222 (uid 1000)"},
+		{"user", "user root\nhostname 192.0.2.10\nport 22", admin, "root@192.0.2.10:22 (uid 1000)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			t.Setenv("SSH_G", tt.sshG)
+			argsFile := filepath.Join(t.TempDir(), "args")
+			t.Setenv("SSH_ARGS", argsFile)
+			s := &Session{cfg: Config{Host: "web1", Address: "web1", Batch: true}, dest: tt.dest}
+			err := s.Access(context.Background())
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Errorf("Access = %v", err)
+			case tt.wantErr != "" && (err == nil || err.Error() != "the SSH destination changed since the plan: "+destination(tt.dest)+" → "+tt.wantErr):
+				t.Errorf("Access = %v, want the changed destination %s", err, tt.wantErr)
+			}
+			if _, err := os.Stat(argsFile); (err == nil) != (tt.wantErr == "") {
+				t.Errorf("the access check logged in: %v, want %v", err == nil, tt.wantErr == "")
+			}
+		})
+	}
+}
+
 // rebootHelper is a fake helper. The first connection answers reboot, the
 // second says that the host has not rebooted yet, and the third gives a
 // degraded system. With $REBOOT_ERROR, the third connection says that the
-// reboot command failed with it.
+// reboot command failed with it. A reconnect answers hello with
+// $RESUME_WELCOME when it is set.
 const rebootHelper = `#!/bin/sh
 n=$(cat "$REBOOT_STATE" 2>/dev/null || echo 0)
 n=$((n+1))
 echo $n > "$REBOOT_STATE"
+w=${RESUME_WELCOME:-'{}'}
 while read -r line; do
   id=$(echo "$line" | sed 's/.*"id":\([0-9]*\).*/\1/')
   case $line in
-  *'"method":"hello"'*'"resume":true'*) echo "{\"id\":$id,\"result\":{}}" ;;
+  *'"method":"hello"'*'"resume":true'*) echo "{\"id\":$id,\"result\":$w}" ;;
   *'"method":"hello"'*) if [ $n -eq 1 ]; then echo "{\"id\":$id,\"result\":{}}"; else echo "{\"id\":$id,\"error\":\"a reconnect without resume\"}"; fi ;;
   *'"method":"reboot"'*) echo "{\"id\":$id,\"result\":\"boot-1\"}" ;;
   *'"method":"booted"'*'"old":"boot-1"'*)
@@ -124,6 +163,50 @@ func TestReboot(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(state + ".facts"); string(data) != "3\n" {
 		t.Errorf("facts read on connections %q, want 3", data)
+	}
+}
+
+// spec: Running a pipeline/Plan (the reconnect after a reboot fails the host
+// when its host name, port, or login user differs from the plan's; a changed
+// host name fails before the login)
+func TestRebootDestinationChanged(t *testing.T) {
+	tests := []struct {
+		name, sshG, welcome string
+		wantErr             string
+		connections         string
+	}{
+		{"host name", "hostname 192.0.2.11\nport 22", "", "192.0.2.11:22 (uid 0)", "1\n"},
+		{"uid", "hostname 192.0.2.10\nport 22", `{"login_uid":1000}`, "192.0.2.10:22 (uid 1000)", "2\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			state := filepath.Join(t.TempDir(), "state")
+			t.Setenv("REBOOT_STATE", state)
+			t.Setenv("SSH_G", "hostname 192.0.2.10\nport 22")
+			s, err := Open(context.Background(), Config{
+				Host:       "web1",
+				Address:    "web1",
+				Dir:        t.TempDir(),
+				Binaries:   []helperbin.Binary{helperbin.New("arm64", []byte(rebootHelper))},
+				Hello:      protocol.Hello{Run: "r1"},
+				Progress:   plain(&bytes.Buffer{}),
+				RetryDelay: 10 * time.Millisecond,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			t.Setenv("SSH_G", tt.sshG)
+			t.Setenv("RESUME_WELCOME", tt.welcome)
+			_, err = s.Reboot(context.Background(), time.Minute)
+			if want := "the SSH destination changed since the plan: 192.0.2.10:22 (uid 0) → " + tt.wantErr; err == nil || err.Error() != want {
+				t.Errorf("Reboot = %v, want %q", err, want)
+			}
+			if data, _ := os.ReadFile(state); string(data) != tt.connections {
+				t.Errorf("connections %q, want %q", data, tt.connections)
+			}
+		})
 	}
 }
 
