@@ -28,6 +28,11 @@ type Service struct {
 	// in the run. For an instance, it is the file of the template. The
 	// controller sets it.
 	NewFile []byte `json:"new_file,omitempty"`
+	// Started is set on a handler step when a service step of the run
+	// started the unit after the handler's last notify, no earlier step of
+	// the handler changed anything, and the step has no confirm_access. A
+	// restart or a reload then checks as ok. The controller sets it.
+	Started bool `json:"started,omitempty"`
 
 	// Check sets these for Apply: the systemctl commands, in order.
 	todo    []string
@@ -146,6 +151,9 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	default:
 		return Result{}, withJournal(ctx, u.id, fmt.Errorf("%s has the load state %q", u.id, u.load))
 	}
+	if s.Started {
+		return Result{Status: OK}, nil
+	}
 	var startedBy []string
 	if (u.load == "loaded" || broken) && len(u.triggeredBy) > 0 && (s.Running != nil && !*s.Running || s.Enabled != nil && !*s.Enabled) {
 		startedBy, err = activeOrEnabled(ctx, u.triggeredBy)
@@ -237,6 +245,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	if len(s.todo) == 0 {
 		return Result{Status: OK, StartedBy: startedBy, MissingUnitFiles: missingFiles}, nil
 	}
+	started := slices.Contains(s.todo, "start")
 	var changes []string
 	for _, c := range s.todo {
 		changes = append(changes, cmp.Or(planLabels[c], c))
@@ -244,7 +253,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ func(string)) (Result, 
 	if missing && (s.Running == nil || *s.Running) {
 		changes = append([]string{u.id + " does not exist yet"}, changes...)
 	}
-	return Result{Status: Change, Action: Modify, Changes: changes, StartedBy: startedBy, MissingUnitFiles: missingFiles}, nil
+	return Result{Status: Change, Action: Modify, Changes: changes, StartedBy: startedBy, MissingUnitFiles: missingFiles, Starts: started}, nil
 }
 
 func (s *Service) missingFiles(ctx context.Context, u unitState) ([]string, error) {

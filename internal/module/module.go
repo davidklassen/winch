@@ -54,6 +54,8 @@ type Result struct {
 	OldReason string   `json:"old_reason,omitempty"`
 	Link      string   `json:"link,omitempty"`
 	StartedBy []string `json:"started_by,omitempty"`
+	// Starts is set on a service step that starts its unit.
+	Starts bool `json:"starts,omitempty"`
 	// MissingUnitFiles are the paths of a missing service unit file. A
 	// selected removal of any of these paths suppresses the plan's note.
 	MissingUnitFiles []string `json:"missing_unit_files,omitempty"`
@@ -143,7 +145,7 @@ var modules = map[string]struct {
 	"pkg":      {func() Module { return new(Pkg) }, "install or remove packages", "Before the first install of a run on a host, apply refreshes the package index. After a repo step changed something, the next pkg step refreshes it again."},
 	"reboot":   {func() Module { return new(Reboot) }, "reboot the host", ""},
 	"repo":     {func() Module { return new(Repo) }, "manage an apt source", ""},
-	"service":  {func() Module { return new(Service) }, "control a systemd unit", "With running: false, a missing unit file is ok, with the note <unit>: unit file not found. A service step with confirm_access: true checks that a new SSH connection works after the step, and rolls back when none does. Run winch doc step.confirm_access."},
+	"service":  {func() Module { return new(Service) }, "control a systemd unit", "With running: false, a missing unit file is ok, with the note <unit>: unit file not found. A service step with confirm_access: true checks that a new SSH connection works after the step, and rolls back when none does. Run winch doc step.confirm_access. In a handler, restarted and reloaded check as ok when a service step of the run started the unit after the handler's last notify, no earlier step of the handler changed anything, and the step has no confirm_access."},
 	"timezone": {func() Module { return new(Timezone) }, "set the time zone", ""},
 	"unit":     {func() Module { return new(Unit) }, "manage a systemd unit file", "A change of the file, also of its owner or mode, runs systemctl daemon-reload. daemon-reload does not restart a running unit. A handler with restarted: true does."},
 	"upgrade":  {func() Module { return new(Upgrade) }, "upgrade the installed packages", "The step refreshes the package index, also during the plan, and checks for pending upgrades."},

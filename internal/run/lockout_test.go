@@ -91,7 +91,7 @@ func TestConfirmAccess(t *testing.T) {
 	if !o.OK() {
 		t.Fatalf("apply failed: %v", o.Failed)
 	}
-	if want := []string{"ssh reload", "access", "confirm", "nftables restart", "access", "confirm", "access"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"ssh reload", "access", "confirm", "nftables start", "access", "confirm", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
 	want := map[string]protocol.Guard{
