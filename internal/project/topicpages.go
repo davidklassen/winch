@@ -684,7 +684,7 @@ winch apply site --batch
 
 # ssh asks no questions; the apply question stays.
 `),
-		doc.Paragraph(`The access checks and the connections after a reboot always use BatchMode=yes. Run winch doc workflow for the access checks. So with a terminal, a session logs in with BatchMode=yes first. Only when the host refuses that login does winch log in again, and ssh can ask. Such a host plans as usual, but apply stops before its first change and names ssh-add. Nothing changes on the host.`),
+		doc.Paragraph(`The access checks and the connections after a reboot always use BatchMode=yes, so they cannot ask for anything. Run winch doc workflow for the access checks. At a terminal, a session therefore logs in with BatchMode=yes first. When the host refuses that login, or its host key is new, winch logs in again, and ssh can ask. A host that refused the first login plans as usual, but apply stops before its first change and names ssh-add. After a new host key, apply runs one access check before the first change.`),
 		doc.Heading("When a connection fails"),
 		doc.Paragraph(`A host is unreachable when ssh fails before the session starts: the name does not resolve, the connection is refused or takes more than 15 seconds, or the host key or the login fails. winch then exits 4 when no step failed. For an unknown host key, the error names the ssh command to run once. For a refused login, it names ssh-add.`),
 		doc.Paragraph(`Only one winch run works on a host at a time. When another run holds the host, the error names that run and the process ID of its helper. When that run is gone, end the process.`),
