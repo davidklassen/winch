@@ -365,13 +365,26 @@ func TestAccessNoOutput(t *testing.T) {
 }
 
 // spec: Remote execution/Sessions (the access check always uses
-// BatchMode=yes; for a refused login, the error names ssh-add)
+// BatchMode=yes; a refused login names the change first)
 func TestAccessBatchHint(t *testing.T) {
-	fakeBin(t, "aarch64", "0", goodSudo)
-	failOnce(t, "", "admin@web1: Permission denied (publickey).", 255)
-	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
-	err := s.Access(context.Background())
-	if want := "exit status 255: admin@web1: Permission denied (publickey). (batch mode cannot type a key passphrase or a password; add the key to the agent with ssh-add)"; err == nil || err.Error() != want {
-		t.Errorf("Access = %v, want %q", err, want)
+	tests := []struct {
+		name, stderr string
+		code         int
+		want         string
+	}{
+		{"refused login", "admin@web1: Permission denied (publickey).", 255,
+			"exit status 255: admin@web1: Permission denied (publickey). The change refuses the login. (If your key needs a passphrase, add it to the agent with ssh-add, so the check can log in.)"},
+		{"login without a home directory", "Could not chdir to home directory /home/admin: Permission denied\nwinch: the login user needs passwordless sudo", 1,
+			"exit status 1: Could not chdir to home directory /home/admin: Permission denied\nwinch: the login user needs passwordless sudo"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			failOnce(t, "", tt.stderr, tt.code)
+			s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+			if err := s.Access(context.Background()); err == nil || err.Error() != tt.want {
+				t.Errorf("Access = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }

@@ -282,7 +282,7 @@ func hint(cfg Config, err error) error {
 	switch {
 	case !cfg.Batch:
 		return err
-	case strings.Contains(msg, "Permission denied"):
+	case strings.Contains(msg, "Permission denied ("):
 		return fmt.Errorf("%w (batch mode cannot type a key passphrase or a password; add the key to the agent with ssh-add)", err)
 	// A changed host key is no question that ssh asks.
 	case strings.Contains(msg, "HAS CHANGED") || !strings.Contains(msg, "Host key verification failed"):
@@ -484,7 +484,11 @@ func (s *Session) Access(ctx context.Context) error {
 		if msg == "" {
 			msg = strings.TrimSpace(stdout.String())
 		}
-		if msg != "" {
+		switch {
+		// The run's own login worked with the same key a moment before.
+		case strings.Contains(msg, "Permission denied ("):
+			return fmt.Errorf("%w: %s The change refuses the login. (If your key needs a passphrase, add it to the agent with ssh-add, so the check can log in.)", err, msg)
+		case msg != "":
 			return hint(cfg, fmt.Errorf("%w: %s", err, msg))
 		}
 		return err
