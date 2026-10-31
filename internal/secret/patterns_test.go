@@ -33,7 +33,7 @@ func TestScan(t *testing.T) {
 		{"slack webhook", fake("slack_webhook.txt"), []Finding{{0, "a Slack webhook URL"}}},
 		{"slack negatives", "xoxb-my-bot-token xoxb-12345-abcd234 XOxE-RROAmw", nil},
 		{"a secret value", "pw: !secret YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBBS0lBUVlMUE1ONUhISEZQWkFNMg==\nother: !secret '" + fake("aws.txt") + "'\n", nil},
-		{"age identity", fake("age_identity.txt") + "\n", []Finding{{0, "an age identity"}}},
+		{"age identity", fake("age_identity.txt") + "\n", []Finding{{0, "an age key"}}},
 		{"url password", "repo: " + fake("url_password.txt") + "/app\n", []Finding{{21, "a password in a URL"}}},
 		{"url password with a dollar", fake("url_password_dollar.txt"), []Finding{{15, "a password in a URL"}}},
 		{"url password from a template", "repo: https://deploy:{{vars.pw}}@git.example.com\n", nil},

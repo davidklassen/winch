@@ -73,24 +73,24 @@ func Password() string {
 	return string(out)
 }
 
-// Identity is the source of the age identity: the stdout of Cmd when Cmd
-// is not empty, else the file Path.
+// Identity is the source of the age key: the stdout of Cmd when Cmd is not
+// empty, else the file Path.
 type Identity struct {
 	Path string
 	// Cmd runs through sh -c in Dir.
 	Cmd, Dir string
 }
 
-// String names the source for an error message.
+// String names the source after "the age key" in a message.
 func (id Identity) String() string {
 	if id.Cmd != "" {
-		return "from " + id.Cmd
+		return "from WINCH_AGE_IDENTITY_CMD"
 	}
-	return "in " + id.Path
+	return id.Path
 }
 
-const noKeyHelp = "Set WINCH_AGE_KEY to a key file, or WINCH_AGE_IDENTITY_CMD to a command that prints a key.\n" +
-	"To make a key, run winch secret init. A member who can read the secrets must then run winch secret rekey"
+const noKeyHelp = "set WINCH_AGE_KEY to a key file, or WINCH_AGE_IDENTITY_CMD to a command that prints a key\n" +
+	"to make a key, run winch secret init; then a member who can read the secrets runs winch secret rekey"
 
 // Read reads the identities from the source.
 func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
@@ -102,10 +102,13 @@ func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
 		var err error
 		data, err = os.ReadFile(id.Path)
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("no age key %s\n%s", id, noKeyHelp)
+			return nil, fmt.Errorf("no age key at %s\n%s", id.Path, noKeyHelp)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read the age identity: %w", err)
+			if pe, ok := errors.AsType[*fs.PathError](err); ok {
+				err = pe.Err
+			}
+			return nil, fmt.Errorf("read the age key %s: %w", id.Path, err)
 		}
 	} else {
 		cmd := exec.CommandContext(ctx, "sh", "-c", id.Cmd)
@@ -116,15 +119,23 @@ func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
 		cmd.Stderr = &stderr
 		var err error
 		if data, err = cmd.Output(); err != nil {
-			if msg := strings.TrimSpace(stderr.String()); msg != "" {
-				err = fmt.Errorf("%w: %s", err, msg)
+			msg := err.Error()
+			if ee, ok := errors.AsType[*exec.ExitError](err); ok && ee.Exited() {
+				msg = fmt.Sprintf("exited with status %d", ee.ExitCode())
 			}
-			return nil, fmt.Errorf("read the age identity: %s: %w", id.Cmd, err)
+			msg = fmt.Sprintf("WINCH_AGE_IDENTITY_CMD %s: %s", msg, id.Cmd)
+			if out := strings.TrimSpace(stderr.String()); out != "" {
+				msg += ": " + out
+			}
+			return nil, errors.New(msg)
 		}
 	}
 	ids, err := age.ParseIdentities(bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("read the age identity %s: %w", id, err)
+		if id.Cmd != "" {
+			return nil, fmt.Errorf("WINCH_AGE_IDENTITY_CMD printed no age key: %s", id.Cmd)
+		}
+		return nil, fmt.Errorf("%s is not an age key file", id.Path)
 	}
 	return ids, nil
 }
@@ -147,15 +158,26 @@ func (id Identity) Init(ctx context.Context) (key string, made *age.X25519Identi
 		return "", nil, err
 	}
 	if len(ids) != 1 {
-		return "", nil, fmt.Errorf("the age identity %s holds %d keys; winch needs one", id, len(ids))
+		return "", nil, fmt.Errorf("the age key %s holds %d keys; winch needs one", id, len(ids))
 	}
-	switch i := ids[0].(type) {
-	case *age.X25519Identity:
-		return i.Recipient().String(), nil, nil
-	case *age.HybridIdentity:
-		return i.Recipient().String(), nil, nil
+	if keys := PublicKeys(ids); len(keys) == 1 {
+		return keys[0], nil, nil
 	}
-	return "", nil, fmt.Errorf("the age identity %s has no public key", id)
+	return "", nil, fmt.Errorf("the age key %s has no public key", id)
+}
+
+// PublicKeys returns the public keys of the identities that have one.
+func PublicKeys(ids []age.Identity) []string {
+	var out []string
+	for _, id := range ids {
+		switch i := id.(type) {
+		case *age.X25519Identity:
+			out = append(out, i.Recipient().String())
+		case *age.HybridIdentity:
+			out = append(out, i.Recipient().String())
+		}
+	}
+	return out
 }
 
 // WriteKey writes k to the file Path in the format of age-keygen. It fails
@@ -188,7 +210,9 @@ func writeKey(path string, k *age.X25519Identity) error {
 const ageHeader = "age-encryption.org/v1\n"
 
 // ErrNotRecipient is the error of Decrypt when no identity can decrypt.
-var ErrNotRecipient = errors.New("the identity is not a recipient")
+var ErrNotRecipient = errors.New("the value is not encrypted for the age key")
+
+var errBroken = errors.New("the value is not a whole age file; encrypt the value again with winch secret encrypt")
 
 // CheckForm checks that text is base64 of an age file.
 func CheckForm(text string) error {
@@ -219,11 +243,11 @@ func Decrypt(text string, ids []age.Identity) (string, error) {
 		return "", ErrNotRecipient
 	}
 	if err != nil {
-		return "", err
+		return "", errBroken
 	}
 	plain, err := io.ReadAll(r)
 	if err != nil {
-		return "", err
+		return "", errBroken
 	}
 	return string(plain), nil
 }
@@ -237,7 +261,7 @@ func Stanzas(text string) (int, error) {
 	}
 	var c stanzaCounter
 	if _, err := age.Decrypt(bytes.NewReader(data), &c); !errors.Is(err, age.ErrIncorrectIdentity) {
-		return 0, err
+		return 0, errBroken
 	}
 	return c.n, nil
 }

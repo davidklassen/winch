@@ -251,7 +251,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 	if err != nil {
 		return nil, err
 	}
-	if err := l.unsealAll(ctx, keys); err != nil {
+	if err := l.unsealAll(ctx, keys, cfg.Recipients); err != nil {
 		return nil, err
 	}
 	secretWarnings, err := l.secretChecks(invs, []*Pipeline{pl})
@@ -364,7 +364,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err != nil {
 		return nil, err
 	}
-	stale, err := l.staleSecrets(len(cfg.Recipients))
+	stale, err := l.staleSecrets(cfg.file, len(cfg.Recipients))
 	if err != nil {
 		return nil, err
 	}

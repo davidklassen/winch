@@ -289,7 +289,7 @@ func validate(ctx context.Context, env Env, f *flags, args []string) int {
 	return o.end(exitOK, summary{})
 }
 
-// identity returns the source of the age identity.
+// identity returns the source of the age key.
 func (env Env) identity() (secret.Identity, error) {
 	switch {
 	case env.AgeCmd != "" && env.AgeKey != "":
@@ -452,7 +452,7 @@ func runModule(ctx context.Context, env Env, f *flags, args []string) int {
 	if !checkHash(o, f) {
 		return o.end(exitInvalid, summary{})
 	}
-	p, ok := o.loadCommand(ctx, f, project.Command{Name: "run", Pattern: args[0], Module: args[1], Args: args[2:]})
+	p, ok := o.loadCommand(ctx, f, project.Command{Name: "run", Pattern: args[0], Module: args[1], Args: args[2:]}, "")
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
@@ -469,7 +469,7 @@ func execCommand(ctx context.Context, env Env, f *flags, args []string) int {
 		o.fail(errors.New("winch: exec needs one host pattern before --"))
 		return o.end(exitInvalid, summary{})
 	}
-	p, ok := o.loadCommand(ctx, f, project.Command{Name: "exec", Pattern: args[0]})
+	p, ok := o.loadCommand(ctx, f, project.Command{Name: "exec", Pattern: args[0]}, "winch exec needs the age key to hide the secrets of the project in its output")
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
@@ -493,9 +493,11 @@ func execCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	return o.end(worst(code, failedCode(failed)), summary{})
 }
 
-// loadCommand loads the project with the pipeline of c.
-func (o *output) loadCommand(ctx context.Context, f *flags, c project.Command) (*project.Project, bool) {
+// loadCommand loads the project with the pipeline of c. An error of the age
+// key ends with the line why, unless it is "".
+func (o *output) loadCommand(ctx context.Context, f *flags, c project.Command, why string) (*project.Project, bool) {
 	return o.loadWith(f, c.Name, func(keys project.Keys) (*project.Project, error) {
+		keys.Why = why
 		return project.LoadCommand(ctx, o.env.Dir, f.inventory, keys, c)
 	})
 }

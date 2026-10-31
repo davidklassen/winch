@@ -26,6 +26,8 @@ import (
 type Keys struct {
 	Identity secret.Identity
 	Filter   *secret.Filter
+	// Why is a line that an error of the age key ends with, or "".
+	Why string
 }
 
 // Sealed is the value of a !secret scalar. The loader puts it into the node,
@@ -90,8 +92,9 @@ func walkTags(n *yamlx.Node, f func(*yamlx.Node)) {
 }
 
 // staleSecrets returns a warning for each sealed value whose number of
-// recipients is not n. age records only the number, not the keys.
-func (l *loader) staleSecrets(n int) ([]*yamlx.Error, error) {
+// recipients is not n, the length of recipients in file. age records only the
+// number, not the keys.
+func (l *loader) staleSecrets(file string, n int) ([]*yamlx.Error, error) {
 	var out []*yamlx.Error
 	var errs []error
 	for _, s := range l.sealed {
@@ -101,34 +104,36 @@ func (l *loader) staleSecrets(n int) ([]*yamlx.Error, error) {
 			continue
 		}
 		if got != n {
-			out = append(out, yamlx.Errorf(s.pos, "this secret is encrypted for %s; winch.yaml lists %d; run winch secret rekey", recipientCount(got), n))
+			out = append(out, yamlx.Errorf(s.pos, "this secret is encrypted for %s; %s lists %d; a member who can read it must run winch secret rekey", publicKeyCount(got), file, n))
 		}
 	}
 	return out, errors.Join(errs...)
 }
 
-func recipientCount(n int) string {
+func publicKeyCount(n int) string {
 	if n == 1 {
-		return "1 recipient"
+		return "1 public key"
 	}
-	return fmt.Sprintf("%d recipients", n)
+	return fmt.Sprintf("%d public keys", n)
 }
 
-// unsealAll decrypts every sealed value with the identity of keys, and adds
-// each plaintext to the filter.
-func (l *loader) unsealAll(ctx context.Context, keys Keys) error {
+// unsealAll decrypts every sealed value with the age key of keys, and adds
+// each plaintext to the filter. recipients are the public keys in the project
+// file.
+func (l *loader) unsealAll(ctx context.Context, keys Keys, recipients []string) error {
 	if len(l.sealed) == 0 {
 		return nil
 	}
 	ids, err := keys.Identity.Read(ctx)
 	if err != nil {
-		return err
+		return withWhy(err, keys.Why)
 	}
+	k := &keyring{identity: keys.Identity, ids: ids, recipients: recipients, why: keys.Why}
 	var errs []error
 	for _, s := range l.sealed {
-		plain, err := decrypt(s.s.Text, ids, keys.Identity)
-		if err != nil {
-			errs = append(errs, yamlx.Errorf(s.pos, "!secret: %v", err))
+		plain, ok, err := k.decrypt(s.s.Text, s.pos)
+		if !ok {
+			errs = append(errs, err)
 			continue
 		}
 		s.s.Plain = plain
@@ -137,12 +142,53 @@ func (l *loader) unsealAll(ctx context.Context, keys Keys) error {
 	return errors.Join(errs...)
 }
 
-func decrypt(text string, ids []age.Identity, identity secret.Identity) (string, error) {
-	plain, err := secret.Decrypt(text, ids)
-	if errors.Is(err, secret.ErrNotRecipient) {
-		return "", fmt.Errorf("the identity %s is not a recipient", identity)
+func withWhy(err error, why string) error {
+	if why == "" {
+		return err
 	}
-	return plain, err
+	return errors.Join(err, errors.New(why))
+}
+
+// keyring decrypts secrets with an age key. It reports only the first
+// secret that the key cannot read.
+type keyring struct {
+	identity   secret.Identity
+	ids        []age.Identity
+	recipients []string
+	why        string
+	reported   bool
+}
+
+// decrypt returns the plaintext of text, the secret at pos. When ok is false,
+// err is the error to report, or nil for a key error that was reported.
+func (k *keyring) decrypt(text string, pos yamlx.Pos) (plain string, ok bool, err error) {
+	plain, err = secret.Decrypt(text, k.ids)
+	switch {
+	case errors.Is(err, secret.ErrNotRecipient):
+		if k.reported {
+			return "", false, nil
+		}
+		k.reported = true
+		return "", false, withWhy(k.cannotRead(pos), k.why)
+	case err != nil:
+		return "", false, yamlx.Errorf(pos, "!secret: %v", err)
+	}
+	return plain, true, nil
+}
+
+// cannotRead returns the error at pos, the first secret that the age key
+// cannot read. The fix depends on whether its public key is in recipients.
+func (k *keyring) cannotRead(pos yamlx.Pos) error {
+	for _, key := range secret.PublicKeys(k.ids) {
+		if slices.Contains(k.recipients, key) {
+			return yamlx.Errorf(pos, "the secrets are not encrypted for the age key %s yet; a member who can read them must run winch secret rekey", k.identity)
+		}
+	}
+	set := "WINCH_AGE_KEY to an age key"
+	if k.identity.Cmd != "" {
+		set = "WINCH_AGE_IDENTITY_CMD to a command that prints an age key"
+	}
+	return yamlx.Errorf(pos, "the age key %s is not in recipients; set %s in recipients, or run winch secret init and ask a member to run winch secret rekey", k.identity, set)
 }
 
 // unseal returns a copy of v with each sealed value replaced: by its
@@ -330,7 +376,7 @@ func (st Step) ShownUnless() string {
 	return ""
 }
 
-// Recipients returns the recipients in winch.yaml.
+// Recipients returns the recipients in the project file.
 func Recipients(dir string) ([]age.Recipient, error) {
 	cfg, err := loadConfig(dir)
 	if err != nil {
@@ -341,20 +387,22 @@ func Recipients(dir string) ([]age.Recipient, error) {
 
 func recipients(cfg *Config) ([]age.Recipient, error) {
 	if len(cfg.Recipients) == 0 {
-		return nil, errors.New("winch.yaml has no recipients")
+		return nil, fmt.Errorf("%s has no recipients; run winch secret init", cfg.file)
 	}
 	return secret.ParseRecipients(cfg.Recipients)
 }
 
-// RecipientEdit is winch.yaml with a new key in recipients.
+// RecipientEdit is the project file with a new key in recipients.
 type RecipientEdit struct {
+	// File is winch.yaml or winch.yml.
+	File string
 	path string
 	text []byte
 }
 
-// AddRecipient returns the edit that adds key to recipients in winch.yaml,
-// or nil when key is in the list. The edit keeps the comments and the layout
-// of the file.
+// AddRecipient returns the edit that adds key to recipients in the project
+// file, or nil when key is in the list. The edit keeps the comments and the
+// layout of the file.
 func AddRecipient(dir, key string) (*RecipientEdit, error) {
 	file, err := projectFile(dir)
 	if err != nil {
@@ -407,7 +455,7 @@ func AddRecipient(dir, key string) (*RecipientEdit, error) {
 		!slices.Equal(after.Recipients, append(cfg.Recipients, key)) {
 		return nil, fmt.Errorf("cannot add the public key to recipients in %s; add it by hand", file)
 	}
-	return &RecipientEdit{path, []byte(text)}, nil
+	return &RecipientEdit{File: file, path: path, text: []byte(text)}, nil
 }
 
 func (e *RecipientEdit) Write() error {
@@ -467,7 +515,7 @@ func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, []st
 	if err != nil {
 		return 0, nil, err
 	}
-	var ids []age.Identity
+	var k *keyring
 	// next keeps one value that two places hold the same after rekey.
 	next := map[string]string{}
 	// done holds the paths after links, so two links to one file write it
@@ -511,10 +559,12 @@ func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, []st
 		if len(sealed) == 0 {
 			continue
 		}
-		if ids == nil {
-			if ids, err = identity.Read(ctx); err != nil {
+		if k == nil {
+			ids, err := identity.Read(ctx)
+			if err != nil {
 				return 0, nil, err
 			}
+			k = &keyring{identity: identity, ids: ids, recipients: cfg.Recipients}
 		}
 		orig := strings.SplitAfter(string(data), "\n")
 		lines := slices.Clone(orig)
@@ -523,9 +573,9 @@ func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, []st
 		shift := map[int]int{}
 		for _, t := range sealed {
 			text, _ := t.Value.(string)
-			plain, err := decrypt(text, ids, identity)
-			if err != nil {
-				errs = append(errs, yamlx.Errorf(t.Pos, "!secret: %v", err))
+			plain, ok, err := k.decrypt(text, t.Pos)
+			if !ok {
+				errs = append(errs, err)
 				continue
 			}
 			if next[text] == "" {
@@ -611,6 +661,13 @@ func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, error
 		return nil, err
 	}
 	files := slices.Concat([]string{project}, invs, pipelines, recipes)
+	kinds := map[string]string{project: "project"}
+	for _, f := range invs {
+		kinds[f] = "inventory"
+	}
+	for _, f := range recipes {
+		kinds[f] = "recipe"
+	}
 	for _, sub := range []string{"templates", "files"} {
 		roots, err := filepath.Glob(filepath.Join(dir, "recipes", "*", sub))
 		if err != nil {
@@ -626,6 +683,7 @@ func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, error
 					return err
 				}
 				files = append(files, filepath.ToSlash(rel))
+				kinds[filepath.ToSlash(rel)] = sub
 				return nil
 			})
 			if err != nil {
@@ -649,19 +707,87 @@ func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, error
 			return nil, err
 		}
 		plain(data)
+		found := secret.Scan(data)
+		if len(found) == 0 {
+			continue
+		}
+		var vars map[int]bool
+		fix := "put it in a variable with !secret, and read the variable here"
+		switch kinds[file] {
+		case "templates":
+			fix = "put it in a variable with !secret, and read it with .vars"
+		case "files":
+			fix = "put it in a variable with !secret, move the file to templates/, and use template in place of source to read it with .vars"
+		case "inventory":
+			fix = "move it into vars with !secret"
+			fallthrough
+		case "project", "recipe":
+			if n, err := yamlx.Parse(file, data); err == nil {
+				vars = varLines(n, kinds[file], strings.SplitAfter(string(data), "\n"))
+			}
+		}
 		line, last, prev := 1, -1, 0
-		for _, f := range secret.Scan(data) {
+		for _, f := range found {
 			line += bytes.Count(data[prev:f.Offset], []byte("\n"))
 			if i := bytes.LastIndexByte(data[prev:f.Offset], '\n'); i >= 0 {
 				last = prev + i
 			}
 			prev = f.Offset
 			col := f.Offset - last
-			out = append(out, yamlx.Errorf(yamlx.Pos{File: file, Line: line, Col: col}, "this looks like %s; use !secret", f.What))
+			at := fix
+			if vars[line] {
+				at = "use !secret"
+			}
+			out = append(out, yamlx.Errorf(yamlx.Pos{File: file, Line: line, Col: col}, "this looks like %s; %s", f.What, at))
 		}
 	}
 	slices.SortStableFunc(out, func(a, b *yamlx.Error) int { return strings.Compare(a.Pos.File, b.Pos.File) })
 	return out, nil
+}
+
+// varLines returns the lines of the variable values in n, the tree of lines,
+// a file of kind "project", "inventory", or "recipe". A !secret can stand on
+// these lines.
+func varLines(n *yamlx.Node, kind string, lines []string) map[int]bool {
+	out := map[int]bool{}
+	defaults := func(n *yamlx.Node) {
+		p := find(n, []string{"vars"})
+		if p == nil || p.Value.Kind != yamlx.Map || len(p.Value.Pairs) == 0 {
+			return
+		}
+		for i := p.KeyPos.Line; i <= blockEnd(lines, p.Value.Pairs[0].KeyPos); i++ {
+			out[i] = true
+		}
+	}
+	inventory := func(n *yamlx.Node) {
+		for _, key := range []string{"hosts", "groups"} {
+			if p := find(n, []string{key}); p != nil {
+				for _, e := range p.Value.Pairs {
+					defaults(e.Value)
+				}
+			}
+		}
+	}
+	switch kind {
+	case "inventory":
+		inventory(n)
+	case "recipe":
+		defaults(n)
+	case "project":
+		defaults(n)
+		inventory(n)
+		if p := find(n, []string{"inventories"}); p != nil {
+			for _, e := range p.Value.Pairs {
+				inventory(e.Value)
+			}
+		}
+		if p := find(n, []string{"recipes"}); p != nil {
+			for _, e := range p.Value.Pairs {
+				defaults(e.Value)
+			}
+		}
+	}
+	return out
 }
 
 // WriteSecret encrypts plain for the recipients, and writes it as the value
