@@ -39,6 +39,8 @@ SSH settings:
     ConnectTimeout=15        a host that does not answer fails
     ServerAliveInterval=15   and does not hang the run
     ServerAliveCountMax=3
+    ControlMaster=no         a master connection from the SSH config,
+    ControlPath=none         with its own keepalive, is not used
     RemoteCommand=none       the SSH config does not replace
     PermitLocalCommand=no    or add to the command of winch
     ClearAllForwardings=yes

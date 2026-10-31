@@ -58,10 +58,6 @@ type Config struct {
 	// reconnect after a reboot always set it: they can run on several hosts
 	// at once.
 	Batch bool
-	// fresh makes ssh open its own connection, also when the SSH config
-	// shares one: a check of the access and a reconnect after a reboot need
-	// a new login.
-	fresh bool
 }
 
 // Session is one ssh process with the helper at the other end.
@@ -196,13 +192,10 @@ func resolve(ctx context.Context, cfg Config) (hostName, port, logLevel string, 
 // argv returns the arguments of ssh for the host of cfg, up to the target.
 func argv(cfg Config) []string {
 	args := []string{"-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
-		"-o", "RemoteCommand=none", "-o", "PermitLocalCommand=no",
+		"-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "RemoteCommand=none", "-o", "PermitLocalCommand=no",
 		"-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
 	if cfg.Batch {
 		args = append(args, "-o", "BatchMode=yes")
-	}
-	if cfg.fresh {
-		args = append(args, "-o", "ControlMaster=no", "-o", "ControlPath=none")
 	}
 	// The host name stays the target, so the Host blocks of the SSH config
 	// match it. ssh expands % tokens in HostName.
@@ -468,12 +461,11 @@ const accessMarker = "winch-access"
 // it proves what the next session needs.
 var accessCommand = command("echo " + accessMarker)
 
-// Access opens a new SSH connection to the host, without a connection that
-// the SSH config shares, and runs a command that needs the login and sudo.
+// Access opens a new SSH connection to the host and runs a command that needs the login and sudo.
 // Like the session start, it fails when the login prints to stdout.
 func (s *Session) Access(ctx context.Context) error {
 	cfg := s.cfg
-	cfg.fresh, cfg.Batch = true, true
+	cfg.Batch = true
 	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, append(argv(cfg), accessCommand)...)...)
 	stdout, stderr := &limitedBuffer{max: 4 << 10}, &limitedBuffer{max: 4 << 10}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -526,7 +518,7 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 	// The helper ends when its input closes, before the reboot.
 	s.Close() //nolint:errcheck // the reboot ends the connection
 	cfg := s.cfg
-	cfg.fresh, cfg.Batch, cfg.Hold = true, true, nil
+	cfg.Batch, cfg.Hold = true, nil
 	cfg.Hello.Resume = true
 	last := errors.New("no connection yet")
 	for {

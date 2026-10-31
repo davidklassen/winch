@@ -848,6 +848,7 @@ hosts:
 		doc.Paragraph(`winch also passes these options. They win over the SSH config:`),
 		doc.Table([][]string{
 			{"ConnectTimeout=15\nServerAliveInterval=15\nServerAliveCountMax=3", "a host that does not answer fails\nand does not hang the run"},
+			{"ControlMaster=no\nControlPath=none", "a master connection from the SSH config,\nwith its own keepalive, is not used"},
 			{"RemoteCommand=none\nPermitLocalCommand=no\nClearAllForwardings=yes\nForwardAgent=no\nForwardX11=no", "the SSH config does not replace\nor add to the command of winch"},
 		}),
 		doc.Heading("Host keys and passphrases"),

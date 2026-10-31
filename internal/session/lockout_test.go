@@ -79,8 +79,7 @@ done
 `
 
 // spec: Modules/reboot (reboot, wait until the helper answers again);
-// roadmap phase 16 (the reconnect passes ControlMaster=no and
-// ControlPath=none; a degraded system does not fail the step);
+// roadmap phase 16 (a degraded system does not fail the step);
 // Remote execution/Sessions (the connections after a reboot always use
 // BatchMode=yes)
 func TestReboot(t *testing.T) {
@@ -104,7 +103,7 @@ func TestReboot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if data, _ := os.ReadFile(argsFile); strings.Contains(string(data), "ControlPath=none") || strings.Contains(string(data), "BatchMode") {
+	if data, _ := os.ReadFile(argsFile); strings.Contains(string(data), "BatchMode") {
 		t.Errorf("the first connection passes %q", data)
 	}
 	b, err := s.Reboot(context.Background(), time.Minute)
@@ -114,7 +113,7 @@ func TestReboot(t *testing.T) {
 	if b.State != "degraded" || !slices.Equal(b.Failed, []string{"a.service"}) {
 		t.Errorf("Reboot = %+v", b)
 	}
-	if data, _ := os.ReadFile(argsFile); !strings.Contains(string(data), "\nBatchMode=yes\n-o\nControlMaster=no\n-o\nControlPath=none\n") {
+	if data, _ := os.ReadFile(argsFile); !strings.Contains(string(data), "\nBatchMode=yes\n") {
 		t.Errorf("the reconnect passes %q", data)
 	}
 	if holds != 1 {
