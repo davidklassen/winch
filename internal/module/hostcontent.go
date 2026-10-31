@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	dpkgInfo = "/var/lib/dpkg/info"
-	archives = "/var/cache/apt/archives"
+	dpkgInfo    = "/var/lib/dpkg/info"
+	ucfRegistry = "/var/lib/ucf/registry"
+	archives    = "/var/cache/apt/archives"
 )
 
 // hostContent is the content of a file step that comes from the host: a
@@ -142,6 +143,13 @@ func stockSource(ctx context.Context, p string) (*hostContent, error) {
 	}
 	pkg := owners[p]
 	if pkg == "" {
+		registry, err := os.ReadFile(ucfRegistry)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+		if pkg = ucfOwner(registry, p); pkg != "" {
+			return nil, fmt.Errorf("%s makes %s with ucf and ships no copy; use copy_from with its source in /usr/share", pkg, p)
+		}
 		h.missing = fmt.Errorf("no installed package ships %s", p)
 		return h, nil
 	}
@@ -302,4 +310,16 @@ func dpkgOwners(fsys fs.FS, want map[string]bool) (map[string]string, error) {
 		}
 	}
 	return owners, nil
+}
+
+// ucfOwner returns the package that registers p in registry, the content of
+// the ucf registry, or "" when none does. A line is the package, white
+// space, and the path.
+func ucfOwner(registry []byte, p string) string {
+	for line := range bytes.Lines(registry) {
+		if f := bytes.Fields(line); len(f) == 2 && string(f[1]) == p {
+			return string(f[0])
+		}
+	}
+	return ""
 }

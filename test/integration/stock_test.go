@@ -101,6 +101,11 @@ func TestStockModule(t *testing.T) {
 			FixArgs:      stockArgs,
 		},
 		{
+			Name:    "stock of a file that ucf manages fails",
+			Args:    &module.File{Path: "/etc/ssh/sshd_config", Stock: true},
+			WantErr: "openssh-server makes /etc/ssh/sshd_config with ucf and ships no copy; use copy_from with its source in /usr/share",
+		},
+		{
 			Name:  "copy_from creates with the mode of the source and root as owner",
 			Setup: `printf 'src\n' > /tmp/w/src && chown nobody:nogroup /tmp/w/src && chmod 640 /tmp/w/src`,
 			Args:  &module.File{Path: "/tmp/w/f", CopyFrom: "/tmp/w/src"},

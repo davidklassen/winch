@@ -204,6 +204,24 @@ func TestDpkgOwners(t *testing.T) {
 	}
 }
 
+// spec: Modules/file, dir, link (stock: a file that ucf manages)
+func TestUcfOwner(t *testing.T) {
+	registry := "openssh-server \t /etc/ssh/sshd_config\nunattended-upgrades \t /etc/apt/apt.conf.d/50unattended-upgrades\n"
+	for _, c := range []struct {
+		registry, path, want string
+	}{
+		{registry, "/etc/ssh/sshd_config", "openssh-server"},
+		{registry, "/etc/apt/apt.conf.d/50unattended-upgrades", "unattended-upgrades"},
+		{registry, "/etc/ssh", ""},
+		{registry, "/etc/apt/apt.conf.d/50unattended", ""},
+		{"", "/etc/ssh/sshd_config", ""},
+	} {
+		if got := ucfOwner([]byte(c.registry), c.path); got != c.want {
+			t.Errorf("ucfOwner(%q, %s) = %q, want %q", c.registry, c.path, got, c.want)
+		}
+	}
+}
+
 // spec: Modules/file, dir, link (stock: the helper reads the package archive)
 func TestDebEntryStopsEarly(t *testing.T) {
 	dir := t.TempDir()
