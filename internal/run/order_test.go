@@ -735,6 +735,94 @@ handlers:
       name: app
       running: true
 `, ""},
+		{"a drop-in after the service step of its unit", steps(`      - service:
+          name: app
+          running: true
+      - file:
+          path: /etc/systemd/system/app.service.d/override.conf
+          content: "[Service]\nEnvironment=A=1\n"
+`), "", "s: file /etc/systemd/system/app.service.d/override.conf: s: service app starts or enables app.service before this step changes its drop-in; move this step before it"},
+		{"a line in a drop-in after a service step that enables its unit", steps(`      - service:
+          name: app
+          enabled: true
+      - line:
+          path: /etc/systemd/system/app.service.d/override.conf
+          line: Environment=A=1
+          match: "^Environment=A="
+`), "", "s: line /etc/systemd/system/app.service.d/override.conf: s: service app starts or enables app.service before this step changes its drop-in; move this step before it"},
+		{"a link drop-in after the service step of an instance", steps(`      - service:
+          name: app@a
+          running: true
+      - link:
+          path: /etc/systemd/system/app@.service.d/override.conf
+          target: /srv/app/override.conf
+`), "", "s: link /etc/systemd/system/app@.service.d/override.conf: s: service app@a starts or enables app@.service before this step changes its drop-in; move this step before it"},
+		{"an instance drop-in after the service step of the instance", steps(`      - service:
+          name: app@a
+          running: true
+      - file:
+          path: /etc/systemd/system/app@a.service.d/override.conf
+          content: ""
+`), "", "s: file /etc/systemd/system/app@a.service.d/override.conf: s: service app@a starts or enables app@a.service before this step changes its drop-in; move this step before it"},
+		{"a drop-in that notifies, after the service step of its unit", steps(`      - recipe: web
+`), `steps:
+  - service:
+      name: app
+      running: true
+  - file:
+      path: /etc/systemd/system/app.service.d/override.conf
+      content: ""
+    notify: restart
+handlers:
+  restart:
+    - service:
+        name: app
+        restarted: true
+`, ""},
+		{"a drop-in that notifies a handler of a recipe that does not run", steps(`      - recipe: web
+        when: !expr "false"
+      - service:
+          name: app
+          running: true
+      - file:
+          path: /etc/systemd/system/app.service.d/override.conf
+          content: ""
+        notify: web.restart
+`), `steps: []
+handlers:
+  restart:
+    - service:
+        name: app
+        restarted: true
+`, "s: file /etc/systemd/system/app.service.d/override.conf: s: service app starts or enables app.service before this step changes its drop-in; move this step before it"},
+		{"a drop-in removed after the service step of its unit", steps(`      - service:
+          name: app.service
+          running: true
+      - file:
+          path: /etc/systemd/system/app.service.d/override.conf
+          absent: true
+`), "", "s: file /etc/systemd/system/app.service.d/override.conf: s: service app.service starts or enables app.service before this step changes its drop-in; move this step before it"},
+		{"a drop-in before the service step of its unit", steps(`      - file:
+          path: /etc/systemd/system/app.service.d/override.conf
+          content: ""
+      - service:
+          name: app
+          running: true
+`), "", ""},
+		{"a drop-in after a service step that stops its unit", steps(`      - service:
+          name: app
+          running: false
+      - file:
+          path: /etc/systemd/system/app.service.d/override.conf
+          content: ""
+`), "", ""},
+		{"a drop-in of another unit after a service step", steps(`      - service:
+          name: nginx
+          running: true
+      - file:
+          path: /etc/systemd/system/app.service.d/override.conf
+          content: ""
+`), "", ""},
 		{"a dir that replaces a link, and a file in it", steps(`      - dir:
           path: /var/www/html
           replace: true
@@ -931,6 +1019,7 @@ handlers:
 			h.SetResult("web1", "nginx", module.Result{Status: module.OK})
 			h.SetResult("web1", "nginx.service", module.Result{Status: module.OK})
 			h.SetResult("web1", "app", module.Result{Status: module.OK})
+			h.SetResult("web1", "app.service", module.Result{Status: module.OK})
 			h.SetResult("web1", "app@a", module.Result{Status: module.OK})
 			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			got := ""
