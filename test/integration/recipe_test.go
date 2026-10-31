@@ -4,8 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,16 +14,7 @@ import (
 func TestRecipes(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "recipes")
-	// A second inventory host on the same VM, for a recipe whose requirement fails.
-	conf, err := os.ReadFile(filepath.Join(lab.Dir, "hosts", vm.Name+".conf"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, err := lab.WriteHost("recipes-other", strings.Replace(string(conf), "Host "+vm.Name, "Host recipes-other", 1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Remove(other) })
+	other := lab.StartVM(t, "recipes-other")
 
 	blob := make([]byte, 256<<10)
 	rand.Read(blob)
@@ -96,7 +85,7 @@ steps:
 	if r.Code != 1 || !strings.Contains(r.Stdout, "recipes: nginx: + Site: file /etc/nginx/sites-available/demo") {
 		t.Fatalf("apply: exit %d, want 1 with the steps of host recipes", r.Code)
 	}
-	if out, err := vm.Run(t.Context(), "test -e /etc/alpine"); err == nil {
+	if out, err := other.Run(t.Context(), "test -e /etc/alpine"); err == nil {
 		t.Errorf("the host that failed its requirement changed: %s", out)
 	}
 	if out := vm.MustRun(t, "curl -s http://localhost:8080/"); out != "Hello from recipes (recipes).\n" {
