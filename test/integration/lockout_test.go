@@ -200,7 +200,7 @@ func TestLockoutKeys(t *testing.T) {
 	}
 	r = lab.Winch(t, dir, "apply", "site", "--yes")
 	if r.Code != 1 || !strings.Contains(r.Stderr, "keys: base: failed: user admin: no new SSH connection works: ") ||
-		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+		!strings.Contains(r.Stderr, "The change refuses the login.") || !strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply: exit %d", r.Code)
 	}
 	if got := vm.MustRun(t, keysState); got != before {
