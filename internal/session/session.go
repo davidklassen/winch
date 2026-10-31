@@ -209,7 +209,7 @@ func Resolve(ctx context.Context, cfg Config) (hostName, port, jump string, err 
 }
 
 type resolved struct {
-	hostName, port, jump, logLevel string
+	hostName, port, jump, user, logLevel string
 }
 
 // resolve reads the SSH config of the host of cfg with ssh -G. It fails when
@@ -233,6 +233,8 @@ func resolve(ctx context.Context, cfg Config) (resolved, error) {
 			r.port = value
 		case "proxyjump", "proxycommand":
 			r.jump = value
+		case "user":
+			r.user = value
 		case "loglevel":
 			r.logLevel = value
 		}
@@ -522,8 +524,16 @@ var accessCommand = command("echo " + accessMarker)
 func (s *Session) Access(ctx context.Context) error {
 	cfg := s.cfg
 	cfg.Batch, cfg.Want = true, &s.dest
-	if _, err := resolve(ctx, cfg); err != nil {
+	r, err := resolve(ctx, cfg)
+	if err != nil {
 		return err
+	}
+	// This login has no hello, so ssh's user stands for the login user. The
+	// helper may not know the name of the login user, as for an LDAP account.
+	if s.dest.User != "" && r.user != s.dest.User {
+		now := s.dest
+		now.User = r.user
+		return DestinationChanged(s.dest, now)
 	}
 	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, append(argv(cfg), accessCommand)...)...)
 	stdout, stderr := &limitedBuffer{max: 4 << 10}, &limitedBuffer{max: 4 << 10}

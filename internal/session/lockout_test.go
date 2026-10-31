@@ -55,19 +55,39 @@ func TestAccess(t *testing.T) {
 }
 
 // spec: Running a pipeline/Lockout protection, Plan (the access check fails
-// before the login when the host name or port differs from the plan's)
+// before the login when the host name, port, or user differs from the plan's;
+// a login name that the helper could not read is not compared)
 func TestAccessDestinationChanged(t *testing.T) {
-	fakeBin(t, "aarch64", "0", goodSudo)
-	t.Setenv("SSH_G", "hostname 192.0.2.10\nport 2222")
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("SSH_ARGS", argsFile)
-	s := &Session{cfg: Config{Host: "web1", Address: "web1", Batch: true}, dest: protocol.Destination{User: "admin", UID: 1000, HostName: "192.0.2.10", Port: "22"}}
-	err := s.Access(context.Background())
-	if want := "the SSH destination changed since the plan: admin@192.0.2.10:22 (uid 1000) → admin@192.0.2.10:2222 (uid 1000)"; err == nil || err.Error() != want {
-		t.Errorf("Access = %v, want %q", err, want)
+	admin := protocol.Destination{User: "admin", UID: 1000, HostName: "192.0.2.10", Port: "22"}
+	noName := protocol.Destination{UID: 1000, HostName: "192.0.2.10", Port: "22"}
+	tests := []struct {
+		name, sshG string
+		dest       protocol.Destination
+		wantErr    string
+	}{
+		{"same", "user admin\nhostname 192.0.2.10\nport 22", admin, ""},
+		{"no login name", "user root\nhostname 192.0.2.10\nport 22", noName, ""},
+		{"port", "user admin\nhostname 192.0.2.10\nport 2222", admin, "admin@192.0.2.10:2222 (uid 1000)"},
+		{"user", "user root\nhostname 192.0.2.10\nport 22", admin, "root@192.0.2.10:22 (uid 1000)"},
 	}
-	if _, err := os.Stat(argsFile); err == nil {
-		t.Error("the access check logged in")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			t.Setenv("SSH_G", tt.sshG)
+			argsFile := filepath.Join(t.TempDir(), "args")
+			t.Setenv("SSH_ARGS", argsFile)
+			s := &Session{cfg: Config{Host: "web1", Address: "web1", Batch: true}, dest: tt.dest}
+			err := s.Access(context.Background())
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Errorf("Access = %v", err)
+			case tt.wantErr != "" && (err == nil || err.Error() != "the SSH destination changed since the plan: "+destination(tt.dest)+" → "+tt.wantErr):
+				t.Errorf("Access = %v, want the changed destination %s", err, tt.wantErr)
+			}
+			if _, err := os.Stat(argsFile); (err == nil) != (tt.wantErr == "") {
+				t.Errorf("the access check logged in: %v, want %v", err == nil, tt.wantErr == "")
+			}
+		})
 	}
 }
 
