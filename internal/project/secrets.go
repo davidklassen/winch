@@ -346,35 +346,41 @@ func recipients(cfg *Config) ([]age.Recipient, error) {
 	return secret.ParseRecipients(cfg.Recipients)
 }
 
-// AddRecipient adds key to recipients in winch.yaml when it is not in the
-// list, and keeps the comments and the layout of the file. It reports whether
-// it added key.
-func AddRecipient(dir, key string) (bool, error) {
+// RecipientEdit is winch.yaml with a new key in recipients.
+type RecipientEdit struct {
+	path string
+	text []byte
+}
+
+// AddRecipient returns the edit that adds key to recipients in winch.yaml,
+// or nil when key is in the list. The edit keeps the comments and the layout
+// of the file.
+func AddRecipient(dir, key string) (*RecipientEdit, error) {
 	file, err := projectFile(dir)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	path, err := filepath.EvalSymlinks(projectPath(dir, file))
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, fmt.Errorf("%w; run winch in the project directory", notFound(file))
+		return nil, fmt.Errorf("%w; run winch in the project directory", notFound(file))
 	}
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false, fmt.Errorf("read %s: %w", file, err)
+		return nil, fmt.Errorf("read %s: %w", file, err)
 	}
 	n, err := yamlx.Parse(file, data)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	var cfg Config
 	if err := yamlx.Decode(n, &cfg); err != nil {
-		return false, err
+		return nil, err
 	}
 	if slices.Contains(cfg.Recipients, key) {
-		return false, nil
+		return nil, nil
 	}
 	text := string(data)
 	i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "recipients" })
@@ -399,9 +405,13 @@ func AddRecipient(dir, key string) (bool, error) {
 	var after Config
 	if n, err := yamlx.Parse(file, []byte(text)); err != nil || yamlx.Decode(n, &after) != nil ||
 		!slices.Equal(after.Recipients, append(cfg.Recipients, key)) {
-		return false, fmt.Errorf("cannot add the public key to recipients in %s; add it by hand", file)
+		return nil, fmt.Errorf("cannot add the public key to recipients in %s; add it by hand", file)
 	}
-	return true, replaceFile(path, []byte(text))
+	return &RecipientEdit{path, []byte(text)}, nil
+}
+
+func (e *RecipientEdit) Write() error {
+	return replaceFile(e.path, e.text)
 }
 
 // secretFiles returns the files that can hold a secret: the project file,
