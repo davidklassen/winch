@@ -141,7 +141,7 @@ func sshdFiles(ctx context.Context) ([]string, error) {
 	if _, err := os.Stat("/usr/sbin/sshd"); err != nil {
 		return nil, nil
 	}
-	out, err := run(ctx, nil, "/usr/sbin/sshd", "-T")
+	out, err := sshdTest(ctx, "-T")
 	if err != nil {
 		return nil, fmt.Errorf("find the files that sshd needs: %w", err)
 	}

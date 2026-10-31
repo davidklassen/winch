@@ -1,0 +1,9 @@
+stdout:
+web1: web: + file /etc/motd
+web1: zeta: ~ handler zeta.stop: service stop
+web1: zeta: ~ handler zeta.flush: service flush
+web1: alpha: ~ handler alpha.reload: service reload
+web1: alpha: ~ handler alpha.check: service check
+
+1 host: 1 changed, 0 unchanged
+stderr:

@@ -168,6 +168,12 @@ func TestRepoModule(t *testing.T) {
 			WantErr: "the source " + signedURL + " " + suite + " is also in /etc/apt/sources.list.d/vendor.list; remove it there",
 		},
 		{
+			Name:    "the source in another file that is a symbolic link",
+			Setup:   "echo 'deb [signed-by=/usr/share/keyrings/x.gpg] " + signedURL + "/ " + suite + " main' > /root/saved && ln -s /root/saved /etc/apt/sources.list.d/vendor.list",
+			Args:    args(),
+			WantErr: "the source " + signedURL + " " + suite + " is also in /etc/apt/sources.list.d/vendor.list; remove it there",
+		},
+		{
 			Name:      "an old key file that holds no key",
 			Setup:     signedSource(suite) + " && echo 'not a key' > " + signedAsc,
 			Args:      args(),
