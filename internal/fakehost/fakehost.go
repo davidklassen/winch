@@ -89,6 +89,8 @@ type Hosts struct {
 	boots       map[string]protocol.Boot
 	// dests holds the destinations that SetDestination set.
 	dests map[string]protocol.Destination
+	// jumps holds the jump hosts that SetJump set.
+	jumps map[string]string
 }
 
 func New() *Hosts {
@@ -125,6 +127,7 @@ func New() *Hosts {
 		timer:        time.Nanosecond,
 		boots:        map[string]protocol.Boot{},
 		dests:        map[string]protocol.Destination{},
+		jumps:        map[string]string{},
 	}
 }
 
@@ -363,11 +366,15 @@ func (h *Hosts) Connect(ctx context.Context, host project.Host) (*Conn, error) {
 	h.Connects[host.Name]++
 	h.Users[host.Name] = host.User
 	h.Trace = append(h.Trace, "connect "+host.Name)
-	dest, ok := h.dests[host.Name]
-	if !ok {
-		dest = protocol.Destination{User: host.User, HostName: host.Address, Port: "22"}
+	return &Conn{hosts: h, host: host.Name, dest: h.dest(host)}, nil
+}
+
+// dest returns the destination of host. h.mu must be held.
+func (h *Hosts) dest(host project.Host) protocol.Destination {
+	if d, ok := h.dests[host.Name]; ok {
+		return d
 	}
-	return &Conn{hosts: h, host: host.Name, dest: dest}, nil
+	return protocol.Destination{User: host.User, HostName: host.Address, Port: "22"}
 }
 
 // SetDestination sets the destination that each later session with host
@@ -377,6 +384,14 @@ func (h *Hosts) SetDestination(host string, d protocol.Destination) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.dests[host] = d
+}
+
+// SetJump sets the jump host that Resolve reports for host, as the
+// ProxyJump of an SSH config would.
+func (h *Hosts) SetJump(host, jump string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.jumps[host] = jump
 }
 
 func (h *Hosts) fails(m map[string]bool, host, path string) bool {
@@ -391,14 +406,23 @@ func (h *Hosts) ConnectorFor(batch bool) run.Connect {
 	return h.Connector()
 }
 
-// Connector returns Connect as a run.Connect.
+// Connector returns Connect as a run.Connect. Its Resolve returns the host
+// name and port of the destination, and the jump host that SetJump set.
 func (h *Hosts) Connector() run.Connect {
-	return func(ctx context.Context, proj string, host project.Host) (run.Conn, error) {
-		c, err := h.Connect(ctx, host)
-		if err != nil {
-			return nil, err
-		}
-		return c, nil
+	return run.Connect{
+		Resolve: func(_ context.Context, host project.Host) (run.Route, error) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			d := h.dest(host)
+			return run.Route{HostName: d.HostName, Port: d.Port, Jump: h.jumps[host.Name]}, nil
+		},
+		Open: func(ctx context.Context, proj string, host project.Host) (run.Conn, error) {
+			c, err := h.Connect(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			return c, nil
+		},
 	}
 }
 

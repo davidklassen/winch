@@ -153,7 +153,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 	// found gone.
 	dial := func(h project.Host) (Conn, error) {
 		plan.opts.progress().Busy(h.Name, "connecting")
-		c, err := connect(context.WithoutCancel(ctx), plan.Project, h)
+		c, err := connect.Open(context.WithoutCancel(ctx), plan.Project, h)
 		if err != nil {
 			return nil, fmt.Errorf("failed: %w", err)
 		}

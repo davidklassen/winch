@@ -424,6 +424,25 @@ func TestDestination(t *testing.T) {
 	}
 }
 
+// spec: Inventory
+func TestResolveJump(t *testing.T) {
+	tests := []struct{ config, want string }{
+		{"hostname 10.0.0.5\nport 22", ""},
+		{"hostname 10.0.0.5\nport 22\nproxyjump bastion-eu", "bastion-eu"},
+		{"hostname 10.0.0.5\nport 22\nproxycommand nc %h %p", "nc %h %p"},
+	}
+	for _, tt := range tests {
+		t.Setenv("SSH_G", tt.config)
+		hostName, port, jump, err := Resolve(context.Background(), Config{Host: "db"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hostName != "10.0.0.5" || port != "22" || jump != tt.want {
+			t.Errorf("%q: Resolve = %q, %q, %q; want 10.0.0.5, 22, %q", tt.config, hostName, port, jump, tt.want)
+		}
+	}
+}
+
 // spec: Running a pipeline/Plan
 func TestDestinationBadSSHConfig(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)

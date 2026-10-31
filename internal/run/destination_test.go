@@ -28,16 +28,17 @@ func TestApplyDestinationChanged(t *testing.T) {
 			h := fakehost.New()
 			h.SetFile("web3", "/etc/motd", "hello\nworld\n")
 			h.Pend("web3", gone)
-			for _, host := range []string{"web1", "web3"} {
-				h.SetDestination(host, protocol.Destination{HostName: "192.0.2.10", Port: "22"})
+			old := map[string]string{"web1": "22", "web3": "2200"}
+			for host, port := range old {
+				h.SetDestination(host, protocol.Destination{HostName: "192.0.2.10", Port: port})
 			}
 			plan := run.MakePlan(context.Background(), load(t, "web3"), h.Connector(), run.Options{})
 			for _, host := range []string{"web1", "web3"} {
 				h.SetDestination(host, tt.dest)
 			}
 			o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&bytes.Buffer{}), plain(&bytes.Buffer{})))
-			want := "failed: the SSH destination changed since the plan: 192.0.2.10:22 (uid 0) → " + tt.want
-			for _, host := range []string{"web1", "web3"} {
+			for host, port := range old {
+				want := "failed: the SSH destination changed since the plan: 192.0.2.10:" + port + " (uid 0) → " + tt.want
 				if err := o.Failed[host]; err == nil || err.Error() != want {
 					t.Errorf("%s error = %v, want %s", host, err, want)
 				}
@@ -56,4 +57,95 @@ func TestApplyDestinationChanged(t *testing.T) {
 			}
 		})
 	}
+}
+
+// spec: Inventory
+func TestPlanSharedDestination(t *testing.T) {
+	t.Run("same host name with other ports", func(t *testing.T) {
+		h := fakehost.New()
+		h.SetDestination("web1", protocol.Destination{HostName: "192.0.2.10", Port: "2201"})
+		h.SetDestination("web2", protocol.Destination{HostName: "192.0.2.10", Port: "2202"})
+		plan := run.MakePlan(context.Background(), load(t, "192.0.2.10"), h.Connector(), run.Options{})
+		if len(plan.Failed) != 0 {
+			t.Errorf("failed hosts: %v", plan.Failed)
+		}
+	})
+	t.Run("same host name and port", func(t *testing.T) {
+		h := fakehost.New()
+		h.SetDestination("web1", protocol.Destination{HostName: "Mail.acme.com", Port: "2222"})
+		h.SetDestination("web3", protocol.Destination{HostName: "mail.acme.com", Port: "2222"})
+		plan := run.MakePlan(context.Background(), load(t, "web3"), h.Connector(), run.Options{})
+		want := map[string]string{
+			"web1": `host "web1" has the SSH destination of host "web3": Mail.acme.com:2222`,
+			"web3": `host "web3" has the SSH destination of host "web1": mail.acme.com:2222`,
+		}
+		for host, w := range want {
+			if err := plan.Failed[host]; err == nil || err.Error() != w {
+				t.Errorf("%s error = %v, want %s", host, err, w)
+			}
+		}
+		if err := plan.Failed["web2"]; err != nil {
+			t.Errorf("web2 error = %v", err)
+		}
+		if h.Connects["web1"] != 0 || h.Connects["web3"] != 0 {
+			t.Errorf("connects = %v, want none to web1 and web3", h.Connects)
+		}
+	})
+	t.Run("same private IP behind other jump hosts", func(t *testing.T) {
+		h := fakehost.New()
+		for host, jump := range map[string]string{"web1": "bastion-eu", "web3": "bastion-us"} {
+			h.SetDestination(host, protocol.Destination{HostName: "10.0.0.5", Port: "22"})
+			h.SetJump(host, jump)
+		}
+		plan := run.MakePlan(context.Background(), load(t, "web3"), h.Connector(), run.Options{})
+		if len(plan.Failed) != 0 {
+			t.Errorf("failed hosts: %v", plan.Failed)
+		}
+	})
+	t.Run("same private IP behind one jump host", func(t *testing.T) {
+		h := fakehost.New()
+		for _, host := range []string{"web1", "web3"} {
+			h.SetDestination(host, protocol.Destination{HostName: "10.0.0.5", Port: "22"})
+			h.SetJump(host, "bastion-eu")
+		}
+		plan := run.MakePlan(context.Background(), load(t, "web3"), h.Connector(), run.Options{})
+		want := map[string]string{
+			"web1": `host "web1" has the SSH destination of host "web3": 10.0.0.5:22 through bastion-eu`,
+			"web3": `host "web3" has the SSH destination of host "web1": 10.0.0.5:22 through bastion-eu`,
+		}
+		for host, w := range want {
+			if err := plan.Failed[host]; err == nil || err.Error() != w {
+				t.Errorf("%s error = %v, want %s", host, err, w)
+			}
+		}
+	})
+	t.Run("three hosts", func(t *testing.T) {
+		h := fakehost.New()
+		for _, host := range []string{"web1", "web2", "web3"} {
+			h.SetDestination(host, protocol.Destination{HostName: "192.0.2.10", Port: "22"})
+		}
+		plan := run.MakePlan(context.Background(), load(t, "web3"), h.Connector(), run.Options{})
+		want := map[string]string{
+			"web1": `host "web1" has the SSH destination of host "web2": 192.0.2.10:22`,
+			"web2": `host "web2" has the SSH destination of host "web1": 192.0.2.10:22`,
+			"web3": `host "web3" has the SSH destination of host "web1": 192.0.2.10:22`,
+		}
+		for host, w := range want {
+			if err := plan.Failed[host]; err == nil || err.Error() != w {
+				t.Errorf("%s error = %v, want %s", host, err, w)
+			}
+		}
+	})
+	t.Run("hosts of skipped stages", func(t *testing.T) {
+		h := fakehost.New()
+		for _, host := range []string{"web1", "web3"} {
+			h.SetDestination(host, protocol.Destination{HostName: "192.0.2.10", Port: "22"})
+		}
+		p := load(t, "web3")
+		p.Pipeline.Stages[0].Skipped = true
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		if len(plan.Failed) != 0 {
+			t.Errorf("failed hosts: %v", plan.Failed)
+		}
+	})
 }

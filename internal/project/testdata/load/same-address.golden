@@ -1,3 +1,13 @@
-inventories/test.yaml:4:3: host "web2" has the address of host "web1": 192.0.2.1
-inventories/test.yaml:7:3: host "web4" has the address of host "web3": web3
-inventories/test.yaml:13:3: host "web7" has the address of host "web6": mail.acme.com
+project acme, inventory inventories/test.yaml
+host web1 address=192.0.2.1 user=
+host web2 address=192.0.2.1 user=
+host web3 address=web3 user=
+host web4 address=web3 user=
+host web5 address=192.0.2.5 user=
+host web6 address=MAIL.acme.com user=
+host web7 address=mail.acme.com user=
+pipeline site
+stage base hosts=all targets=web1,web2,web3,web4,web5,web6,web7
+  file {"path":"/etc/motd"} data="hi" at pipelines/site.yaml:5:9
+stage one hosts=web2 targets=web2
+  file {"path":"/etc/issue","absent":true} at pipelines/site.yaml:11:9

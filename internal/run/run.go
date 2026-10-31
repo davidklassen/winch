@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"net"
 	"path"
 	"regexp"
 	"slices"
@@ -95,8 +97,20 @@ func (o Options) progress() Progress {
 	return o.Progress
 }
 
-// Connect opens a session with a host for the project named proj.
-type Connect func(ctx context.Context, proj string, h project.Host) (Conn, error)
+// Route is how ssh reaches a host: the host name and port, through the jump
+// host, a ProxyJump or ProxyCommand, when it is not empty.
+type Route struct {
+	HostName, Port, Jump string
+}
+
+// Connect reaches hosts.
+type Connect struct {
+	// Resolve returns the route that ssh resolves for h, without a contact
+	// with the host.
+	Resolve func(ctx context.Context, h project.Host) (Route, error)
+	// Open opens a session with h for the project named proj.
+	Open func(ctx context.Context, proj string, h project.Host) (Conn, error)
+}
 
 type Plan struct {
 	// Project is the name of the project.
@@ -340,7 +354,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		hr := runs[h.Name]
 		if hr.conn == nil {
 			opts.progress().Busy(h.Name, "connecting")
-			c, err := connect(context.WithoutCancel(ctx), p.Name, h)
+			c, err := connect.Open(context.WithoutCancel(ctx), p.Name, h)
 			if err != nil {
 				return nil, err
 			}
@@ -357,6 +371,13 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 		}
 	}
+	var running []project.Host
+	for _, h := range p.Inventory.Hosts {
+		if _, ok := last[h.Name]; ok {
+			running = append(running, h)
+		}
+	}
+	maps.Copy(plan.Failed, sharedDestinations(context.WithoutCancel(ctx), running, connect.Resolve))
 	for si := range p.Pipeline.Stages {
 		stage := &p.Pipeline.Stages[si]
 		if stage.Skipped {
@@ -425,6 +446,43 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	plan.suppressMissingUnitFiles()
 	plan.hash = sumBytes(plan.HashInput())[:16]
 	return plan
+}
+
+// sharedDestinations returns errors for the hosts whose host name, port, and
+// jump host, as ssh resolves them, are those of another host: the sessions of
+// both would share the lock of one helper.
+func sharedDestinations(ctx context.Context, hosts []project.Host, resolve func(context.Context, project.Host) (Route, error)) map[string]error {
+	errs := map[string]error{}
+	byRoute := map[Route][]string{}
+	routes := map[string]Route{}
+	for _, h := range hosts {
+		r, err := resolve(ctx, h)
+		if err != nil {
+			errs[h.Name] = err
+			continue
+		}
+		routes[h.Name] = r
+		r.HostName = strings.ToLower(r.HostName)
+		byRoute[r] = append(byRoute[r], h.Name)
+	}
+	for _, names := range byRoute {
+		if len(names) < 2 {
+			continue
+		}
+		for i, name := range names {
+			other := names[0]
+			if i == 0 {
+				other = names[1]
+			}
+			r := routes[name]
+			shown := net.JoinHostPort(r.HostName, r.Port)
+			if r.Jump != "" {
+				shown += " through " + r.Jump
+			}
+			errs[name] = fmt.Errorf("host %q has the SSH destination of host %q: %s", name, other, shown)
+		}
+	}
+	return errs
 }
 
 // check checks the steps of a stage on one host. At the first contact, it
