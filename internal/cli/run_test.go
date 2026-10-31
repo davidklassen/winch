@@ -99,8 +99,8 @@ func TestRunArgs(t *testing.T) {
 		{"an alias", []string{"web1", "file", "path=/x", "content=*x"}, `; quote it: 'content="*x"'`},
 		{"a reserved character", []string{"web1", "file", "path=/x", "content=@x"}, `; quote it: 'content="@x"'`},
 		{"a bad hash", []string{"web1", "pkg", "name=htop", "--check", "xyz"}, "a plan hash has 16 hex characters"},
-		{"--hosts", []string{"web1", "pkg", "name=htop", "--hosts", "web1"}, "flag provided but not defined: -hosts"},
-		{"--set", []string{"web1", "pkg", "name=htop", "--set", "vars.x=1"}, "flag provided but not defined: -set"},
+		{"--hosts", []string{"web1", "pkg", "name=htop", "--hosts", "web1"}, "winch run: unknown flag --hosts"},
+		{"--set", []string{"web1", "pkg", "name=htop", "--set", "vars.x=1"}, "winch run: unknown flag --set"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -229,10 +229,10 @@ func TestExec(t *testing.T) {
 			want: "web1\n  up\n\n", wantErr: "web2: ssh: connect to host", code: exitUnreachable},
 		{name: "a failed host",
 			results: map[string]module.ExecResult{"web1": {Output: "up\n"}}, fail: "web2",
-			want: "web1\n  up\n\n", wantErr: "web2: session: the helper ended\n", code: exitFailed},
+			want: "web1\n  up\n\n", wantErr: "web2: the session ended without an error message\n", code: exitFailed},
 		{name: "a failed close keeps the output",
 			results: map[string]module.ExecResult{"web1": {Output: "up\n"}, "web2": {Output: "up\n"}}, close: "web2",
-			want: "web1, web2 (2 hosts)\n  up\n\n", wantErr: "web2: session: exit status 255\n", code: exitFailed},
+			want: "web1, web2 (2 hosts)\n  up\n\n", wantErr: "web2: the session ended without an error message (ssh: exit status 255)\n", code: exitFailed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -307,7 +307,7 @@ func TestExecArgs(t *testing.T) {
 		{"nothing after --", []string{"all", "--"}, usage},
 		{"no pattern", []string{"--", "uptime"}, "winch exec: needs one host pattern before --"},
 		{"two patterns", []string{"web1", "web2", "--", "uptime"}, "winch exec: needs one host pattern before --"},
-		{"--yes", []string{"all", "--yes", "--", "uptime"}, "flag provided but not defined: -yes"},
+		{"--yes", []string{"all", "--yes", "--", "uptime"}, "winch exec: unknown flag --yes"},
 		{"no host", []string{"none", "--", "uptime"}, `winch exec: the host pattern "none" matches no host in inventories/test.yaml`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

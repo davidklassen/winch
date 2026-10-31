@@ -32,7 +32,7 @@ func put(ctx context.Context, top *os.Root, missing []string, dir *os.Root, tmp,
 			keep = dir.Rename
 		}
 		if err := keep(name, backup); err != nil {
-			return fmt.Errorf("keep the old %s: %w", name, err)
+			return err
 		}
 	}
 	if err := dir.Rename(tmp, name); err != nil {

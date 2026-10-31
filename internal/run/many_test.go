@@ -563,7 +563,7 @@ func TestSessionErrorInApplyHasNoScope(t *testing.T) {
 		want string
 	}{
 		{"connect", func(h *fakehost.Hosts) { h.SetUnreachable("web1") }, "web1: ssh: connect to host web1: Connection refused\n"},
-		{"close", func(h *fakehost.Hosts) { h.FailClose("web1") }, "web1: session: exit status 255\n"},
+		{"close", func(h *fakehost.Hosts) { h.FailClose("web1") }, "web1: the session ended without an error message (ssh: exit status 255)\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := manyProject(t, motdStage)
@@ -591,7 +591,7 @@ func TestPlanCloseErrorFailsHost(t *testing.T) {
 	h := fakehost.New()
 	h.FailClose("web1")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
-	if err := plan.Failed["web1"]; err == nil || err.Error() != "session: exit status 255" {
+	if err := plan.Failed["web1"]; err == nil || err.Error() != "the session ended without an error message (ssh: exit status 255)" {
 		t.Errorf("web1 error %v, want the close error", err)
 	}
 	if len(plan.Failed) != 1 {

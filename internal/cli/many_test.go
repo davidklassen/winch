@@ -143,7 +143,7 @@ func TestJSONHealthApply(t *testing.T) {
 	h := fakehost.New()
 	h.FailCommand("web1", "check")
 	r = winch(t, dir, h, false, "", "apply", "site", "--yes", "--json")
-	want = `{"type":"applied","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#health","stage":"base","health":"check","status":"failed","error":"did not pass within 1m0s: exit status 1"}`
+	want = `{"type":"applied","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#health","stage":"base","health":"check","status":"failed","error":"did not pass within 60s: exit status 1"}`
 	if r.code != exitFailed || !strings.Contains(r.out, want+"\n") {
 		t.Errorf("exit %d, stdout %s\nwant %s", r.code, r.out, want)
 	}

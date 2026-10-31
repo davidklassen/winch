@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -71,13 +72,13 @@ func parseRoot(file string, data []byte) (*yaml.Node, error) {
 		if errors.Is(err, io.EOF) {
 			return nil, nil
 		}
-		return nil, parseError(file, err)
+		return nil, parseError(file, data, err)
 	}
 	var extra yaml.Node
 	if err := dec.Decode(&extra); err == nil {
 		return nil, Errorf(Pos{file, extra.Line, extra.Column}, "a file holds one YAML document")
 	} else if !errors.Is(err, io.EOF) {
-		return nil, parseError(file, err)
+		return nil, parseError(file, data, err)
 	}
 	return doc.Content[0], nil
 }
@@ -90,13 +91,31 @@ func HasComment(data []byte) bool {
 
 var lineRe = regexp.MustCompile(`^yaml: line (\d+): (.*)$`)
 
-func parseError(file string, err error) error {
-	msg := err.Error()
-	if m := lineRe.FindStringSubmatch(msg); m != nil {
-		line, _ := strconv.Atoi(m[1])
-		return Errorf(Pos{file, line, 1}, "%s", m[2])
+// parseError gives the error of the YAML parser a position in file. The
+// errors of a tab in the indentation name the line of the tab or the line
+// above it, and on the first line no line.
+func parseError(file string, data []byte, err error) error {
+	msg, line := strings.TrimPrefix(err.Error(), "yaml: "), 1
+	if m := lineRe.FindStringSubmatch(err.Error()); m != nil {
+		line, _ = strconv.Atoi(m[1])
+		msg = m[2]
 	}
-	return Errorf(Pos{file, 1, 1}, "%s", strings.TrimPrefix(msg, "yaml: "))
+	if slices.Contains(tabErrors, msg) {
+		lines := strings.Split(string(data), "\n")
+		for i := line - 1; i <= line && i < len(lines); i++ {
+			indent := lines[i][:len(lines[i])-len(strings.TrimLeft(lines[i], " \t"))]
+			if col := strings.IndexByte(indent, '\t'); col >= 0 {
+				return Errorf(Pos{file, i + 1, col + 1}, "a tab indents this line; YAML indents with spaces")
+			}
+		}
+	}
+	return Errorf(Pos{file, line, 1}, "%s", msg)
+}
+
+var tabErrors = []string{
+	"found character that cannot start any token",
+	"found a tab character that violates indentation",
+	"found a tab character where an indentation space is expected",
 }
 
 type converter struct {

@@ -437,7 +437,7 @@ func compileRequire(n *yamlx.Node) (Require, error) {
 	}
 	prog, err := expr.Compile(text, expr.Env(requireEnv{}), expr.AsBool(), expr.Optimize(false))
 	if err != nil {
-		return Require{}, yamlx.Errorf(n.Pos, "require: %s", exprMessage(err, []string{"facts"}))
+		return Require{}, yamlx.Errorf(n.Pos, "require: %s", exprMessage(err, text, []string{"facts"}))
 	}
 	check := &exprCheck{src: prog.Source(), named: map[ast.Node]bool{}}
 	ast.Walk(new(prog.Node()), check)
@@ -452,7 +452,7 @@ func (r *Recipe) Check(f facts.Facts) error {
 	for _, req := range r.Require {
 		out, err := expr.Run(req.program, requireEnv{Facts: f})
 		if err != nil {
-			return yamlx.Errorf(req.Pos, "require: %s", exprMessage(err, []string{"facts"}))
+			return yamlx.Errorf(req.Pos, "require: %s", exprMessage(err, req.Text, []string{"facts"}))
 		}
 		if ok, _ := out.(bool); !ok {
 			return yamlx.Errorf(req.Pos, "recipe %s requires %s; the host has os.id %q, os.version %q, os.codename %q",

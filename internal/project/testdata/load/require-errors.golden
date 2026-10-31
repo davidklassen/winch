@@ -7,7 +7,7 @@ recipes/nginx/recipe.yaml:3:5: require: unknown name "fact"; did you mean "facts
 recipes/nginx/recipe.yaml:4:5: require: unknown fact "idd"; did you mean "id"?
  | facts.os.idd == "debian"
  | .........^
-recipes/nginx/recipe.yaml:5:5: require: expected bool, but got string
-recipes/nginx/recipe.yaml:6:5: require: invalid operation: == (mismatched types string and int)
+recipes/nginx/recipe.yaml:5:5: require: expected true or false, got a string
+recipes/nginx/recipe.yaml:6:5: require: facts.os.version is a string; compare it with a string, such as "13"
  | facts.os.version == 13
  | .................^

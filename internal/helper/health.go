@@ -60,13 +60,8 @@ func health(ctx context.Context, h protocol.Health, interval, killDelay time.Dur
 		}
 	}
 	if !passing.IsZero() {
-		return fmt.Errorf("passed, but not for %s within %s", seconds(h.Stable), seconds(h.Timeout))
+		return fmt.Errorf("passed, but not for %s within %s", module.Seconds(h.Stable), module.Seconds(h.Timeout))
 	}
 	msg := strings.TrimPrefix(last.Error(), h.Command+": ")
-	return fmt.Errorf("did not pass within %s: %s", seconds(h.Timeout), msg)
-}
-
-// seconds formats d in seconds: 120s, 0.3s.
-func seconds(d time.Duration) string {
-	return fmt.Sprintf("%gs", d.Seconds())
+	return fmt.Errorf("did not pass within %s: %s", module.Seconds(h.Timeout), msg)
 }

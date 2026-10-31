@@ -378,7 +378,7 @@ func TestDownloadModule(t *testing.T) {
 			Setup:        "mv /usr/bin/xz /usr/bin/xz.off",
 			Args:         &module.Download{URL: urlTxz, SHA256: sha(txz), Unpack: "/tmp/w/opt"},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + urlTxz, unpackLine}, MissingTools: []module.Tool{{Name: "xz", Package: "xz-utils"}}},
-			WantApplyErr: "xz is missing; install the package xz-utils with an earlier pkg step",
+			WantApplyErr: "xz is missing; install the package xz-utils in an earlier pkg step",
 			Fix:          "mv /usr/bin/xz.off /usr/bin/xz",
 		},
 		{
@@ -700,7 +700,7 @@ while True:
 			Setup:        stall,
 			Args:         &module.Download{URL: stalled, SHA256: sum, Path: "/tmp/w/f"},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + stalled, attrs}},
-			WantApplyErr: "download " + stalled + ": no data for 2m0s",
+			WantApplyErr: "download " + stalled + ": no data for 120s",
 			After:        `[ "$(ls -A /tmp/w)" = "" ]`,
 			Fix:          good,
 		},

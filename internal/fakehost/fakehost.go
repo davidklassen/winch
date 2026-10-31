@@ -488,7 +488,7 @@ func (c *Conn) dead() error {
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
 	if c.kill != c.hosts.kills[c.host] {
-		return errors.New("session: write |1: broken pipe")
+		return errors.New("the session ended without an error message (ssh: signal: killed)")
 	}
 	return nil
 }
@@ -1085,7 +1085,7 @@ func (c *Conn) Health(ctx context.Context, h protocol.Health) error {
 	defer c.hosts.mu.Unlock()
 	c.hosts.Trace = append(c.hosts.Trace, fmt.Sprintf("health %s %s %s %s", c.host, h.Command, h.Stable, h.Timeout))
 	if c.hosts.failCmd[c.host+" "+h.Command] {
-		return fmt.Errorf("did not pass within %s: exit status 1", h.Timeout)
+		return fmt.Errorf("did not pass within %s: exit status 1", module.Seconds(h.Timeout))
 	}
 	c.hosts.checks[c.host] = slices.DeleteFunc(c.hosts.checks[c.host], func(k protocol.Check) bool { return k == h.Check })
 	return nil
@@ -1102,7 +1102,7 @@ func (c *Conn) Close() error {
 	c.hosts.Open--
 	c.hosts.Trace = append(c.hosts.Trace, "close "+c.host)
 	if c.hosts.failClose[c.host] {
-		return errors.New("session: exit status 255")
+		return errors.New("the session ended without an error message (ssh: exit status 255)")
 	}
 	return nil
 }
@@ -1128,7 +1128,7 @@ func (c *Conn) Exec(ctx context.Context, command string) (module.ExecResult, err
 	defer c.hosts.mu.Unlock()
 	c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "exec "+command)
 	if c.hosts.failExec[c.host] {
-		return module.ExecResult{}, errors.New("session: the helper ended")
+		return module.ExecResult{}, errors.New("the session ended without an error message")
 	}
 	return c.hosts.execs[c.host], nil
 }

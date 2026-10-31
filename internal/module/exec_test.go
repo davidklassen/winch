@@ -234,3 +234,24 @@ func TestRunWithoutLimit(t *testing.T) {
 		t.Errorf("error = %v, want nil", err)
 	}
 }
+
+// spec: CLI/Messages
+func TestNoResultSeconds(t *testing.T) {
+	for limit, want := range map[time.Duration]string{
+		commandLimit:            "no result after 600s",
+		90 * time.Second:        "no result after 90s",
+		1500 * time.Millisecond: "no result after 1.5s",
+	} {
+		if got := noResult(limit).Error(); got != want {
+			t.Errorf("%v: got %q, want %q", limit, got, want)
+		}
+	}
+}
+
+// spec: CLI/Messages
+func TestRunMissingTool(t *testing.T) {
+	_, err := runLimited(t.Context(), commandLimit, time.Second, nil, "", "winch-no-such-tool", "x")
+	if err == nil || err.Error() != "winch-no-such-tool is missing" {
+		t.Errorf("got %v", err)
+	}
+}

@@ -599,11 +599,11 @@ func TestSecretGenerate(t *testing.T) {
 	}
 
 	r = winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw", "--host", "")
-	if r.code != exitInvalid || !strings.Contains(r.err, "winch secret generate: invalid value \"\" for flag -host: must not be empty") {
+	if r.code != exitInvalid || !strings.Contains(r.err, "winch secret generate: --host must not be empty") {
 		t.Errorf("--host \"\": exit %d, stderr %q", r.code, r.err)
 	}
 	r = winch(t, dir, fakehost.New(), false, "", "validate", "--host", "web1")
-	if r.code != exitInvalid || !strings.Contains(r.err, "flag provided but not defined: -host") {
+	if r.code != exitInvalid || !strings.Contains(r.err, "winch validate: unknown flag --host") {
 		t.Errorf("validate --host: exit %d, stderr %q", r.code, r.err)
 	}
 

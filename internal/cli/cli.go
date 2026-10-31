@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -147,7 +146,6 @@ func Main(ctx context.Context, args []string, env Env) int {
 	}
 	env.name = name
 	var f flags
-	fs := flagSet(cmd, &f)
 	flagArgs := args[1:]
 	// The words after -- of exec are the command, also those that start
 	// with -.
@@ -155,13 +153,13 @@ func Main(ctx context.Context, args []string, env Env) int {
 		f.command = strings.Join(flagArgs[i+1:], " ")
 		flagArgs = flagArgs[:i]
 	}
-	pos, err := parse(fs, flagArgs)
-	if errors.Is(err, flag.ErrHelp) {
+	pos, err := parse(cmd, &f, flagArgs)
+	if errors.Is(err, errHelp) {
 		writeHelp(env.stdout, cmd)
 		return exitOK
 	}
 	if err != nil {
-		env.fail(usage("%v", err))
+		env.fail(err)
 		fmt.Fprintf(env.stderr, "Run \"winch %s --help\" for the flags.\n", name)
 		return exitInvalid
 	}
@@ -190,47 +188,34 @@ func version(_ context.Context, env Env, _ *flags, args []string) int {
 	return exitOK
 }
 
-// flagSet returns the parser of the flags of cmd, which sets f.
-func flagSet(cmd command, f *flags) *flag.FlagSet {
-	fs := flag.NewFlagSet(cmd.name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	for _, fd := range cmd.flags {
-		name := strings.TrimPrefix(fd.name, "--")
-		switch name {
-		case "inventory":
-			fs.StringVar(&f.inventory, name, "", "")
-		case "set":
-			fs.Func(name, "", func(s string) error {
-				f.set = append(f.set, s)
-				return nil
-			})
-		case "json":
-			fs.BoolVar(&f.json, name, false, "")
-		case "yes":
-			fs.BoolVar(&f.yes, name, false, "")
-		case "check":
-			fs.Func(name, "", func(s string) error {
-				f.check = &s
-				return nil
-			})
-		case "exit-code":
-			fs.BoolVar(&f.exitCode, name, false, "")
-		case "hosts":
-			fs.Func(name, "", notEmpty(&f.hosts))
-		case "stages":
-			fs.Func(name, "", notEmpty(&f.stages))
-		case "user":
-			fs.Func(name, "", func(s string) error {
-				f.users = append(f.users, s)
-				return nil
-			})
-		case "batch":
-			fs.BoolVar(&f.batch, name, false, "")
-		case "host":
-			fs.Func(name, "", notEmpty(&f.host))
-		}
+func setFlagValue(f *flags, name, v string) error {
+	switch name {
+	case "--inventory":
+		f.inventory = v
+	case "--set":
+		f.set = append(f.set, v)
+	case "--json":
+		f.json = true
+	case "--yes":
+		f.yes = true
+	case "--check":
+		f.check = &v
+	case "--exit-code":
+		f.exitCode = true
+	case "--hosts":
+		return notEmpty(&f.hosts, name, v)
+	case "--stages":
+		return notEmpty(&f.stages, name, v)
+	case "--user":
+		f.users = append(f.users, v)
+	case "--batch":
+		f.batch = true
+	case "--host":
+		return notEmpty(&f.host, name, v)
+	default:
+		return fmt.Errorf("no flag %s", name)
 	}
-	return fs
+	return nil
 }
 
 func commandNamed(name string) (command, bool) {
@@ -270,32 +255,56 @@ func printError(w *color.Writer, msg string) {
 	color.Fprint(w, color.Text{{Style: color.Red, Text: secret.PrintableLines(msg) + "\n"}})
 }
 
-// notEmpty returns a flag function that sets *v and rejects an empty value.
-// An empty --hosts must not select every host.
-func notEmpty(v *string) func(string) error {
-	return func(s string) error {
-		if strings.TrimSpace(s) == "" {
-			return errors.New("must not be empty")
-		}
-		*v = s
-		return nil
+// notEmpty sets *p to v and rejects an empty value. An empty --hosts must
+// not select every host.
+func notEmpty(p *string, name, v string) error {
+	if strings.TrimSpace(v) == "" {
+		return usage("%s must not be empty", name)
 	}
+	*p = v
+	return nil
 }
 
-// parse parses flags before and after positional arguments.
-func parse(fs *flag.FlagSet, args []string) ([]string, error) {
+var errHelp = errors.New("help")
+
+// parse sets the flags of cmd in f and returns the other arguments. Flags
+// come before and after the other arguments, with one dash or two, and a
+// value after = or in the next argument. The arguments after -- are not
+// flags.
+func parse(cmd command, f *flags, args []string) ([]string, error) {
 	var pos []string
-	for {
-		if err := fs.Parse(args); err != nil {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return append(pos, args[i+1:]...), nil
+		}
+		if len(arg) < 2 || arg[0] != '-' {
+			pos = append(pos, arg)
+			continue
+		}
+		name, v, hasValue := strings.Cut(arg, "=")
+		name = "--" + strings.TrimLeft(name, "-")
+		if name == "--h" || name == "--help" {
+			return nil, errHelp
+		}
+		j := slices.IndexFunc(cmd.flags, func(fd flagDoc) bool { return fd.name == name })
+		if j < 0 {
+			return nil, usage("unknown flag %s", name)
+		}
+		switch takesValue := cmd.flags[j].value != ""; {
+		case !takesValue && hasValue:
+			return nil, usage("%s takes no value", name)
+		case takesValue && !hasValue && i+1 == len(args):
+			return nil, usage("%s needs a value", name)
+		case takesValue && !hasValue:
+			i++
+			v = args[i]
+		}
+		if err := setFlagValue(f, name, v); err != nil {
 			return nil, err
 		}
-		args = fs.Args()
-		if len(args) == 0 {
-			return pos, nil
-		}
-		pos = append(pos, args[0])
-		args = args[1:]
 	}
+	return pos, nil
 }
 
 func validate(ctx context.Context, env Env, f *flags, args []string) int {

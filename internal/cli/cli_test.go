@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,11 @@ func TestInvalid(t *testing.T) {
 	}{
 		{"no command", nil, "Commands:"},
 		{"unknown command", []string{"aply", "site"}, `unknown command "aply"; did you mean "apply"?`},
-		{"unknown flag", []string{"plan", "site", "--nope"}, "flag provided but not defined: -nope"},
+		{"unknown flag", []string{"plan", "site", "--yes"}, "winch plan: unknown flag --yes\nRun \"winch plan --help\" for the flags.\n"},
+		{"unknown flag with one dash", []string{"plan", "site", "-nope"}, "winch plan: unknown flag --nope\n"},
+		{"a flag without its value", []string{"plan", "site", "--inventory"}, "winch plan: --inventory needs a value\n"},
+		{"a value for a flag without one", []string{"apply", "site", "--yes=maybe"}, "winch apply: --yes takes no value\n"},
+		{"an empty value", []string{"plan", "site", "--hosts="}, "winch plan: --hosts must not be empty\n"},
 		{"no pipeline", []string{"plan"}, "winch plan: name a pipeline: site; only steps at the top of winch.yaml run without a name\n"},
 		{"two pipelines", []string{"apply", "site", "other"}, "winch apply: takes at most one pipeline"},
 		{"unknown pipeline", []string{"plan", "sit"}, "winch plan: unknown pipeline \"sit\"; did you mean \"site\"?\n"},
@@ -512,9 +517,8 @@ func TestCommandRuns(t *testing.T) {
 		}
 	}
 	for _, c := range commands {
-		fs := flagSet(c, &flags{})
 		for _, f := range c.flags {
-			if fs.Lookup(strings.TrimPrefix(f.name, "--")) == nil {
+			if err := setFlagValue(&flags{}, f.name, "x"); err != nil {
 				t.Errorf("winch %s: the help lists %s, which does not parse", c.name, f.name)
 			}
 		}
@@ -624,5 +628,15 @@ func TestVersionArgs(t *testing.T) {
 	r := winch(t, t.TempDir(), fakehost.New(), false, "", "version", "x")
 	if r.code != exitInvalid || r.out != "" || r.err != "winch version: takes no arguments\n" {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+}
+
+// spec: CLI
+func TestParseFlags(t *testing.T) {
+	cmd, _ := commandNamed("apply")
+	var f flags
+	pos, err := parse(cmd, &f, []string{"--inventory=x", "site", "--set=vars.a=b", "-yes", "--", "--json"})
+	if err != nil || !slices.Equal(pos, []string{"site", "--json"}) || f.inventory != "x" || !slices.Equal(f.set, []string{"vars.a=b"}) || !f.yes || f.json {
+		t.Errorf("parse = %q, %v; flags %+v", pos, err, f)
 	}
 }

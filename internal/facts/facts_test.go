@@ -50,8 +50,8 @@ func TestRead(t *testing.T) {
 	if want := (OS{ID: "debian", Version: "13", Codename: "trixie", Arch: runtime.GOARCH}); err != nil || f.OS != want {
 		t.Errorf("Read of a missing first file = %+v, %v; want %+v", f, err, want)
 	}
-	if _, err := Read("testdata/missing", "testdata/missing"); err == nil {
-		t.Error("Read of missing files: no error")
+	if _, err := Read("testdata/missing", "testdata/gone"); err == nil || err.Error() != "read facts: neither testdata/missing nor testdata/gone exists" {
+		t.Errorf("Read of missing files: %v", err)
 	}
 	empty := t.TempDir() + "/os-release"
 	if err := os.WriteFile(empty, nil, 0o644); err != nil {
@@ -62,8 +62,8 @@ func TestRead(t *testing.T) {
 	}
 	// A first file that exists but cannot be read is an error, not a reason
 	// to read the second.
-	if _, err := Read("testdata", "testdata/debian-13.os-release"); err == nil {
-		t.Error("Read of a directory: no error")
+	if _, err := Read("testdata", "testdata/debian-13.os-release"); err == nil || err.Error() != "read facts: read testdata: is a directory" {
+		t.Errorf("Read of a directory: %v", err)
 	}
 }
 

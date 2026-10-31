@@ -7,12 +7,14 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/file"
+	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
 
 	"github.com/davidklassen/winch/internal/facts"
@@ -180,7 +182,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 	}
 	prog, err := expr.Compile(text, exprOptions...)
 	if err != nil {
-		return nil, yamlx.Errorf(n.Pos, "%s", exprMessage(err, exprNames))
+		return nil, yamlx.Errorf(n.Pos, "%s", exprMessage(err, text, exprNames))
 	}
 	c.prog = prog
 	check := &exprCheck{sc: sc, src: prog.Source(), named: map[ast.Node]bool{}}
@@ -351,9 +353,15 @@ func constKey(n ast.Node) (ast.Node, string, bool) {
 var (
 	unknownNameRe  = regexp.MustCompile(`^unknown name (\w+)$`)
 	unknownFieldRe = regexp.MustCompile(`^type (\w+\.\w+) has no field (\w+)$`)
-	exprNames      = []string{"vars", "facts", "host", "item", "match"}
-	osFields       = fieldTags(facts.OS{})
-	hostFields     = fieldTags(hostEnv{})
+	mismatchRe     = regexp.MustCompile(`^invalid operation: (\S+) \(mismatched types (\S+) and (\S+)\)$`)
+	// runMismatchRe is the same error when the expression runs.
+	runMismatchRe  = regexp.MustCompile(`^invalid operation: (\S+) (\S+) (\S+)$`)
+	expectedBoolRe = regexp.MustCompile(`^expected bool, but got (\S+)$`)
+	// typeWords name the types of expr in messages.
+	typeWords  = map[string]string{"string": "a string", "int": "a number", "int64": "a number", "float": "a number", "float64": "a number", "bool": "a boolean", "array": "a list", "map": "a map", "nil": "null"}
+	exprNames  = []string{"vars", "facts", "host", "item", "match"}
+	osFields   = fieldTags(facts.OS{})
+	hostFields = fieldTags(hostEnv{})
 	// fieldNames are the fields of the typed data, by the type name in
 	// errors of expr.
 	fieldNames = map[string]struct {
@@ -366,11 +374,14 @@ var (
 	}
 )
 
-// exprMessage returns the message of an expr error, with a suggestion for an
-// unknown name, and the snippet.
-func exprMessage(err error, names []string) string {
+// exprMessage returns the message of an expr error of the expression src,
+// with a suggestion for an unknown name, and the snippet.
+func exprMessage(err error, src string, names []string) string {
 	fe, ok := errors.AsType[*file.Error](err)
 	if !ok {
+		if m := expectedBoolRe.FindStringSubmatch(err.Error()); m != nil && typeWords[m[1]] != "" {
+			return "expected true or false, got " + typeWords[m[1]]
+		}
 		return err.Error()
 	}
 	msg := fe.Message
@@ -380,9 +391,81 @@ func exprMessage(err error, names []string) string {
 		if f, ok := fieldNames[m[1]]; ok {
 			msg = fmt.Sprintf("unknown %s %q%s", f.noun, m[2], yamlx.Suggest(m[2], f.names))
 		}
+	} else if m := mismatchRe.FindStringSubmatch(msg); m != nil && typeWords[m[2]] != "" && typeWords[m[3]] != "" {
+		msg = mismatch(src, fe.From, m[1], typeWords[m[2]], typeWords[m[3]])
+	} else if m := runMismatchRe.FindStringSubmatch(msg); m != nil && typeWords[m[1]] != "" && typeWords[m[3]] != "" {
+		msg = mismatch(src, fe.From, m[2], typeWords[m[1]], typeWords[m[3]])
 	}
 	return msg + fe.Snippet
 }
+
+// mismatch is the message of the operator op at the offset at in src, whose
+// operands have the types left and right. A comparison of a name with a
+// constant names the type that the constant needs, such as "13" for a string.
+func mismatch(src string, at int, op, left, right string) string {
+	msg := fmt.Sprintf("%s cannot take %s and %s", op, left, right)
+	if !slices.Contains([]string{"==", "!=", "<", ">", "<=", ">="}, op) {
+		return msg
+	}
+	tree, err := parser.Parse(src)
+	if err != nil {
+		return msg
+	}
+	var bin *ast.BinaryNode
+	ast.Walk(&tree.Node, visitor(func(n *ast.Node) {
+		if b, ok := (*n).(*ast.BinaryNode); ok && b.Operator == op && b.Location().From == at {
+			bin = b
+		}
+	}))
+	if bin == nil {
+		return msg
+	}
+	name, value, want := bin.Left, bin.Right, left
+	if constant(name) {
+		name, value, want = value, name, right
+	}
+	if constant(name) || !constant(value) {
+		return msg
+	}
+	if want == "a boolean" {
+		return fmt.Sprintf("%s is a boolean; compare it with true or false", name)
+	}
+	msg = fmt.Sprintf("%s is %s; compare it with %s", name, want, want)
+	sign := ""
+	if u, ok := value.(*ast.UnaryNode); ok {
+		sign, value = u.Operator, u.Node
+	}
+	switch v := value.(type) {
+	case *ast.IntegerNode:
+		if want == "a string" {
+			msg += fmt.Sprintf(", such as %q", sign+strconv.Itoa(v.Value))
+		}
+	case *ast.FloatNode:
+		if want == "a string" {
+			msg += fmt.Sprintf(", such as %q", sign+strconv.FormatFloat(v.Value, 'f', -1, 64))
+		}
+	case *ast.StringNode:
+		if _, err := strconv.ParseFloat(v.Value, 64); err == nil && want == "a number" {
+			msg += ", such as " + v.Value
+		}
+	}
+	return msg
+}
+
+// constant reports whether n is a constant, such as 13, -13, or "13".
+func constant(n ast.Node) bool {
+	switch n := n.(type) {
+	case *ast.IntegerNode, *ast.FloatNode, *ast.StringNode, *ast.BoolNode, *ast.NilNode:
+		return true
+	case *ast.UnaryNode:
+		return n.Operator == "-" && constant(n.Node)
+	}
+	return false
+}
+
+type visitor func(*ast.Node)
+
+func (v visitor) Visit(n *ast.Node) { v(n) }
 
 func fieldTags(v any) []string {
 	t := reflect.TypeOf(v)
@@ -415,7 +498,7 @@ func (c *computed) eval(e *Env) (any, error) {
 	}
 	out, err := expr.Run(c.prog, e.exprEnv())
 	if err != nil {
-		return nil, errors.New(exprMessage(err, exprNames))
+		return nil, errors.New(exprMessage(err, c.prog.Source().String(), exprNames))
 	}
 	if err := computedError(out); err != nil {
 		return nil, err
@@ -546,7 +629,10 @@ func prefix(name string) string {
 func describeValue(v any) string {
 	n, err := yamlx.FromValue(v, yamlx.Pos{})
 	if err != nil {
-		return fmt.Sprintf("a %T", v)
+		if reflect.ValueOf(v).Kind() == reflect.Func {
+			return "a function"
+		}
+		return "a set of fields"
 	}
 	return yamlx.Describe(n)
 }

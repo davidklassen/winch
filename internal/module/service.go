@@ -457,7 +457,7 @@ func checkStarted(ctx context.Context, unit, action string, reload bool) error {
 	if u.up() && !u.restarting() {
 		return nil
 	}
-	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, fmt.Errorf("no result after %s", commandLimit))
+	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, noResult(commandLimit))
 	defer cancel()
 	// systemd-analyze writes the results to stderr.
 	cmd := exec.CommandContext(ctx, "systemd-analyze", "condition", "--unit="+unit)

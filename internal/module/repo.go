@@ -494,9 +494,10 @@ func writeRoot(p string, content []byte, uid, gid int, mode uint32) error {
 		defer sub.Close()
 		dir = sub
 	}
-	return writeFile(dir, path.Base(p), bytes.NewReader(content), uid, gid, mode, func(tmp string) error {
+	err = writeFile(dir, path.Base(p), bytes.NewReader(content), uid, gid, mode, func(tmp string) error {
 		return dir.Rename(tmp, path.Base(p))
 	})
+	return pathError("write", p, err)
 }
 
 // removed reports whether an earlier step removes p or a parent of p.
