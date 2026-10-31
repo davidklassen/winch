@@ -269,6 +269,9 @@ type hostRun struct {
 	// services are the unit files that service steps start or enable, with
 	// the first step, or with "" when a unit step wrote the file first.
 	services map[string]string
+	// started are the units that service steps start or enable, by name and
+	// by unit file, with the first step.
+	started map[string]string
 	// trees are the paths of steps that remove the tree there, and writes the
 	// paths that steps write, with the step.
 	trees, writes []pathStep
@@ -443,7 +446,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, created: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, created: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -625,7 +628,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		if err := hr.tree(p.Step.Args, where); err != nil {
 			return nil, err
 		}
-		if err := hr.unitOrder(p.Step.Args, where); err != nil {
+		if err := hr.unitOrder(p, where); err != nil {
 			return nil, err
 		}
 		hr.newUnitFile(&steps[i].Step)
@@ -971,13 +974,23 @@ func (hr *hostRun) tree(m module.Module, where string) error {
 }
 
 // unitOrder fails a unit step whose unit file an earlier service step needs to
-// start or enable the unit. Such a step fails on a new host.
-func (hr *hostRun) unitOrder(m module.Module, where string) error {
-	switch m := m.(type) {
+// start or enable the unit. Such a step fails on a new host. It also fails a
+// step that changes a drop-in of a unit that an earlier service step starts or
+// enables, when the step notifies no handler on the host: daemon-reload does
+// not restart the unit.
+func (hr *hostRun) unitOrder(p Planned, where string) error {
+	var dropIn string
+	switch m := p.Step.Args.(type) {
 	case *module.Service:
-		starts := m.Running != nil && *m.Running || m.Enabled != nil && *m.Enabled
-		if _, ok := hr.services[m.UnitFile()]; starts && !ok {
-			hr.services[m.UnitFile()] = where
+		if m.Running != nil && *m.Running || m.Enabled != nil && *m.Enabled {
+			if _, ok := hr.services[m.UnitFile()]; !ok {
+				hr.services[m.UnitFile()] = where
+			}
+			for _, u := range []string{m.Unit(), m.UnitFile()} {
+				if _, ok := hr.started[u]; !ok {
+					hr.started[u] = where
+				}
+			}
 		}
 	case *module.Unit:
 		if w := hr.services[m.Name]; w != "" {
@@ -985,6 +998,20 @@ func (hr *hostRun) unitOrder(m module.Module, where string) error {
 		}
 		// Later service steps find the unit file.
 		hr.services[m.Name] = ""
+	case *module.File:
+		dropIn = m.Path
+	case *module.Line:
+		dropIn = m.Path
+	case *module.Link:
+		dropIn = m.Path
+	}
+	unit, ok := strings.CutPrefix(path.Dir(dropIn), "/etc/systemd/system/")
+	if !ok || len(p.Notify) > 0 {
+		return nil
+	}
+	unit, ok = strings.CutSuffix(unit, ".d")
+	if w, found := hr.started[unit]; ok && found {
+		return fmt.Errorf("%s: %s starts or enables %s before this step changes its drop-in; move this step before it", where, w, unit)
 	}
 	return nil
 }
