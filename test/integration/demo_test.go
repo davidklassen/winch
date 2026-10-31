@@ -165,6 +165,11 @@ func checkDemo(t *testing.T, vm *vmtest.VM, peer string) {
 	if out := vm.MustRun(t, "ss -Hltn 'sport = :25' | awk '{print $4}'"); out != "127.0.0.1:25\n" {
 		t.Errorf("postfix listens on %q, want only 127.0.0.1:25", out)
 	}
+	// Postfix delivers the domain's mail to Dovecot through LMTP.
+	vm.MustRun(t, "printf 'Subject: winch delivery\\n\\nhello\\n' | sendmail webmaster@example.com")
+	if out := vm.MustRun(t, "for i in $(seq 100); do doveadm search -u webmaster@example.com mailbox INBOX header Subject 'winch delivery' 2>/dev/null | grep -q . && { echo delivered; exit 0; }; sleep 0.2; done; journalctl -q -u postfix@- -n 10"); out != "delivered\n" {
+		t.Errorf("no mail in the INBOX of webmaster@example.com; the postfix log: %q", out)
+	}
 	if out := vm.MustRun(t, "cmp /etc/postfix/master.cf /usr/share/postfix/master.cf.dist && echo stock"); out != "stock\n" {
 		t.Errorf("postfix master.cf: %q", out)
 	}

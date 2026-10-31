@@ -1,0 +1,3 @@
+{{ range $user, $hash := .vars.mail_users -}}
+{{ $user }}@{{ $.vars.domain }} {{ $.vars.domain }}/{{ $user }}/Maildir/
+{{ end -}}

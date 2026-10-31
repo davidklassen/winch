@@ -11,10 +11,12 @@ steps:
       domains: !expr '[host.name]'
       email: !expr vars.certbot_email
       reuse_key: true
-      # On a new host, Dovecot comes after this recipe.
+      # On a new host, Dovecot comes after this recipe, and the hook also
+      # runs after the first issue.
       deploy_hook: |
-        systemctl try-reload-or-restart postfix
-        if systemctl cat dovecot >/dev/null 2>&1; then systemctl try-reload-or-restart dovecot; fi
+        for s in postfix dovecot; do
+          if systemctl cat "$s" >/dev/null 2>&1; then systemctl try-reload-or-restart "$s"; fi
+        done
   - certbot:
       name: !expr vars.domain
       domains: !expr '[vars.domain, "www." + vars.domain]'

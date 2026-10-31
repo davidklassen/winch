@@ -1,5 +1,5 @@
-# The send-only postfix of the monitor: mail from loopback, signed by
-# dkimpy-milter.
+# Postfix on loopback: it sends mail signed by dkimpy-milter and delivers
+# the mail of the domain to Dovecot.
 vars:
   # The host that the check of outbound port 25 reaches.
   postfix_probe_host: gmail-smtp-in.l.google.com
@@ -16,6 +16,11 @@ steps:
   - file:
       path: /etc/mailname
       content: !tpl "{{ .host.name }}\n"
+  - file:
+      path: /etc/postfix/vmailbox
+      template: vmailbox.tmpl
+    then: postmap /etc/postfix/vmailbox
+    notify: reload
   - file:
       path: /etc/postfix/main.cf
       template: main.cf.tmpl
@@ -41,6 +46,10 @@ steps:
       message: outbound port 25 is blocked; open it at the provider
 
 handlers:
+  reload:
+    - service:
+        name: postfix
+        reloaded: true
   restart:
     - service:
         name: postfix
