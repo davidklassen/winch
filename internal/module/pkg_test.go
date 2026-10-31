@@ -253,3 +253,34 @@ Status: install ok installed
 		t.Errorf("installStanzas =\n%s\nwant\n%s", got, want)
 	}
 }
+
+// spec: Modules/pkg
+func TestProvidedNameWaitsForTheRefresh(t *testing.T) {
+	old := "Package: php-mbstring\nVersions: \n\nReverse Provides: \nphp8.3-mbstring 8.3.6-0ubuntu0.24.04.5 (= )\n\n" +
+		"Package: hello\nVersions: \n2.10-3 (/var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble_main_binary-amd64_Packages)\n\n" +
+		"Package: mail-transport-agent\nVersions: \n\nReverse Provides: \npostfix 3.8.6-1build2 (= )\nexim4-daemon-light 4.97-4ubuntu4 (= )\n"
+	names := []string{"php-mbstring", "hello", "mail-transport-agent"}
+	providers, _, _ := parseShowpkg(old)
+	var notes []string
+	provided := mayBeProvided(names, providers, func(s string) { notes = append(notes, s) })
+	if want := []string{"php-mbstring", "mail-transport-agent"}; !slices.Equal(provided, want) {
+		t.Errorf("provided = %q, want %q", provided, want)
+	}
+	want := []string{
+		"php-mbstring may be provided by php8.3-mbstring; apply checks it after the refresh",
+		"mail-transport-agent may be provided by exim4-daemon-light, postfix; apply checks it after the refresh",
+	}
+	if !slices.Equal(notes, want) {
+		t.Errorf("notes = %q, want %q", notes, want)
+	}
+	// After the refresh, the index still knows only providers of the name.
+	if err := providedOnly(provided, providers); err == nil || err.Error() != "php-mbstring is provided by php8.3-mbstring; name that package\n"+
+		"mail-transport-agent is provided by exim4-daemon-light, postfix; name one of them" {
+		t.Errorf("providedOnly = %v", err)
+	}
+	fresh := "Package: php-mbstring\nVersions: \n2:8.3+93ubuntu2 (/var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble_universe_binary-amd64_Packages)\n\nReverse Provides: \nphp8.3-mbstring 8.3.6-0ubuntu0.24.04.5 (= )\n"
+	providers, _, _ = parseShowpkg(fresh)
+	if err := providedOnly([]string{"php-mbstring"}, providers); err != nil {
+		t.Errorf("providedOnly after the refresh = %v, want nil", err)
+	}
+}

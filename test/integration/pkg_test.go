@@ -55,7 +55,7 @@ func TestPkgModule(t *testing.T) {
 	const localArmhf = "dpkg --add-architecture armhf && " + localOnly
 	// fragileV1 installs version 1 of winch-fragile while the index has version 2.
 	const fragileV1 = "touch /etc/winch-fragile.ok && dpkg -i /root/winch-fragile.deb >/dev/null && " + localOnly + " && apt-cache policy winch-fragile | grep -q 'Candidate: 2'"
-	reset := "pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /var/lib/apt/lists/10.0.2.100_test_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --purge winch-mta-c:armhf >/dev/null 2>&1; dpkg --remove-architecture armhf 2>/dev/null; " +
+	reset := "[ ! -e /root/virt ] || { rm -r /root/virt /etc/apt/sources.list.d/winch-virt.sources && apt-get update -q >/dev/null; }; pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /var/lib/apt/lists/10.0.2.100_test_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --purge winch-mta-c:armhf >/dev/null 2>&1; dpkg --remove-architecture armhf 2>/dev/null; " +
 		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-uses-fragile winch-fragile winch-conflict hello sl figlet tree fortune-mod fortunes-min " + librecode + " at >/dev/null 2>&1; true"
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
 		{
@@ -434,21 +434,53 @@ func TestPkgModule(t *testing.T) {
 			Want: module.Result{Status: module.OK},
 		},
 		{
-			Name:    "a name that only another package provides fails the check",
-			Args:    &module.Pkg{Name: []string{"libssl3"}},
-			WantErr: "libssl3 is provided by libssl3t64; name that package",
+			Name:         "a name that only another package provides fails after the refresh",
+			Args:         &module.Pkg{Name: []string{"libssl3"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install libssl3", later}},
+			WantState:    module.State{IndexFresh: true},
+			WantApplyErr: "libssl3 is provided by libssl3t64; name that package",
+			FixArgs:      &module.Pkg{Name: []string{"hello"}},
 		},
 		{
-			Name:    "a name with several providers fails the check",
-			Setup:   "apt-get update -q >/dev/null",
-			Args:    &module.Pkg{Name: []string{"mail-transport-agent"}},
-			WantErr: "mail-transport-agent is provided by ",
+			Name:         "a name that only another package provides fails after an earlier refresh",
+			State:        module.State{IndexFresh: true},
+			Args:         &module.Pkg{Name: []string{"libssl3"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install libssl3", later}},
+			WantState:    module.State{IndexFresh: true},
+			WantApplyErr: "libssl3 is provided by libssl3t64; name that package",
+			FixArgs:      &module.Pkg{Name: []string{"hello"}},
 		},
 		{
-			Name:    "a name with several providers names the native ones",
-			Setup:   localArmhf,
-			Args:    &module.Pkg{Name: []string{"winch-mta"}},
-			WantErr: "winch-mta is provided by winch-mta-a, winch-mta-b; name one of them",
+			Name:         "a name with several providers fails after the refresh",
+			Setup:        "apt-get update -q >/dev/null",
+			Args:         &module.Pkg{Name: []string{"mail-transport-agent"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install mail-transport-agent", later}},
+			WantState:    module.State{IndexFresh: true},
+			WantApplyErr: "mail-transport-agent is provided by ",
+			FixArgs:      &module.Pkg{Name: []string{"hello"}},
+		},
+		{
+			Name:         "a name with several providers names the native ones",
+			Setup:        localArmhf,
+			Args:         &module.Pkg{Name: []string{"winch-mta"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install winch-mta", later}},
+			WantState:    module.State{IndexFresh: true},
+			WantApplyErr: "winch-mta is provided by winch-mta-a, winch-mta-b; name one of them",
+			FixArgs:      &module.Pkg{Name: []string{"hello"}},
+		},
+		{
+			Name: "a name that the old index knows only as provided installs after the refresh",
+			// The index knows only winch-virt, which provides hello, as on a
+			// new host whose index misses the section of hello.
+			Setup: "rm -f /var/lib/apt/lists/*_Packages* && mkdir -p /root/virt && " +
+				`printf 'Package: winch-virt\nVersion: 1\nArchitecture: all\nProvides: hello\nMaintainer: winch\nFilename: winch-virt.deb\nSize: 1\nDescription: test\n' > /root/virt/Packages && ` +
+				`printf 'Types: deb\nURIs: file:/root/virt\nSuites: ./\nTrusted: yes\n' > /etc/apt/sources.list.d/winch-virt.sources && ` +
+				"apt-get update -q -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/winch-virt.sources -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 >/dev/null && " +
+				"apt-cache showpkg hello | grep -q '^winch-virt '",
+			Args:      &module.Pkg{Name: []string{"hello"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello", later}},
+			WantState: module.State{IndexFresh: true},
+			After:     "dpkg-query -W -f='${db:Status-Abbrev}' hello | grep -q '^ii'",
 		},
 		{
 			Name:        "a package that others also provide installs",
@@ -477,9 +509,13 @@ func TestPkgModule(t *testing.T) {
 			After: "! dpkg-query -W -f='${db:Status-Abbrev}' winch-mta-c:armhf | grep -q '^ii'",
 		},
 		{
-			Name:    "a list names the provided name after a real package",
-			Args:    &module.Pkg{Name: []string{"hello", "libssl3"}},
-			WantErr: "libssl3 is provided by libssl3t64; name that package",
+			Name:         "a list names the provided name after a real package",
+			Args:         &module.Pkg{Name: []string{"hello", "libssl3"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello, libssl3", later}},
+			WantState:    module.State{IndexFresh: true},
+			WantApplyErr: "libssl3 is provided by libssl3t64; name that package",
+			After:        "! dpkg -s hello >/dev/null 2>&1",
+			FixArgs:      &module.Pkg{Name: []string{"hello"}},
 		},
 		{
 			Name:    "absent of a name that only another package provides fails the check",
