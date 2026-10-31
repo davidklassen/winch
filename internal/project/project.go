@@ -1559,12 +1559,12 @@ func (st Step) instance(e *Env) (Step, any, error) {
 		if err != nil {
 			return Step{}, nil, err
 		}
+		args = yamlx.Value(n)
 		m, _ := module.New(st.Module)
 		if err := yamlx.Decode(n, m); err != nil {
-			return Step{}, nil, err
+			return Step{}, args, err
 		}
 		st.Args = m
-		args = yamlx.Value(n)
 		if f, ok := m.(*module.File); ok {
 			if st.tmpl, err = st.in.content(f, st.loop != nil); err != nil {
 				return Step{}, nil, err
@@ -1610,6 +1610,7 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 		var failed bool
 		ev.failed = &failed
 		v, a, err := st.instance(ev)
+		args[n] = a
 		if _, ok := err.(errContent); ok || failed {
 			contentOK = false
 		}
@@ -1617,7 +1618,10 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 			argsOK, contentOK = false, false
 			continue
 		}
-		mods[n], args[n] = v.Args, a
+		mods[n] = v.Args
+	}
+	if u, ok := s.Args.(*module.User); ok && u.AuthorizedKeys != nil {
+		u.SecretKeys = secretKeys(args)
 	}
 	sh := &Shown{Main: secret.Mark}
 	validate := s.ShownValidate()
@@ -1673,6 +1677,23 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 		return nil, reads
 	}
 	return sh, reads
+}
+
+// secretKeys marks the authorized_keys elements of the arguments real that
+// differ from the placeholder variants. When a variant has another number of
+// elements, each element is from a secret.
+func secretKeys(args [3]any) []bool {
+	var lists [3][]any
+	for n, a := range args {
+		m, _ := a.(map[string]any)
+		lists[n], _ = m["authorized_keys"].([]any)
+	}
+	var out []bool
+	same := len(lists[1]) == len(lists[0]) && len(lists[2]) == len(lists[0])
+	for i, k := range lists[0] {
+		out = append(out, !same || k != lists[1][i] || k != lists[2][i])
+	}
+	return out
 }
 
 // publicRepo returns the argument of r, the repo of the real variant, that

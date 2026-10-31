@@ -245,7 +245,7 @@ func TestKeyPlan(t *testing.T) {
 		{"# a comment", "a line that is not a key"},
 	}
 	for _, tt := range tests {
-		if got := keyPlan(tt.line); got != tt.want {
+		if got := keyPlan(tt.line, false); got != tt.want {
 			t.Errorf("keyPlan(%q) = %q, want %q", tt.line, got, tt.want)
 		}
 	}
@@ -257,21 +257,32 @@ func TestKeyPlan(t *testing.T) {
 // spec: Modules/user and group
 func TestKeyChanges(t *testing.T) {
 	a, b, c := key("ssh-ed25519", "a"), key("ssh-ed25519", "b"), rsaKey(3072)+" c"
+	blob, _ := base64.StdEncoding.DecodeString(strings.Fields(a)[1])
+	fp := fingerprint(blob)
 	tests := []struct {
 		name      string
 		cur, want []string
+		secret    []bool
 		changes   []string
 	}{
-		{"same", []string{a, b}, []string{a, b}, nil},
-		{"add", []string{a}, []string{a, b}, []string{"add " + keyPlan(b)}},
-		{"remove", []string{a, b, c}, []string{a}, []string{"remove " + keyPlan(b), "remove " + keyPlan(c)}},
-		{"order", []string{b, a}, []string{a, b}, []string{"put the keys in order"}},
-		{"duplicate", []string{a, a}, []string{a}, []string{"remove a duplicate line"}},
-		{"not a key", []string{"# x", a}, []string{a}, []string{"remove a line that is not a key"}},
+		{"same", []string{a, b}, []string{a, b}, nil, nil},
+		{"add", []string{a}, []string{a, b}, nil, []string{"add " + keyPlan(b, false)}},
+		{"remove", []string{a, b, c}, []string{a}, nil, []string{"remove " + keyPlan(b, false), "remove " + keyPlan(c, false)}},
+		{"order", []string{b, a}, []string{a, b}, nil, []string{"put the keys in order"}},
+		{"duplicate", []string{a, a}, []string{a}, nil, []string{"remove a duplicate line"}},
+		{"not a key", []string{"# x", a}, []string{a}, nil, []string{"remove a line that is not a key"}},
+		{"secret options", nil, []string{`environment="TOKEN=abc" ` + a, `no-pty ` + c}, []bool{true, false},
+			[]string{"add key (secret) ssh-ed25519 " + fp + " a", "add " + keyPlan(`no-pty `+c, false)}},
+		{"secret without options", nil, []string{a}, []bool{true}, []string{"add " + keyPlan(a, false)}},
+		{"new options of the same key", []string{`environment="TOKEN=old" ` + b}, []string{`environment="TOKEN=new" ` + a}, []bool{true},
+			[]string{"add key (secret) ssh-ed25519 " + fp + " a", "remove key (secret) ssh-ed25519 " + fp + " b"}},
+		{"old options of another key", []string{`environment="TOKEN=old" ` + c}, []string{`environment="TOKEN=new" ` + a}, []bool{true},
+			[]string{"add key (secret) ssh-ed25519 " + fp + " a", "remove key (secret) ssh-rsa " + strings.Fields(keyPlan(c, false))[2] + " c"}},
+		{"old options without a secret", []string{`no-pty ` + c}, []string{a}, []bool{false}, []string{"add " + keyPlan(a, false), "remove " + keyPlan(`no-pty `+c, false)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := keyChanges(tt.cur, tt.want)
+			got := keyChanges(tt.cur, tt.want, tt.secret)
 			if fmt.Sprint(got) != fmt.Sprint(tt.changes) {
 				t.Errorf("got %q, want %q", got, tt.changes)
 			}
