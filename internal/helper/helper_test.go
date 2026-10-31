@@ -4,8 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"reflect"
@@ -171,11 +175,189 @@ func TestLockWithoutPID(t *testing.T) {
 			if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 				t.Fatal(err)
 			}
-			r := start(t, dir, "").call(t, "hello", hello("r2"))
+			r := start(t, dir, "").call(t, "hello", hello("r1"))
 			if r.Error != tc.want {
 				t.Errorf("hello error = %q, want %q", r.Error, tc.want)
 			}
 		})
+	}
+}
+
+// TestLockHolder is not a test: it is the process that holds the lock for
+// TestTakeOverLock.
+func TestLockHolder(t *testing.T) {
+	dir := os.Getenv("WINCH_TEST_LOCK_DIR")
+	if dir == "" {
+		return
+	}
+	if os.Getenv("WINCH_TEST_IGNORE_TERM") == "true" {
+		signal.Ignore(syscall.SIGTERM)
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("WINCH_TEST_BUSY") == "true" {
+		d, err := os.Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Flock(int(d.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, _ := json.Marshal(lockRecord{Hello: hello(os.Getenv("WINCH_TEST_RUN")), PID: os.Getpid()})
+	if _, err := f.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout.WriteString("ready\n") //nolint:errcheck // a failed write shows as a test that waits
+	time.Sleep(time.Minute)
+}
+
+type holder struct {
+	pid int
+	// exited closes when the holder ends, with err its exit status.
+	exited chan struct{}
+	err    error
+}
+
+// startHolder starts a process that holds the lock of dir with the record of
+// run.
+func startHolder(t *testing.T, dir, run string, busy, ignoreTerm bool) *holder {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLockHolder$")
+	cmd.Env = append(os.Environ(), "WINCH_TEST_LOCK_DIR="+dir, "WINCH_TEST_RUN="+run,
+		"WINCH_TEST_BUSY="+strconv.FormatBool(busy), "WINCH_TEST_IGNORE_TERM="+strconv.FormatBool(ignoreTerm))
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if line, err := bufio.NewReader(out).ReadString('\n'); err != nil || line != "ready\n" {
+		cmd.Process.Kill() //nolint:errcheck // the test fails anyway
+		t.Fatalf("lock holder: %q, %v", line, err)
+	}
+	h := &holder{pid: cmd.Process.Pid, exited: make(chan struct{})}
+	go func() {
+		h.err = cmd.Wait()
+		close(h.exited)
+	}()
+	t.Cleanup(func() {
+		cmd.Process.Kill() //nolint:errcheck // the holder can be gone
+		<-h.exited
+	})
+	return h
+}
+
+func (h *holder) wantSignal(t *testing.T, sig syscall.Signal) {
+	t.Helper()
+	<-h.exited
+	var exit *exec.ExitError
+	if !errors.As(h.err, &exit) || exit.Sys().(syscall.WaitStatus).Signal() != sig {
+		t.Errorf("holder ended with %v, want signal %v", h.err, sig)
+	}
+}
+
+// spec: Remote execution/Sessions (the session kept through the question)
+func TestTakeOverLock(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		run      string
+		busy     bool
+		takeOver bool
+	}{
+		{name: "idle helper of the same run", run: "r1", takeOver: true},
+		{name: "busy helper of the same run", run: "r1", busy: true},
+		{name: "idle helper of another run", run: "r2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			h := startHolder(t, dir, tc.run, tc.busy, false)
+			r := start(t, dir, "").call(t, "hello", hello("r1"))
+			if tc.takeOver {
+				if r.Error != "" {
+					t.Fatalf("hello: %s", r.Error)
+				}
+				h.wantSignal(t, syscall.SIGTERM)
+				return
+			}
+			want := "locked by run " + tc.run + " (alice@laptop, since 2026-10-24T12:00:00Z, helper process " + strconv.Itoa(h.pid) + ")"
+			if !strings.HasPrefix(r.Error, want) {
+				t.Errorf("hello error = %q, want %q", r.Error, want)
+			}
+			select {
+			case <-h.exited:
+				t.Errorf("the holder ended: %v", h.err)
+			default:
+			}
+		})
+	}
+}
+
+// spec: Remote execution/Sessions (the session kept through the question)
+func TestTakeOverKillsAfterGrace(t *testing.T) {
+	dir := t.TempDir()
+	h := startHolder(t, dir, "r1", false, true)
+	f, err := os.Open(filepath.Join(dir, "lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if locked, err := takeOver(t.Context(), f, h.pid, 100*time.Millisecond); !locked || err != nil {
+		t.Errorf("takeOver = %v, %v; want the lock", locked, err)
+	}
+	h.wantSignal(t, syscall.SIGKILL)
+}
+
+// spec: Remote execution/Sessions (the session kept through the question)
+func TestLockBusyDuringRequest(t *testing.T) {
+	dir := t.TempDir()
+	busy := func() (bool, error) {
+		d, err := os.Open(dir)
+		if err != nil {
+			return false, err
+		}
+		defer d.Close()
+		locked, err := tryLock(d)
+		return !locked, err
+	}
+	c := start(t, dir, "")
+	c.call(t, "hello", hello("r1"))
+	if b, err := busy(); b || err != nil {
+		t.Errorf("after hello: busy %v, %v", b, err)
+	}
+	ready, done := filepath.Join(dir, "ready"), filepath.Join(dir, "done")
+	during := make(chan error, 1)
+	go func() {
+		defer os.WriteFile(done, nil, 0o600) //nolint:errcheck // a failed write shows as a test that waits
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			if _, err := os.Stat(ready); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				during <- errors.New("exec did not start")
+				return
+			}
+		}
+		if b, err := busy(); !b || err != nil {
+			during <- fmt.Errorf("not busy: %v", err)
+			return
+		}
+		during <- nil
+	}()
+	if r := c.call(t, "exec", protocol.Exec{Command: ": > " + ready + "; while [ ! -e " + done + " ]; do sleep 0.01; done"}); r.Error != "" {
+		t.Errorf("exec: %s", r.Error)
+	}
+	if err := <-during; err != nil {
+		t.Errorf("during exec: %v", err)
+	}
+	if b, err := busy(); b || err != nil {
+		t.Errorf("after exec: busy %v, %v", b, err)
 	}
 }
 

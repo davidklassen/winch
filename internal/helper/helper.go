@@ -44,7 +44,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		}
 	}()
 	enc := json.NewEncoder(out)
-	var lock *os.File
+	var lock *lockFile
 	var handlers, thens, downloads, certbotHooks, checks records
 	var rb *rollbacks
 	var loginUser *module.Login
@@ -55,10 +55,11 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		if lock == nil {
 			return
 		}
+		err = errors.Join(err, lock.mark(false))
 		if !rebooting {
 			err = errors.Join(err, rb.end(ctx, handlers, thens))
 		}
-		lock.Close()
+		lock.close()
 	}()
 	for {
 		req, ok := <-reqs
@@ -68,6 +69,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			}
 			return fmt.Errorf("read request: %w", readErr)
 		}
+		markErr := lock.mark(false)
 		var result any
 		var err error
 		note := func(msg string) {
@@ -75,11 +77,13 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			_ = enc.Encode(protocol.Response{ID: req.ID, Note: msg})
 		}
 		switch {
+		case markErr != nil:
+			err = markErr
 		case req.Method == "hello" && lock != nil:
 			err = errors.New("hello was already sent")
 		case req.Method == "hello":
 			var project string
-			lock, project, err = takeLock(req.Params, dir, self)
+			lock, project, err = takeLock(ctx, req.Params, dir, self)
 			handlers = records{dir: filepath.Join(dir, "handlers"), project: project, what: "pending handlers"}
 			thens = records{dir: filepath.Join(dir, "then"), project: project, what: "pending then records"}
 			downloads = downloadRecords(filepath.Join(dir, "downloads", project))
@@ -103,7 +107,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 				err = rb.clear(handlers)
 			}
 			if err != nil && lock != nil {
-				lock.Close()
+				lock.close()
 				lock = nil
 			}
 		case lock == nil:
@@ -150,6 +154,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		default:
 			err = fmt.Errorf("unknown method %q", req.Method)
 		}
+		// Idle before the answer, which can be the last that the controller
+		// reads before a question. A failed unlock keeps the lock busy.
+		_ = lock.mark(true)
 		resp := protocol.Response{ID: req.ID}
 		if err != nil {
 			resp.Error = err.Error()
@@ -169,8 +176,8 @@ type lockRecord struct {
 }
 
 // takeLock takes the lock of the state directory, and returns it with the
-// project of the session.
-func takeLock(params json.RawMessage, dir, self string) (_ *os.File, project string, err error) {
+// project of the session. The returned lock is busy.
+func takeLock(ctx context.Context, params json.RawMessage, dir, self string) (_ *lockFile, project string, err error) {
 	var h protocol.Hello
 	if err := json.Unmarshal(params, &h); err != nil {
 		return nil, "", fmt.Errorf("decode hello: %w", err)
@@ -185,25 +192,49 @@ func takeLock(params json.RawMessage, dir, self string) (_ *os.File, project str
 	if err != nil {
 		return nil, "", fmt.Errorf("open lock: %w", err)
 	}
+	busy, err := os.Open(dir)
+	if err != nil {
+		f.Close()
+		return nil, "", fmt.Errorf("open lock: %w", err)
+	}
+	l := &lockFile{f: f, busy: busy}
 	defer func() {
 		if err != nil {
-			f.Close()
+			l.close()
 		}
 	}()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			var held lockRecord
-			data, _ := io.ReadAll(f)
-			_ = json.Unmarshal(data, &held)
-			msg := fmt.Sprintf("locked by run %s (%s@%s, since %s", held.Run, held.User, held.Machine, held.Started.UTC().Format(time.RFC3339))
-			// A new lock file is empty until its holder writes it. A kill with
-			// a PID below 2 signals a process group or init, not one helper.
-			if held.PID <= 1 {
-				return nil, "", errors.New(msg + ")")
-			}
-			return nil, "", fmt.Errorf("%s, helper process %d); if that run is gone, end it with: sudo kill %d", msg, held.PID, held.PID)
+	// Busy before the lock, so that the record of the last holder, until this
+	// helper writes its own, never looks idle. The flock of busy also keeps
+	// an idle holder from starting a request until it ends.
+	idle, err := tryLock(busy)
+	if err != nil {
+		return nil, "", err
+	}
+	locked, err := tryLock(f)
+	if err != nil {
+		return nil, "", err
+	}
+	var held lockRecord
+	if !locked {
+		data, _ := io.ReadAll(f)
+		_ = json.Unmarshal(data, &held)
+	}
+	// A new lock file is empty until its holder writes it. A kill with a PID
+	// below 2 signals a process group or init, not one helper.
+	if !locked && idle && held.PID > 1 && held.Run != "" && held.Run == h.Run {
+		if locked, err = takeOver(ctx, f, held.PID, module.KillDelay); err != nil {
+			return nil, "", err
 		}
-		return nil, "", fmt.Errorf("lock: %w", err)
+	}
+	if !locked {
+		msg := fmt.Sprintf("locked by run %s (%s@%s, since %s", held.Run, held.User, held.Machine, held.Started.UTC().Format(time.RFC3339))
+		if held.PID <= 1 {
+			return nil, "", errors.New(msg + ")")
+		}
+		return nil, "", fmt.Errorf("%s, helper process %d); if that run is gone, end it with: sudo kill %d", msg, held.PID, held.PID)
+	}
+	if err := l.mark(false); err != nil {
+		return nil, "", err
 	}
 	data, err := json.Marshal(lockRecord{Hello: h, PID: os.Getpid()})
 	if err != nil {
@@ -219,7 +250,70 @@ func takeLock(params json.RawMessage, dir, self string) (_ *os.File, project str
 	if err := deleteOld(filepath.Join(dir, "bin"), self); err != nil {
 		return nil, "", err
 	}
-	return f, h.Project, nil
+	return l, h.Project, nil
+}
+
+// tryLock reports whether it took the flock of f.
+func tryLock(f *os.File) (bool, error) {
+	err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("lock: %w", err)
+	}
+	return true, nil
+}
+
+// takeOver ends the helper pid, which holds the lock of f for the same run
+// and runs no request: its session died, as after a laptop sleep, and sshd
+// has not seen it yet. It sends SIGTERM, then SIGKILL after grace, and
+// reports whether it took the lock.
+func takeOver(ctx context.Context, f *os.File, pid int, grace time.Duration) (bool, error) {
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		if err := syscall.Kill(pid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return false, fmt.Errorf("end helper process %d: %w", pid, err)
+		}
+		for deadline := time.Now().Add(grace); time.Now().Before(deadline); {
+			if locked, err := tryLock(f); locked || err != nil {
+				return locked, err
+			}
+			select {
+			case <-ctx.Done():
+				return false, ctx.Err()
+			case <-tick.C:
+			}
+		}
+	}
+	return false, nil
+}
+
+// lockFile is the held lock of the state directory. The helper holds the
+// flock of busy, the state directory, while it runs a request.
+type lockFile struct {
+	f, busy *os.File
+}
+
+// mark takes or releases busy. A nil lock, before hello, does nothing.
+func (l *lockFile) mark(idle bool) error {
+	if l == nil {
+		return nil
+	}
+	how := syscall.LOCK_EX
+	if idle {
+		how = syscall.LOCK_UN
+	}
+	if err := syscall.Flock(int(l.busy.Fd()), how); err != nil {
+		return fmt.Errorf("lock: %w", err)
+	}
+	return nil
+}
+
+func (l *lockFile) close() {
+	l.f.Close()
+	l.busy.Close()
 }
 
 // checkTree fails on the first entry under dir that is not a directory or a

@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -211,6 +213,32 @@ func TestWinch(t *testing.T) {
 		vm.MustRun(t, "kill "+m[1])
 		if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 {
 			t.Errorf("plan after kill: exit %d, stderr %q", r.Code, r.Stderr)
+		}
+	})
+
+	t.Run("a new session of the same run takes over its idle helper", func(t *testing.T) {
+		vm.Session(t)
+		// The helper's process ID, and the sshd process of its connection.
+		ids := strings.Fields(vm.MustRun(t, `pid=$(sed 's/.*"pid":\([0-9]*\).*/\1/' /var/lib/winch/lock); p=$pid
+while [ "$p" -gt 1 ]; do
+  case "$(cat /proc/$p/comm)" in sshd*) echo "$pid $p"; exit 0;; esac
+  p=$(cut -d' ' -f4 /proc/$p/stat)
+done
+exit 1`))
+		// A stopped sshd passes nothing to the helper, as for a connection
+		// that died on the controller's side and that sshd has not seen yet.
+		vm.MustRun(t, "kill -STOP "+ids[1])
+		t.Cleanup(func() { vm.Run(context.Background(), "kill -CONT "+ids[1]) }) //nolint:errcheck // the VM can be gone
+		start := time.Now()
+		s := vm.Session(t)
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("the new session took %v", d)
+		}
+		if _, err := s.Exec(t.Context(), "true"); err != nil {
+			t.Fatalf("exec in the new session: %v", err)
+		}
+		if out := vm.MustRun(t, "grep -c '\"pid\":"+ids[0]+"}' /var/lib/winch/lock || true"); out != "0\n" {
+			t.Errorf("the lock still names the old helper %s", ids[0])
 		}
 	})
 
