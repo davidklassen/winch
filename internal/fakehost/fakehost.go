@@ -174,8 +174,8 @@ func (h *Hosts) SetAnswer(host, question, value string) {
 }
 
 // SetResult makes the check of the dir or link step for path, of the line step
-// for its match, or of the service step
-// for the unit name, on a host return res.
+// for its match, of the service or repo step for its name, or of the upgrade
+// step for its mode, on a host return res.
 func (h *Hosts) SetResult(host, name string, res module.Result) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -535,8 +535,26 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	}
 	if r, ok := m.(*module.Repo); ok {
 		c.hosts.mu.Lock()
+		defer c.hosts.mu.Unlock()
 		c.hosts.RepoRemoved = append(c.hosts.RepoRemoved, r.Removed)
-		c.hosts.mu.Unlock()
+		if res, ok := c.hosts.result(c.host + " " + r.Name); ok {
+			if slices.Contains(res.Changes, "refresh the index of source "+r.Name) {
+				st.IndexFresh, st.Refreshed = false, false
+			}
+			return res, nil
+		}
+		return module.Result{Status: module.OK}, nil
+	}
+	if u, ok := m.(*module.Upgrade); ok {
+		c.hosts.mu.Lock()
+		defer c.hosts.mu.Unlock()
+		if !st.Refreshed {
+			c.hosts.Refreshes[c.host]++
+		}
+		st.IndexFresh, st.Refreshed = true, true
+		if res, ok := c.hosts.result(c.host + " " + u.Main()); ok {
+			return res, nil
+		}
 		return module.Result{Status: module.OK}, nil
 	}
 	if sv, ok := m.(*module.Service); ok {
@@ -813,7 +831,7 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 		return res, nil
 	}
 	switch m := m.(type) {
-	case *module.Reboot, *module.Hostname, *module.Timezone, *module.Certbot, *module.Firewall, *module.Download:
+	case *module.Reboot, *module.Hostname, *module.Timezone, *module.Certbot, *module.Firewall, *module.Download, *module.Repo, *module.Upgrade:
 		return res, nil
 	case *module.User:
 		c.hosts.SetUser(c.host, m.Name)

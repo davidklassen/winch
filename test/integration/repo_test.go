@@ -76,7 +76,7 @@ func TestRepoModule(t *testing.T) {
 		{
 			Name:      "change the suite",
 			Setup:     signedSource("bookworm"),
-			State:     module.State{IndexFresh: true},
+			State:     module.State{IndexFresh: true, Refreshed: true},
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{signedFile + ": Suites bookworm → " + suite, refresh}},
 			WantState: module.State{},
@@ -93,10 +93,10 @@ func TestRepoModule(t *testing.T) {
 		{
 			Name:      "a key file with mode 0600 refreshes nothing",
 			Setup:     signedSource(suite) + " && chmod 600 " + signedAsc,
-			State:     module.State{IndexFresh: true},
+			State:     module.State{IndexFresh: true, Refreshed: true},
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{signedAsc + ": mode 0600 → 0644"}},
-			WantState: module.State{IndexFresh: true},
+			WantState: module.State{IndexFresh: true, Refreshed: true},
 		},
 		{
 			Name:      "another key",

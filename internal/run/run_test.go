@@ -192,6 +192,43 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
 	}
 }
 
+// spec: Modules/upgrade
+func TestUpgradeRefreshOncePerRun(t *testing.T) {
+	repo := "      - repo:\n          name: app\n          url: https://apt.example.com\n          suite: stable\n          components: main\n"
+	tests := []struct {
+		name  string
+		steps string
+		want  int
+	}{
+		{"upgrade alone", "", 1},
+		{"a repo step first", repo, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: test\n",
+				"inventories/test.yaml": "hosts:\n  web1: {}\n",
+				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.steps + "      - upgrade:\n          mode: safe\n",
+			})
+			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := fakehost.New()
+			h.SetResult("web1", "app", module.Result{Status: module.Change, Action: module.Create, Changes: []string{"refresh the index of source app"}})
+			h.SetResult("web1", "safe", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"upgrade curl 1 → 2"}})
+			plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+			var out, errOut bytes.Buffer
+			if !run.Apply(t.Context(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+				t.Fatalf("apply failed: %s", errOut.String())
+			}
+			if n := h.Refreshes["web1"]; n != tt.want {
+				t.Errorf("%d index refreshes, want %d", n, tt.want)
+			}
+		})
+	}
+}
+
 // spec: CLI/Output; Modules/file, dir, link
 func TestPlanContentReasons(t *testing.T) {
 	p := loadFiles(t, map[string]string{

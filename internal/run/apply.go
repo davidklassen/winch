@@ -220,7 +220,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 			hps, hosts = append(hps, hp), append(hosts, hp.Host)
 			if runs[name] == nil {
-				runs[name] = &hostApply{host: name, rep: rep, progress: plan.opts.progress(), notified: map[string]bool{}, notifiedAt: map[string]int{}, started: map[string]int{}, thens: slices.Clone(plan.Pending[name].Then)}
+				runs[name] = &hostApply{host: name, rep: rep, progress: plan.opts.progress(), state: module.State{Refreshed: plan.refreshed[name]}, notified: map[string]bool{}, notifiedAt: map[string]int{}, started: map[string]int{}, thens: slices.Clone(plan.Pending[name].Then)}
 				for _, n := range plan.Pending[name].Handlers {
 					runs[name].notified[n] = true
 				}
