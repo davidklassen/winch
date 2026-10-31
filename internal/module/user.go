@@ -678,7 +678,7 @@ func (u *User) checkSSHD(ctx context.Context, sshConnection string, a accounts, 
 	if err != nil {
 		return err
 	}
-	out, err := run(ctx, nil, "sshd", "-T", "-C", spec)
+	out, err := sshdTest(ctx, "-T", "-C", spec)
 	if err != nil {
 		return err
 	}
@@ -779,6 +779,21 @@ func (u *User) ownGroup(a accounts, gid uint32, group, owner string) bool {
 		return g.members[0] == owner
 	}
 	return false
+}
+
+// sshdTest runs sshd's test mode with args. As root, sshd needs /run/sshd,
+// which a stop of ssh.service removes. Without it, sshd runs in a private
+// mount namespace whose empty /run holds the directory, so the check changes
+// nothing on the host.
+func sshdTest(ctx context.Context, args ...string) (string, error) {
+	if _, err := os.Stat("/run/sshd"); !errors.Is(err, fs.ErrNotExist) {
+		return run(ctx, nil, "/usr/sbin/sshd", args...)
+	}
+	out, err := run(ctx, nil, "unshare", append([]string{"--mount", "--propagation=private", "sh", "-c", `mount -t tmpfs -o mode=0755 winch /run && mkdir /run/sshd && exec /usr/sbin/sshd "$@"`, "sh"}, args...)...)
+	if err != nil {
+		return out, fmt.Errorf("sshd %s without /run/sshd: %w", args[0], err)
+	}
+	return out, nil
 }
 
 // sshdSpec returns the connection spec of sshd -T for a login of user over

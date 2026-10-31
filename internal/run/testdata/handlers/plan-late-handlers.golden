@@ -1,0 +1,17 @@
+stdout:
+web1
+  web
+    + file /etc/motd
+        owner root, group root, mode 0644
+        @@ -0,0 +1,1 @@
+        +hi
+    zeta
+      ! handler zeta.stop
+      ! handler zeta.flush
+    alpha
+      ! handler alpha.reload
+      ! handler alpha.check
+
+1 host: 1 to change, 0 unchanged, 0 unknown
+plan b6028d7f5fd07a56
+stderr:

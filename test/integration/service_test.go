@@ -180,7 +180,7 @@ func TestServiceModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "service")
 	vm.MustRun(t, units)
-	reset := "systemctl unmask --runtime winch-vendor; systemctl reset-failed winch-crash winch-quick winch-late winch-later winch-loop; if [ -d /etc/systemd/system/winch-crash.service.d ] || [ -d /etc/systemd/system/winch-quick.service.d ] || [ -d /etc/systemd/system/winch-slowstop.service.d ] || [ -d /etc/systemd/system/winch-test.service.d ]; then rm -rf /etc/systemd/system/winch-crash.service.d /etc/systemd/system/winch-quick.service.d /etc/systemd/system/winch-slowstop.service.d /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; if [ -e /etc/systemd/system/winch-nope.service ]; then systemctl disable --now winch-nope; rm /etc/systemd/system/winch-nope.service; systemctl daemon-reload; fi; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service winch-lost.service winch-cond.service winch-slowstop.service winch-late.service winch-later.service winch-ready.service winch-loop.service; rm -f /tmp/boom /tmp/winch-cond; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service winch-noexec.service 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
+	reset := "systemctl unmask --runtime winch-vendor; systemctl reset-failed winch-crash winch-quick winch-late winch-later winch-loop; if [ -d /etc/systemd/system/winch-crash.service.d ] || [ -d /etc/systemd/system/winch-quick.service.d ] || [ -d /etc/systemd/system/winch-slowstop.service.d ] || [ -d /etc/systemd/system/winch-test.service.d ]; then rm -rf /etc/systemd/system/winch-crash.service.d /etc/systemd/system/winch-quick.service.d /etc/systemd/system/winch-slowstop.service.d /etc/systemd/system/winch-test.service.d; systemctl daemon-reload; fi; systemctl unmask winch-vendor winch-tpl@one; if [ -e /etc/systemd/system/winch-nope.service ]; then systemctl disable --now winch-nope; rm /etc/systemd/system/winch-nope.service; systemctl daemon-reload; fi; systemctl stop 'winch-tpl@*' winch-test.service winch-test.timer winch-static.service winch-vendor.service winch-crash.service winch-notify.service winch-boom.service winch-remain.service winch-lost.service winch-cond.service winch-slowstop.service winch-late.service winch-later.service winch-ready.service winch-loop.service; rm -f /tmp/boom /tmp/winch-cond; if [ -L /run/systemd/system/multi-user.target.wants/winch-test.service ]; then systemctl disable --runtime winch-test.service; fi; systemctl disable winch-test.service winch-test.timer winch-vendor.service winch-tpl@one.service winch-tpl@two.service winch-noexec.service " + vmtest.Quote(oddUnit) + " 2>/dev/null; if [ -L /etc/systemd/system/winch-linked.service ] || [ -L /etc/systemd/system/winch-noinstall.service ] || [ -L /etc/systemd/system/winch-dropin.service ] || [ -L /etc/systemd/system/winch-ltpl@.service ]; then systemctl stop winch-linked.service; for u in winch-linked winch-dropin winch-ltpl@one; do systemctl disable $u.service 2>/dev/null; done; rm -rf /etc/systemd/system/winch-linked.service /etc/systemd/system/winch-noinstall.service /etc/systemd/system/winch-dropin.service /etc/systemd/system/winch-dropin.service.d /etc/systemd/system/winch-ltpl@.service /etc/systemd/system/winch-ltpl@one.service; systemctl daemon-reload; fi; true"
 	change := func(changes ...string) module.Result {
 		return module.Result{Status: module.Change, Action: module.Modify, Changes: changes}
 	}
@@ -308,6 +308,20 @@ printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service
 			Want:      change("start"),
 			Unchanged: `! systemctl is-active -q ` + vmtest.Quote(oddUnit),
 			After:     `systemctl is-active -q ` + vmtest.Quote(oddUnit),
+		},
+		{
+			Name:      "enable and start an instance name with escaped spaces and shell characters",
+			Args:      &module.Service{Name: oddUnit, Enabled: new(true), Running: new(true)},
+			Want:      change("enable", "start"),
+			Unchanged: `! systemctl is-enabled -q ` + vmtest.Quote(oddUnit) + ` && ! systemctl is-active -q ` + vmtest.Quote(oddUnit),
+			After:     `systemctl is-enabled -q ` + vmtest.Quote(oddUnit) + ` && systemctl is-active -q ` + vmtest.Quote(oddUnit) + ` && test -L ` + vmtest.Quote("/etc/systemd/system/multi-user.target.wants/"+oddUnit+".service") + ` && [ ! -e /tmp/pwn ]`,
+		},
+		{
+			Name:  "stop and disable an instance name with escaped spaces and shell characters",
+			Setup: `systemctl enable --now ` + vmtest.Quote(oddUnit),
+			Args:  &module.Service{Name: oddUnit, Enabled: new(false), Running: new(false)},
+			Want:  change("disable", "stop"),
+			After: `! systemctl is-enabled -q ` + vmtest.Quote(oddUnit) + ` && ! systemctl is-active -q ` + vmtest.Quote(oddUnit),
 		},
 		{
 			Name:  "ok when running",

@@ -694,6 +694,39 @@ while True:
 	attrs := "owner root, group root, mode 0644"
 	reset := "! pid=$(cat /root/listening 2>/dev/null) || ! kill $pid || while kill -0 $pid 2>/dev/null; do sleep 0.1; done\n[ -e /etc/ssl/certs ] || mv /etc/ssl/certs.off /etc/ssl/certs\n[ ! -e /usr/local/share/ca-certificates/winch-test.crt ] || { rm /usr/local/share/ca-certificates/winch-test.crt && update-ca-certificates >/dev/null 2>&1; }\nrm -rf /tmp/w /root/listening /var/lib/winch/downloads/test && mkdir /tmp/w"
 	stalled, untrusted := "http://127.0.0.1:8099/tool", "https://localhost:8443/tool"
+	// redirects serves a chain of redirects from http to https and back to
+	// http on both ports. The chain of /r1 ends in "tool", the chain of /b1 in
+	// other content.
+	redirects := trust + ` && (python3 -c 'import os, socket, ssl, threading
+routes = {"/r1": "https://localhost:8443/r2", "/r2": "http://127.0.0.1:8099/tool", "/tool": "tool",
+    "/b1": "https://localhost:8443/b2", "/b2": "http://127.0.0.1:8099/evil", "/evil": "evil"}
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain("/root/tls.pem")
+def serve(s, tls):
+    while True:
+        c, _ = s.accept()
+        try:
+            if tls:
+                c = ctx.wrap_socket(c, server_side=True)
+            r = routes[c.recv(65536).split(b" ")[1].decode()]
+            if r.startswith("http"):
+                c.sendall(("HTTP/1.1 302 Found\r\nLocation: %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n" % r).encode())
+            else:
+                c.sendall(("HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" % (len(r), r)).encode())
+        except Exception:
+            pass
+        c.close()
+socks = []
+for port in (8099, 8443):
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", port))
+    s.listen()
+    socks.append(s)
+threading.Thread(target=serve, args=(socks[1], True), daemon=True).start()
+open("/root/listening", "w").write(str(os.getpid()))
+serve(socks[0], False)' >/dev/null 2>&1 &) && timeout 10 sh -c 'until [ -e /root/listening ]; do sleep 0.1; done'`
+	chain, otherChain := "http://127.0.0.1:8099/r1", "http://127.0.0.1:8099/b1"
 	vmtest.RunCases(t, vm, "download", reset, []vmtest.Case{
 		{
 			Name:         "a server that stops sending fails after the stall limit",
@@ -711,6 +744,22 @@ while True:
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + untrusted, attrs}},
 			WantApplyErr: "certificate signed by unknown authority",
 			Fix:          trust,
+		},
+		{
+			Name:  "a redirect chain from http to https and back to http",
+			Setup: redirects,
+			Args:  &module.Download{URL: chain, SHA256: sum, Path: "/tmp/w/f"},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + chain, attrs}},
+			After: `[ "$(cat /tmp/w/f)" = tool ]`,
+		},
+		{
+			Name:         "a redirect chain to other content fails on the sha256",
+			Setup:        redirects,
+			Args:         &module.Download{URL: otherChain, SHA256: sum, Path: "/tmp/w/f"},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"download " + otherChain, attrs}},
+			WantApplyErr: "download " + otherChain + ": the SHA-256 is " + sha([]byte("evil")) + ", not " + sum,
+			After:        `[ "$(ls -A /tmp/w)" = "" ]`,
+			FixArgs:      &module.Download{URL: chain, SHA256: sum, Path: "/tmp/w/f"},
 		},
 		{
 			Name:  "a file with its sha256 needs no CA certificates",

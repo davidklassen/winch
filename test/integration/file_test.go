@@ -8,6 +8,10 @@ import (
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
+// setgidParent makes /tmp/w/sg a directory of the group admin with the setgid
+// bit, so new entries in it get the group admin.
+const setgidParent = `mkdir /tmp/w/sg && chgrp admin /tmp/w/sg && chmod 2775 /tmp/w/sg`
+
 // spec: Modules/file, dir, link
 func TestFileModule(t *testing.T) {
 	t.Parallel()
@@ -21,6 +25,21 @@ func TestFileModule(t *testing.T) {
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /tmp/w/sub (owner root, group root, mode 0755)", attrs}, Old: new("")},
 			Unchanged: `[ ! -e /tmp/w/sub ]`,
 			After:     `[ "$(cat /tmp/w/sub/create)" = hello ] && [ "$(stat -c '%U %G %a' /tmp/w/sub/create)" = "root root 644" ]`,
+		},
+		{
+			Name:  "create in a setgid directory",
+			Setup: setgidParent,
+			Args:  &module.File{Path: "/tmp/w/sg/f", Data: []byte("hello\n")},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{attrs}, Old: new("")},
+			After: `[ "$(stat -c '%U %G %a' /tmp/w/sg/f)" = "root root 644" ]`,
+		},
+		{
+			Name:      "create under a setgid parent",
+			Setup:     setgidParent,
+			Args:      &module.File{Path: "/tmp/w/sg/sub/f", Data: []byte("hello\n")},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /tmp/w/sg/sub (owner root, group root, mode 0755)", attrs}, Old: new("")},
+			Unchanged: `[ ! -e /tmp/w/sg/sub ]`,
+			After:     `[ "$(stat -c '%U %G %a' /tmp/w/sg/sub /tmp/w/sg/sub/f | tr '\n' ' ')" = "root root 755 root root 644 " ]`,
 		},
 		{
 			Name:  "ok",

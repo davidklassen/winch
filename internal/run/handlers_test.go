@@ -480,6 +480,47 @@ func TestStageStepNotifiesEarlierRecipe(t *testing.T) {
 	}
 }
 
+// spec: Handlers; CLI/Output
+func TestLateHandlersOfSeveralRecipes(t *testing.T) {
+	recipe := func(path, first, second string) string {
+		return "steps:\n  - file:\n      path: " + path + "\n      content: \"x\\n\"\nhandlers:\n" +
+			"  " + first + ":\n    - service:\n        name: " + first + "\n        restarted: true\n" +
+			"  " + second + ":\n    - service:\n        name: " + second + "\n        restarted: true\n"
+	}
+	p := loadFiles(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: web
+    hosts: all
+    steps:
+      - recipe: zeta
+      - recipe: alpha
+      - file:
+          path: /etc/motd
+          content: "hi\n"
+        notify: [alpha.check, alpha.reload, zeta.flush, zeta.stop]
+`,
+		"recipes/zeta/recipe.yaml":  recipe("/etc/zeta", "stop", "flush"),
+		"recipes/alpha/recipe.yaml": recipe("/etc/alpha", "reload", "check"),
+	})
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/zeta", "x\n")
+	h.SetFile("web1", "/etc/alpha", "x\n")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	golden.Assert(t, filepath.Join("testdata", "handlers", "plan-late-handlers.golden"), output(&out, &errOut))
+	out.Reset()
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+		t.Fatal(errOut.String())
+	}
+	golden.Assert(t, filepath.Join("testdata", "handlers", "apply-late-handlers.golden"), output(&out, &errOut))
+	if want := []string{"stop restart", "flush restart", "reload restart", "check restart", "access"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+	}
+}
+
 // spec: Steps; Running a pipeline/Plan; CLI/Output
 func TestPendingThen(t *testing.T) {
 	files := maps.Clone(handlerFiles)

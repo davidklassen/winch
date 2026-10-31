@@ -1,10 +1,12 @@
 package integration
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1313,4 +1315,44 @@ systemctl reload ssh`
 			After: `[ "$(getent shadow admin | cut -d: -f2)" = '!' ]`,
 		},
 	})
+}
+
+// spec: Modules/user; Modules/file, dir, link (dir purge)
+func TestSSHDChecksWithoutRunDir(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "sshd-norun")
+	vm.MustRun(t, "mkdir /tmp/w && touch /tmp/w/junk")
+	s := vm.Session(t)
+	// The state after a stop of ssh.service on a host with ssh.socket. A new
+	// login would make /run/sshd again, so the test uses the session alone.
+	if res, err := s.Exec(t.Context(), "mv /run/sshd /run/sshd.off"); err != nil || res.ExitCode != 0 {
+		t.Fatalf("move /run/sshd: %+v, %v", res, err)
+	}
+	t.Cleanup(func() { s.Exec(context.Background(), "mv /run/sshd.off /run/sshd") }) //nolint:errcheck // the VM can be gone
+	ctx := t.Context()
+	got, err := s.Check(ctx, "user", &module.User{Name: "wtalice", AuthorizedKeys: keys(fakeKey('1', "one"))}, &module.State{})
+	if err != nil || got.Status != module.Change {
+		t.Errorf("check of user keys = %+v, %v; want a change", got, err)
+	}
+	got, err = s.Check(ctx, "dir", &module.Dir{Path: "/tmp/w", Purge: true}, &module.State{})
+	if want := []string{"remove file /tmp/w/junk"}; err != nil || !slices.Equal(got.Changes, want) {
+		t.Errorf("check of a purge = %+v, %v; want the changes %q", got, err, want)
+	}
+	_, err = s.Check(ctx, "dir", &module.Dir{Path: "/etc/ssh", Purge: true}, &module.State{})
+	if want := "purge of /etc/ssh would remove files that sshd needs: "; err == nil || !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("check of a purge of /etc/ssh: %v, want an error that starts with %q", err, want)
+	}
+	if res, err := s.Exec(ctx, "echo 'NoSuchOption yes' > /etc/ssh/sshd_config.d/wt.conf"); err != nil || res.ExitCode != 0 {
+		t.Fatalf("write a bad sshd drop-in: %+v, %v", res, err)
+	}
+	_, err = s.Check(ctx, "user", &module.User{Name: "wtalice", AuthorizedKeys: keys(fakeKey('1', "one"))}, &module.State{})
+	if want := "sshd -T without /run/sshd: "; err == nil || !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), "NoSuchOption") {
+		t.Errorf("check of user keys with a bad sshd config: %v, want an error that starts with %q and names the option", err, want)
+	}
+	if res, err := s.Exec(ctx, "rm /etc/ssh/sshd_config.d/wt.conf"); err != nil || res.ExitCode != 0 {
+		t.Fatalf("remove the bad sshd drop-in: %+v, %v", res, err)
+	}
+	if res, err := s.Exec(ctx, "[ ! -e /run/sshd ]"); err != nil || res.ExitCode != 0 {
+		t.Errorf("the checks made /run/sshd: %+v, %v", res, err)
+	}
 }

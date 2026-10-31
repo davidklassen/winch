@@ -92,6 +92,14 @@ func TestDebconfModule(t *testing.T) {
 			After:     get("winch-ask/secret", "new-pass"),
 		},
 		{
+			Name:      "an empty password",
+			Setup:     set("winch-ask winch-ask/secret password old-pass"),
+			Args:      &module.Debconf{Package: "winch-ask", Question: "winch-ask/secret", Type: "password", Value: ""},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"answer (password, not shown)"}},
+			Unchanged: get("winch-ask/secret", "old-pass"),
+			After:     "echo 'GET winch-ask/secret' | debconf-communicate | grep -qx '0 \\?'",
+		},
+		{
 			Name:  "a value that ends in a backslash",
 			Args:  &module.Debconf{Package: "winch-later", Question: "winch-later/path", Type: "string", Value: `C:\dir\`},
 			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{`answer (none) → "C:\\dir\\"`}},

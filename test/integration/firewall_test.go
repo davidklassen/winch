@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -200,6 +201,18 @@ func TestFirewallModule(t *testing.T) {
 		"  - service:\n      name: nftables\n      enabled: true\n")
 	if r := lab.Winch(t, dir, "plan"); r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("plan after the reboot: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+
+	// Overlapping networks in one from list load, and the next plan is clean.
+	project(firewall + "        - tcp: 22\n        - tcp: 5432\n          from: [10.0.0.0/8, 10.1.0.0/16, 10.1.2.3, 2001:db8::/32, 2001:db8:1::/48]\n")
+	if r := lab.Winch(t, dir, "apply", "--yes"); r.Code != 0 || !strings.Contains(r.Stdout, "add tcp 5432 from 10.0.0.0/8, 10.1.0.0/16, 10.1.2.3, 2001:db8::/32, 2001:db8:1::/48\n") {
+		t.Fatalf("apply with overlapping networks: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	if out := vm.MustRun(t, table); !regexp.MustCompile(`ip saddr .*10\.0\.0\.0/8.* tcp dport 5432 accept`).MatchString(out) || !regexp.MustCompile(`ip6 saddr .*2001:db8::/32.* tcp dport 5432 accept`).MatchString(out) {
+		t.Errorf("the table with overlapping networks:\n%s", out)
+	}
+	if r := lab.Winch(t, dir, "plan"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("plan after overlapping networks: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 
 	// Remove.

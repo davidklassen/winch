@@ -22,6 +22,14 @@ func TestDirModule(t *testing.T) {
 			After:     `[ "$(stat -c '%F %U %G %a' /tmp/w/a /tmp/w/a/b | sort -u)" = "directory root root 755" ]`,
 		},
 		{
+			Name:      "create with parents under a setgid parent",
+			Setup:     setgidParent,
+			Args:      &module.Dir{Path: "/tmp/w/sg/a/b"},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create directory /tmp/w/sg/a (owner root, group root, mode 0755)", attrs}},
+			Unchanged: `[ ! -e /tmp/w/sg/a ]`,
+			After:     `[ "$(stat -c '%U %G %a' /tmp/w/sg/a /tmp/w/sg/a/b | sort -u)" = "root root 755" ]`,
+		},
+		{
 			Name:  "ok",
 			Setup: `mkdir /tmp/w/d`,
 			Args:  &module.Dir{Path: "/tmp/w/d"},
