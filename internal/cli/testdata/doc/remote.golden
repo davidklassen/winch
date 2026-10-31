@@ -4,11 +4,11 @@ winch works on a host through one SSH connection, the session, with a
 helper program at the other end.
 
 What a host needs:
-  - Debian 13, Ubuntu 24.04, or Ubuntu 26.04, on amd64 or arm64.
-  - Login as root, or as a user with passwordless sudo.
-  - A POSIX login shell that prints nothing on stdout before winch
-    starts a command.
-  - /var/lib/winch/ on a file system that allows running programs.
+    - Debian 13, Ubuntu 24.04, or Ubuntu 26.04, on amd64 or arm64.
+    - Login as root, or as a user with passwordless sudo.
+    - A POSIX login shell that prints nothing on stdout before winch
+      starts a command.
+    - /var/lib/winch/ on a file system that allows running programs.
 
   Nothing else needs to be installed. The machine that runs winch is
   Linux or macOS with the OpenSSH client.
@@ -16,9 +16,9 @@ What a host needs:
 SSH settings:
   winch runs your ssh, so ~/.ssh/config applies: Port, IdentityFile,
   ProxyJump, and every other setting. Its Host blocks match the host
-  name of the inventory, also when the host has an address. The
-  address and the user of the inventory override the SSH config.
-  --user overrides both.
+  name of the inventory, also when the host has an address. The address
+  and the user of the inventory override the SSH config. --user
+  overrides both.
 
     # ~/.ssh/config
     Host *.acme.com
@@ -36,20 +36,20 @@ SSH settings:
 
   winch also passes these options. They win over the SSH config:
 
-    ConnectTimeout=15        a host that does not answer fails
-    ServerAliveInterval=15   and does not hang the run
+    ConnectTimeout=15                  a host that does not answer fails
+    ServerAliveInterval=15             and does not hang the run
     ServerAliveCountMax=3
-    ControlMaster=no         a master connection from the SSH config,
-    ControlPath=none         with its own keepalive, is not used
-    RemoteCommand=none       the SSH config does not replace
-    PermitLocalCommand=no    or add to the command of winch
+    ControlMaster=no ControlPath=none  a master connection from the SSH
+                                       config, with its own keepalive,
+                                       is not used
+    RemoteCommand=none                 the SSH config does not replace
+    PermitLocalCommand=no              or add to the command of winch
     ClearAllForwardings=yes
-    ForwardAgent=no
-    ForwardX11=no
+    ForwardAgent=no ForwardX11=no
 
 Host keys and passphrases:
-  When stdin and stderr are terminals, ssh can ask for a new host key
-  or a key passphrase. Sessions then start one at a time, in inventory
+  When stdin and stderr are terminals, ssh can ask for a new host key or
+  a key passphrase. Sessions then start one at a time, in inventory
   order, so each question belongs to one host. After the start, hosts
   run in parallel.
 
@@ -69,9 +69,9 @@ Host keys and passphrases:
 
 When a connection fails:
   A host is unreachable when ssh fails before the session starts: the
-  name does not resolve, the connection is refused or takes more than
-  15 seconds, or the host key or the login fails. winch then exits 4
-  when no step failed. For an unknown host key, the error names the ssh
+  name does not resolve, the connection is refused or takes more than 15
+  seconds, or the host key or the login fails. winch then exits 4 when
+  no step failed. For an unknown host key, the error names the ssh
   command to run once. For a refused login, it names ssh-add.
 
   Only one winch run works on a host at a time. When another run holds
@@ -80,18 +80,18 @@ When a connection fails:
 
 The session:
   A session is one ssh process with the helper at the other end. All
-  work on a host goes through it. It opens at the first work of the
-  host and stays open across stages. It closes when the host has no
-  more work, and at the apply question, which can wait for a long
-  time. The access checks open their own connections.
+  work on a host goes through it. It opens at the first work of the host
+  and stays open across stages. It closes when the host has no more
+  work, and at the apply question, which can wait for a long time. The
+  access checks open their own connections.
 
   winch keeps the helper in /var/lib/winch/bin/ and sends it when it is
-  missing. The helper exits when the session ends and leaves no
-  process, except a confirm_access timer until it ends.
+  missing. The helper exits when the session ends and leaves no process,
+  except a confirm_access timer until it ends.
 
   The helpers for amd64 and arm64 are inside the winch binary. A winch
-  built with go install has none: plan, apply, run, and exec fail
-  before they contact a host. Install a release.
+  built with go install has none: plan, apply, run, and exec fail before
+  they contact a host. Install a release.
 
 How commands run:
   Every command on the host, also one that a module runs, such as
@@ -107,22 +107,21 @@ How commands run:
   of several lines stops at its first failed line.
 
   A cmd with dir runs in that directory. A cmd with user runs as that
-  user, with the home of that user as HOME. It starts no login
-  session: PAM does not run, so the login umask and limits of the user
-  do not apply.
+  user, with the home of that user as HOME. It starts no login session:
+  PAM does not run, so the login umask and limits of the user do not
+  apply.
 
 The time limit:
-  A command stops after 10 minutes, or after the timeout of a cmd
-  step in seconds. The helper sends SIGTERM to the command and its
-  child processes, and SIGKILL 10 seconds later to those that still
-  run. The step fails, and the error shows the last 10 lines of
-  output. apt-get in pkg, repo, and upgrade has no time limit.
+  A command stops after 10 minutes, or after the timeout of a cmd step
+  in seconds. The helper sends SIGTERM to the command and its child
+  processes, and SIGKILL 10 seconds later to those that still run. The
+  step fails, and the error shows the last 10 lines of output. apt-get
+  in pkg, repo, and upgrade has no time limit.
 
-  When the connection to winch ends, the helper lets the running
-  command finish within its limit, and then exits. A package install
-  is not cut off in the middle. winch exec is different: on Ctrl-C, or
-  when its session breaks, its command gets SIGINT, and SIGKILL after
-  10 seconds.
+  When the connection to winch ends, the helper lets the running command
+  finish within its limit, and then exits. A package install is not cut
+  off in the middle. winch exec is different: on Ctrl-C, or when its
+  session breaks, its command gets SIGINT, and SIGKILL after 10 seconds.
 
 What winch leaves on the host:
   winch keeps its files in /var/lib/winch/:
@@ -139,7 +138,6 @@ What winch leaves on the host:
                              reboot, until the next boot
     lock                     the session lock
 
-  To remove winch from a host, delete /var/lib/winch/. Pending
-  handlers, then commands, health gates, asserts, and certbot hooks
-  are then lost. The next run of winch starts from the state of the
-  host.
+  To remove winch from a host, delete /var/lib/winch/. Pending handlers,
+  then commands, health gates, asserts, and certbot hooks are then lost.
+  The next run of winch starts from the state of the host.

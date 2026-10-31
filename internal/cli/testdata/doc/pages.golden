@@ -30,12 +30,12 @@ Minimal project:
 Hosts:
   winch connects with the OpenSSH client and its SSH config. The login
   user is root, or has passwordless sudo. A host needs nothing else
-  installed: winch sends a helper program to /var/lib/winch/ on the
-  host and runs it there. Run winch doc remote.
+  installed: winch sends a helper program to /var/lib/winch/ on the host
+  and runs it there. Run winch doc remote.
 
 When the project grows:
-  Move the hosts into inventories, the steps into pipelines, and
-  groups of steps into recipes:
+  Move the hosts into inventories, the steps into pipelines, and groups
+  of steps into recipes:
 
     winch.yaml               the project file
     inventories/
@@ -49,26 +49,25 @@ When the project grows:
         templates/site.tmpl  the templates of the recipe
         files/tls.conf       the files of the recipe
 
-  The name of an inventory or a pipeline is its file name without
-  .yaml. Plan and apply then name the pipeline: winch plan site.
+  The name of an inventory or a pipeline is its file name without .yaml.
+  Plan and apply then name the pipeline: winch plan site.
 
-  An inventory, a pipeline, or a recipe can also be a key in
-  winch.yaml, under inventories, pipelines, or recipes. The value of
-  the key is the content of the file. A name in both places is an
-  error.
+  An inventory, a pipeline, or a recipe can also be a key in winch.yaml,
+  under inventories, pipelines, or recipes. The value of the key is the
+  content of the file. A name in both places is an error.
 
 Top-level inventory and pipeline:
   hosts and groups at the top of winch.yaml are the only inventory of
-  the project. They work with any number of pipelines. steps,
-  handlers, parallelism, and health at the top of winch.yaml are the
-  only pipeline. Then plan and apply take no pipeline name.
+  the project. They work with any number of pipelines. steps, handlers,
+  parallelism, and health at the top of winch.yaml are the only
+  pipeline. Then plan and apply take no pipeline name.
 
 YAML:
-  All files are YAML 1.2. Only true and false are booleans: yes, no,
-  on, and off are strings. File modes are strings: mode: "0644".
-  Unknown keys and duplicate keys are errors. Anchors and aliases
-  work. Merge keys (<<) do not. winch fmt fixes the indentation and
-  the step key order.
+  All files are YAML 1.2. Only true and false are booleans: yes, no, on,
+  and off are strings. File modes are strings: mode: "0644". Unknown
+  keys and duplicate keys are errors. Anchors and aliases work. Merge
+  keys (<<) do not. winch fmt fixes the indentation and the step key
+  order.
 
 Keys:
   name         string                 required  letters, digits, ., _, and -
@@ -158,20 +157,20 @@ and gives them values.
 
 Files:
   An inventory is a file in inventories/, such as
-  inventories/production.yaml, or a key in inventories of winch.yaml.
-  It holds data and secrets, but no templates or expressions.
+  inventories/production.yaml, or a key in inventories of winch.yaml. It
+  holds data and secrets, but no templates or expressions.
 
 Choosing the inventory:
   --inventory <name> names the inventory of a run. inventory in
   winch.yaml names a default. A project with one inventory uses it. A
-  project with more inventories and no default makes each run name
-  its inventory, so a run against production is always deliberate.
+  project with more inventories and no default makes each run name its
+  inventory, so a run against production is always deliberate.
 
 Groups and values:
-  The group all contains every host. A host value beats a group
-  value, and a group value beats a value of all. Two groups of one
-  host that set different values for one variable, or for user, are
-  an error, unless the host sets that value too.
+  The group all contains every host. A host value beats a group value,
+  and a group value beats a value of all. Two groups of one host that
+  set different values for one variable, or for user, are an error,
+  unless the host sets that value too.
 
 SSH settings:
   Every other SSH setting, such as the port or the key, comes from your
@@ -179,17 +178,17 @@ SSH settings:
   has an address.
 
 Host patterns:
-  Host patterns select hosts in the hosts of a stage, in --hosts, and
-  in winch run and winch exec:
+  Host patterns select hosts in the hosts of a stage, in --hosts, and in
+  winch run and winch exec:
 
     web          the hosts in the group web, or the host named web
     web,db       the hosts in web or in db
     web & prod   the hosts in web and in prod
     web & !web3  the hosts in web, without web3
 
-  & and ! bind tighter than ",". Hosts keep inventory order. A name
-  that is neither a group nor a host is an error. A pattern with only
-  ! names is an error: write all & !web, not !web.
+  & and ! bind tighter than ",". Hosts keep inventory order. A name that
+  is neither a group nor a host is an error. A pattern with only ! names
+  is an error: write all & !web, not !web.
 
 Keys:
   hosts          map              -  keyed by host name
@@ -287,34 +286,33 @@ that value too.
 ==> winch doc pipeline
 pipeline: ordered stages that apply steps to hosts
 
-A pipeline is an ordered list of stages. Each stage applies its steps
-to a set of hosts.
+A pipeline is an ordered list of stages. Each stage applies its steps to
+a set of hosts.
 
 Files:
-  A pipeline is a file in pipelines/, such as pipelines/site.yaml, or
-  a key in pipelines of winch.yaml. winch plan site and winch apply
-  site run it.
+  A pipeline is a file in pipelines/, such as pipelines/site.yaml, or a
+  key in pipelines of winch.yaml. winch plan site and winch apply site
+  run it.
 
 One stage or many:
-  Most pipelines run the same steps on every host. Such a pipeline
-  holds the steps directly. It is one stage with the name of the
-  pipeline. A pipeline whose hosts have different roles, or that must
-  finish on some hosts before it starts on others, has stages.
+  Most pipelines run the same steps on every host. Such a pipeline holds
+  the steps directly. It is one stage with the name of the pipeline. A
+  pipeline whose hosts have different roles, or that must finish on some
+  hosts before it starts on others, has stages.
 
 Order:
   Stages run in order. A stage starts when the previous stage finished
   on all its hosts. Inside a stage, each host runs its steps in order,
   without waiting for other hosts. A stage that matches no host is
-  skipped. --stages runs only some stages, and --hosts only some
-  hosts.
+  skipped. --stages runs only some stages, and --hosts only some hosts.
 
 Steps of a stage:
   A step in a stage can use a module directly. It cannot use template,
   source, or the key of repo: those read the files of a recipe.
 
 Failures:
-  A failed host takes no part in later stages. The other hosts go on.
-  A new run is the resume: steps that already succeeded check as ok.
+  A failed host takes no part in later stages. The other hosts go on. A
+  new run is the resume: steps that already succeeded check as ok.
 
 Keys:
   stages                 list of maps           -         stages in run order
@@ -496,19 +494,19 @@ Files:
   every command, also a recipe that no pipeline uses.
 
 Names:
-  A recipe name has lowercase letters, digits, and _. It can be the
-  name of a module.
+  A recipe name has lowercase letters, digits, and _. It can be the name
+  of a module.
 
 Running a recipe:
-  A step runs a recipe with recipe: <name>. A recipe step has only
-  name, recipe, vars, and when. A recipe runs at most once per host in
-  a run. Two stages can run the same recipe when their hosts do not
-  overlap. A recipe cannot run another recipe.
+  A step runs a recipe with recipe: <name>. A recipe step has only name,
+  recipe, vars, and when. A recipe runs at most once per host in a run.
+  Two stages can run the same recipe when their hosts do not overlap. A
+  recipe cannot run another recipe.
 
 Templates and files:
-  template reads from the templates/ directory of the recipe, and
-  source from files/. Paths can name subdirectories. A template file
-  uses the language of !tpl. Run winch doc templates.
+  template reads from the templates/ directory of the recipe, and source
+  from files/. Paths can name subdirectories. A template file uses the
+  language of !tpl. Run winch doc templates.
 
 Keys:
   require   list of expressions    -         conditions on facts
@@ -584,8 +582,8 @@ recipe.
 
 Form:
   A step is a map. It has one module key, such as pkg or file, with the
-  arguments of the module as a map. Or it has recipe with the name of
-  a recipe. Run winch doc <module> for the arguments of a module.
+  arguments of the module as a map. Or it has recipe with the name of a
+  recipe. Run winch doc <module> for the arguments of a module.
 
 Computed values:
   Any module argument can be a template or an expression, and so can
@@ -721,9 +719,9 @@ Declaring a handler:
 
 Notifying a handler:
   notify on a step names a handler of the current recipe or stage, or
-  <recipe>.<handler> of another recipe. That recipe must run in the
-  same pipeline, on at least one host where the step runs. On a host
-  where it does not run, winch drops the notification.
+  <recipe>.<handler> of another recipe. That recipe must run in the same
+  pipeline, on at least one host where the step runs. On a host where it
+  does not run, winch drops the notification.
 
     # winch.yaml
     name: demo
@@ -749,15 +747,15 @@ Notifying a handler:
     # A change of gzip.conf reloads nginx once, at the end of the stage.
 
 When a handler runs:
-  - A handler runs at most once per recipe run on a host. A handler of
-    a stage runs at most once per stage run.
-  - A handler runs after the last step of its recipe. When its recipe
-    already ran on that host, it runs at the end of the current stage.
-  - A handler of a stage runs after the last step of the stage and
-    after the recipe handlers at the end of the stage. It runs before
-    the health gate.
-  - Handlers run in the order that the recipe or the stage declares
-    them.
+    - A handler runs at most once per recipe run on a host. A handler of
+      a stage runs at most once per stage run.
+    - A handler runs after the last step of its recipe. When its recipe
+      already ran on that host, it runs at the end of the current stage.
+    - A handler of a stage runs after the last step of the stage and
+      after the recipe handlers at the end of the stage. It runs before
+      the health gate.
+    - Handlers run in the order that the recipe or the stage declares
+      them.
 
 Handler steps:
   A handler step can have when. It cannot use notify or run a recipe.
@@ -768,17 +766,16 @@ Pending handlers:
   When a step notifies a handler, winch marks the handler as pending on
   the host before the step changes anything. The mark goes when the
   handler succeeds. When a run stops first, the handler stays pending.
-  It runs the next time its recipe or stage runs on that host. The
-  plan shows a handler that will run with "!".
+  It runs the next time its recipe or stage runs on that host. The plan
+  shows a handler that will run with "!".
 ==> winch doc variables
 variables: named values for hosts, groups, and recipes
 
-Variables are named values that steps, templates, and expressions
-read.
+Variables are named values that steps, templates, and expressions read.
 
 Sources:
-  Each host has its own value. A value comes from these sources. A
-  later source replaces an earlier one:
+  Each host has its own value. A value comes from these sources. A later
+  source replaces an earlier one:
 
     1. the default
     2. the vars of the groups of the host, then of the host
@@ -790,27 +787,27 @@ Sources:
 Defaults:
   A default is declared once: in vars of winch.yaml, or in vars of the
   recipe that owns it. A recipe's own defaults start with the recipe
-  name and _. A default can be a !secret, a template, or an
-  expression. It sees vars, host, and facts, but not match(). A cycle
-  between defaults is an error.
+  name and _. A default can be a !secret, a template, or an expression.
+  It sees vars, host, and facts, but not match(). A cycle between
+  defaults is an error.
 
 Variables without a default:
   A variable without a default needs no declaration. A read of it is
-  enough, and the variable is required where it is read. A variable
-  that may stay unset needs a default, such as relay_host: "".
+  enough, and the variable is required where it is read. A variable that
+  may stay unset needs a default, such as relay_host: "".
 
 Names and reads:
-  A variable name has lowercase letters, digits, and _. A read names
-  the variable: vars.domain, .vars.domain, $.vars.domain, or
-  host.vars.domain. Any other read of the whole map, such as
-  keys(vars) or range .vars, is an error. A map variable holds data
-  that a step reads by key: vars.users[item]. host.vars holds the
-  variables of the host without the vars of a recipe step.
+  A variable name has lowercase letters, digits, and _. A read names the
+  variable: vars.domain, .vars.domain, $.vars.domain, or
+  host.vars.domain. Any other read of the whole map, such as keys(vars)
+  or range .vars, is an error. A map variable holds data that a step
+  reads by key: vars.users[item]. host.vars holds the variables of the
+  host without the vars of a recipe step.
 
 Types:
   Variables have no types. A value keeps the type that YAML gives it.
-  --set parses its value as YAML. Quote a value that YAML would
-  change: --set 'vars.php_version="8.0"'.
+  --set parses its value as YAML. Quote a value that YAML would change:
+  --set 'vars.php_version="8.0"'.
 
 Example:
   # winch.yaml
@@ -853,8 +850,8 @@ A template is text in which winch fills in the values of each host.
 
 Syntax:
   The !tpl tag marks a template, a Go text/template. It builds text,
-  such as a path or a line. The template files of a recipe use the
-  same language.
+  such as a path or a line. The template files of a recipe use the same
+  language.
 
 Data:
   A template reads these names with a leading dot:
@@ -871,27 +868,27 @@ Where templates go:
   then.
 
 Functions and actions:
-  A function takes its arguments after its name, separated by spaces:
-  {{ join .vars.names ", " }}. Templates also have the actions of Go's
-  text/template: if, else, range, with, define, template, block,
-  break, and continue, and the variables $x := value.
+  A function takes its arguments after its name, separated by spaces: {{
+  join .vars.names ", " }}. Templates also have the actions of Go's
+  text/template: if, else, range, with, define, template, block, break,
+  and continue, and the variables $x := value.
 
 Missing values:
-  A template that reads a missing map key fails. Use get for a key
-  that may be missing. A template that prints a null value fails.
+  A template that reads a missing map key fails. Use get for a key that
+  may be missing. A template that prints a null value fails.
 
 Quoting:
-  A value goes into a command as it is. Quote a value that must stay
-  one word with quote. Quote a YAML value that starts with a quote, [,
-  {, &, *, or !, or that contains ": " or " #". A template that starts
-  with {{ needs quotes.
+  A value goes into a command as it is. Quote a value that must stay one
+  word with quote. Quote a YAML value that starts with a quote, [, {, &,
+  *, or !, or that contains ": " or " #". A template that starts with {{
+  needs quotes.
 
 When they run:
   winch evaluates templates on the machine that runs winch, during the
   plan. They cannot read the result of a step. winch checks each one
   when it loads the project: an unknown name or a syntax error is an
-  error. An error while winch evaluates one for a host fails that
-  host. The other hosts go on.
+  error. An error while winch evaluates one for a host fails that host.
+  The other hosts go on.
 
 Functions:
   and       and x y: the first empty argument, or the last argument.
@@ -1067,8 +1064,8 @@ urlquery s: s escaped for the query of a URL.
 ==> winch doc expressions
 expressions: computed values (!expr)
 
-An expression computes a value for each host, such as a list, a
-number, or true or false.
+An expression computes a value for each host, such as a list, a number,
+or true or false.
 
 Syntax:
   The !expr tag marks an expression in the language of expr
@@ -1078,7 +1075,8 @@ Syntax:
 Data:
   An expression reads these names without a leading dot:
 
-    vars      the variables of the host, with the vars of the recipe step
+    vars      the variables of the host, with the vars of the recipe
+              step
     facts     the facts of the host; run winch doc facts
     host      name, short, address, groups, and vars of the host
     item      the current element in a step with loop
@@ -1094,17 +1092,17 @@ Where expressions go:
   then. when takes an expression. loop takes a list or an expression.
 
 Operators:
-  + - * / % **                  arithmetic
-  == != < > <= >=               comparison
-  and or not                    logic, also && || !
-  in                            membership in a list or a map
-  contains startsWith endsWith  text tests
-  matches                       regular expression test
-  c ? a : b                     choice
-  a ?? b                        a, or b when a is nil
-  [] ?.                         read an element or a key
-  x[i:j] 1..3                   slice and range
-  |                             pipe: vars.name | lower()
+    + - * / % **                  arithmetic
+    == != < > <= >=               comparison
+    and or not                    logic, also && || !
+    in                            membership in a list or a map
+    contains startsWith endsWith  text tests
+    matches                       regular expression test
+    c ? a : b                     choice
+    a ?? b                        a, or b when a is nil
+    [] ?.                         read an element or a key
+    x[i:j] 1..3                   slice and range
+    |                             pipe: vars.name | lower()
 
 Predicates:
   In a predicate, such as the second argument of filter, # is the
@@ -1116,16 +1114,15 @@ Missing values:
   null fails the host.
 
 Quoting:
-  Quote a YAML value that starts with a quote, [, {, &, *, or !, or
-  that contains ": " or " #".
+  Quote a YAML value that starts with a quote, [, {, &, *, or !, or that
+  contains ": " or " #".
 
 When they run:
-  winch evaluates expressions on the machine that runs winch, during
-  the plan. They cannot read the result of a step. winch checks each
-  one when it loads the project: an unknown name or a syntax error is
-  an error. An error while winch evaluates one for a host fails that
-  host. The other hosts go on. $env and now() are errors in every
-  expression.
+  winch evaluates expressions on the machine that runs winch, during the
+  plan. They cannot read the result of a step. winch checks each one
+  when it loads the project: an unknown name or a syntax error is an
+  error. An error while winch evaluates one for a host fails that host.
+  The other hosts go on. $env and now() are errors in every expression.
 
 Functions:
   abs            abs(n): the absolute value of the number n.
@@ -1563,9 +1560,9 @@ Facts are values that winch reads from each host before the plan, such
 as the OS release.
 
 Reading a fact:
-  Expressions read a fact as facts.os.id, and templates as
-  {{ .facts.os.id }}. Facts are a fixed set. A read of an unknown fact
-  is an error.
+  Expressions read a fact as facts.os.id, and templates as {{
+  .facts.os.id }}. Facts are a fixed set. A read of an unknown fact is
+  an error.
 
     # winch.yaml
     name: demo
@@ -1649,49 +1646,51 @@ Where a secret stands:
   depth of a list or a map. --set cannot give a secret.
 
 Commands:
-  winch secret init                  make an age key, add it to recipients
-  winch secret generate vars.<name>  write a random password into the inventory
-  winch secret encrypt               encrypt a value from stdin
-  winch secret rekey                 encrypt all secrets for the current recipients
+    winch secret init                  make an age key, add it to
+                                       recipients
+    winch secret generate vars.<name>  write a random password into the
+                                       inventory
+    winch secret encrypt               encrypt a value from stdin
+    winch secret rekey                 encrypt all secrets for the
+                                       current recipients
 
 The age key:
   winch secret init makes a key at ~/.config/winch/age.key, or at the
-  path in WINCH_AGE_KEY. It makes a key only when no key is there.
-  With WINCH_AGE_IDENTITY_CMD, it makes no key and adds the public key
-  of the command's key.
+  path in WINCH_AGE_KEY. It makes a key only when no key is there. With
+  WINCH_AGE_IDENTITY_CMD, it makes no key and adds the public key of the
+  command's key.
 
   winch reads the age identity from the output of the command in
-  WINCH_AGE_IDENTITY_CMD, such as op read op://infra/winch/key.
-  Without it, winch reads the file in WINCH_AGE_KEY, or else
+  WINCH_AGE_IDENTITY_CMD, such as op read op://infra/winch/key. Without
+  it, winch reads the file in WINCH_AGE_KEY, or else
   ~/.config/winch/age.key. winch validate needs no identity.
 
 A new member:
   A new member runs winch secret init and sends the change for review.
-  The new key can read the secrets after a member who can read them
-  runs winch secret rekey.
+  The new key can read the secrets after a member who can read them runs
+  winch secret rekey.
 
 Output:
-  A variable is secret when its value is a !secret, or when its
-  default reads a secret variable. The plan, diffs, errors, logs, and
-  JSON show (secret) in place of a secret, also a part of a value that
-  comes from a secret. A filter replaces each secret value in all text
-  that winch prints, also in output from the host. The filter also
-  hides private keys, age identities, passwords in URLs, and
-  well-known tokens.
+  A variable is secret when its value is a !secret, or when its default
+  reads a secret variable. The plan, diffs, errors, logs, and JSON show
+  (secret) in place of a secret, also a part of a value that comes from
+  a secret. A filter replaces each secret value in all text that winch
+  prints, also in output from the host. The filter also hides private
+  keys, age identities, passwords in URLs, and well-known tokens.
 
 Secrets in commands:
-  A secret in a command does not show in the process list of the host.
-  A program that the command starts with the secret as an argument,
-  such as psql -c, does show it.
+  A secret in a command does not show in the process list of the host. A
+  program that the command starts with the secret as an argument, such
+  as psql -c, does show it.
 
 Warnings and errors:
-  - winch warns about text in project files that looks like a private
-    key or a token, and is not a !secret.
-  - winch warns about a file step whose content reads a secret and
-    whose mode is missing or lets others read it.
-  - A !secret in a certbot hook is an error: certbot stores its hooks
-    in a file that other users can read. A hook that reads a secret
-    through match() fails the host.
+    - winch warns about text in project files that looks like a private
+      key or a token, and is not a !secret.
+    - winch warns about a file step whose content reads a secret and
+      whose mode is missing or lets others read it.
+    - A !secret in a certbot hook is an error: certbot stores its hooks
+      in a file that other users can read. A hook that reads a secret
+      through match() fails the host.
 
 Example:
   # inventories/production.yaml
@@ -1726,52 +1725,53 @@ Plan and apply:
   second check decides.
 
 Plan marks:
-  +  create
-  ~  change
-  -  remove
-  ?  unknown: a cmd without creates or unless
-  !  a handler, or a pending then, gate, or assert that will run
-  *  a reboot, assert, or health gate that runs during apply
+    +  create
+    ~  change
+    -  remove
+    ?  unknown: a cmd without creates or unless
+    !  a handler, or a pending then, gate, or assert that will run
+    *  a reboot, assert, or health gate that runs during apply
 
 Plan hash:
   The last line of a plan is its hash, such as plan a3f9c2e1d07b4c58.
   The hash covers the project name, the hosts with the host name and
-  port that ssh resolves for them and their login users, the stages,
-  the evaluated steps, the check results, and the pending handlers and
-  then commands. winch apply --check <hash> applies only when the new
-  plan has that hash, without the question.
+  port that ssh resolves for them and their login users, the stages, the
+  evaluated steps, the check results, and the pending handlers and then
+  commands. winch apply --check <hash> applies only when the new plan
+  has that hash, without the question.
 
 Without a terminal:
   apply without --yes or --check prints the plan and exits 5. Its last
   line is the command that applies that plan.
 
 What winch changes:
-  winch changes only what steps declare. Deleting a step changes
-  nothing on the host. To remove a thing, declare it with absent:
-  true. The plan fails a host when two steps manage the same path,
-  package, unit, user, or group with different arguments.
+  winch changes only what steps declare. Deleting a step changes nothing
+  on the host. To remove a thing, declare it with absent: true. The plan
+  fails a host when two steps manage the same path, package, unit, user,
+  or group with different arguments.
 
 Stopping and resuming:
-  The first Ctrl-C lets the running step of each host finish, starts
-  no new step, and ends with the summary. A second Ctrl-C closes the
+  The first Ctrl-C lets the running step of each host finish, starts no
+  new step, and ends with the summary. A second Ctrl-C closes the
   connections to the hosts. A new run is the resume: steps that already
   succeeded check as ok, and pending handlers run.
 
 Access to the host:
   winch keeps its access to each host.
-  - A step that stops, disables, masks, or removes the SSH server
-    fails: "this cuts off winch's access".
-  - Some steps get the rollback of confirm_access without it: a change
-    of the login user's authorized_keys, ~/.ssh, or home directory,
-    groups added to the login user, a change of /etc/pam.d, and a
-    change of /etc/sudoers or /etc/sudoers.d when the login user is not
-    root. Every firewall step gets it too. The plan marks such a step.
-    Run winch doc step.confirm_access.
-  - A step that changes sshd's config while ssh.socket is active, as on
-    Ubuntu, restarts ssh.socket. It gets the same protection.
-  - After the last step of a host that changed something, winch checks
-    the access once more. When it fails, the host fails, and nothing
-    rolls back.
+
+    - A step that stops, disables, masks, or removes the SSH server
+      fails: "this cuts off winch's access".
+    - Some steps get the rollback of confirm_access without it: a change
+      of the login user's authorized_keys, ~/.ssh, or home directory,
+      groups added to the login user, a change of /etc/pam.d, and a
+      change of /etc/sudoers or /etc/sudoers.d when the login user is
+      not root. Every firewall step gets it too. The plan marks such a
+      step. Run winch doc step.confirm_access.
+    - A step that changes sshd's config while ssh.socket is active, as
+      on Ubuntu, restarts ssh.socket. It gets the same protection.
+    - After the last step of a host that changed something, winch checks
+      the access once more. When it fails, the host fails, and nothing
+      rolls back.
 
 Changing the SSH port:
   The access check connects to the port in your SSH config. So a change
@@ -1783,13 +1783,13 @@ Changing the SSH port:
     3. Remove the old port from sshd.
 
 Exit codes:
-  0  success
-  1  one or more hosts failed
-  2  plan --exit-code: apply would change something
-  3  invalid command line or project; nothing ran
-  4  one or more hosts were unreachable, and no step failed
-  5  confirmation needed; nothing changed
-  6  the plan hash differs from --check; nothing changed
+    0  success
+    1  one or more hosts failed
+    2  plan --exit-code: apply would change something
+    3  invalid command line or project; nothing ran
+    4  one or more hosts were unreachable, and no step failed
+    5  confirmation needed; nothing changed
+    6  the plan hash differs from --check; nothing changed
 
   When several apply, the first in the order 3, 1, 4, 6, 5, 2, 0 wins.
 
@@ -1803,7 +1803,8 @@ JSON output:
     applied     the apply of one step
     host        a host finished, failed, or was unreachable
     exec        the output of winch exec on one host
-    summary     the counts, the plan hash, and the exit code; always last
+    summary     the counts, the plan hash, and the exit code; always
+                last
 
   A step event has host and address, such as mail.acme.com:nginx#3[0]:
   the host, the stage or recipe, the step number from 1, and the loop

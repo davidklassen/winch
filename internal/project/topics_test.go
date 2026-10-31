@@ -3,6 +3,7 @@ package project
 import (
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/expr-lang/expr/builtin"
@@ -27,6 +28,18 @@ func TestTopicText(t *testing.T) {
 		}
 		check(t, topic.Name+".", topic.Keys)
 		check(t, topic.Name+".", topic.Functions)
+		for _, b := range topic.Blocks {
+			if b.Kind == doc.KindCode || b.Kind == doc.KindExample {
+				continue
+			}
+			texts := append([]string{b.Text}, b.Items...)
+			for _, row := range b.Rows {
+				texts = append(texts, row...)
+			}
+			if slices.ContainsFunc(texts, func(s string) bool { return strings.Contains(s, "\n") }) {
+				t.Errorf("topic %s: a line break in the text of a %s block, the page wraps it: %q", topic.Name, b.Kind, texts)
+			}
+		}
 	}
 }
 

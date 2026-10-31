@@ -88,7 +88,7 @@ func writeHelp(out io.Writer, c command) {
 	}
 	if len(subs) > 0 {
 		cmd := strings.TrimSpace("winch " + c.name)
-		fmt.Fprintf(out, "\n%s\n", wrap(fmt.Sprintf("Run \"%s <command> --help\" for the arguments and flags of a command.", cmd), 72))
+		fmt.Fprintf(out, "\n%s\n", wrap(fmt.Sprintf("Run \"%s <command> --help\" for the arguments and flags of a command.", cmd), docWidth))
 	}
 	if len(c.see) > 0 {
 		fmt.Fprintf(out, "\nSee: %s\n", strings.Join(c.see, ", "))

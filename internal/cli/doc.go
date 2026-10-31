@@ -73,7 +73,7 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	if len(path) == 1 {
 		fmt.Fprintf(env.stdout, "%s: %s\n\n", name, d.Text)
 		if d.Body != "" {
-			fmt.Fprintf(env.stdout, "%s\n\n", wrap(d.Body, 72))
+			fmt.Fprintf(env.stdout, "%s\n\n", wrap(d.Body, docWidth))
 		}
 		fmt.Fprintln(env.stdout, "Keys:")
 		writeKeys(env.stdout, d.Keys)
@@ -102,7 +102,7 @@ func docCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	default:
 		head += ", default " + k.Default
 	}
-	fmt.Fprintf(env.stdout, "%s: %s\n\n%s\n", args[0], head, wrap(k.Text, 72))
+	fmt.Fprintf(env.stdout, "%s: %s\n\n%s\n", args[0], head, wrap(k.Text, docWidth))
 	if len(k.Keys) > 0 {
 		if k.Type == "list of maps" {
 			fmt.Fprintln(env.stdout, "\nKeys of each element:")
@@ -195,27 +195,20 @@ func writeTopic(out io.Writer, t doc.Topic) {
 }
 
 // writeBlocks writes the blocks of a topic page. Blocks after a heading are
-// indented by two spaces. A table, a code block, or a numbered list after a
-// paragraph is indented by two more. A list follows a paragraph without an
-// empty line.
+// indented by two spaces, and a list, a table, or a code block by two more.
 func writeBlocks(out io.Writer, blocks []doc.Block) {
 	indent := ""
-	var prev doc.Block
 	for i, b := range blocks {
-		listAfterParagraph := b.Kind == doc.KindList && !b.Ordered && prev.Kind == doc.KindParagraph
-		if i > 0 && prev.Kind != doc.KindHeading && !listAfterParagraph {
+		if i > 0 && blocks[i-1].Kind != doc.KindHeading {
 			fmt.Fprintln(out)
 		}
-		in := indent
-		if prev.Kind == doc.KindParagraph && (b.Kind == doc.KindTable || b.Kind == doc.KindCode || b.Ordered) {
-			in += "  "
-		}
+		in := indent + "  "
 		switch b.Kind {
 		case doc.KindHeading:
 			fmt.Fprintf(out, "%s:\n", b.Text)
 			indent = "  "
 		case doc.KindParagraph:
-			writeLines(out, in, in, b.Text)
+			writeLines(out, indent, indent, wrap(b.Text, docWidth-len(indent)))
 		case doc.KindCode:
 			writeLines(out, in, in, strings.TrimSuffix(b.Text, "\n"))
 		case doc.KindList:
@@ -224,36 +217,65 @@ func writeBlocks(out io.Writer, blocks []doc.Block) {
 				if b.Ordered {
 					marker = fmt.Sprintf("%d. ", j+1)
 				}
-				writeLines(out, in+marker, in+strings.Repeat(" ", len(marker)), item)
+				writeLines(out, in+marker, in+strings.Repeat(" ", len(marker)), wrap(item, docWidth-len(in)-len(marker)))
 			}
 		case doc.KindTable:
-			var t strings.Builder
-			w := tabwriter.NewWriter(&t, 0, 0, 2, ' ', 0)
-			for _, row := range b.Rows {
-				// A line break in a cell continues the cell on a row of
-				// its own.
-				lines := make([][]string, len(row))
-				n := 0
-				for c, cell := range row {
-					lines[c] = strings.Split(cell, "\n")
-					n = max(n, len(lines[c]))
-				}
-				for l := range n {
-					cells := make([]string, len(row))
-					for c := range row {
-						if l < len(lines[c]) {
-							cells[c] = lines[c][l]
-						}
-					}
-					fmt.Fprintf(w, "%s%s\n", in, strings.Join(cells, "\t"))
-				}
+			writeTable(out, in, b.Rows)
+		}
+	}
+}
+
+// writeTable writes rows in columns two spaces apart. While a row is wider
+// than the page, the widest column that can wrap loses one character, down
+// to the length of its longest word.
+func writeTable(out io.Writer, indent string, rows [][]string) {
+	var widths, words []int
+	for _, row := range rows {
+		for c, cell := range row {
+			if c == len(widths) {
+				widths, words = append(widths, 0), append(words, 0)
 			}
-			w.Flush()
-			for line := range strings.Lines(t.String()) {
-				fmt.Fprintln(out, strings.TrimRight(line, " \n"))
+			widths[c] = max(widths[c], len(cell))
+			for _, w := range strings.Fields(cell) {
+				words[c] = max(words[c], len(w))
 			}
 		}
-		prev = b
+	}
+	for {
+		total, widest := len(indent)+2*(len(widths)-1), -1
+		for c, w := range widths {
+			total += w
+			if w > words[c] && (widest < 0 || w > widths[widest]) {
+				widest = c
+			}
+		}
+		if total <= docWidth || widest < 0 {
+			break
+		}
+		widths[widest]--
+	}
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	for _, row := range rows {
+		lines := make([][]string, len(row))
+		n := 0
+		for c, cell := range row {
+			lines[c] = strings.Split(wrap(cell, widths[c]), "\n")
+			n = max(n, len(lines[c]))
+		}
+		for l := range n {
+			cells := make([]string, len(row))
+			for c := range row {
+				if l < len(lines[c]) {
+					cells[c] = lines[c][l]
+				}
+			}
+			fmt.Fprintf(w, "%s%s\n", indent, strings.Join(cells, "\t"))
+		}
+	}
+	w.Flush()
+	for line := range strings.Lines(b.String()) {
+		fmt.Fprintln(out, strings.TrimRight(line, " \n"))
 	}
 }
 
@@ -289,6 +311,9 @@ func writeKeys(out io.Writer, keys []doc.Key) {
 		fmt.Fprintln(out, strings.TrimRight(line, " \n"))
 	}
 }
+
+// docWidth is the width of the pages of winch doc.
+const docWidth = 72
 
 // wrap breaks each paragraph of text into lines of at most width characters
 // at spaces.
