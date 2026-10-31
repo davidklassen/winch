@@ -163,6 +163,34 @@ func TestTimezoneModule(t *testing.T) {
 	})
 }
 
+// spec: Modules/hostname and timezone; Running a pipeline/Plan
+func TestTimezoneRemovesFile(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "tzfile")
+	timezone := "      - timezone:\n          name: Europe/Berlin\n"
+	absent := "      - file:\n          path: /etc/timezone\n          absent: true\n"
+	for _, tc := range []struct{ name, steps string }{
+		{"the removal first", absent + timezone},
+		{"the timezone first", timezone + absent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vm.MustRun(t, "timedatectl set-timezone Etc/UTC && echo Etc/UTC > /etc/timezone")
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: demo\ninventory: test\n",
+				"inventories/test.yaml": "hosts:\n  tzfile: {}\n",
+				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tc.steps,
+			})
+			if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+				t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+			}
+			if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+				t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+			}
+			vm.MustRun(t, `[ "$(timedatectl show -p Timezone --value)" = Europe/Berlin ] && test ! -e /etc/timezone`)
+		})
+	}
+}
+
 // spec: Modules/reboot; Modules/hostname and timezone; Remote execution/Facts
 // (reboot_required)
 func TestReboot(t *testing.T) {

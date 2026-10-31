@@ -540,6 +540,42 @@ handlers:
       - timezone:
           name: Etc/UTC
 `), "", "s: timezone Etc/UTC: the path /etc/timezone is also in s: file /etc/timezone, with other arguments"},
+		{"a removal of /etc/timezone and a timezone", steps(`      - file:
+          path: /etc/timezone
+          absent: true
+      - timezone:
+          name: Etc/UTC
+`), "", ""},
+		{"a timezone and a removal of /etc/timezone", steps(`      - timezone:
+          name: Etc/UTC
+      - file:
+          path: /etc/timezone
+          absent: true
+`), "", ""},
+		{"a timezone, a removal of /etc/timezone, and a file on it", steps(`      - timezone:
+          name: Etc/UTC
+      - file:
+          path: /etc/timezone
+          absent: true
+      - file:
+          path: /etc/timezone
+          content: "Europe/Berlin\n"
+`), "", "s: file /etc/timezone: the path /etc/timezone is also in s: timezone Etc/UTC, with other arguments"},
+		{"a removal of /etc/timezone, a timezone, and a file on it", steps(`      - file:
+          path: /etc/timezone
+          absent: true
+      - timezone:
+          name: Etc/UTC
+      - file:
+          path: /etc/timezone
+          content: "Europe/Berlin\n"
+`), "", "s: file /etc/timezone: the path /etc/timezone is also in s: file /etc/timezone, with other arguments"},
+		{"a timezone and a removal of /etc/localtime", steps(`      - timezone:
+          name: Etc/UTC
+      - file:
+          path: /etc/localtime
+          absent: true
+`), "", "s: file /etc/localtime: the path /etc/localtime is also in s: timezone Etc/UTC, with other arguments"},
 		{"a certbot and a file on its renewal file", steps(`      - certbot:
           name: example.com
           domains: example.com

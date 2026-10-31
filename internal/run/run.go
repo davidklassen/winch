@@ -674,6 +674,15 @@ func (hr *hostRun) earlierPkgs(st *project.Step) {
 	st.Args = &c
 }
 
+// removesTimezoneFile reports whether a removes /etc/timezone and b is a
+// timezone step. The timezone step writes the file only when it exists, so
+// the two converge in any order.
+func removesTimezoneFile(a, b module.Module) bool {
+	f, ok := a.(*module.File)
+	_, tz := b.(*module.Timezone)
+	return ok && tz && f.Absent && f.Path == module.TimezoneFile
+}
+
 // same fails a step that manages a path, package, unit, user, or group that
 // an earlier step of the host manages with other arguments. The host would
 // change on every run.
@@ -682,6 +691,9 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		m, ok := hr.managed[thing]
 		if !ok {
 			hr.managed[thing] = managed{where, st.Module, args}
+			return nil
+		}
+		if removesTimezoneFile(m.args, args) || removesTimezoneFile(args, m.args) {
 			return nil
 		}
 		a, err := json.Marshal(m.args)

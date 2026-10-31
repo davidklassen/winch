@@ -33,7 +33,7 @@ func (z *Timezone) Validate() error {
 const (
 	zoneinfo     = "/usr/share/zoneinfo/"
 	localtime    = "/etc/localtime"
-	timezoneFile = "/etc/timezone"
+	TimezoneFile = "/etc/timezone"
 )
 
 func (z *Timezone) Check(ctx context.Context, _ *State, _ func(string)) (Result, error) {
@@ -52,16 +52,16 @@ func (z *Timezone) Check(ctx context.Context, _ *State, _ func(string)) (Result,
 	case cur != z.Name:
 		changes = append(changes, "time zone "+cmp.Or(cur, "unknown")+" → "+z.Name)
 	}
-	data, err := os.ReadFile(timezoneFile)
+	data, err := os.ReadFile(TimezoneFile)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 	case err != nil:
 		return Result{}, err
 	case strings.TrimSpace(string(data)) != z.Name:
-		if err := noFlagsAt(timezoneFile); err != nil {
+		if err := noFlagsAt(TimezoneFile); err != nil {
 			return Result{}, err
 		}
-		changes = append(changes, timezoneFile+" "+strings.TrimSpace(string(data))+" → "+z.Name)
+		changes = append(changes, TimezoneFile+" "+strings.TrimSpace(string(data))+" → "+z.Name)
 	}
 	if len(changes) == 0 {
 		return Result{Status: OK}, nil
@@ -123,7 +123,7 @@ func (z *Timezone) Apply(ctx context.Context, _ func(string)) error {
 	if _, err := run(ctx, nil, "timedatectl", "set-timezone", "--", z.Name); err != nil {
 		return err
 	}
-	data, err := os.ReadFile(timezoneFile)
+	data, err := os.ReadFile(TimezoneFile)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil
@@ -132,5 +132,5 @@ func (z *Timezone) Apply(ctx context.Context, _ func(string)) error {
 	case strings.TrimSpace(string(data)) == z.Name:
 		return nil
 	}
-	return writeRoot(timezoneFile, []byte(z.Name+"\n"), 0, 0, 0o644)
+	return writeRoot(TimezoneFile, []byte(z.Name+"\n"), 0, 0, 0o644)
 }

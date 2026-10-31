@@ -66,7 +66,7 @@ func Touches(m Module) []Touch {
 	case *Hostname:
 		return []Touch{{hostnameFile, true}}
 	case *Timezone:
-		return []Touch{{localtime, true}, {timezoneFile, true}}
+		return []Touch{{localtime, true}, {TimezoneFile, true}}
 	case *Firewall:
 		var out []Touch
 		for _, p := range firewallPaths {
