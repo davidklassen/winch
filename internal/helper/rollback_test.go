@@ -101,6 +101,41 @@ func content(t *testing.T, p string) string {
 
 func (l *lockout) job() string { return filepath.Join(l.dir, "rollback", "timer.json") }
 
+// expire moves the deadline of the timer job to now, after edit changes the
+// job.
+func (l *lockout) expire(t *testing.T, edit func(*job)) {
+	t.Helper()
+	data, err := os.ReadFile(l.job())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var j job
+	if err := json.Unmarshal(data, &j); err != nil {
+		t.Fatal(err)
+	}
+	j.Deadline = time.Now()
+	if edit != nil {
+		edit(&j)
+	}
+	data, _ = json.Marshal(j)
+	if err := writeJob(l.job(), data); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// waitTimer waits until the timer process takes the job.
+func (l *lockout) waitTimer(t *testing.T) {
+	t.Helper()
+	for start := time.Now(); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Lstat(l.job()); os.IsNotExist(err) {
+			return
+		}
+		if time.Since(start) > 10*time.Second {
+			t.Fatal("the timer process did not take the job")
+		}
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (the helper stops the timer
 // when the second connection works)
 func TestConfirmStopsTheTimer(t *testing.T) {
@@ -177,19 +212,7 @@ func TestRollbackNow(t *testing.T) {
 func TestTimerFires(t *testing.T) {
 	l := startLockout(t)
 	l.applyBoth(t)
-	data, err := os.ReadFile(l.job())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var j job
-	if err := json.Unmarshal(data, &j); err != nil {
-		t.Fatal(err)
-	}
-	j.Deadline = time.Now()
-	data, _ = json.Marshal(j)
-	if err := writeJob(l.job(), data); err != nil {
-		t.Fatal(err)
-	}
+	l.expire(t, nil)
 	for start := time.Now(); content(t, l.a) != "old\n" || content(t, l.b) != "old\n"; {
 		if time.Since(start) > 10*time.Second {
 			t.Fatalf("the timer process did not put back the files: a %q, b %q", content(t, l.a), content(t, l.b))
@@ -210,19 +233,7 @@ func TestTimerFires(t *testing.T) {
 func TestRollbackAfterTimer(t *testing.T) {
 	l := startLockout(t)
 	l.applyBoth(t)
-	data, err := os.ReadFile(l.job())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var j job
-	if err := json.Unmarshal(data, &j); err != nil {
-		t.Fatal(err)
-	}
-	j.Deadline = time.Now()
-	data, _ = json.Marshal(j)
-	if err := writeJob(l.job(), data); err != nil {
-		t.Fatal(err)
-	}
+	l.expire(t, nil)
 	for start := time.Now(); content(t, l.a) != "old\n" || content(t, l.b) != "old\n"; {
 		if time.Since(start) > 10*time.Second {
 			t.Fatalf("the timer process did not put back the files: a %q, b %q", content(t, l.a), content(t, l.b))
@@ -245,28 +256,8 @@ func TestTimerRollbackFails(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			l := startLockout(t)
 			l.applyBoth(t)
-			data, err := os.ReadFile(l.job())
-			if err != nil {
-				t.Fatal(err)
-			}
-			var j job
-			if err := json.Unmarshal(data, &j); err != nil {
-				t.Fatal(err)
-			}
-			j.Deadline = time.Now()
-			j.Undo = &undo{Module: "file", Args: failingFileArgs(l.b)}
-			data, _ = json.Marshal(j)
-			if err := writeJob(l.job(), data); err != nil {
-				t.Fatal(err)
-			}
-			for start := time.Now(); ; time.Sleep(10 * time.Millisecond) {
-				if _, err := os.Lstat(l.job()); os.IsNotExist(err) {
-					break
-				}
-				if time.Since(start) > 10*time.Second {
-					t.Fatal("the timer process did not take the job")
-				}
-			}
+			l.expire(t, func(j *job) { j.Undo = &undo{Module: "file", Args: failingFileArgs(l.b)} })
+			l.waitTimer(t)
 			r := l.c.call(t, method, nil)
 			want := "file " + l.b + ": validate: false"
 			if method == "confirm" {
@@ -584,7 +575,7 @@ func TestFailedGuardedApplyRollsBack(t *testing.T) {
 		t.Fatal(r.Error)
 	}
 	g.Confirm = true
-	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: failingFileArgs(l.b), Guard: g})
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: failingFileArgs(l.b), Guard: g, Notify: []string{"ssh.restart"}, Then: &protocol.Then{Recipe: "ssh", Module: "file", Mains: []string{"2"}}})
 	if !strings.Contains(r.Error, "validate: false") || !strings.HasSuffix(r.Error, "; the old files are back") {
 		t.Errorf("apply error %q, want the validate error and the rollback", r.Error)
 	}
@@ -593,6 +584,9 @@ func TestFailedGuardedApplyRollsBack(t *testing.T) {
 	}
 	if _, err := os.Lstat(l.job()); !os.IsNotExist(err) {
 		t.Errorf("the timer job stays: %v", err)
+	}
+	if p := pendingAll(t, l.c); len(p.Handlers) != 0 || len(p.Then) != 0 {
+		t.Errorf("records after the rollback: %+v, want none", p)
 	}
 }
 
@@ -774,6 +768,63 @@ func TestEndKeepsTheHandlerWhenTheRestoreFails(t *testing.T) {
 	lines, err := records{dir: filepath.Join(l.dir, "handlers"), project: "acme"}.read()
 	if err != nil || !slices.Equal(lines, []string{"ssh.reload"}) {
 		t.Errorf("pending %q, %v; want ssh.reload", lines, err)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (when a rollback fails, the
+// step's pending handlers and then commands stay recorded)
+func TestFailedRollbackKeepsTheRecords(t *testing.T) {
+	for _, how := range []string{"rollback", "failed step", "timer", "end"} {
+		t.Run(how, func(t *testing.T) {
+			l := startLockout(t)
+			// A read-only directory fails the restore, and an apply.
+			readOnly := func() {
+				if err := os.Chmod(filepath.Dir(l.a), 0o500); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Cleanup(func() { os.Chmod(filepath.Dir(l.a), 0o700) }) //nolint:errcheck // the test cleans up
+			if how == "failed step" {
+				readOnly()
+			}
+			g := protocol.Guard{Recipe: "ssh", Save: true, Confirm: true}
+			r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"ssh.restart"}, Then: &protocol.Then{Recipe: "ssh", Module: "file", Mains: []string{"1"}}})
+			if how != "failed step" {
+				readOnly()
+			}
+			switch how {
+			case "failed step":
+				if !strings.Contains(r.Error, "; the rollback failed: ") {
+					t.Fatalf("apply: %q, want the failed rollback", r.Error)
+				}
+			case "rollback":
+				if r := l.c.call(t, "rollback", nil); r.Error == "" {
+					t.Fatal("rollback passed, want the failed restore")
+				}
+			case "timer":
+				l.expire(t, nil)
+				l.waitTimer(t)
+				if r := l.c.call(t, "rollback", nil); r.Error == "" {
+					t.Fatal("rollback after the timer passed, want the failed restore of the timer")
+				}
+			case "end":
+				l.c.w.Close()
+				if err := <-l.c.done; err == nil {
+					t.Fatal("the helper ended without an error, want the failed restore")
+				}
+			}
+			handlers, err := records{dir: filepath.Join(l.dir, "handlers"), project: "acme"}.read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			thens, err := records{dir: filepath.Join(l.dir, "then"), project: "acme"}.read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(handlers, []string{"ssh.restart"}) || len(thens) != 1 {
+				t.Errorf("pending handlers %q, then records %q; want ssh.restart and the then record", handlers, thens)
+			}
+		})
 	}
 }
 

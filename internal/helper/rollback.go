@@ -386,14 +386,14 @@ func (r *rollbacks) end(ctx context.Context, handlers, thens records) error {
 }
 
 // rollbackStep ends the timer of the guarded step at once, and drops the
-// records that the step added.
+// records that the step added. When the rollback fails, the records stay, so
+// that the next run applies them under the access check.
 func rollbackStep(ctx context.Context, r *rollbacks, handlers, thens records) error {
 	g := r.running
-	err := r.rollback(ctx)
-	if g != nil {
-		err = errors.Join(err, handlers.remove(g.handlers...), thens.remove(g.thens...))
+	if err := r.rollback(ctx); err != nil || g == nil {
+		return err
 	}
-	return err
+	return errors.Join(handlers.remove(g.handlers...), thens.remove(g.thens...))
 }
 
 // RunTimer is the timer process: it waits until the job is gone, which
