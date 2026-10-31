@@ -1,5 +1,7 @@
 mail_driver = maildir
 mail_path = ~/Maildir
+# Debian's 10-mail.conf puts INBOX in /var/mail for system users.
+mail_inbox_path =
 
 ssl = required
 ssl_server_cert_file = /etc/letsencrypt/live/{{ .host.name }}/fullchain.pem
@@ -55,6 +57,9 @@ protocol lmtp {
   mail_plugins {
     sieve = yes
   }
+  # Debian's 20-lmtp.conf strips the domain for system users; the users
+  # in /etc/dovecot/users have it.
+  auth_username_format = %{user | lower}
 }
 
 sieve_plugins {

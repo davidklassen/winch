@@ -1,4 +1,4 @@
-# Debian's generated main.cf plus our changes: send only, from loopback.
+# Debian's generated main.cf plus our changes: mail from loopback only.
 smtpd_banner = $myhostname ESMTP $mail_name (Debian/GNU)
 biff = no
 append_dot_mydomain = no
@@ -29,6 +29,11 @@ smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
 smtp_dns_support_level = dnssec
 smtp_tls_security_level = dane
 smtp_tls_loglevel = 1
+
+# Mailboxes in Dovecot
+virtual_mailbox_domains = {{ .vars.domain }}
+virtual_mailbox_maps = hash:/etc/postfix/vmailbox
+virtual_transport = lmtp:unix:private/dovecot-lmtp
 
 # dkimpy-milter signs everything. A broken signer must not stop alerts.
 smtpd_milters = inet:127.0.0.1:8892
