@@ -97,6 +97,7 @@ func (o *output) warn(warnings []*yamlx.Error) {
 
 // plan writes the plan: the text, or the planned and host events.
 func (o *output) plan(pl *run.Plan) {
+	o.warn(pl.Warnings)
 	if o.ev == nil {
 		pl.Write(o.env.stdout, o.env.stderr)
 		return

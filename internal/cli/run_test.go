@@ -351,3 +351,32 @@ func TestExecSecret(t *testing.T) {
 		t.Errorf("without an identity: exit %d, stderr %q", r.code, r.err)
 	}
 }
+
+// spec: Running a pipeline/Lockout protection (the plan warns when sshd loads
+// a changed config without confirm_access)
+func TestPlanSSHDWarning(t *testing.T) {
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/ssh/sshd_config
+          content: "UsePAM no\n"
+        then: systemctl restart ssh
+`,
+	})
+	const warning = "sshd loads a changed config without an access check; add confirm_access: true"
+	r := winch(t, dir, fakehost.New(), false, "", "plan", "site")
+	if want := "pipelines/site.yaml:5:9: warning: " + warning + "\n"; r.code != exitOK || !strings.Contains(r.err, want) {
+		t.Errorf("exit %d, stderr %q, want %q", r.code, r.err, want)
+	}
+	r = winch(t, dir, fakehost.New(), false, "", "plan", "site", "--json")
+	if !slices.ContainsFunc(jsonLines(t, r.out), func(l map[string]any) bool {
+		return l["type"] == "diagnostic" && l["message"] == warning && l["line"] == 5.0
+	}) {
+		t.Errorf("no diagnostic in %q", r.out)
+	}
+}
