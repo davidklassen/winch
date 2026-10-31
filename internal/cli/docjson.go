@@ -94,7 +94,7 @@ func writeDocJSON(out io.Writer) {
 		m, _ := module.Reference(name)
 		d.Modules = append(d.Modules, docModuleJSON{Name: name, Line: m.Text, Body: m.Body, Keys: docKeys(name+".", m.Keys), Example: m.Example})
 	}
-	for _, c := range commands {
+	for _, c := range append([]command{mainCommand}, commands...) {
 		d.Commands = append(d.Commands, commandJSON(c))
 	}
 	enc := json.NewEncoder(out)
@@ -127,7 +127,7 @@ type docCommandJSON struct {
 }
 
 func commandJSON(c command) docCommandJSON {
-	j := docCommandJSON{Name: c.name, Summary: c.summary, Usage: c.usage, Description: []string{}, Examples: []docExampleJSON{}, Flags: []docFlagJSON{}, See: []string{}}
+	j := docCommandJSON{Name: c.name, Summary: oneLine(c.summary), Usage: c.usage, Description: []string{}, Examples: []docExampleJSON{}, Flags: []docFlagJSON{}, See: []string{}}
 	for _, p := range c.description {
 		j.Description = append(j.Description, oneLine(p))
 	}

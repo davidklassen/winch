@@ -49,7 +49,7 @@ func subcommands(c command) ([]command, []string) {
 // description, subcommands, flags, and the pages to read next.
 func writeHelp(out io.Writer, c command) {
 	if c.name == "" {
-		fmt.Fprintf(out, "%s\n", docIntro)
+		fmt.Fprintf(out, "%s\n", c.summary)
 	} else {
 		fmt.Fprintf(out, "winch %s: %s\n", c.name, c.summary)
 	}
@@ -108,6 +108,7 @@ var (
 )
 
 var mainCommand = command{
+	summary: docIntro,
 	examples: []example{
 		{"check the project without contacting a host", "winch validate"},
 		{"show the changes of the pipeline site on the test inventory", "winch plan site --inventory test"},
