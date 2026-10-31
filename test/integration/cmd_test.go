@@ -2,6 +2,7 @@ package integration
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -198,6 +199,46 @@ func TestAssertModule(t *testing.T) {
 			NoConverge:   true,
 		},
 	})
+}
+
+// spec: Modules (the environment of host commands); Modules/cmd
+func TestCmdCleanEnv(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "cmdenv")
+	// libpam-tmpdir gives the login session a TMPDIR that only root can
+	// write to.
+	vm.MustRun(t, "apt-get update -q >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -q libpam-tmpdir >/dev/null")
+	if out := vm.MustRun(t, `echo "$TMPDIR"`); out != "/tmp/user/0\n" {
+		t.Fatalf("TMPDIR of the login session = %q, want /tmp/user/0", out)
+	}
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: env\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  cmdenv: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: s
+    hosts: all
+    steps:
+      - cmd:
+          command: env > /root/env.out
+      - cmd:
+          command: mktemp > /tmp/winch-www.out && env >> /tmp/winch-www.out
+          user: www-data
+`,
+	})
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d, stderr %q", r.Code, r.Stderr)
+	}
+	// sh sets PWD itself.
+	allowed := []string{"LC_ALL", "PATH", "HOME", "USER", "LOGNAME", "PWD"}
+	for _, file := range []string{"/root/env.out", "/tmp/winch-www.out"} {
+		out := vm.MustRun(t, "cat "+file)
+		if slices.ContainsFunc(strings.Split(out, "\n"), func(l string) bool {
+			name, _, ok := strings.Cut(l, "=")
+			return ok && !slices.Contains(allowed, name)
+		}) {
+			t.Errorf("%s: a variable from the login session in:\n%s", file, out)
+		}
+	}
 }
 
 const cmdRecipe = `steps:

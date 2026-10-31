@@ -388,7 +388,7 @@ func TestWinch(t *testing.T) {
 		}
 	})
 
-	t.Run("host commands run in / with C.UTF-8, PATH, HOME, umask 022, and no sudo variables", func(t *testing.T) {
+	t.Run("host commands run in / with C.UTF-8, PATH, HOME, umask 022, and no login variables", func(t *testing.T) {
 		// The systemctl in /usr/local/sbin records the environment and the
 		// working directory that a module command gets from the helper. Other
 		// callers, such as root's user manager, must not overwrite the record.
@@ -408,7 +408,7 @@ func TestWinch(t *testing.T) {
 		path := "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 		files := map[string][]string{
 			"/root/env.out":    {"LC_ALL=C.UTF-8", `LC_CTYPE="C.UTF-8"`, "0022", path, "HOME=/root"},
-			"/root/module.env": {"LC_ALL=C.UTF-8", path, "PWD=/", "cwd /", "HOME=/root"},
+			"/root/module.env": {"LC_ALL=C.UTF-8", path, "cwd /", "HOME=/root", "USER=root", "LOGNAME=root"},
 		}
 		for _, user := range []string{"admin", "root"} {
 			dir := vmtest.WriteProject(t, map[string]string{
@@ -435,9 +435,13 @@ func TestWinch(t *testing.T) {
 				out := vm.MustRun(t, "cat "+file)
 				lines := strings.Split(out, "\n")
 				missing := slices.DeleteFunc(slices.Clone(want), func(w string) bool { return slices.Contains(lines, w) })
-				bad := slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "SUDO_") || l == "LANGUAGE=de" })
+				bad := slices.ContainsFunc(lines, func(l string) bool {
+					name, _, ok := strings.Cut(l, "=")
+					return strings.HasPrefix(l, "SUDO_") || l == "LANGUAGE=de" ||
+						file == "/root/module.env" && ok && !slices.Contains([]string{"LC_ALL", "PATH", "HOME", "USER", "LOGNAME"}, name)
+				})
 				if len(missing) > 0 || bad || strings.Contains(out, "Cannot set") {
-					t.Errorf("as %s, %s: missing %q, or a SUDO_ variable, LANGUAGE, or a locale error in:\n%s", user, file, missing, out)
+					t.Errorf("as %s, %s: missing %q, a variable from the login session, or a locale error in:\n%s", user, file, missing, out)
 				}
 			}
 		}
