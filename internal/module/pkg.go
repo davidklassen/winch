@@ -183,6 +183,9 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 				return Result{}, err
 			}
 			others := parseRemovals(out, p.todo)
+			if err := checkAccess(slices.Concat(p.todo, others), st.LoginUID); err != nil {
+				return Result{}, err
+			}
 			if len(others) > 0 {
 				changes = append(changes, "also "+p.verb()+" "+strings.Join(others, ", "))
 			}
@@ -805,4 +808,71 @@ func parseDpkg(out, native string) (map[string]dpkgPkg, error) {
 		pkgs[name] = pkg
 	}
 	return pkgs, nil
+}
+
+// cutsOff fails a removal of the SSH server or of a package that ships one of
+// paths. info is the info directory of dpkg.
+func cutsOff(removed, paths []string, info fs.FS) error {
+	for _, n := range removed {
+		base, _, _ := strings.Cut(n, ":")
+		if base == "openssh-server" {
+			return errors.New("this cuts off winch's access")
+		}
+		data, err := fs.ReadFile(info, n+".list")
+		if errors.Is(err, fs.ErrNotExist) && base != n {
+			data, err = fs.ReadFile(info, base+".list")
+		}
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("check winch's access: %w", err)
+		}
+		for line := range strings.Lines(string(data)) {
+			if slices.Contains(paths, strings.TrimSuffix(line, "\n")) {
+				return errors.New("this cuts off winch's access")
+			}
+		}
+	}
+	return nil
+}
+
+// accessPaths returns the files that the session of the login user uid needs:
+// sudo for a login user other than root, and the login shell. Each comes as
+// its path, the file that resolve finds through its links, and the twin of
+// each on a merged /usr, where dpkg lists the path that the package ships.
+func accessPaths(uid uint32, a accounts, resolve func(string) (string, error)) []string {
+	var need []string
+	if uid != 0 {
+		need = append(need, "/usr/bin/sudo")
+	}
+	if login, ok := a.userByID(uid); ok && login.shell != "" {
+		need = append(need, login.shell)
+	}
+	var paths []string
+	for _, p := range need {
+		files := []string{p}
+		if r, err := resolve(p); err == nil && r != p {
+			files = append(files, r)
+		}
+		for _, f := range files {
+			twin, ok := strings.CutPrefix(f, "/usr")
+			if !ok {
+				twin = "/usr" + f
+			}
+			paths = append(paths, f, twin)
+		}
+	}
+	return paths
+}
+
+func checkAccess(removed []string, uid uint32) error {
+	if len(removed) == 0 {
+		return nil
+	}
+	a, err := readAccounts()
+	if err != nil {
+		return fmt.Errorf("check winch's access: %w", err)
+	}
+	return cutsOff(removed, accessPaths(uid, a, filepath.EvalSymlinks), os.DirFS(dpkgInfo))
 }

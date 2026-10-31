@@ -1,0 +1,6 @@
+Package: winch-up-nossh
+Version: 2
+Architecture: all
+Maintainer: winch
+Conflicts: openssh-server
+Description: test

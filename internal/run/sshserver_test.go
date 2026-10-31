@@ -30,11 +30,6 @@ func TestSSHServerCutOff(t *testing.T) {
 		{"stop ssh.socket", stage("s", service("ssh.socket", off)),
 			"s: service ssh.socket: this cuts off winch's access"},
 		{"ssh already stopped", stage("s", service("ssh.service", off)), ""},
-		{"remove openssh-server", stage("s", "      - pkg:\n          name: openssh-server\n          absent: true\n"),
-			"s: pkg openssh-server: this cuts off winch's access"},
-		{"remove a package that openssh-server needs", stage("s", "      - pkg:\n          name: openssh-sftp-server\n          absent: true\n"),
-			"s: pkg openssh-sftp-server: this cuts off winch's access"},
-		{"remove openssh-client", stage("s", "      - pkg:\n          name: openssh-client\n          absent: true\n"), ""},
 		{"mask ssh", stage("s", maskSSH), "s: link /etc/systemd/system/ssh.service: this cuts off winch's access"},
 		{"ssh.socket already masked", stage("s", "      - link:\n          path: /etc/systemd/system/ssh.socket\n          target: /dev/null\n"), ""},
 		{"mask ssh with a relative target", stage("s", "      - link:\n          path: /etc/systemd/system/ssh.service\n          target: ../../../dev/null\n"),
@@ -58,8 +53,6 @@ func TestSSHServerCutOff(t *testing.T) {
 			mask := module.Result{Status: module.Change, Action: module.Create}
 			h.SetResult("web1", "/etc/systemd/system/ssh.service", mask)
 			h.SetResult("web1", "/etc/systemd/system/other/ssh.service", mask)
-			h.SetPkg("web1", "openssh-server", "openssh-sftp-server", "openssh-client")
-			h.SetPkgDeps("openssh-server", "openssh-sftp-server")
 			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			got := ""
 			if err := plan.Failed["web1"]; err != nil {

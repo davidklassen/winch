@@ -766,3 +766,47 @@ func TestLockoutAfterRun(t *testing.T) {
 		t.Errorf("apply: exit %d", r.Code)
 	}
 }
+
+// spec: Running a pipeline/Lockout protection (a step that removes the SSH
+// server, sudo, or the login shell)
+func TestLockoutPackages(t *testing.T) {
+	t.Parallel()
+	vm := upgradeVM(t, "lockout-pkgs")
+	// winch-shell ships a copy of bash in /usr/bin; the login shell of admin
+	// is its path in /bin.
+	vm.MustRun(t, installV1("winch-up-nossh")+` && mkdir -p /root/debs/winch-shell/DEBIAN /root/debs/winch-shell/usr/bin &&
+printf 'Package: winch-shell\nVersion: 1\nArchitecture: all\nMaintainer: winch\nDescription: test\n' > /root/debs/winch-shell/DEBIAN/control &&
+cp /usr/bin/bash /root/debs/winch-shell/usr/bin/winch-sh && dpkg-deb -b /root/debs/winch-shell /root/debs/winch-shell.deb >/dev/null && `+installV1("winch-shell"))
+	// On Ubuntu 26.04 sudo is sudo-rs, through an alternative.
+	sudo := strings.TrimSpace(vm.MustRun(t, "dpkg -S $(readlink -f /usr/bin/sudo) | cut -d: -f1"))
+	stage := func(step string) string { return "stages:\n  - name: base\n    hosts: all\n    steps:\n" + step }
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":             "name: demo\ninventory: test\n",
+		"inventories/test.yaml":  "hosts:\n  lockout-pkgs: {}\n",
+		"pipelines/upgrade.yaml": stage("      - upgrade:\n          mode: full\n"),
+		"pipelines/sudo.yaml":    stage("      - pkg:\n          name: " + sudo + "\n          absent: true\n"),
+		"pipelines/sftp.yaml":    stage("      - pkg:\n          name: openssh-sftp-server\n          absent: true\n"),
+		"pipelines/shell.yaml":   stage("      - pkg:\n          name: winch-shell\n          absent: true\n"),
+		"pipelines/other.yaml":   stage("      - pkg:\n          name: winch-up-nossh\n          absent: true\n"),
+	})
+	for _, c := range []struct{ pipeline, want string }{
+		{"upgrade", "lockout-pkgs: base: upgrade full: this cuts off winch's access"},
+		{"sudo", "lockout-pkgs: base: pkg " + sudo + ": this cuts off winch's access"},
+		// apt also removes openssh-server, which depends on it.
+		{"sftp", "lockout-pkgs: base: pkg openssh-sftp-server: this cuts off winch's access"},
+	} {
+		if r := lab.Winch(t, dir, "plan", c.pipeline); r.Code != 1 || !strings.Contains(r.Stderr, c.want) {
+			t.Errorf("plan %s: exit %d, want the error %q", c.pipeline, r.Code, c.want)
+		}
+	}
+	if r := lab.Winch(t, dir, "plan", "shell"); r.Code != 0 {
+		t.Errorf("plan shell before the change of the login shell: exit %d", r.Code)
+	}
+	vm.MustRun(t, "echo /bin/winch-sh >> /etc/shells && usermod -s /bin/winch-sh admin")
+	if r := lab.Winch(t, dir, "plan", "shell"); r.Code != 1 || !strings.Contains(r.Stderr, "lockout-pkgs: base: pkg winch-shell: this cuts off winch's access") {
+		t.Errorf("plan shell: exit %d", r.Code)
+	}
+	if r := lab.Winch(t, dir, "plan", "other"); r.Code != 0 {
+		t.Errorf("plan other: exit %d", r.Code)
+	}
+}

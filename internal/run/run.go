@@ -1055,7 +1055,7 @@ func (hr *hostRun) packages(m module.Module, res module.Result, where string) er
 	return nil
 }
 
-// sshServer fails a step that removes or masks the SSH server. It records a
+// sshServer fails a step that masks the SSH server. It records a
 // step that stops or disables one of the SSH server units: the plan fails it
 // unless another step starts and enables the other unit.
 func (hr *hostRun) sshServer(m module.Module, res module.Result, where string) error {
@@ -1075,13 +1075,6 @@ func (hr *hostRun) sshServer(m module.Module, res module.Result, where string) e
 		disables := m.Enabled != nil && !*m.Enabled && slices.Contains(res.Changes, "disable")
 		if (stops || disables) && !hr.sshOn[other] {
 			hr.sshOff = append(hr.sshOff, startedBy{other, cut()})
-		}
-	case *module.Pkg:
-		for _, c := range res.Changes {
-			verb, list, _ := strings.Cut(strings.TrimPrefix(c, "also "), " ")
-			if (verb == "remove" || verb == "purge") && slices.Contains(strings.Split(list, ", "), "openssh-server") {
-				return cut()
-			}
 		}
 	case *module.Link:
 		if res.Status == module.OK || m.Target == nil {
