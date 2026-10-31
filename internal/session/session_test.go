@@ -310,6 +310,18 @@ func TestOpenSudo(t *testing.T) {
 			t.Errorf("error = %v, want %q", err, want)
 		}
 	})
+	t.Run("only the probe fails", func(t *testing.T) {
+		fakeBin(t, "aarch64", "1000", "#!/bin/sh\necho \"$1 $2\" >> \"$SUDO_LOG\"\nif [ \"$2\" = true ]; then echo 'sudo: a password is required' >&2; exit 1; fi\nshift\nexec \"$@\"\n")
+		calls := sudoCalls(t)
+		_, err := open(t, stateDir, bins)
+		want := "winch: the login user needs passwordless sudo: sudo: a password is required"
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+		if got := calls(); got != "-n true\n" {
+			t.Errorf("sudo calls = %q, want only the probe", got)
+		}
+	})
 }
 
 // spec: Remote execution/Helper

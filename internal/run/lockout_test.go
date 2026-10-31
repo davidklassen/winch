@@ -191,6 +191,10 @@ func TestRebootStep(t *testing.T) {
 			wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ reboot if required (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "a reboot in a handler", pipeline: motd + "        notify: restart\n    handlers:\n      restart:\n        - reboot:\n            if_required: false\n            timeout: 30\n",
 			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ handler base.restart: reboot (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
+		{name: "a handler reboot if required, required by an earlier step", requiredAfter: true, pipeline: motd + "        notify: restart\n    handlers:\n      restart:\n        - reboot:\n            if_required: true\n            timeout: 30\n",
+			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ handler base.restart: reboot if required (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
+		{name: "a handler reboot if required, not required", pipeline: motd + "        notify: restart\n    handlers:\n      restart:\n        - reboot:\n            if_required: true\n            timeout: 30\n",
+			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\n", wantLog: []string{"access"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -110,3 +110,37 @@ func TestPurgeUnpack(t *testing.T) {
 		t.Errorf("third plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 }
+
+// spec: Modules/file, dir, link (dir purge keeps the conffiles of a removed package)
+func TestPurgeRemovedPackageConffile(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "purge-rc")
+	// winch-rc ships the conffile /etc/winch-rc/rc.conf. After dpkg -r its
+	// state is rc: the package is gone, and the conffile stays.
+	vm.MustRun(t, `set -e
+mkdir -p /root/winch-rc/DEBIAN /root/winch-rc/etc/winch-rc
+printf 'Package: winch-rc\nVersion: 1\nArchitecture: all\nMaintainer: winch\nDescription: test\n' > /root/winch-rc/DEBIAN/control
+echo /etc/winch-rc/rc.conf > /root/winch-rc/DEBIAN/conffiles
+echo rc > /root/winch-rc/etc/winch-rc/rc.conf
+dpkg-deb -b /root/winch-rc /root/winch-rc.deb >/dev/null
+dpkg -i /root/winch-rc.deb >/dev/null
+dpkg -r winch-rc >/dev/null
+dpkg-query -W -f='${db:Status-Abbrev}' winch-rc | grep -q '^rc'
+touch /etc/winch-rc/stale`)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: purge\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  purge-rc: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - dir:\n          path: /etc/winch-rc\n          purge: true\n",
+	})
+	r := lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "remove file /etc/winch-rc/stale") || strings.Contains(r.Stdout, "rc.conf") {
+		t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	if got := vm.MustRun(t, "cat /etc/winch-rc/rc.conf; test ! -e /etc/winch-rc/stale"); got != "rc\n" {
+		t.Errorf("conffile = %q", got)
+	}
+	r = lab.Winch(t, dir, "plan", "site", "--exit-code")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
+	}
+}

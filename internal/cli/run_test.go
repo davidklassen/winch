@@ -332,6 +332,20 @@ func TestExecSecret(t *testing.T) {
 			t.Errorf("json %v: exit %d, stdout %q, stderr %q", json, r.code, r.out, r.err)
 		}
 	}
+	setPassword(t, dir, encrypt(t, dir, "first-line\nsecond-line\n"))
+	// The base64 of the exact value, with its last newline.
+	h := fakehost.New()
+	h.SetExec("web1", module.ExecResult{Output: "key=Zmlyc3QtbGluZQpzZWNvbmQtbGluZQo=\n"})
+	for _, json := range []bool{false, true} {
+		args := []string{"exec", "web1", "--", "base64", "/etc/pw"}
+		if json {
+			args = []string{"exec", "web1", "--json", "--", "base64", "/etc/pw"}
+		}
+		r := winchWith(t, dir, "", identity, "", h, false, "", args...)
+		if r.code != exitOK || !strings.Contains(r.out, "key=(secret)=") {
+			t.Errorf("base64, json %v: exit %d, stdout %q, stderr %q", json, r.code, r.out, r.err)
+		}
+	}
 	r := winch(t, dir, fakehost.New(), false, "", "exec", "web1", "--", "uptime")
 	if r.code != exitInvalid || !strings.Contains(r.err, "no age key") {
 		t.Errorf("without an identity: exit %d, stderr %q", r.code, r.err)
