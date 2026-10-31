@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"slices"
 	"strings"
 	"sync"
@@ -153,13 +152,10 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 	// found gone.
 	dial := func(h project.Host) (Conn, error) {
 		plan.opts.progress().Busy(h.Name, "connecting")
-		c, err := connect.Open(context.WithoutCancel(ctx), plan.Project, h)
+		want := plan.Destinations[h.Name]
+		c, err := connect.Open(context.WithoutCancel(ctx), plan.Project, h, &want)
 		if err != nil {
 			return nil, fmt.Errorf("failed: %w", err)
-		}
-		if old, now := plan.Destinations[h.Name], c.Destination(); old != now {
-			c.Close() //nolint:errcheck // the host fails already
-			return nil, fmt.Errorf("failed: the SSH destination changed since the plan: %s → %s", destination(old), destination(now))
 		}
 		for _, gone := range plan.gone[h.Name] {
 			if err := c.Passed(context.WithoutCancel(ctx), gone); err != nil {
@@ -335,14 +331,6 @@ func hostStatus(err error) string {
 		return "unreachable"
 	}
 	return "failed"
-}
-
-func destination(d protocol.Destination) string {
-	s := fmt.Sprintf("%s (uid %d)", net.JoinHostPort(d.HostName, d.Port), d.UID)
-	if d.User != "" {
-		s = d.User + "@" + s
-	}
-	return s
 }
 
 // hostApply is what apply keeps about a host between its stages.

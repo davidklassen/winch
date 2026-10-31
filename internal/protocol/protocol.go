@@ -55,6 +55,8 @@ type Destination struct {
 	UID      uint32 `json:"uid"`
 	HostName string `json:"hostname"`
 	Port     string `json:"port"`
+	// Jump is the ProxyJump or ProxyCommand that ssh resolves, or empty.
+	Jump string `json:"jump,omitempty"`
 }
 
 // Step is the params of check and apply.

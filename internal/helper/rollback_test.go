@@ -222,9 +222,9 @@ func TestTimerFires(t *testing.T) {
 	if r := l.c.call(t, "confirm", nil); !strings.Contains(r.Error, "the rollback timer ended first; the old files are back") {
 		t.Errorf("confirm after the timer: %q", r.Error)
 	}
-	// The timer alone leaves the records: the helper owns them.
-	if p := pendingAll(t, l.c); !slices.Equal(p.Handlers, []string{"ssh.reload", "ssh.restart"}) || len(p.Then) != 1 {
-		t.Errorf("records after the timer: %+v", p)
+	p := pendingAll(t, l.c)
+	if want := []string{"ssh.reload"}; !slices.Equal(p.Handlers, want) || len(p.Then) != 0 {
+		t.Errorf("records after the confirm: %+v, want the handler %v", p, want)
 	}
 }
 
@@ -265,6 +265,9 @@ func TestTimerRollbackFails(t *testing.T) {
 			}
 			if !strings.HasPrefix(r.Error, want) {
 				t.Errorf("%s after the timer: %q, want the rollback failure of the timer %q", method, r.Error, want)
+			}
+			if p := pendingAll(t, l.c); !slices.Equal(p.Handlers, []string{"ssh.reload", "ssh.restart"}) || len(p.Then) != 1 {
+				t.Errorf("records after the failed rollback: %+v, want both handlers and the then record", p)
 			}
 		})
 	}

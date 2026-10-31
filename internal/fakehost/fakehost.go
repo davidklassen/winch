@@ -22,6 +22,7 @@ import (
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
+	"github.com/davidklassen/winch/internal/session"
 )
 
 type Hosts struct {
@@ -352,7 +353,9 @@ func (h *Hosts) SetUnreachable(host string) {
 	h.down[host] = true
 }
 
-func (h *Hosts) Connect(ctx context.Context, host project.Host) (*Conn, error) {
+// Connect fails like a session when want is not nil and the destination of
+// host differs from it.
+func (h *Hosts) Connect(ctx context.Context, host project.Host, want *protocol.Destination) (*Conn, error) {
 	if h.OnConnect != nil {
 		h.OnConnect(host.Name)
 	}
@@ -360,6 +363,9 @@ func (h *Hosts) Connect(ctx context.Context, host project.Host) (*Conn, error) {
 	defer h.mu.Unlock()
 	if host.Address == "unreachable" || h.down[host.Name] {
 		return nil, run.MarkUnreachable(errors.New("ssh: connect to host " + host.Address + ": Connection refused"))
+	}
+	if d := h.dest(host); want != nil && d != *want {
+		return nil, session.DestinationChanged(*want, d)
 	}
 	h.Open++
 	h.MaxOpen = max(h.MaxOpen, h.Open)
@@ -369,12 +375,17 @@ func (h *Hosts) Connect(ctx context.Context, host project.Host) (*Conn, error) {
 	return &Conn{hosts: h, host: host.Name, dest: h.dest(host)}, nil
 }
 
-// dest returns the destination of host. h.mu must be held.
+// dest returns the destination of host, with the jump host that SetJump set.
+// h.mu must be held.
 func (h *Hosts) dest(host project.Host) protocol.Destination {
-	if d, ok := h.dests[host.Name]; ok {
-		return d
+	d, ok := h.dests[host.Name]
+	if !ok {
+		d = protocol.Destination{User: host.User, HostName: host.Address, Port: "22"}
 	}
-	return protocol.Destination{User: host.User, HostName: host.Address, Port: "22"}
+	if j, ok := h.jumps[host.Name]; ok {
+		d.Jump = j
+	}
+	return d
 }
 
 // SetDestination sets the destination that each later session with host
@@ -414,10 +425,10 @@ func (h *Hosts) Connector() run.Connect {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			d := h.dest(host)
-			return run.Route{HostName: d.HostName, Port: d.Port, Jump: h.jumps[host.Name]}, nil
+			return run.Route{HostName: d.HostName, Port: d.Port, Jump: d.Jump}, nil
 		},
-		Open: func(ctx context.Context, proj string, host project.Host) (run.Conn, error) {
-			c, err := h.Connect(ctx, host)
+		Open: func(ctx context.Context, proj string, host project.Host, want *protocol.Destination) (run.Conn, error) {
+			c, err := h.Connect(ctx, host, want)
 			if err != nil {
 				return nil, err
 			}

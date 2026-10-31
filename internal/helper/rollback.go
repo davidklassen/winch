@@ -243,10 +243,12 @@ func (r *rollbacks) confirm(ctx context.Context) error {
 		if err := r.timerResult(ctx); err != nil {
 			return fmt.Errorf("the rollback timer ended first; the rollback failed: %w", err)
 		}
-		return errors.New("the rollback timer ended first; the old files are back")
+		return errTimerFirst
 	}
 	return errors.Join(os.Remove(done), r.ended(ctx))
 }
+
+var errTimerFirst = errors.New("the rollback timer ended first; the old files are back")
 
 // rollback ends the timer at once: it puts back the files and runs the undo
 // step. When the timer took the job first, it returns the result of the
@@ -394,6 +396,18 @@ func rollbackStep(ctx context.Context, r *rollbacks, handlers, thens records) er
 		return err
 	}
 	return errors.Join(handlers.remove(g.handlers...), thens.remove(g.thens...))
+}
+
+// confirmStep stops the timer of the guarded step. When the timer ended first
+// and put back the files, it drops the records that the step added, as
+// rollbackStep does.
+func confirmStep(ctx context.Context, r *rollbacks, handlers, thens records) error {
+	g := r.running
+	err := r.confirm(ctx)
+	if g == nil || !errors.Is(err, errTimerFirst) {
+		return err
+	}
+	return errors.Join(err, handlers.remove(g.handlers...), thens.remove(g.thens...))
 }
 
 // RunTimer is the timer process: it waits until the job is gone, which
