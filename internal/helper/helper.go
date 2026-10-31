@@ -429,7 +429,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			res.Changes = append(res.Changes, "daemon-reload", "restart ssh.socket")
 			if !res.Guard {
 				res.Guard = true
-				res.Changes = append([]string{"changes the ports of ssh.socket, which winch connects to"}, res.Changes...)
+				res.Changes = append([]string{module.SSHSocketNote(m, res)}, res.Changes...)
 			}
 		}
 	}
