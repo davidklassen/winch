@@ -368,7 +368,7 @@ func TestPlanSSHDWarning(t *testing.T) {
         then: systemctl restart ssh
 `,
 	})
-	const warning = "sshd loads a changed config without an access check; add confirm_access: true"
+	const warning = "sshd loads a changed config without an access check; reload it in a service handler with confirm_access: true"
 	r := winch(t, dir, fakehost.New(), false, "", "plan", "site")
 	if want := "pipelines/site.yaml:5:9: warning: " + warning + "\n"; r.code != exitOK || !strings.Contains(r.err, want) {
 		t.Errorf("exit %d, stderr %q, want %q", r.code, r.err, want)

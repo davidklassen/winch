@@ -160,6 +160,10 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 				return nil, fmt.Errorf("failed: %w", err)
 			}
 		}
+		if toApply[h.Name] && c.Prompted(context.WithoutCancel(ctx)) {
+			c.Close() //nolint:errcheck // the host fails already
+			return nil, errors.New("failed: the access check cannot log in without a prompt; add the key to the agent with ssh-add")
+		}
 		for _, gone := range plan.gone[h.Name] {
 			if err := c.Passed(context.WithoutCancel(ctx), gone); err != nil {
 				c.Close() //nolint:errcheck // the host fails already

@@ -311,7 +311,7 @@ exit 1`))
 			vm.MustRun(t, "chown nobody "+p)
 			r := lab.Winch(t, dir, "plan", "site")
 			vm.MustRun(t, "chown root "+p)
-			if r.Code != 1 || !strings.Contains(r.Stderr, "winch: "+p+" is not owned by root or can be written by others") {
+			if r.Code != 1 || !strings.Contains(r.Stderr, "winch: "+p+" is not owned by root, or the group or others can write it") {
 				t.Errorf("plan with %s owned by nobody: exit %d\n%s", p, r.Code, r.Stderr)
 			}
 		}
@@ -325,7 +325,7 @@ exit 1`))
 		vm.MustRun(t, `mkdir -p /var/lib/winch/rollback && echo '{"deadline":"2026-01-01T00:00:00Z","restore":[],"downloads":""}' > `+job+` && chown -R nobody /var/lib/winch/rollback`)
 		defer vm.MustRun(t, "rm -rf /var/lib/winch/rollback")
 		r := lab.Winch(t, dir, "plan", "site")
-		if r.Code != 1 || !strings.Contains(r.Stderr, "/var/lib/winch/rollback is not owned by root or can be written by others") {
+		if r.Code != 1 || !strings.Contains(r.Stderr, "/var/lib/winch/rollback is not owned by root, or the group or others can write it") {
 			t.Errorf("plan with rollback/ owned by nobody: exit %d\n%s", r.Code, r.Stderr)
 		}
 		if _, err := vm.Run(t.Context(), "test -e "+job); err != nil {

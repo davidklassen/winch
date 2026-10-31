@@ -77,9 +77,11 @@ type Session struct {
 	progress *color.Writer
 	// cfg and ctx are those of Open: a check of the access and a reboot
 	// open more connections.
-	cfg  Config
-	ctx  context.Context
-	dest protocol.Destination
+	cfg        Config
+	ctx        context.Context
+	dest       protocol.Destination
+	prompted   bool
+	newHostKey bool
 
 	waitOnce sync.Once
 	waitErr  error
@@ -115,8 +117,11 @@ b=$d/bin/$h
 for p in "$d/" "$d/bin/" "$b"; do
   [ -e "$p" ] || continue
   set -- $(ls -ldn "$p")
-  case $1 in [d-]????[!w]??[!w]*) [ "$3" = 0 ] && continue ;; esac
-  echo "winch: ${p%/} is not owned by root or can be written by others" >&2; exit 1
+  case $1 in
+  [!d-]*) echo "winch: ${p%/} is not a directory or a regular file" >&2; exit 1 ;;
+  ?????[!w]??[!w]*) [ "$3" = 0 ] && continue ;;
+  esac
+  echo "winch: ${p%/} is not owned by root, or the group or others can write it" >&2; exit 1
 done
 if [ -x "$b" ] && [ "$(sha256sum < "$b")" = "$h  -" ]; then
   echo have
@@ -147,25 +152,39 @@ func command(script string) string {
 
 // Open starts ssh and the helper. When the host closes the connection before
 // the SSH handshake, as a busy sshd does at its MaxStartups limit, Open starts
-// ssh once more after RetryDelay. It does not retry another failure, so a
-// retry never counts as a second failed login.
+// ssh once more after RetryDelay. It does not retry another failure in batch
+// mode, so a retry never counts as a second failed login.
+//
+// Without Batch, Open logs in with BatchMode=yes first, so it learns whether
+// the access check can log in. Only after a refused login or an unknown host
+// key does it log in again, and ssh may ask. ssh checks the host key before
+// the login, so after a new host key only Prompted tells about the login.
 func Open(ctx context.Context, cfg Config) (*Session, error) {
 	r, err := resolve(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	s, exit, err := dial(ctx, cfg)
+	batch := cfg
+	batch.Batch = true
+	s, exit, err := dial(ctx, batch)
 	if !exit.started && Dropped(exit.code, exit.stderr, r.logLevel) {
 		select {
 		case <-ctx.Done():
 			return nil, err
 		case <-time.After(cfg.retryDelay()):
 		}
+		s, exit, err = dial(ctx, batch)
+	}
+	login := strings.Contains(exit.stderr, "Permission denied (")
+	// A changed host key is no question that ssh asks.
+	hostKey := strings.Contains(exit.stderr, "Host key verification failed.") && !strings.Contains(exit.stderr, "HAS CHANGED")
+	if err != nil && !cfg.Batch && (login || hostKey) {
 		s, _, err = dial(ctx, cfg)
 	}
 	if err != nil {
 		return nil, err
 	}
+	s.prompted, s.newHostKey = login, hostKey && !login
 	s.dest.HostName, s.dest.Port, s.dest.Jump = r.hostName, r.port, r.jump
 	if err := s.changed(cfg.Want); err != nil {
 		return nil, err
@@ -186,7 +205,7 @@ func (s *Session) changed(want *protocol.Destination) error {
 // DestinationChanged is the error of a login whose destination differs from
 // the plan's.
 func DestinationChanged(old, now protocol.Destination) error {
-	return fmt.Errorf("the SSH destination changed since the plan: %s → %s", destination(old), destination(now))
+	return fmt.Errorf("the SSH destination changed since the plan: %s → %s; run winch plan again and check the new destination", destination(old), destination(now))
 }
 
 func destination(d protocol.Destination) string {
@@ -334,7 +353,7 @@ func hint(cfg Config, err error) error {
 	case !cfg.Batch:
 		return err
 	case strings.Contains(msg, "Permission denied ("):
-		return fmt.Errorf("%w (batch mode cannot type a key passphrase or a password; add the key to the agent with ssh-add)", err)
+		return fmt.Errorf("%w (batch mode cannot type a passphrase or a password; if the key needs one, add it to the agent with ssh-add)", err)
 	// A changed host key is no question that ssh asks.
 	case strings.Contains(msg, "HAS CHANGED") || !strings.Contains(msg, "Host key verification failed"):
 		return err
@@ -346,7 +365,7 @@ func hint(cfg Config, err error) error {
 	if cfg.User != "" {
 		cmd += " -l " + cfg.User
 	}
-	return fmt.Errorf("%w (in batch mode ssh asks nothing; run %q once)", err, cmd+" "+cfg.Host)
+	return fmt.Errorf("%w (in batch mode ssh asks nothing; accept the host key once with: %s %s)", err, cmd, cfg.Host)
 }
 
 func (s *Session) exit() sshExit {
@@ -405,7 +424,7 @@ func (s *Session) start(cfg Config, line string) error {
 			return fmt.Errorf("unexpected output from the host: %q", got)
 		}
 	} else if line != "have" {
-		return fmt.Errorf("the login shell printed %q before winch started; remove it from the shell startup files, such as ~/.bashrc", line)
+		return s.printed(line)
 	}
 	var w protocol.Welcome
 	if err := s.call("hello", cfg.Hello, &w); err != nil {
@@ -413,6 +432,47 @@ func (s *Session) start(cfg Config, line string) error {
 	}
 	s.dest.User, s.dest.UID = w.Login, w.LoginUID
 	return nil
+}
+
+// printed returns the error of a login that printed line before the script.
+// When the login ends without a line of the script and without error output,
+// another command than winch's printed line.
+func (s *Session) printed(line string) error {
+	shell := func(text string) error {
+		return fmt.Errorf("the login shell printed %q before winch started; remove it from the shell startup files, such as ~/.bashrc", text)
+	}
+	// Text without a newline comes before the line of the script.
+	for _, end := range []string{"have", "need amd64", "need arm64"} {
+		if before, ok := strings.CutSuffix(line, end); ok {
+			return shell(before)
+		}
+	}
+	text := line
+	for n := len(line); n < 4<<10; {
+		next, err := s.stdout.ReadSlice('\n')
+		n += len(next)
+		got := strings.TrimSpace(string(next))
+		if got == "have" || strings.HasPrefix(got, "need ") {
+			break
+		}
+		if got != "" {
+			text += "\n" + got
+		}
+		if err != nil && !errors.Is(err, bufio.ErrBufferFull) {
+			s.wait() //nolint:errcheck // the error output tells more than the exit
+			if strings.TrimSpace(s.stderr.String()) == "" {
+				return notRun(text)
+			}
+			break
+		}
+	}
+	return shell(line)
+}
+
+// notRun is the error of a login that printed text and did not run winch's
+// command.
+func notRun(text string) error {
+	return fmt.Errorf("the login did not run winch's command; a command= line in authorized_keys or a nologin shell prints this: %s", text)
 }
 
 // fail ends the session after err. The error output of ssh, when there is
@@ -539,29 +599,26 @@ func (s *Session) Access(ctx context.Context) error {
 	stdout, stderr := &limitedBuffer{max: 4 << 10}, &limitedBuffer{max: 4 << 10}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = 5 * time.Second
-	if err := cmd.Run(); err != nil {
-		// nologin prints its refusal on stdout.
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = strings.TrimSpace(stdout.String())
-		}
-		switch {
-		// The run's own login worked with the same key a moment before.
-		case strings.Contains(msg, "Permission denied ("):
-			return fmt.Errorf("%w: %s The change refuses the login. (If your key needs a passphrase, add it to the agent with ssh-add, so the check can log in.)", err, msg)
-		case msg != "":
-			return hint(cfg, fmt.Errorf("%w: %s", err, msg))
-		}
-		return err
-	}
+	err = cmd.Run()
+	msg := strings.TrimSpace(stderr.String())
 	extra, ok := strings.CutSuffix(stdout.String(), accessMarker+"\n")
+	extra = strings.TrimSpace(extra)
 	switch {
-	case ok && extra == "":
-		return nil
-	case !ok && strings.TrimSpace(extra) == "":
+	// Open logged in without a prompt, so the change refuses the login.
+	case err != nil && strings.Contains(msg, "Permission denied ("):
+		return fmt.Errorf("the access check cannot log in after this change: %s", msg)
+	case err != nil && msg != "":
+		return hint(cfg, errors.New(msg))
+	case !ok && extra != "":
+		return notRun(extra)
+	case err != nil:
+		return err
+	case !ok:
 		return errors.New("the login did not run winch's command")
+	case extra != "":
+		return fmt.Errorf("the login shell printed %q; remove it from the shell startup files, such as ~/.bashrc", extra)
 	}
-	return fmt.Errorf("the login shell printed %q; remove it from the shell startup files, such as ~/.bashrc", strings.TrimSpace(extra))
+	return nil
 }
 
 // Confirm stops the rollback timer on the host.
@@ -721,6 +778,17 @@ func (s *Session) step(method string, m module.Module, step protocol.Step, st *m
 }
 
 func (s *Session) Destination() protocol.Destination { return s.dest }
+
+// Prompted reports whether the login needed a prompt. After a login that
+// accepted a new host key, it runs the access check once to find out.
+func (s *Session) Prompted(ctx context.Context) bool {
+	if s.newHostKey {
+		s.newHostKey = false
+		err := s.Access(ctx)
+		s.prompted = err != nil && strings.Contains(err.Error(), "Permission denied (")
+	}
+	return s.prompted
+}
 
 // Close ends the helper and waits for ssh.
 func (s *Session) Close() error {

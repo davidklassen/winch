@@ -527,10 +527,50 @@ func TestLostAccessAfterRun(t *testing.T) {
 	}
 }
 
+// spec: Remote execution/Sessions (a host whose login needed a prompt plans
+// as usual, but apply stops before its first change)
+func TestApplyAfterPrompt(t *testing.T) {
+	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/motd
+          content: hi
+`})
+	h := fakehost.New()
+	h.SetPrompted("web1")
+	out, o := applyWeb1(t, p, h)
+	if o.OK() {
+		t.Fatal("apply succeeded after a login with a prompt")
+	}
+	if want := "web1: failed: the access check cannot log in without a prompt; add the key to the agent with ssh-add"; !strings.Contains(out, want) {
+		t.Errorf("output:\n%s\nwant %q", out, want)
+	}
+	if _, ok := h.File("web1", "/etc/motd"); ok {
+		t.Error("apply wrote /etc/motd")
+	}
+	if len(h.Log["web1"]) > 0 {
+		t.Errorf("log %q, want nothing", h.Log["web1"])
+	}
+
+	// A host without a change only loses its gone records.
+	h = fakehost.New()
+	h.SetFile("web1", "/etc/motd", "hi")
+	h.Pend("web1", protocol.Check{Pipeline: "site", Stage: "old"})
+	h.SetPrompted("web1")
+	if out, o := applyWeb1(t, p, h); !o.OK() {
+		t.Fatalf("apply failed:\n%s", out)
+	}
+	if got := h.ChecksOf("web1"); len(got) > 0 {
+		t.Errorf("records %v, want the gone record removed", got)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (the plan warns when sshd loads
 // a changed config without confirm_access)
 func TestSSHDWarning(t *testing.T) {
-	const warning = "sshd loads a changed config without an access check; add confirm_access: true"
+	const warning = "sshd loads a changed config without an access check; reload it in a service handler with confirm_access: true"
 	recipe := func(path, handler string) string {
 		return `steps:
   - file:

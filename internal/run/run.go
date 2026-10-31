@@ -34,6 +34,9 @@ import (
 // context of the run: an interrupt stops its command.
 type Conn interface {
 	Destination() protocol.Destination
+	// Prompted reports whether the login needed a prompt, which the access
+	// check cannot answer.
+	Prompted(ctx context.Context) bool
 	Facts(ctx context.Context) (facts.Facts, error)
 	Pending(ctx context.Context) (protocol.Pending, error)
 	Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)

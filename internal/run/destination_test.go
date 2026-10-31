@@ -38,7 +38,7 @@ func TestApplyDestinationChanged(t *testing.T) {
 			}
 			o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&bytes.Buffer{}), plain(&bytes.Buffer{})))
 			for host, port := range old {
-				want := "failed: the SSH destination changed since the plan: 192.0.2.10:" + port + " (uid 0) → " + tt.want
+				want := "failed: the SSH destination changed since the plan: 192.0.2.10:" + port + " (uid 0) → " + tt.want + "; run winch plan again and check the new destination"
 				if err := o.Failed[host]; err == nil || err.Error() != want {
 					t.Errorf("%s error = %v, want %s", host, err, want)
 				}

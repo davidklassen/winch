@@ -155,7 +155,8 @@ func TestLockWithoutPID(t *testing.T) {
 	for _, tc := range []struct {
 		name, content, want string
 	}{
-		{"empty", "", "locked by run  (@, since 0001-01-01T00:00:00Z)"},
+		{"empty", "", "locked by another run that is starting; run winch again to see which one"},
+		{"half written", `{"run":"r2"}ne","started":"2026-10-24T12:00:00Z"}`, "locked by another run that is starting; run winch again to see which one"},
 		{"no pid", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z"}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
 		{"pid not a number", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":"x"}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
 		{"pid 0", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":0}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
@@ -416,30 +417,30 @@ func TestCheckTree(t *testing.T) {
 		}, ""},
 		{"a rollback directory of another user", me + 1, func(t *testing.T, dir string) {
 			mkdir(t, filepath.Join(dir, "rollback"))
-		}, "rollback"},
+		}, "rollback is not owned by root, or the group or others can write it"},
 		{"a record the group can write", me, func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "handlers", "demo"), "version 1\n")
 			if err := os.Chmod(filepath.Join(dir, "handlers", "demo"), 0o620); err != nil {
 				t.Fatal(err)
 			}
-		}, "handlers/demo"},
+		}, "handlers/demo is not owned by root, or the group or others can write it"},
 		{"a directory others can write", me, func(t *testing.T, dir string) {
 			mkdir(t, filepath.Join(dir, "then"))
 			if err := os.Chmod(filepath.Join(dir, "then"), 0o703); err != nil {
 				t.Fatal(err)
 			}
-		}, "then"},
+		}, "then is not owned by root, or the group or others can write it"},
 		{"a symbolic link", me, func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "rollback", "a"), "")
 			if err := os.Symlink("a", filepath.Join(dir, "rollback", "timer.json")); err != nil {
 				t.Fatal(err)
 			}
-		}, "rollback/timer.json"},
+		}, "rollback/timer.json is not a directory or a regular file"},
 		{"a pipe", me, func(t *testing.T, dir string) {
 			if err := syscall.Mkfifo(filepath.Join(dir, "lock"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-		}, "lock"},
+		}, "lock is not a directory or a regular file"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -452,7 +453,7 @@ func TestCheckTree(t *testing.T) {
 				}
 				return
 			}
-			want := filepath.Join(dir, tt.want) + " is not owned by root or can be written by others"
+			want := filepath.Join(dir, tt.want)
 			if err == nil || err.Error() != want {
 				t.Errorf("error = %v, want %q", err, want)
 			}
@@ -472,7 +473,7 @@ func TestHelloChecksTheTree(t *testing.T) {
 	}
 	c := start(t, dir, "")
 	r := c.call(t, "hello", hello("r1"))
-	if want := p + " is not owned by root or can be written by others"; !strings.Contains(r.Error, want) {
+	if want := p + " is not owned by root, or the group or others can write it"; !strings.Contains(r.Error, want) {
 		t.Errorf("hello error = %q, want %q", r.Error, want)
 	}
 	if _, err := os.Lstat(p); err != nil {

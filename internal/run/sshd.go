@@ -15,7 +15,7 @@ func (p *Plan) sshdWarnings() []*yamlx.Error {
 	var out []*yamlx.Error
 	warn := func(pos yamlx.Pos) {
 		if !slices.ContainsFunc(out, func(w *yamlx.Error) bool { return w.Pos == pos }) {
-			out = append(out, yamlx.Errorf(pos, "sshd loads a changed config without an access check; add confirm_access: true"))
+			out = append(out, yamlx.Errorf(pos, "sshd loads a changed config without an access check; reload it in a service handler with confirm_access: true"))
 		}
 	}
 	changed := map[string]bool{}

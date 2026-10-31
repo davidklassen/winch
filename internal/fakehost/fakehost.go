@@ -83,6 +83,7 @@ type Hosts struct {
 	// noAccess holds the hosts whose access check fails, and noAccessOnce
 	// those whose next one fails.
 	noAccess, noAccessOnce map[string]bool
+	prompted               map[string]bool
 	// timer is the time that a started rollback timer has left.
 	timer time.Duration
 	// rollbackErr is the error of every rollback.
@@ -128,6 +129,7 @@ func New() *Hosts {
 		Guards:       map[string]protocol.Guard{},
 		noAccess:     map[string]bool{},
 		noAccessOnce: map[string]bool{},
+		prompted:     map[string]bool{},
 		timer:        time.Nanosecond,
 		boots:        map[string]protocol.Boot{},
 		dests:        map[string]protocol.Destination{},
@@ -141,6 +143,14 @@ func (h *Hosts) FailAccess(host string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.noAccess[host] = true
+}
+
+// SetPrompted makes each later session with host report a login that needed
+// a prompt.
+func (h *Hosts) SetPrompted(host string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.prompted[host] = true
 }
 
 // FailAccessOnce makes the next access check of host fail.
@@ -376,7 +386,7 @@ func (h *Hosts) Connect(ctx context.Context, host project.Host, want *protocol.D
 	h.Connects[host.Name]++
 	h.Users[host.Name] = host.User
 	h.Trace = append(h.Trace, "connect "+host.Name)
-	return &Conn{hosts: h, host: host.Name, dest: h.dest(host), kill: h.kills[host.Name]}, nil
+	return &Conn{hosts: h, host: host.Name, dest: h.dest(host), kill: h.kills[host.Name], prompted: h.prompted[host.Name]}, nil
 }
 
 // Kill ends the open sessions of host, as a network change does: each of
@@ -450,10 +460,11 @@ func (h *Hosts) Connector() run.Connect {
 }
 
 type Conn struct {
-	hosts *Hosts
-	host  string
-	dest  protocol.Destination
-	kill  int
+	hosts    *Hosts
+	host     string
+	dest     protocol.Destination
+	kill     int
+	prompted bool
 }
 
 // dead returns the error of a session that Kill ended, or nil.
@@ -467,6 +478,8 @@ func (c *Conn) dead() error {
 }
 
 func (c *Conn) Destination() protocol.Destination { return c.dest }
+
+func (c *Conn) Prompted(ctx context.Context) bool { return c.prompted }
 
 func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
 	if err := c.dead(); err != nil {
