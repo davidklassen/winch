@@ -2522,7 +2522,10 @@ service: control a systemd unit
 With running: false, a missing unit file is ok, with the note <unit>:
 unit file not found. A service step with confirm_access: true checks
 that a new SSH connection works after the step, and rolls back when none
-does. Run winch doc step.confirm_access.
+does. Run winch doc step.confirm_access. In a handler, restarted and
+reloaded check as ok when a service step of the run started the unit
+after the handler's last notify, no earlier step of the handler changed
+anything, and the step has no confirm_access.
 
 Keys:
   name       string   required  unit, with or without .service

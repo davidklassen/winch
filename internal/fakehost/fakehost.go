@@ -520,11 +520,15 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		c.hosts.ServiceNewFile = append(c.hosts.ServiceNewFile, sv.Name+": "+string(sv.NewFile))
 		res, ok := c.hosts.result(c.host + " " + sv.Name)
 		c.hosts.mu.Unlock()
-		if ok {
+		switch {
+		case ok:
 			return res, nil
-		}
-		if !sv.Reloaded && !sv.Restarted {
-			return module.Result{}, errors.New("fakehost: a service step needs reloaded or restarted")
+		case sv.Started:
+			return module.Result{Status: module.OK}, nil
+		case sv.Running != nil && *sv.Running:
+			return module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"start"}, Starts: true}, nil
+		case !sv.Reloaded && !sv.Restarted:
+			return module.Result{}, errors.New("fakehost: a service step needs reloaded, restarted, or running: true")
 		}
 		if c.hosts.fails(c.hosts.failCheck, c.host, sv.Name) {
 			return module.Result{}, errors.New("permission denied")
@@ -660,11 +664,14 @@ func (c *Conn) checkPkg(p *module.Pkg, st *module.State) module.Result {
 	return module.Result{Status: module.Change, Action: module.Create, Changes: changes}
 }
 
-// serviceAction is the action of a service step: only reloaded and
-// restarted.
+// serviceAction is the action of a service step: only reloaded, restarted,
+// and running: true.
 func serviceAction(s *module.Service) string {
-	if s.Reloaded {
+	switch {
+	case s.Reloaded:
 		return "reload"
+	case s.Running != nil:
+		return "start"
 	}
 	return "restart"
 }

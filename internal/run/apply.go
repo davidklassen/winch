@@ -215,7 +215,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 			hps, hosts = append(hps, hp), append(hosts, hp.Host)
 			if runs[name] == nil {
-				runs[name] = &hostApply{host: name, rep: rep, progress: plan.opts.progress(), notified: map[string]bool{}, thens: slices.Clone(plan.Pending[name].Then)}
+				runs[name] = &hostApply{host: name, rep: rep, progress: plan.opts.progress(), notified: map[string]bool{}, notifiedAt: map[string]int{}, started: map[string]int{}, thens: slices.Clone(plan.Pending[name].Then)}
 				for _, n := range plan.Pending[name].Handlers {
 					runs[name].notified[n] = true
 				}
@@ -341,6 +341,12 @@ type hostApply struct {
 	// notified are the handlers that wait for their slot: notified in this
 	// run, or pending on the host.
 	notified map[string]bool
+	// clock counts the notifies and the starts of the run. notifiedAt holds
+	// the time of each handler's last notify in this run, and started the
+	// time of each unit's last start by a service step.
+	clock      int
+	notifiedAt map[string]int
+	started    map[string]int
 	// thens are the pending then records that no step ran yet.
 	thens []protocol.Then
 	// gate is the gate of the current stage while it is not recorded and
@@ -374,7 +380,7 @@ func (a *hostApply) apply(ctx context.Context, stage *project.Stage, hp HostPlan
 			}
 		}
 	}
-	changed, err := a.steps(ctx, stage, "", hp.Steps)
+	changed, err := a.steps(ctx, stage, nil, hp.Steps)
 	if err != nil {
 		return changed, err
 	}
@@ -449,8 +455,8 @@ func (ev StepEvent) label() string {
 
 // steps applies steps and runs the handlers of their slots. A step runs its
 // then after its last element when an element changed something, or when its
-// then is pending on the host.
-func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler string, steps []Planned) (changed bool, err error) {
+// then is pending on the host. h is the handler of the steps, or nil.
+func (a *hostApply) steps(ctx context.Context, stage *project.Stage, h *project.Handler, steps []Planned) (changed bool, err error) {
 	// changedLabel is the label of the last element of the current step that
 	// changed something, or "".
 	changedLabel := ""
@@ -467,7 +473,13 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, handler str
 			continue
 		}
 		ev := stepEvent(a.host, stage, p)
-		ev.Handler, ev.Step, ev.Module = handler, label(p.Step), p.Step.Module
+		if h != nil {
+			ev.Handler = h.FullName()
+			if !changed {
+				p.Step = a.afterStart(p.Step, h.Record())
+			}
+		}
+		ev.Step, ev.Module = label(p.Step), p.Step.Module
 		l := oneLine(ev.label())
 		a.progress.Busy(a.host, ev.scope()+": "+l)
 		res, err := a.step(ctx, ev, l, p, guard(stage, p))
@@ -586,7 +598,7 @@ func (a *hostApply) handler(ctx context.Context, stage *project.Stage, s *Slot) 
 	if !a.notified[record] {
 		return false, nil
 	}
-	changed, err := a.steps(ctx, stage, h.FullName(), s.Steps)
+	changed, err := a.steps(ctx, stage, h, s.Steps)
 	if err != nil {
 		return changed, err
 	}
@@ -595,6 +607,21 @@ func (a *hostApply) handler(ctx context.Context, stage *project.Stage, s *Slot) 
 	}
 	delete(a.notified, record)
 	return changed, nil
+}
+
+// afterStart marks a restart or a reload of a handler step as Started when a
+// service step of the run started the unit after the handler's last notify.
+// A step with confirm_access still runs: its access check guards the files
+// that the start used.
+func (a *hostApply) afterStart(st project.Step, record string) project.Step {
+	sv, ok := st.Args.(*module.Service)
+	if !ok || st.ConfirmAccess || !sv.Restarted && !sv.Reloaded || a.started[sv.Unit()] <= a.notifiedAt[record] {
+		return st
+	}
+	c := *sv
+	c.Started = true
+	st.Args = &c
+	return st
 }
 
 // guard returns how the helper guards the step p of stage: it saves in the
@@ -650,8 +677,15 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	}
 	a.rep.Step(ev)
 	if res.Status == module.Change {
+		// The helper records the notifies before the step changes anything.
+		a.clock++
 		for _, n := range p.Notify {
 			a.notified[n] = true
+			a.notifiedAt[n] = a.clock
+		}
+		if res.Starts {
+			a.clock++
+			a.started[p.Step.Args.(*module.Service).Unit()] = a.clock
 		}
 		if err := a.pendGate(ctx); err != nil {
 			return res, err

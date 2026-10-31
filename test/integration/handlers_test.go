@@ -505,3 +505,62 @@ func TestStageHandlers(t *testing.T) {
 		}
 	})
 }
+
+// spec: Modules/service and unit (restarted and reloaded); Handlers
+func TestHandlerAfterStart(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "handler-start")
+	vm.MustRun(t, `cat > /etc/systemd/system/winch-hs.service <<'U'
+[Service]
+ExecStartPre=/bin/sh -c 'echo $$INVOCATION_ID >> /root/invocations'
+ExecStart=/bin/sleep infinity
+U
+systemctl daemon-reload`)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: hsdemo\ninventory: test\nvars:\n  hs_value: one\n",
+		"inventories/test.yaml": "hosts:\n  handler-start: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: app
+    hosts: all
+    steps:
+      - file:
+          path: /etc/winch-hs.conf
+          content: !tpl "{{ .vars.hs_value }}\n"
+        notify: restart
+      - service:
+          name: winch-hs
+          running: true
+    handlers:
+      restart:
+        - service:
+            name: winch-hs
+            restarted: true
+`,
+	})
+	invocations := func(want int) {
+		t.Helper()
+		out := vm.MustRun(t, "cat /root/invocations")
+		if ids := strings.Fields(out); len(ids) != want || len(ids) == 2 && ids[0] == ids[1] {
+			t.Errorf("winch-hs invocations = %q, want %d different ones", out, want)
+		}
+	}
+
+	t.Run("a start after the notify skips the restart", func(t *testing.T) {
+		r := lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "handler-start: app: ~ service winch-hs") || strings.Contains(r.Stdout, "~ handler app.restart") {
+			t.Fatalf("apply: exit %d, want a start and no restart\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		invocations(1)
+		if out := vm.MustRun(t, "sed '/^version 1$/d' /var/lib/winch/handlers/hsdemo 2>/dev/null; true"); out != "" {
+			t.Errorf("pending handlers = %q, want none", out)
+		}
+	})
+
+	t.Run("a notify of a running unit restarts it", func(t *testing.T) {
+		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.hs_value=two")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "handler-start: app: ~ handler app.restart: service winch-hs") {
+			t.Fatalf("apply: exit %d, want the restart\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		invocations(2)
+	})
+}
