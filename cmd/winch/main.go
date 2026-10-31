@@ -95,7 +95,14 @@ func connect(sessions context.Context, notes *color.Writer, display *progress.Di
 	}
 	hello.Machine, _ = os.Hostname()
 	bins := helperbin.Binaries()
-	return func(_ context.Context, proj string, h project.Host) (run.Conn, error) {
+	resolve := func(ctx context.Context, h project.Host) (run.Route, error) {
+		hostName, port, jump, err := session.Resolve(ctx, session.Config{Host: h.Name, Address: h.Address, User: h.User, Batch: batch})
+		if err != nil {
+			return run.Route{}, fmt.Errorf("connect: %w", err)
+		}
+		return run.Route{HostName: hostName, Port: port, Jump: jump}, nil
+	}
+	open := func(_ context.Context, proj string, h project.Host) (run.Conn, error) {
 		hello := hello
 		hello.Project = proj
 		s, err := session.Open(sessions, session.Config{
@@ -116,4 +123,5 @@ func connect(sessions context.Context, notes *color.Writer, display *progress.Di
 		}
 		return s, nil
 	}
+	return run.Connect{Resolve: resolve, Open: open}
 }

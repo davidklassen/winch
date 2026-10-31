@@ -247,7 +247,7 @@ inventory.hosts.address: string
 Host name or IP for SSH. Without it, the SSH config decides the host
 name. The Host blocks of the SSH config match the host name, also with
 address. A port goes in the SSH config. Two hosts cannot have the same
-address.
+SSH host name, port, and jump host.
 ==> winch doc inventory.hosts.user
 inventory.hosts.user: string
 

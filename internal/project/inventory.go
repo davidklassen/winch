@@ -22,7 +22,7 @@ type Inventory struct {
 
 type Host struct {
 	Name     string      `yaml:",key"`
-	Address  string      `yaml:"address" line:"host name or IP for SSH" doc:"Host name or IP for SSH. Without it, the SSH config decides the host name. The Host blocks of the SSH config match the host name, also with address. A port goes in the SSH config. Two hosts cannot have the same address."`
+	Address  string      `yaml:"address" line:"host name or IP for SSH" doc:"Host name or IP for SSH. Without it, the SSH config decides the host name. The Host blocks of the SSH config match the host name, also with address. A port goes in the SSH config. Two hosts cannot have the same SSH host name, port, and jump host."`
 	User     string      `yaml:"user" line:"SSH login user" doc:"SSH login user. Without it, the host takes the user of its groups, then of all, then of the SSH config. --user beats it. Every other SSH setting comes from your SSH config."`
 	VarsNode *yamlx.Node `yaml:"vars" type:"map" line:"variable values of the host" doc:"Variable values of the host. They beat the values of its groups."`
 	Pos      yamlx.Pos
@@ -112,7 +112,6 @@ func (l *loader) loadInventory(p part, set []setValue) (*Inventory, error) {
 			errs = append(errs, merr)
 		}
 	}
-	addresses := map[string]string{}
 	for i := range inv.Hosts {
 		h := &inv.Hosts[i]
 		if h.Name == "all" {
@@ -132,12 +131,6 @@ func (l *loader) loadInventory(p part, set []setValue) (*Inventory, error) {
 			errs = append(errs, yamlx.Errorf(h.Pos, "host %q: %s is not a host name or IP%s", h.Name, what, hint))
 		case hasPort(h.Address):
 			errs = append(errs, yamlx.Errorf(h.Pos, "host %q: %s has a port or brackets; put the port in the SSH config", h.Name, what))
-		}
-		// Two hosts with one address share the lock of the helper there.
-		if other, ok := addresses[strings.ToLower(h.Address)]; ok {
-			errs = append(errs, yamlx.Errorf(h.Pos, "host %q has the address of host %q: %s", h.Name, other, h.Address))
-		} else {
-			addresses[strings.ToLower(h.Address)] = h.Name
 		}
 		own, verrs := l.values(h.VarsNode)
 		errs = append(errs, verrs...)

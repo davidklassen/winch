@@ -144,12 +144,12 @@ func command(script string) string {
 // ssh once more after RetryDelay. It does not retry another failure, so a
 // retry never counts as a second failed login.
 func Open(ctx context.Context, cfg Config) (*Session, error) {
-	hostName, port, logLevel, err := resolve(ctx, cfg)
+	r, err := resolve(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
 	s, exit, err := dial(ctx, cfg)
-	if !exit.started && Dropped(exit.code, exit.stderr, logLevel) {
+	if !exit.started && Dropped(exit.code, exit.stderr, r.logLevel) {
 		select {
 		case <-ctx.Done():
 			return nil, err
@@ -160,33 +160,47 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.dest.HostName, s.dest.Port = hostName, port
+	s.dest.HostName, s.dest.Port = r.hostName, r.port
 	return s, nil
 }
 
-// resolve returns the host name, the port, and the log level of ssh for the
-// host of cfg.
-func resolve(ctx context.Context, cfg Config) (hostName, port, logLevel string, err error) {
+// Resolve returns the host name, the port, and the jump host that ssh
+// resolves for the host of cfg. The jump host is the ProxyJump or the
+// ProxyCommand, or empty.
+func Resolve(ctx context.Context, cfg Config) (hostName, port, jump string, err error) {
+	r, err := resolve(ctx, cfg)
+	return r.hostName, r.port, r.jump, err
+}
+
+type resolved struct {
+	hostName, port, jump, logLevel string
+}
+
+// resolve reads the SSH config of the host of cfg with ssh -G.
+func resolve(ctx context.Context, cfg Config) (resolved, error) {
 	out, err := exec.CommandContext(ctx, "ssh", append([]string{"-G"}, argv(cfg)...)...).Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
 			err = errors.New(strings.TrimSpace(string(exit.Stderr)))
 		}
-		return "", "", "", fmt.Errorf("read the SSH config: %w", err)
+		return resolved{}, fmt.Errorf("read the SSH config: %w", err)
 	}
+	var r resolved
 	for line := range strings.Lines(string(out)) {
 		key, value, _ := strings.Cut(strings.TrimSpace(line), " ")
 		switch key {
 		case "hostname":
-			hostName = value
+			r.hostName = value
 		case "port":
-			port = value
+			r.port = value
+		case "proxyjump", "proxycommand":
+			r.jump = value
 		case "loglevel":
-			logLevel = value
+			r.logLevel = value
 		}
 	}
-	return hostName, port, logLevel, nil
+	return r, nil
 }
 
 // argv returns the arguments of ssh for the host of cfg, up to the target.

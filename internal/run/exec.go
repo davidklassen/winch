@@ -28,7 +28,7 @@ type ExecResult struct {
 // ctx ends, the commands stop.
 func Exec(ctx context.Context, proj string, hosts []project.Host, command string, connect Connect, opts Options) []ExecResult {
 	results := make([]ExecResult, len(hosts))
-	open := func(h project.Host) (Conn, error) { return connect(context.WithoutCancel(ctx), proj, h) }
+	open := func(h project.Host) (Conn, error) { return connect.Open(context.WithoutCancel(ctx), proj, h) }
 	errs := rollout(ctx, "exec", hosts, 0, opts, open, func(i int, c Conn) error {
 		if ctx.Err() != nil {
 			return errors.Join(ErrInterrupted, c.Close())
