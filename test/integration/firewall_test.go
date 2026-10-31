@@ -221,3 +221,40 @@ func TestFirewallModule(t *testing.T) {
 	// Without the drop-in, nftables.service does not load the removed file.
 	vm.MustRun(t, "systemctl restart nftables")
 }
+
+// dhcp6Reply sends one UDP packet to port 546 of the host over a veth pair
+// from the network namespace wd, from the port in argv[1]. It prints
+// "received" or "dropped".
+const dhcp6Reply = `import socket, subprocess, sys
+r = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+r.bind(("fd00:546::1", 546))
+r.settimeout(2)
+send = "import socket; s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM); s.bind(('fd00:546::2', " + sys.argv[1] + ")); s.sendto(b'x', ('fd00:546::1', 546))"
+subprocess.run(["ip", "netns", "exec", "wd", "python3", "-c", send], check=True)
+try:
+    r.recv(16)
+    print("received")
+except socket.timeout:
+    print("dropped")
+`
+
+// spec: Modules/firewall
+func TestFirewallDHCPv6Reply(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "dhcp6")
+	vm.MustRun(t, "ip netns add wd && ip link add wv0 type veth peer name wv1 && ip link set wv1 netns wd && "+
+		"ip -6 addr add fd00:546::1/64 dev wv0 nodad && ip link set wv0 up && "+
+		"ip netns exec wd sh -c 'ip -6 addr add fd00:546::2/64 dev wv1 nodad && ip link set wv1 up'")
+	vm.MustRun(t, "cat > /root/dhcp6.py <<'EOF'\n"+dhcp6Reply+"EOF")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml": "name: fw\nhosts:\n  dhcp6: {}\nsteps:\n  - pkg:\n      name: nftables\n  - firewall:\n      allow:\n        - tcp: 22\n",
+	})
+	if r := lab.Winch(t, dir, "apply", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	for port, want := range map[string]string{"547": "received\n", "549": "dropped\n"} {
+		if got := vm.MustRun(t, "python3 /root/dhcp6.py "+port); got != want {
+			t.Errorf("from port %s: %q, want %q", port, got, want)
+		}
+	}
+}

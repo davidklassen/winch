@@ -223,6 +223,53 @@ func TestSecretContentReasons(t *testing.T) {
 	golden.Assert(t, filepath.Join("testdata", "secrets", "content-reasons.golden"), output(&out, &errOut))
 }
 
+// spec: Variables/Secrets in output; CLI/Output
+func TestOldContentReasons(t *testing.T) {
+	identity, recipient := ageKey(t)
+	key, err := secret.Encrypt("new-key", []age.Recipient{recipient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      tls_key: !secret " + key + "\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/ssl/key.der
+          content: !expr vars.tls_key
+      - file:
+          path: /etc/app.conf
+          content: !tpl "key: {{ .vars.tls_key }}\n"
+      - file:
+          path: /etc/blob
+          content: "text\n"
+      - file:
+          path: /etc/latin1.conf
+          content: "text\n"
+      - file:
+          path: /etc/big.txt
+          content: "text\n"
+`,
+	})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/ssl/key.der", "0\x82\x00\x01\xff")
+	h.SetFile("web1", "/etc/app.conf", "key: \xff\n")
+	h.SetFile("web1", "/etc/blob", "a\x00b")
+	h.SetFile("web1", "/etc/latin1.conf", "caf\xe9\n")
+	h.SetFile("web1", "/etc/big.txt", strings.Repeat("a", 1<<20+1))
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	golden.Assert(t, filepath.Join("testdata", "secrets", "old-content-reasons.golden"), output(&out, &errOut))
+}
+
 // spec: Modules/line; Variables/Secrets in output
 func TestPlanLine(t *testing.T) {
 	identity, recipient := ageKey(t)

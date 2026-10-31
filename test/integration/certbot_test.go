@@ -11,17 +11,21 @@ import (
 )
 
 // pebbleSetup installs certbot with its plugins and the web servers, and
-// starts Pebble, the ACME test server. Its DNS server answers 127.0.0.1 for
-// every name, so Pebble checks the challenges on this VM. With
-// PEBBLE_AUTHZREUSE=0, Pebble still reuses a valid authorization of the
-// account in 1% of the orders. A test whose challenge must fail removes the
-// account first, and certbot registers a new one.
+// starts Pebble.
 const pebbleSetup = `set -e
 apt-get update -q >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q certbot python3-certbot-nginx python3-certbot-apache nginx apache2 pebble curl >/dev/null
 systemctl stop apache2
 systemctl start nginx
-mkdir -p /etc/pebble
+` + pebbleStart
+
+// pebbleStart starts Pebble, the ACME test server, and points certbot at it.
+// Its DNS server answers 127.0.0.1 for every name, so Pebble checks the
+// challenges on this VM. With PEBBLE_AUTHZREUSE=0, Pebble still reuses a
+// valid authorization of the account in 1% of the orders. A test whose
+// challenge must fail removes the account first, and certbot registers a new
+// one.
+const pebbleStart = `mkdir -p /etc/pebble /etc/letsencrypt
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 -subj /CN=localhost \
 	-addext subjectAltName=DNS:localhost -keyout /etc/pebble/key.pem -out /usr/local/share/ca-certificates/pebble.crt 2>/dev/null
 update-ca-certificates >/dev/null 2>&1

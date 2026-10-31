@@ -1198,6 +1198,32 @@ func TestGoneRecordWithoutChange(t *testing.T) {
 	}
 }
 
+// spec: Steps; Running a pipeline/Failures
+func TestGoneRecordOfFailedHostStays(t *testing.T) {
+	p := loadFiles(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: \"hi\\n\"\n",
+	})
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/motd", "hi\n")
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/etc/aliases"}})
+	h.FailCheck("web1 /etc/motd")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	if plan.Failed["web1"] == nil {
+		t.Fatal("the check of web1 did not fail")
+	}
+	connects := h.Connects["web1"]
+	var out, errOut bytes.Buffer
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	if h.Connects["web1"] != connects || len(h.ThenOf("web1")) != 1 {
+		t.Errorf("apply connected to web1 %d times, records %v", h.Connects["web1"]-connects, h.ThenOf("web1"))
+	}
+	if c, _ := h.File("web2", "/etc/motd"); c != "hi\n" || !o.Changed["web2"] || o.Failed["web2"] != nil {
+		t.Errorf("web2: /etc/motd %q, changed %v, error %v", c, o.Changed["web2"], o.Failed["web2"])
+	}
+}
+
 // spec: Running a pipeline/Apply (Ctrl-C)
 func TestGoneRecordRemovalFails(t *testing.T) {
 	p := loadFiles(t, map[string]string{

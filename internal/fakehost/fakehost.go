@@ -608,7 +608,11 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		return module.Result{Status: module.Change, Action: module.Create, Old: new(""), Validates: f.Validation != nil,
 			Changes: append(c.missingParents(f.Path), "owner root, group root, mode 0644")}, nil
 	case cur != string(f.Data):
-		return module.Result{Status: module.Change, Action: module.Modify, Old: &cur, Validates: f.Validation != nil}, nil
+		res := module.Result{Status: module.Change, Action: module.Modify, Validates: f.Validation != nil}
+		if _, res.OldReason = (&module.File{Data: []byte(cur)}).Text(); res.OldReason == "" {
+			res.Old = &cur
+		}
+		return res, nil
 	}
 	return module.Result{Status: module.OK}, nil
 }

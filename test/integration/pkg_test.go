@@ -57,11 +57,13 @@ func TestPkgModule(t *testing.T) {
 	const fragileV1 = "touch /etc/winch-fragile.ok && dpkg -i /root/winch-fragile.deb >/dev/null && " + localOnly + " && apt-cache policy winch-fragile | grep -q 'Candidate: 2'"
 	reset := "[ ! -e /root/virt ] || { rm -r /root/virt /etc/apt/sources.list.d/winch-virt.sources && apt-get update -q >/dev/null; }; pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /var/lib/apt/lists/10.0.2.100_test_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --purge winch-mta-c:armhf >/dev/null 2>&1; dpkg --remove-architecture armhf 2>/dev/null; " +
 		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-uses-fragile winch-fragile winch-conflict hello sl figlet tree fortune-mod fortunes-min " + librecode + " at >/dev/null 2>&1; true"
+	// The cases with a fresh index need the index of the system's sources,
+	// also when RUN selects one of them alone.
+	vm.MustRun(t, localRepo)
 	vmtest.RunCases(t, vm, "pkg", reset, []vmtest.Case{
 		{
-			Name: "the first install of a run refreshes the index",
-			// A new VM has no index.
-			Setup:     count,
+			Name:      "the first install of a run refreshes the index",
+			Setup:     "rm -f /var/lib/apt/lists/*_* && " + count,
 			Args:      &module.Pkg{Name: []string{"hello"}},
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello", later}},
 			WantState: module.State{IndexFresh: true},

@@ -555,6 +555,50 @@ func TestSerialFailureContinues(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Failures; CLI/Output
+func TestSessionErrorInApplyHasNoScope(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail func(*fakehost.Hosts)
+		want string
+	}{
+		{"connect", func(h *fakehost.Hosts) { h.SetUnreachable("web1") }, "web1: failed: ssh: connect to host web1: Connection refused\n"},
+		{"close", func(h *fakehost.Hosts) { h.FailClose("web1") }, "web1: failed: session: exit status 255\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := manyProject(t, motdStage)
+			h := fakehost.New()
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+			tc.fail(h)
+			var out, errOut bytes.Buffer
+			o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+			if o.Failed["web1"] == nil || errOut.String() != tc.want {
+				t.Errorf("web1 error %v, stderr %q, want %q", o.Failed["web1"], errOut.String(), tc.want)
+			}
+		})
+	}
+}
+
+// spec: Running a pipeline/Plan; Running a pipeline/Failures
+func TestPlanCloseErrorFailsHost(t *testing.T) {
+	p := manyProject(t, motdStage+`  - name: next
+    hosts: web1
+    steps:
+      - file:
+          path: /etc/issue
+          content: "x\n"
+`)
+	h := fakehost.New()
+	h.FailClose("web1")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	if err := plan.Failed["web1"]; err == nil || err.Error() != "session: exit status 255" {
+		t.Errorf("web1 error %v, want the close error", err)
+	}
+	if len(plan.Failed) != 1 {
+		t.Errorf("failed hosts %v, want only web1", plan.Failed)
+	}
+}
+
 // spec: Running a pipeline/Health gates
 func TestHealthGateOnlyAfterAChange(t *testing.T) {
 	p := manyProject(t, healthStage+`  - name: next
