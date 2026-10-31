@@ -316,6 +316,11 @@ func (c *Certbot) check(dir string, note func(string)) (Result, error) {
 	}
 	changes := c.changes(cur)
 	c.issue = changes != nil
+	if c.issue {
+		if err := noFlagsAt(renewalPath(dir, c.Name)); err != nil {
+			return Result{}, err
+		}
+	}
 	for _, hook := range c.PendingHooks {
 		changes = append(changes, "pending "+hook)
 	}

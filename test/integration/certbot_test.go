@@ -56,6 +56,7 @@ func issue(args string) string {
 const keySum = "sha256sum /etc/letsencrypt/live/a.example.com/privkey.pem"
 
 const certbotReset = `[ ! -e /usr/bin/certbot.off ] || mv /usr/bin/certbot.off /usr/bin/certbot
+find /etc/letsencrypt/renewal -type f -exec chattr -ia {} +
 rm -rf /etc/letsencrypt/accounts /etc/letsencrypt/live/* /etc/letsencrypt/archive/* /etc/letsencrypt/renewal/* /root/deployed /root/key.sum /root/hook-ok
 systemctl stop apache2
 systemctl start nginx
@@ -131,6 +132,24 @@ func TestCertbotModule(t *testing.T) {
 				"issue the certificate again, with a new key; run deploy_hook",
 			}},
 			After: `[ "$(cat /root/deployed)" = deployed ] && python3 -c ` + vmtest.Quote(`from configobj import ConfigObj; assert ConfigObj("/etc/letsencrypt/renewal/a.example.com.conf")["renewalparams"]["renew_hook"] == "sh -ec 'echo deployed >> /root/deployed'"`),
+		},
+		{
+			Name:    "an immutable renewal file fails a changed deploy_hook",
+			Setup:   issue(`--cert-name a.example.com -d a.example.com --deploy-hook "echo old >> /root/deployed"`) + "chattr +i /etc/letsencrypt/renewal/a.example.com.conf",
+			Args:    &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: &deployed},
+			WantErr: "/etc/letsencrypt/renewal/a.example.com.conf is immutable; chattr -i changes it",
+		},
+		{
+			Name:    "an append-only renewal file fails a new domain",
+			Setup:   issue("--cert-name a.example.com -d a.example.com") + "chattr +a /etc/letsencrypt/renewal/a.example.com.conf",
+			Args:    &module.Certbot{Name: "a.example.com", Domains: ab, Email: "admin@example.com"},
+			WantErr: "/etc/letsencrypt/renewal/a.example.com.conf is append-only; chattr -a changes it",
+		},
+		{
+			Name:  "an immutable renewal file of a current certificate is ok",
+			Setup: issue(`--cert-name a.example.com -d a.example.com --deploy-hook "echo deployed >> /root/deployed"`) + "chattr +i /etc/letsencrypt/renewal/a.example.com.conf",
+			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: &deployed},
+			Want:  module.Result{Status: module.OK},
 		},
 		{
 			Name:  "reuse_key keeps the key",
@@ -352,6 +371,39 @@ func TestCertbotPendingHooks(t *testing.T) {
 		r = lab.Winch(t, dir, "plan", "site", "--exit-code")
 		if r.Code != 0 || !unchanged(r.Stdout, 1) {
 			t.Errorf("final plan: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+
+	t.Run("a pending hook on an immutable renewal file", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: hooks\ninventory: test\n",
+			"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",
+			"pipelines/site.yaml": `stages:
+  - name: test
+    hosts: all
+    steps:
+      - certbot:
+          name: flagged
+          domains: [a.example.com]
+          email: admin@example.com
+          deploy_hook: |
+            test -e /root/flagged-ready
+            echo deploy >> /root/flagged-deploy
+`,
+		})
+		if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 1 || !strings.Contains(r.Stderr, "Hook 'deploy-hook' reported") {
+			t.Fatalf("first apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		vm.MustRun(t, "chattr +i /etc/letsencrypt/renewal/flagged.conf && touch /root/flagged-ready")
+		r := lab.Winch(t, dir, "plan", "site", "--exit-code")
+		if r.Code != 2 || !strings.Contains(r.Stdout, "pending deploy_hook") {
+			t.Fatalf("plan: exit %d, want pending deploy_hook\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if r = lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+			t.Fatalf("retry apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+		}
+		if got := vm.MustRun(t, "cat /root/flagged-deploy"); got != "deploy\n" {
+			t.Errorf("deploy_hook runs = %q, want one", got)
 		}
 	})
 
