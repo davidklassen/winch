@@ -133,6 +133,13 @@ func TestFileModule(t *testing.T) {
 			After: `[ -f /tmp/w/link ] && [ ! -L /tmp/w/link ] && [ "$(cat /tmp/w/target)" = target ]`,
 		},
 		{
+			Name:  "symlink with a newline in its target replaced by a file",
+			Setup: `ln -s "$(printf 'a\nb')" /tmp/w/link`,
+			Args:  &module.File{Path: "/tmp/w/link", Data: []byte("x\n"), Replace: true},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"replace the symbolic link to a?b", attrs}, Old: new("")},
+			After: `[ -f /tmp/w/link ] && [ ! -L /tmp/w/link ]`,
+		},
+		{
 			Name:      "a mode change reaches both names of a hard link",
 			Setup:     `printf 'x\n' > /tmp/w/f && chmod 600 /tmp/w/f && ln /tmp/w/f /tmp/w/h`,
 			Args:      &module.File{Path: "/tmp/w/f", Data: []byte("x\n")},

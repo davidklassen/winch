@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -306,7 +307,7 @@ func keyText(k pgpKey) string {
 	if k.userID == "" {
 		return k.fingerprint
 	}
-	return k.fingerprint + " " + k.userID
+	return k.fingerprint + " " + secret.Printable(k.userID)
 }
 
 // checkOthers fails when another sources file of apt lists the source.

@@ -35,6 +35,14 @@ func TestLinkModule(t *testing.T) {
 			After:     `[ "$(readlink /tmp/w/l)" = /etc/hosts ] && [ -f /etc/hostname ]`,
 		},
 		{
+			Name:      "a target with a newline gives one change line",
+			Setup:     `ln -s "$(printf 'a\nb')" /tmp/w/l`,
+			Args:      &module.Link{Path: "/tmp/w/l", Target: new("/etc/hosts")},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"target a?b → /etc/hosts"}},
+			Unchanged: `[ "$(readlink /tmp/w/l)" = "$(printf 'a\nb')" ]`,
+			After:     `[ "$(readlink /tmp/w/l)" = /etc/hosts ]`,
+		},
+		{
 			Name:      "change the target from one directory to another",
 			Setup:     `mkdir /tmp/w/a /tmp/w/b && ln -s /tmp/w/a /tmp/w/l`,
 			Args:      &module.Link{Path: "/tmp/w/l", Target: new("/tmp/w/b")},
