@@ -2,6 +2,7 @@ package vmtest
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	_ "embed"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -111,7 +113,7 @@ func (l *Lab) snapshotInputs(ctx context.Context) (snapshotInputs, error) {
 	if _, err := io.Copy(h, f); err != nil {
 		return snapshotInputs{}, err
 	}
-	args, err := qemuArgs(l.Arch, "DISK", "DIR", 0, true)
+	args, err := qemuArgs(l.Arch, l.cfg.Mem, "DISK", "DIR", 0, true, nil)
 	if err != nil {
 		return snapshotInputs{}, err
 	}
@@ -123,7 +125,7 @@ func (l *Lab) snapshotInputs(ctx context.Context) (snapshotInputs, error) {
 		Image: hex.EncodeToString(h.Sum(nil)),
 		Seed:  seedUserData() + metaData + networkConfig,
 		QEMU:  strings.SplitN(string(version), "\n", 2)[0],
-		Flags: strings.Join(append(args, "disk "+diskSize), "\n"),
+		Flags: strings.Join(args, "\n"),
 	}, nil
 }
 
@@ -176,7 +178,7 @@ func (l *Lab) buildSnapshot(ctx context.Context, dir string) error {
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	vm, err := l.boot(ctx, "base", tmp, l.cfg.Image, true, "")
+	vm, err := l.boot(ctx, "base", tmp, l.cfg.Image, true, nil, "")
 	if err != nil {
 		return err
 	}
@@ -299,17 +301,18 @@ func (q *qmp) call(command string, args, result any) error {
 	}
 }
 
-// forwards returns the VM's forwards from guest port to host port. It fails
-// without the SSH forward.
-func (q *qmp) forwards() (map[int]int, error) {
+// forwards returns the VM's forwards, sorted by protocol and guest port. It
+// fails without the SSH forward.
+func (q *qmp) forwards() ([]Forward, error) {
 	var out string
 	if err := q.call("human-monitor-command", map[string]string{"command-line": "info usernet"}, &out); err != nil {
 		return nil, err
 	}
-	forwards := map[int]int{}
+	var forwards []Forward
+	ssh := false
 	for line := range strings.Lines(out) {
 		f := strings.Fields(line)
-		if len(f) < 6 || f[0] != "TCP[HOST_FORWARD]" {
+		if len(f) < 6 || f[0] != "TCP[HOST_FORWARD]" && f[0] != "UDP[HOST_FORWARD]" {
 			continue
 		}
 		host, err := strconv.Atoi(f[3])
@@ -320,10 +323,15 @@ func (q *qmp) forwards() (map[int]int, error) {
 		if err != nil {
 			return nil, err
 		}
-		forwards[guest] = host
+		proto := strings.ToLower(f[0][:3])
+		ssh = ssh || proto == "tcp" && guest == 22
+		forwards = append(forwards, Forward{Proto: proto, Guest: guest, Host: host})
 	}
-	if forwards[22] == 0 {
+	if !ssh {
 		return nil, fmt.Errorf("no SSH forward in info usernet: %s", out)
 	}
+	slices.SortFunc(forwards, func(a, b Forward) int {
+		return cmp.Or(strings.Compare(a.Proto, b.Proto), cmp.Compare(a.Guest, b.Guest))
+	})
 	return forwards, nil
 }

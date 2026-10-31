@@ -241,6 +241,8 @@ func TestFromEnvOnline(t *testing.T) {
 			t.Setenv("WINCH_VM_IMAGE", "image")
 			t.Setenv("WINCH_VM_ARCH", "arm64")
 			t.Setenv("WINCH_VM_CACHE", "cache")
+			t.Setenv("WINCH_VM_MEM", "1G")
+			t.Setenv("WINCH_VM_DISK", "8G")
 			t.Setenv("WINCH_VM_ONLINE", c.value)
 			cfg, err := FromEnv("repo")
 			if c.wantErr {
@@ -251,6 +253,52 @@ func TestFromEnvOnline(t *testing.T) {
 			}
 			if err != nil || cfg.Online != c.online {
 				t.Errorf("ONLINE=%q: online %v, %v; want %v", c.value, cfg.Online, err, c.online)
+			}
+		})
+	}
+}
+
+func TestFromEnvSizesAndForwards(t *testing.T) {
+	for _, c := range []struct {
+		name, mem, disk, forward string
+		want                     []Forward
+		wantErr                  string
+	}{
+		{name: "defaults", mem: "1G", disk: "8G"},
+		{name: "megabytes", mem: "4096M", disk: "16G"},
+		{name: "forwards", mem: "1G", disk: "8G", forward: "udp:1194,tcp:8080",
+			want: []Forward{{Proto: "udp", Guest: 1194}, {Proto: "tcp", Guest: 8080}}},
+		{name: "memory without a unit", mem: "1024", disk: "8G", wantErr: "MEM=1024"},
+		{name: "disk in terabytes", mem: "1G", disk: "1T", wantErr: "DISK=1T"},
+		{name: "no disk", mem: "1G", wantErr: "WINCH_VM_DISK"},
+		{name: "a path in the disk", mem: "1G", disk: "../8G", wantErr: "DISK=../8G"},
+		{name: "no protocol", mem: "1G", disk: "8G", forward: "1194", wantErr: "FORWARD=1194"},
+		{name: "sctp", mem: "1G", disk: "8G", forward: "sctp:1194", wantErr: "FORWARD=sctp:1194"},
+		{name: "port 0", mem: "1G", disk: "8G", forward: "udp:0", wantErr: "FORWARD=udp:0"},
+		{name: "port too big", mem: "1G", disk: "8G", forward: "udp:65536", wantErr: "FORWARD=udp:65536"},
+		{name: "empty entry", mem: "1G", disk: "8G", forward: "udp:1194,", wantErr: "FORWARD=udp:1194,"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("WINCH_VM_OS", "debian-13")
+			t.Setenv("WINCH_VM_IMAGE", "image")
+			t.Setenv("WINCH_VM_ARCH", "arm64")
+			t.Setenv("WINCH_VM_CACHE", "cache")
+			t.Setenv("WINCH_VM_ONLINE", "")
+			t.Setenv("WINCH_VM_MEM", c.mem)
+			t.Setenv("WINCH_VM_DISK", c.disk)
+			t.Setenv("WINCH_VM_FORWARD", c.forward)
+			cfg, err := FromEnv("repo")
+			if c.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+					t.Errorf("FromEnv = %v, want an error with %q", err, c.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Mem != c.mem || cfg.Disk != c.disk || !slices.Equal(cfg.Forwards, c.want) {
+				t.Errorf("FromEnv = mem %s, disk %s, forwards %v; want %s, %s, %v", cfg.Mem, cfg.Disk, cfg.Forwards, c.mem, c.disk, c.want)
 			}
 		})
 	}
@@ -487,7 +535,7 @@ func TestWatchdog(t *testing.T) {
 
 // spec: roadmap: Testing/VMs
 func TestBootSSHPort(t *testing.T) {
-	usernet := `  Protocol[State]    FD  Source Address  Port   Dest. Address  Port RecvQ SendQ\r\n  TCP[HOST_FORWARD]   13       127.0.0.1 56634       10.0.2.15  2222     0     0\r\n  TCP[HOST_FORWARD]   12       127.0.0.1 56633       10.0.2.15    22     0     0\r\n`
+	usernet := `  Protocol[State]    FD  Source Address  Port   Dest. Address  Port RecvQ SendQ\r\n  UDP[HOST_FORWARD]   14       127.0.0.1 56635       10.0.2.15  1194     0     0\r\n  TCP[HOST_FORWARD]   13       127.0.0.1 56634       10.0.2.15  2222     0     0\r\n  TCP[HOST_FORWARD]   12       127.0.0.1 56633       10.0.2.15    22     0     0\r\n`
 	// The fake QEMU exits when a command is not the expected one.
 	greet := `expect() { read cmd; case "$cmd" in *"$1"*) ;; *) exit 1 ;; esac; }
 echo '{"QMP": {}}'; expect qmp_capabilities; echo '{"return": {}}'; expect 'info usernet'
@@ -500,6 +548,8 @@ echo '{"QMP": {}}'; expect qmp_capabilities; echo '{"return": {}}'; expect 'info
 	}{
 		{name: "forward", qemu: greet + fmt.Sprintf(`printf '%%s\n' '{"return": "%s"}'`, usernet)},
 		{name: "no forward", qemu: greet + `echo '{"return": ""}'`, want: []string{"vm demo", "no SSH forward"}},
+		{name: "only a UDP forward of port 22", qemu: greet + `printf '%s\n' '{"return": "  UDP[HOST_FORWARD]   14       127.0.0.1 56635       10.0.2.15    22     0     0\r\n"}'`,
+			want: []string{"vm demo", "no SSH forward"}},
 		{name: "QEMU fails", qemu: "echo boom >&2; exit 1", want: []string{"vm demo", "boom"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -509,16 +559,19 @@ echo '{"QMP": {}}'; expect qmp_capabilities; echo '{"return": {}}'; expect 'info
 					t.Fatal(err)
 				}
 			}
-			writeScript(t, filepath.Join(dir, "bin", "qemu-img"), "#!/bin/sh\n")
+			writeScript(t, filepath.Join(dir, "bin", "qemu-img"), "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\n")
 			writeScript(t, filepath.Join(dir, "bin", "qemu-system-x86_64"), "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\n"+c.qemu+"\nexec sleep 30\n")
 			t.Setenv("PATH", filepath.Join(dir, "bin")+":"+os.Getenv("PATH"))
-			l := &Lab{Dir: dir, Arch: "amd64"}
-			vm, err := l.boot(t.Context(), "demo", filepath.Join(dir, "vms", "demo"), "base.qcow2", false, "")
+			l := &Lab{Dir: dir, Arch: "amd64", cfg: Config{Mem: "2G", Disk: "16G"}}
+			vm, err := l.boot(t.Context(), "demo", filepath.Join(dir, "vms", "demo"), "base.qcow2", false, []Forward{{Proto: "udp", Guest: 1194}}, "")
 			if vm != nil {
 				defer vm.Stop()
 			}
+			if img, _ := os.ReadFile(filepath.Join(dir, "bin", "qemu-img.args")); !bytes.HasSuffix(img, []byte("\n16G\n")) {
+				t.Errorf("qemu-img arguments %q, want the size 16G last", img)
+			}
 			args, _ := os.ReadFile(filepath.Join(dir, "bin", "qemu-system-x86_64.args"))
-			for _, w := range []string{"\n-qmp\nstdio\n", "hostfwd=tcp:127.0.0.1:0-:22,", "hostfwd=tcp:127.0.0.1:0-:2222,"} {
+			for _, w := range []string{"\n-qmp\nstdio\n", "hostfwd=tcp:127.0.0.1:0-:22,", "hostfwd=tcp:127.0.0.1:0-:2222,", "hostfwd=udp:127.0.0.1:0-:1194,", "\n-m\n2G\n"} {
 				if !bytes.Contains(args, []byte(w)) {
 					t.Errorf("QEMU arguments %q, want %q in them", args, w)
 				}
@@ -531,6 +584,10 @@ echo '{"QMP": {}}'; expect qmp_capabilities; echo '{"return": {}}'; expect 'info
 				if want := "Host demo\n  HostName 127.0.0.1\n  Port 56633\n"; string(conf) != want {
 					t.Errorf("host config = %q, want %q", conf, want)
 				}
+				want := []Forward{{"tcp", 22, 56633}, {"tcp", 2222, 56634}, {"udp", 1194, 56635}}
+				if !slices.Equal(vm.Forwards(), want) {
+					t.Errorf("forwards = %v, want %v", vm.Forwards(), want)
+				}
 				return
 			}
 			if err == nil {
@@ -540,6 +597,56 @@ echo '{"QMP": {}}'; expect qmp_capabilities; echo '{"return": {}}'; expect 'info
 				if !strings.Contains(err.Error(), w) {
 					t.Errorf("boot = %v, want %q in it", err, w)
 				}
+			}
+		})
+	}
+}
+
+// spec: roadmap: Testing/VMs
+func TestSnapshotInputsSizes(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeScript(t, filepath.Join(dir, "bin", "qemu-system-x86_64"), "#!/bin/sh\necho 'QEMU emulator version 10.2.0'\n")
+	t.Setenv("PATH", filepath.Join(dir, "bin")+":"+os.Getenv("PATH"))
+	image := filepath.Join(dir, "image.qcow2")
+	if err := os.WriteFile(image, []byte("image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lab := func(t *testing.T, cfg Config) (prefix, name string) {
+		t.Helper()
+		cfg.Image = image
+		l := &Lab{Arch: "amd64", cfg: cfg}
+		in, err := l.snapshotInputs(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return "snapshot-" + l.platform() + "-", snapshotName(l.platform(), in)
+	}
+	base := Config{OS: "debian-13", Mem: "1G", Disk: "8G"}
+	prefix, want := lab(t, base)
+	for _, c := range []struct {
+		name string
+		edit func(*Config)
+		same bool
+	}{
+		{name: "memory", edit: func(cfg *Config) { cfg.Mem = "4G" }},
+		{name: "disk", edit: func(cfg *Config) { cfg.Disk = "16G" }},
+		// A forward does not change the saved machine.
+		{name: "forward", edit: func(cfg *Config) { cfg.Forwards = []Forward{{Proto: "udp", Guest: 1194}} }, same: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := base
+			c.edit(&cfg)
+			_, got := lab(t, cfg)
+			if c.same && got != want {
+				t.Errorf("a changed %s gives %s, want %s", c.name, got, want)
+			}
+			// The build of a snapshot removes the others of its prefix,
+			// which a parallel lab of the default sizes uses.
+			if !c.same && strings.HasPrefix(got, prefix) {
+				t.Errorf("a changed %s gives %s, want a name without the prefix %s", c.name, got, prefix)
 			}
 		})
 	}

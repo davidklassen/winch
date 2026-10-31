@@ -2,10 +2,13 @@ package integration
 
 import (
 	"context"
+	"net"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 // spec: roadmap: Testing/VMs
@@ -91,6 +94,53 @@ func TestLab(t *testing.T) {
 			t.Errorf("error = %v, want the list test/repo/debian.list in it", err)
 		}
 	})
+}
+
+// spec: roadmap: Testing/VMs
+func TestLabForward(t *testing.T) {
+	t.Parallel()
+	cfg, err := vmtest.FromEnv("../repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Forwards = []vmtest.Forward{{Proto: "udp", Guest: 1194}}
+	l, err := vmtest.NewLab(t.Context(), t.TempDir(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(l.Close)
+	vm := l.StartVM(t, "labforward")
+	port := vm.HostPort("udp", 1194)
+	if port == 0 {
+		t.Fatalf("no forward of UDP port 1194 in %v", vm.Forwards())
+	}
+	got := make(chan string, 1)
+	go func() {
+		out, err := vm.Run(t.Context(), `python3 -c 'import socket; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("", 1194)); s.settimeout(30); print(s.recv(100).decode())'`)
+		if err != nil {
+			out = err.Error()
+		}
+		got <- out
+	}()
+	conn, err := net.Dial("udp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close() //nolint:errcheck // a UDP close has nothing to flush
+	// The packets before the VM listens are lost.
+	for {
+		if _, err := conn.Write([]byte("hello")); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case out := <-got:
+			if out != "hello\n" {
+				t.Errorf("the VM got %q, want hello", out)
+			}
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 // spec: roadmap: Testing/VMs

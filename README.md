@@ -41,6 +41,10 @@ ssh demo "curl -s http://localhost/about"
 `age.key` decrypts the demo secrets. It is for the demo only: keep the
 age identity of a real project out of the project directory.
 
+The VMs have 1 GB of memory and an 8 GB disk. `make vm MEM=4G DISK=16G`
+makes them bigger. `FORWARD=udp:1194,tcp:8080` forwards more ports of
+each VM. `make vm` prints the host port of each forward.
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).

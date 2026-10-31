@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -40,11 +41,24 @@ type Config struct {
 	Online bool
 	// Refresh builds the repository again.
 	Refresh bool
+	// Mem and Disk are the sizes of each VM's memory and disk, such as 1G
+	// and 8G.
+	Mem, Disk string
+	// Forwards are the forwards of each VM besides SSH.
+	Forwards []Forward
+}
+
+// Forward forwards a port of 127.0.0.1 on the host to a port of the VM. In
+// Config, Host is 0: the kernel picks a free port.
+type Forward struct {
+	// Proto is tcp or udp.
+	Proto       string
+	Guest, Host int
 }
 
 // FromEnv returns the configuration in WINCH_VM_OS, WINCH_VM_IMAGE,
-// WINCH_VM_ARCH, WINCH_VM_CACHE, and WINCH_VM_ONLINE. repo is the directory
-// of the test repository.
+// WINCH_VM_ARCH, WINCH_VM_CACHE, WINCH_VM_ONLINE, WINCH_VM_MEM, WINCH_VM_DISK,
+// and WINCH_VM_FORWARD. repo is the directory of the test repository.
 func FromEnv(repo string) (Config, error) {
 	cfg := Config{
 		OS:     os.Getenv("WINCH_VM_OS"),
@@ -52,12 +66,29 @@ func FromEnv(repo string) (Config, error) {
 		Arch:   os.Getenv("WINCH_VM_ARCH"),
 		Cache:  os.Getenv("WINCH_VM_CACHE"),
 		Online: os.Getenv("WINCH_VM_ONLINE") == "1",
+		Mem:    os.Getenv("WINCH_VM_MEM"),
+		Disk:   os.Getenv("WINCH_VM_DISK"),
 	}
 	if v := os.Getenv("WINCH_VM_ONLINE"); v != "" && v != "1" {
 		return Config{}, fmt.Errorf("ONLINE=%s: use ONLINE=1 or no ONLINE", v)
 	}
-	if cfg.OS == "" || cfg.Image == "" || cfg.Arch == "" || cfg.Cache == "" {
-		return Config{}, errors.New("WINCH_VM_OS, WINCH_VM_IMAGE, WINCH_VM_ARCH, or WINCH_VM_CACHE is not set; run make test-integration")
+	if cfg.OS == "" || cfg.Image == "" || cfg.Arch == "" || cfg.Cache == "" || cfg.Mem == "" || cfg.Disk == "" {
+		return Config{}, errors.New("WINCH_VM_OS, WINCH_VM_IMAGE, WINCH_VM_ARCH, WINCH_VM_CACHE, WINCH_VM_MEM, or WINCH_VM_DISK is not set; run make test-integration")
+	}
+	for _, size := range []struct{ name, value string }{{"MEM", cfg.Mem}, {"DISK", cfg.Disk}} {
+		if !sizeRE.MatchString(size.value) {
+			return Config{}, fmt.Errorf("%s=%s: use a size such as 4G or 512M", size.name, size.value)
+		}
+	}
+	if v := os.Getenv("WINCH_VM_FORWARD"); v != "" {
+		for f := range strings.SplitSeq(v, ",") {
+			proto, port, _ := strings.Cut(f, ":")
+			guest, err := strconv.Atoi(port)
+			if proto != "tcp" && proto != "udp" || err != nil || guest < 1 || guest > 65535 {
+				return Config{}, fmt.Errorf("FORWARD=%s: use tcp:<port> or udp:<port>, separated by commas", v)
+			}
+			cfg.Forwards = append(cfg.Forwards, Forward{Proto: proto, Guest: guest})
+		}
 	}
 	abs, err := filepath.Abs(repo)
 	if err != nil {
@@ -66,6 +97,8 @@ func FromEnv(repo string) (Config, error) {
 	cfg.Repo = abs
 	return cfg, nil
 }
+
+var sizeRE = regexp.MustCompile(`^[1-9][0-9]*[MG]$`)
 
 type Lab struct {
 	Dir  string
@@ -155,9 +188,11 @@ func (l *Lab) OS() string {
 	return l.cfg.OS
 }
 
-// platform names the snapshot and the repository in the cache.
+// platform names the snapshot and the repository in the cache. A lab
+// removes the other snapshots and repositories of its platform, so
+// labs of other sizes keep theirs.
 func (l *Lab) platform() string {
-	return l.cfg.OS + "-" + l.Arch
+	return l.cfg.OS + "-" + l.Arch + "-" + l.cfg.Mem + "-" + l.cfg.Disk
 }
 
 // Env returns the environment of this process with the lab's PATH.
@@ -192,15 +227,14 @@ func (l *Lab) hint(out string) string {
 }
 
 type VM struct {
-	Name   string
-	lab    *Lab
-	dir    string
-	qmp    *qmp
-	cmd    *exec.Cmd
-	exited chan struct{}
-	watch  *watchdog
-	// forwards maps a guest port to its host port.
-	forwards map[int]int
+	Name     string
+	lab      *Lab
+	dir      string
+	qmp      *qmp
+	cmd      *exec.Cmd
+	exited   chan struct{}
+	watch    *watchdog
+	forwards []Forward
 }
 
 // Start starts a VM from the snapshot and gives it the apt sources of the
@@ -227,7 +261,7 @@ func (l *Lab) Start(ctx context.Context, name string) (*VM, error) {
 // VM's clock over SSH as soon as SSH works.
 func (l *Lab) clone(ctx context.Context, name string, online bool) (_ *VM, err error) {
 	snap := filepath.Join(l.cfg.Cache, l.snapshot)
-	vm, err := l.boot(ctx, name, filepath.Join(l.Dir, "vms", name), filepath.Join(snap, "disk.qcow2"), online, filepath.Join(snap, "state"))
+	vm, err := l.boot(ctx, name, filepath.Join(l.Dir, "vms", name), filepath.Join(snap, "disk.qcow2"), online, l.cfg.Forwards, filepath.Join(snap, "state"))
 	if err != nil {
 		return nil, err
 	}
@@ -287,9 +321,10 @@ func (vm *VM) setClock(ctx context.Context) error {
 	return nil
 }
 
-// boot starts QEMU on a new disk layer over backing, with its files in dir.
-// With state, the VM loads that saved machine; without, it boots.
-func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, state string) (_ *VM, err error) {
+// boot starts QEMU on a new disk layer over backing, with its files in dir,
+// and the forwards besides SSH. With state, the VM loads that saved machine;
+// without, it boots.
+func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, forwards []Forward, state string) (_ *VM, err error) {
 	vm := &VM{Name: name, lab: l, dir: dir}
 	defer func() {
 		if err != nil {
@@ -300,10 +335,10 @@ func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, 
 		return nil, err
 	}
 	disk := filepath.Join(vm.dir, "disk.qcow2")
-	if out, err := exec.CommandContext(ctx, "qemu-img", "create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", backing, disk, diskSize).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "qemu-img", "create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", backing, disk, l.cfg.Disk).CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("qemu-img: %v: %s", err, out)
 	}
-	args, err := qemuArgs(l.Arch, disk, vm.dir, l.httpPort, online)
+	args, err := qemuArgs(l.Arch, l.cfg.Mem, disk, vm.dir, l.httpPort, online, forwards)
 	if err != nil {
 		return nil, err
 	}
@@ -359,8 +394,23 @@ func (l *Lab) boot(ctx context.Context, name, dir, backing string, online bool, 
 // UsePort points the lab's SSH config for the VM at the host port that
 // forwards to guest port 22 or 2222.
 func (vm *VM) UsePort(guest int) error {
-	_, err := vm.lab.WriteHost(vm.Name, fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port %d\n", vm.Name, vm.forwards[guest]))
+	_, err := vm.lab.WriteHost(vm.Name, fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port %d\n", vm.Name, vm.HostPort("tcp", guest)))
 	return err
+}
+
+// Forwards returns the VM's forwards, sorted by protocol and guest port.
+func (vm *VM) Forwards() []Forward {
+	return vm.forwards
+}
+
+// HostPort returns the host port that forwards to the guest port, or 0.
+func (vm *VM) HostPort(proto string, guest int) int {
+	for _, f := range vm.forwards {
+		if f.Proto == proto && f.Guest == guest {
+			return f.Host
+		}
+	}
+	return 0
 }
 
 // waitRunning waits until QEMU has loaded the saved machine, then starts it.
@@ -417,22 +467,21 @@ func tail(s string, n int) string {
 	return strings.Join(lines[max(0, len(lines)-n):], "\n")
 }
 
-// diskSize is the size of each VM's disk. cloud-init grows the root file
-// system to it. Ubuntu 26.04's image has too little free space for the test
-// repository.
-const diskSize = "8G"
-
 // qemuArgs returns the QEMU command of a VM. The forwards bind port 0, so the
 // kernel picks free ports. Guest port 2222 is for a test that moves sshd.
 // Offline, restrict=on cuts the VM off from every address but the guestfwd to
 // the lab's HTTP server.
-func qemuArgs(arch, disk, dir string, httpPort int, online bool) ([]string, error) {
-	netdev := fmt.Sprintf("user,id=net0,hostfwd=tcp:127.0.0.1:0-:22,hostfwd=tcp:127.0.0.1:0-:2222,guestfwd=tcp:%s:80-cmd:nc 127.0.0.1 %d", labAddr, httpPort)
+func qemuArgs(arch, mem, disk, dir string, httpPort int, online bool, forwards []Forward) ([]string, error) {
+	netdev := "user,id=net0,hostfwd=tcp:127.0.0.1:0-:22,hostfwd=tcp:127.0.0.1:0-:2222"
+	for _, f := range forwards {
+		netdev += fmt.Sprintf(",hostfwd=%s:127.0.0.1:0-:%d", f.Proto, f.Guest)
+	}
+	netdev += fmt.Sprintf(",guestfwd=tcp:%s:80-cmd:nc 127.0.0.1 %d", labAddr, httpPort)
 	if !online {
 		netdev += ",restrict=on"
 	}
 	common := []string{
-		"-smp", "2", "-m", "1024",
+		"-smp", "2", "-m", mem,
 		"-drive", "if=virtio,format=qcow2,file=" + disk,
 		"-netdev", netdev,
 		"-device", "virtio-net-pci,netdev=net0",
