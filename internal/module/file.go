@@ -36,8 +36,11 @@ type File struct {
 	Stock       bool      `yaml:"stock" json:"stock,omitempty" line:"content that the package ships" doc:"Content that the package ships for path, from the installed version. The package also gives the default owner, group, and mode."`
 	// Data is the content for the host, from content, template, or source.
 	// Without omitempty, JSON keeps nil apart from empty content.
-	Data       []byte         `json:"data"`
-	DataSHA256 string         `json:"data_sha256,omitempty"`
+	Data       []byte `json:"data"`
+	DataSHA256 string `json:"data_sha256,omitempty"`
+	// Listens are the lines of the content of sshd's config that set the
+	// ports, for a step without its content.
+	Listens    []string       `json:"listens,omitempty"`
 	Owner      yamlx.NameOrID `yaml:"owner" json:"owner,omitempty" doc:"A user name or a numeric ID. A step without content has no default." default:"root"`
 	Group      yamlx.NameOrID `yaml:"group" json:"group,omitempty" doc:"A group name or a numeric ID. A step without content has no default." default:"root"`
 	Mode       string         `yaml:"mode" json:"mode,omitempty" line:"octal, in quotes" doc:"Octal, in quotes: \"0640\". Without quotes, YAML reads it as a number. With stock, the package gives the default. With copy_from, the source gives it. A step without content has no default." default:"0644"`
@@ -191,6 +194,9 @@ func (f *File) WithoutContent() Module {
 	c := *f
 	if f.Data != nil {
 		c.DataSHA256 = sha(f.Data)
+		if SSHDConfig(f.Path) {
+			c.Listens = listens(string(f.Data))
+		}
 		c.Data = nil
 	}
 	return &c

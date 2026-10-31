@@ -351,6 +351,60 @@ func TestGuard(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (ssh.socket)
+func TestSSHSocketNote(t *testing.T) {
+	ports := "changes the ports of ssh.socket, which winch connects to"
+	restarts := "restarts ssh.socket, which winch connects to"
+	conf := "/etc/ssh/sshd_config"
+	tests := []struct {
+		name      string
+		m         Module
+		old       *string
+		oldReason string
+		action    Action
+		want      string
+	}{
+		{"a line of PermitRootLogin", &Line{Path: conf, Line: "PermitRootLogin no"}, new("#PermitRootLogin prohibit-password\n"), "", Modify, restarts},
+		{"a new line of PermitRootLogin", &Line{Path: conf, Line: "PermitRootLogin no"}, new(""), "", Modify, restarts},
+		{"a line of Port", &Line{Path: conf, Line: "Port 2222"}, new("#Port 22\n"), "", Modify, ports},
+		{"a new line of Port", &Line{Path: conf, Line: "Port 2222"}, new(""), "", Modify, ports},
+		{"a line of ListenAddress", &Line{Path: conf, Line: "ListenAddress 10.0.0.1"}, new(""), "", Modify, ports},
+		{"a lowercase keyword", &Line{Path: conf, Line: "port=2222"}, new(""), "", Modify, ports},
+		{"a Port line made a comment", &Line{Path: conf, Match: "^Port ", Line: "#Port 22"}, new("Port 22\n"), "", Modify, ports},
+		{"a line in a binary file", &Line{Path: conf, Line: "PermitRootLogin no"}, nil, "binary", Modify, ports},
+		{"a removed Port line", &Line{Path: conf, Match: "^Port ", Absent: true}, new("Port 2222\n"), "", Modify, ports},
+		{"a removed Include line", &Line{Path: conf, Match: "^Include ", Absent: true}, new("Include /etc/ssh/sshd_config.d/*.conf\n"), "", Modify, ports},
+		{"a file without the Include line", &File{Path: conf, Data: []byte("PermitRootLogin no\n")}, new("Include /etc/ssh/sshd_config.d/*.conf\nPermitRootLogin yes\n"), "", Modify, ports},
+		{"a removed PermitRootLogin line", &Line{Path: conf, Match: "^PermitRootLogin ", Absent: true}, new("PermitRootLogin yes\n"), "", Modify, restarts},
+		{"a file with the same ports", &File{Path: conf, Data: []byte("Port 22\nPermitRootLogin no\n")}, new("Port 22\nPermitRootLogin yes\n"), "", Modify, restarts},
+		{"a file with another port", &File{Path: conf, Data: []byte("Port 2222\n")}, new("Port 22\n"), "", Modify, ports},
+		{"a new file", &File{Path: conf + ".d/a.conf", Data: []byte("PasswordAuthentication no\n")}, new(""), "", Create, restarts},
+		{"a new file with a port", &File{Path: conf + ".d/a.conf", Data: []byte("Port 2222\n")}, new(""), "", Create, ports},
+		{"a replaced link", &File{Path: conf + ".d/a.conf", Data: []byte("PasswordAuthentication no\n")}, new(""), "", Modify, ports},
+		{"a file with a commented port", &File{Path: conf, Data: []byte("#Port 2222\n")}, new("#Port 22\n"), "", Modify, restarts},
+		{"a file from the host", &File{Path: conf, CopyFrom: "/root/sshd_config"}, nil, "", Modify, ports},
+		{"the mode of a file", &File{Path: conf, Mode: "0600"}, nil, "", Modify, restarts},
+		{"the mode of a file with the same content", &File{Path: conf, Data: []byte("Port 22\n"), Mode: "0600"}, nil, "", Modify, restarts},
+		{"a port moved to ListenAddress", &File{Path: conf, Data: []byte("ListenAddress 22\n")}, new("Port 22\n"), "", Modify, ports},
+		{"a file with a binary old content", &File{Path: conf, Data: []byte("Port 22\n")}, nil, "binary", Modify, ports},
+		{"a removed file", &File{Path: conf + ".d/a.conf", Absent: true}, nil, "", Modify, ports},
+		{"a link", &Link{Path: conf, Target: new("/etc/ssh/a")}, nil, "", Modify, ports},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SSHSocketNote(tt.m, Result{Status: Change, Action: tt.action, Old: tt.old, OldReason: tt.oldReason}); got != tt.want {
+				t.Errorf("SSHSocketNote = %q, want %q", got, tt.want)
+			}
+			// The check of a plan gets the step without its content.
+			if c, ok := tt.m.(WithContent); ok {
+				if got := SSHSocketNote(c.WithoutContent(), Result{Status: Change, Action: tt.action, Old: tt.old, OldReason: tt.oldReason}); got != tt.want {
+					t.Errorf("SSHSocketNote without the content = %q, want %q", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (every path that the recipe
 // changed or removed)
 func TestTouches(t *testing.T) {

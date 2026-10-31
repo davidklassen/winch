@@ -2,6 +2,7 @@ package integration
 
 import (
 	"archive/tar"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -366,6 +367,60 @@ func TestLockoutSSHPort(t *testing.T) {
 	listens(t, "2222")
 	if r := lab.Winch(t, dir, "plan", "site", "--set", "vars.sshd_ports=[2222]"); r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("plan after the move: exit %d", r.Code)
+	}
+}
+
+const sshNoteSteps = `  - name: root
+    line:
+      path: /etc/ssh/sshd_config
+      match: "^#?PermitRootLogin "
+      line: PermitRootLogin no
+  - name: port
+    line:
+      path: /etc/ssh/sshd_config
+      match: "^#?Port "
+      line: Port 2222
+  - name: drop-in
+    file:
+      path: /etc/ssh/sshd_config.d/winch.conf
+      content: "PasswordAuthentication no\n"
+`
+
+// spec: Running a pipeline/Lockout protection (ssh.socket: the plan line of a
+// change of sshd's config)
+func TestLockoutSSHSocketNote(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "ssh-note")
+	dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: demo\nhosts:\n  ssh-note: {}\nsteps:\n" + sshNoteSteps})
+	socket := osRelease().id == "ubuntu"
+	if got := vm.MustRun(t, "systemctl is-active ssh.socket || true") == "active\n"; got != socket {
+		t.Fatalf("ssh.socket active: %t, want %t", got, socket)
+	}
+	r := lab.Winch(t, dir, "plan")
+	if r.Code != 0 {
+		t.Fatalf("plan: exit %d", r.Code)
+	}
+	for _, c := range []struct{ step, note string }{
+		{"root: line /etc/ssh/sshd_config", "restarts ssh.socket, which winch connects to"},
+		{"port: line /etc/ssh/sshd_config", "changes the ports of ssh.socket, which winch connects to"},
+		{"drop-in: file /etc/ssh/sshd_config.d/winch.conf", "restarts ssh.socket, which winch connects to"},
+	} {
+		_, after, ok := strings.Cut(r.Stdout, c.step+"\n")
+		if !ok {
+			t.Fatalf("plan has no step %q:\n%s", c.step, r.Stdout)
+		}
+		// The lines of a step are indented more than the headers.
+		var got []string
+		for line := range strings.Lines(after) {
+			if !strings.HasPrefix(line, "      ") {
+				break
+			}
+			got = append(got, strings.TrimSpace(line))
+		}
+		restarts := slices.Contains(got, "daemon-reload") && slices.Contains(got, "restart ssh.socket")
+		if len(got) == 0 || socket && (got[0] != c.note || !restarts) || !socket && strings.Contains(strings.Join(got, "\n"), "ssh.socket") {
+			t.Errorf("plan lines of %q = %q; ssh.socket active: %t, want %q first and the restart of ssh.socket", c.step, got, socket, c.note)
+		}
 	}
 }
 

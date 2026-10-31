@@ -454,6 +454,59 @@ func SSHSocket(ctx context.Context, touches []Touch) (bool, error) {
 	return sshSocketUp(ctx)
 }
 
+// SSHSocketNote returns the plan line of a checked change of sshd's config
+// that restarts ssh.socket.
+func SSHSocketNote(m Module, res Result) string {
+	if sameListen(m, res) {
+		return "restarts ssh.socket, which winch connects to"
+	}
+	return "changes the ports of ssh.socket, which winch connects to"
+}
+
+// sameListen reports whether a change keeps the lines of a file that set the
+// ports. A change with an unknown old or new content can change them.
+func sameListen(m Module, res Result) bool {
+	var lines []string
+	switch m := m.(type) {
+	case *File:
+		if m.Absent || m.fromHost() {
+			return false
+		}
+		// The check shows no old content when the content stays.
+		if res.Old == nil && res.OldReason == "" {
+			return true
+		}
+		// A replaced link or directory shows an empty old content.
+		if res.Action == Modify && res.Old != nil && *res.Old == "" {
+			return false
+		}
+		lines = m.Listens
+		if m.Data != nil {
+			lines = listens(string(m.Data))
+		}
+	case *Line:
+		text, _ := m.Text()
+		lines = listens(string(text))
+	default:
+		return false
+	}
+	return res.Old != nil && slices.Equal(listens(*res.Old), lines)
+}
+
+// listens returns the Port, ListenAddress, and Include lines of sshd's
+// config, with their words split as sshd splits them. An Include can bring
+// in a Port.
+func listens(config string) []string {
+	var out []string
+	for line := range strings.Lines(config) {
+		words := strings.Fields(strings.ReplaceAll(line, "=", " "))
+		if len(words) > 0 && slices.ContainsFunc([]string{"Port", "ListenAddress", "Include"}, func(k string) bool { return strings.EqualFold(words[0], k) }) {
+			out = append(out, strings.ToLower(words[0])+" "+strings.Join(words[1:], " "))
+		}
+	}
+	return out
+}
+
 func sshSocketUp(ctx context.Context) (bool, error) {
 	u, err := showUnit(ctx, "ssh.socket")
 	if err != nil {
