@@ -32,6 +32,9 @@ type Pkg struct {
 	// Check sets these for Apply.
 	refresh bool
 	todo    []string
+	// provided are the names that the index of the check knows only as
+	// provided by other packages.
+	provided []string
 	// configure holds half-done packages as name=version. The install of the
 	// installed version finishes them and upgrades nothing.
 	configure []string
@@ -156,9 +159,11 @@ func (p *Pkg) Check(ctx context.Context, st *State, note func(string)) (Result, 
 		for n, ps := range providers {
 			providers[n] = slices.DeleteFunc(ps, func(q string) bool { return pkgs[q].state != installed && pkgs[q].half == 0 })
 		}
-	}
-	if err := providedOnly(missing, providers); err != nil {
-		return Result{}, err
+		if err := providedOnly(missing, providers); err != nil {
+			return Result{}, err
+		}
+	} else {
+		p.provided = mayBeProvided(missing, providers, note)
 	}
 	// apt-mark showauto with no names lists every automatic package.
 	if len(inst) > 0 {
@@ -262,6 +267,20 @@ func showpkg(ctx context.Context, names []string) (providers map[string][]string
 	}
 	providers, foreign, known = parseShowpkg(out)
 	return providers, foreign, known, nil
+}
+
+// mayBeProvided notes each name that apt knows only as provided by other
+// packages, and returns them. An old index can miss a real package of the
+// name, so apply checks them after the refresh.
+func mayBeProvided(names []string, providers map[string][]string, note func(string)) []string {
+	var provided []string
+	for _, n := range names {
+		if ps := providers[n]; len(ps) > 0 {
+			note(n + " may be provided by " + strings.Join(ps, ", ") + "; apply checks it after the refresh")
+			provided = append(provided, n)
+		}
+	}
+	return provided
 }
 
 // providedOnly fails on each name that apt knows only as provided by other
@@ -548,6 +567,15 @@ func (p *Pkg) Apply(ctx context.Context, note func(string)) error {
 			return err
 		}
 		if _, err := aptGet(ctx, "update", "-q", "--error-on=any"); err != nil {
+			return err
+		}
+	}
+	if len(p.provided) > 0 {
+		providers, _, _, err := showpkg(ctx, p.provided)
+		if err != nil {
+			return err
+		}
+		if err := providedOnly(p.provided, providers); err != nil {
 			return err
 		}
 	}
