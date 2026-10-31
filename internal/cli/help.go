@@ -24,7 +24,7 @@ type example struct{ comment, command string }
 // flagDoc is a flag of a command. Its name decides how Main parses it.
 type flagDoc struct{ name, value, def, text string }
 
-const docIntro = `Winch is a server configuration tool. It describes the desired state
+const docIntro = `winch is a server configuration tool. It describes the desired state
 of your servers in declarative YAML and provides commands to manage
 that state.`
 
