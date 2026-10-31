@@ -21,3 +21,6 @@ steps:
     file:
       path: /etc/cron.d/kernel
       absent: true
+  - file:
+      path: /etc/timezone
+      absent: true
