@@ -304,6 +304,14 @@ func TestPurgeModule(t *testing.T) {
 			After:     `[ ! -e /tmp/w/d/a ] && [ -e /tmp/w/d/keep ]`,
 		},
 		{
+			Name:      "a name with a newline gives one change line",
+			Setup:     `touch "$(printf '/tmp/w/d/a\nb')"`,
+			Args:      &module.Dir{Path: "/tmp/w/d", Purge: true},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove file /tmp/w/d/a?b"}},
+			Unchanged: `[ -e "$(printf '/tmp/w/d/a\nb')" ]`,
+			After:     `[ -z "$(ls -A /tmp/w/d)" ]`,
+		},
+		{
 			Name:  "ok when only written entries are there",
 			Setup: `touch /tmp/w/d/keep`,
 			Args:  &module.Dir{Path: "/tmp/w/d", Purge: true, Keep: []string{"/tmp/w/d/keep"}},

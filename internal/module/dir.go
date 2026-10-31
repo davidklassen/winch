@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -150,7 +151,7 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), want)}, nil
 	case fi.Mode()&fs.ModeSymlink != 0:
 		target, _ := dir.Readlink(name)
-		return Result{Status: Change, Action: Modify, Changes: []string{"replace the symbolic link to " + target, want}}, nil
+		return Result{Status: Change, Action: Modify, Changes: []string{"replace the symbolic link to " + secret.Printable(target), want}}, nil
 	case fi.Mode().IsRegular():
 		line, err := checkReplace(dir, name, d.Path, fi, d.Replace)
 		if err != nil {

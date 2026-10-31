@@ -24,6 +24,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -325,7 +326,7 @@ func (f *File) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		return Result{Status: Change, Action: Create, Changes: changes, Old: old, SourceSHA256: srcSum, Validates: f.Validation != nil}, nil
 	case fi.Mode()&fs.ModeSymlink != 0:
 		target, _ := dir.Readlink(name)
-		changes := slices.Concat([]string{"replace the symbolic link to " + target}, content, []string{want})
+		changes := slices.Concat([]string{"replace the symbolic link to " + secret.Printable(target)}, content, []string{want})
 		return Result{Status: Change, Action: Modify, Changes: changes, Old: old, SourceSHA256: srcSum, Validates: f.Validation != nil}, nil
 	case fi.IsDir():
 		line, err := checkReplace(dir, name, f.Path, fi, f.Replace)

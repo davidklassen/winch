@@ -545,6 +545,13 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			After: `cmp /etc/hostname /tmp/hostname && [ -f /home/wtalice/.ssh/authorized_keys ] && [ ! -L /home/wtalice/.ssh/authorized_keys ]`,
 		},
 		{
+			Name:  "a key file that is a link with a newline in its target",
+			Setup: `useradd -m -U wtalice && install -d -o wtalice -g wtalice -m 700 /home/wtalice/.ssh && ln -s "$(printf 'a\nb')" /home/wtalice/.ssh/authorized_keys`,
+			Args:  &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
+			Want:  change("replace the symbolic link /home/wtalice/.ssh/authorized_keys to a?b", "create file /home/wtalice/.ssh/authorized_keys (owner wtalice, group wtalice, mode 0600)", "add key "+keyLine(k1)),
+			After: `[ -f /home/wtalice/.ssh/authorized_keys ] && [ ! -L /home/wtalice/.ssh/authorized_keys ]`,
+		},
+		{
 			Name:    "a key file that is a directory",
 			Setup:   `useradd -m -U wtalice && mkdir -p /home/wtalice/.ssh/authorized_keys`,
 			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},

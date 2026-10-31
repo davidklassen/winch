@@ -329,6 +329,14 @@ func TestDirModule(t *testing.T) {
 			After:     `[ -d /tmp/w/l ] && [ ! -L /tmp/w/l ] && [ -f /tmp/w/t/f ]`,
 		},
 		{
+			Name:      "replace a link with a newline in its target",
+			Setup:     `ln -s "$(printf 'a\nb')" /tmp/w/l`,
+			Args:      &module.Dir{Path: "/tmp/w/l", Replace: true},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"replace the symbolic link to a?b", attrs}},
+			Unchanged: `[ -L /tmp/w/l ]`,
+			After:     `[ -d /tmp/w/l ] && [ ! -L /tmp/w/l ]`,
+		},
+		{
 			Name:      "replace a link to a file",
 			Setup:     `touch /tmp/w/f && ln -s f /tmp/w/l`,
 			Args:      &module.Dir{Path: "/tmp/w/l", Replace: true},

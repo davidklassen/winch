@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/davidklassen/winch/internal/secret"
 )
 
 // removal is an entry of a directory that purge removes, with its plan line.
@@ -57,7 +59,7 @@ func (d *Dir) removals(dir *os.Root) ([]removal, error) {
 				return nil, err
 			}
 		}
-		out = append(out, removal{n, line})
+		out = append(out, removal{n, secret.Printable(line)})
 	}
 	return out, nil
 }

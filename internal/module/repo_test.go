@@ -402,6 +402,8 @@ func TestKeyFileChanges(t *testing.T) {
 		{"added key", key, readTestdata(t, "two-blocks.asc"), []string{addRSA}},
 		{"removed key", readTestdata(t, "two-blocks.asc"), key, []string{"remove key " + rsaFpr + " winch rsa key <rsa@example.com>"}},
 		{"other key", key, rsa, []string{"remove key " + testFpr + " winch test key <test@example.com>", addRSA}},
+		{"a user ID with a newline", readTestdata(t, "newline-uid.asc"), rsa, []string{"remove key " + testFpr + " winch test key?<test@example.com>", addRSA}},
+		{"a new user ID with a newline", nil, readTestdata(t, "newline-uid.asc"), []string{"add key " + testFpr + " winch test key?<test@example.com>"}},
 		{"not a key", []byte("not a key\n"), key, []string{"replace " + p + ": is not an ASCII-armored OpenPGP public key", addTest}},
 		{"same keys", []byte(strings.Replace(string(key), "\n\n", "\nComment: x\n\n", 1)), key, []string{"rewrite " + p}},
 	}

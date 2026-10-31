@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -109,7 +110,7 @@ func (l *Link) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	if cur == *l.Target {
 		return Result{Status: OK}, nil
 	}
-	return Result{Status: Change, Action: Modify, Changes: []string{"target " + cur + " → " + *l.Target}, Validates: l.Validation != nil}, nil
+	return Result{Status: Change, Action: Modify, Changes: []string{"target " + secret.Printable(cur) + " → " + *l.Target}, Validates: l.Validation != nil}, nil
 }
 
 func (l *Link) Apply(ctx context.Context, _ Say) error {

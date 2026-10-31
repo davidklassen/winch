@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"unicode"
 
+	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -849,7 +850,7 @@ func (u *User) keyLines(home, group string) ([]string, error) {
 		keys = append([]string{create[1]}, keyChanges(nil, *u.AuthorizedKeys, u.SecretKeys)...)
 	case fi.Mode()&fs.ModeSymlink != 0:
 		target, _ := dir.Readlink("authorized_keys")
-		keys = append([]string{fmt.Sprintf("replace the symbolic link %s to %s", file, target), create[1]}, keyChanges(nil, *u.AuthorizedKeys, u.SecretKeys)...)
+		keys = append([]string{fmt.Sprintf("replace the symbolic link %s to %s", file, secret.Printable(target)), create[1]}, keyChanges(nil, *u.AuthorizedKeys, u.SecretKeys)...)
 	case !fi.Mode().IsRegular():
 		return nil, fmt.Errorf("%s is %s, not a file", file, kind(fi))
 	default:
