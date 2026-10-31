@@ -112,12 +112,15 @@ type nameCheck struct {
 	item  bool
 	data  bool
 	reads []string
-	// values are the variables whose values it reads. A range over only
+	// values are the variables whose values it reads. A field of the
+	// elements of a variable x is the value "x.field". A range over only
 	// the keys of a map does not read its values.
 	values []string
 	errs   []error
-	// keys is true for the map of such a range.
-	keys bool
+	// elem is true for the value of a range whose body reads only fields
+	// of the element, and fields are those fields.
+	elem   bool
+	fields []string
 	// byKey is true for the map of a get or index with a constant key: a
 	// read of a host's vars by name.
 	byKey bool
@@ -187,9 +190,9 @@ func (c *nameCheck) walk(n tparse.Node, top bool) {
 		c.walk(n.List, top)
 		c.walk(n.ElseList, top)
 	case *tparse.RangeNode:
-		c.keys = readsKeys(n)
+		c.fields, c.elem = elemFields(n)
 		c.walk(n.Pipe, top)
-		c.keys = false
+		c.fields, c.elem = nil, false
 		c.walk(n.List, false)
 		c.walk(n.ElseList, top)
 	case *tparse.WithNode:
@@ -268,8 +271,13 @@ func (c *nameCheck) field(ident []string, dot, first int) {
 		}
 		if level == vars {
 			c.reads = append(c.reads, id)
-			if !c.keys {
+			switch {
+			case !c.elem || len(c.fields) > 0 && i < len(ident)-1:
 				c.values = append(c.values, id)
+			default:
+				for _, f := range c.fields {
+					c.values = append(c.values, id+"."+f)
+				}
 			}
 			c.log(id, off)
 			c.peers(ident[i+1:], dot)
@@ -293,49 +301,82 @@ func (c *nameCheck) field(ident []string, dot, first int) {
 	}
 }
 
-// readsKeys reports whether the range n reads only the keys of the map it
-// ranges over, as in range $k, $v := .vars.m where the body reads neither $v
-// nor dot. With =, $v keeps the last value after the range.
-func readsKeys(n *tparse.RangeNode) bool {
-	if n.Pipe.IsAssign || len(n.Pipe.Decl) != 2 || len(n.Pipe.Cmds) != 1 || len(n.Pipe.Cmds[0].Args) != 1 {
-		return false
+// elemFields returns the fields of the element that the body of the range n
+// reads, as .name in range .vars.m or $v.name in range $k, $v := .vars.m. It
+// returns false when the body reads the element whole. With =, the variables
+// keep the last element after the range.
+func elemFields(n *tparse.RangeNode) ([]string, bool) {
+	if n.Pipe.IsAssign || len(n.Pipe.Cmds) != 1 || len(n.Pipe.Cmds[0].Args) != 1 {
+		return nil, false
 	}
 	switch n.Pipe.Cmds[0].Args[0].(type) {
 	case *tparse.FieldNode, *tparse.VariableNode:
 	default:
-		return false
+		return nil, false
 	}
-	return !readsValue(n.List, n.Pipe.Decl[1].Ident[0], true)
+	v := ""
+	if d := n.Pipe.Decl; len(d) > 0 {
+		v = d[len(d)-1].Ident[0]
+	}
+	var fields []string
+	if !readsElem(n.List, v, true, &fields) {
+		return nil, false
+	}
+	return fields, true
 }
 
-// readsValue reports whether n reads the variable v, or reads dot where dot
-// is true.
-func readsValue(n tparse.Node, v string, dot bool) bool {
+// readsElem adds to fields the first name of each field that n reads of the
+// variable v, or of dot where dot is true. It returns false when n reads v or
+// dot whole.
+func readsElem(n tparse.Node, v string, dot bool, fields *[]string) bool {
+	all := func(dot bool, ns ...tparse.Node) bool {
+		for _, x := range ns {
+			if !readsElem(x, v, dot, fields) {
+				return false
+			}
+		}
+		return true
+	}
 	switch n := n.(type) {
 	case *tparse.ListNode:
-		return n != nil && slices.ContainsFunc(n.Nodes, func(x tparse.Node) bool { return readsValue(x, v, dot) })
+		return n == nil || all(dot, n.Nodes...)
 	case *tparse.ActionNode:
-		return readsValue(n.Pipe, v, dot)
+		return all(dot, n.Pipe)
 	case *tparse.TemplateNode:
-		return n.Pipe != nil && readsValue(n.Pipe, v, dot)
+		return n.Pipe == nil || all(dot, n.Pipe)
 	case *tparse.PipeNode:
-		return slices.ContainsFunc(n.Cmds, func(x *tparse.CommandNode) bool { return readsValue(x, v, dot) })
+		for _, x := range n.Cmds {
+			if !all(dot, x) {
+				return false
+			}
+		}
+		return true
 	case *tparse.CommandNode:
-		return slices.ContainsFunc(n.Args, func(x tparse.Node) bool { return readsValue(x, v, dot) })
+		return all(dot, n.Args...)
 	case *tparse.ChainNode:
-		return readsValue(n.Node, v, dot)
+		return all(dot, n.Node)
 	case *tparse.IfNode:
-		return readsValue(n.Pipe, v, dot) || readsValue(n.List, v, dot) || readsValue(n.ElseList, v, dot)
+		return all(dot, n.Pipe, n.List, n.ElseList)
 	case *tparse.RangeNode:
-		return readsValue(n.Pipe, v, dot) || readsValue(n.List, v, false) || readsValue(n.ElseList, v, dot)
+		return all(dot, n.Pipe, n.ElseList) && all(false, n.List)
 	case *tparse.WithNode:
-		return readsValue(n.Pipe, v, dot) || readsValue(n.List, v, false) || readsValue(n.ElseList, v, dot)
-	case *tparse.DotNode, *tparse.FieldNode:
-		return dot
+		return all(dot, n.Pipe, n.ElseList) && all(false, n.List)
+	case *tparse.DotNode:
+		return !dot
+	case *tparse.FieldNode:
+		if dot {
+			*fields = append(*fields, n.Ident[0])
+		}
 	case *tparse.VariableNode:
-		return n.Ident[0] == v
+		if n.Ident[0] != v {
+			return true
+		}
+		if len(n.Ident) == 1 {
+			return false
+		}
+		*fields = append(*fields, n.Ident[1])
 	}
-	return false
+	return true
 }
 
 // nullError is the error of an action that prints a null value. text is the

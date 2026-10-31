@@ -186,6 +186,35 @@ func hasSealed(v any) bool {
 	return false
 }
 
+// sealedFields adds to fields each field that holds a secret in a map element
+// of the list or map v. It returns false when a secret is in another place.
+func sealedFields(v any, fields map[string]bool) bool {
+	var elems []any
+	switch v := v.(type) {
+	case []any:
+		elems = v
+	case map[string]any:
+		elems = slices.Collect(maps.Values(v))
+	default:
+		return false
+	}
+	for _, e := range elems {
+		if !hasSealed(e) {
+			continue
+		}
+		m, ok := e.(map[string]any)
+		if !ok {
+			return false
+		}
+		for k, x := range m {
+			if hasSealed(x) {
+				fields[k] = true
+			}
+		}
+	}
+	return true
+}
+
 // force returns alt, the value of a secret variable in the variant n, with
 // each leaf that equals the real leaf replaced by the placeholder. Map keys
 // stay.
