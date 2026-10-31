@@ -1440,6 +1440,9 @@ func (st Step) Eval(e *Env) ([]Step, error) {
 				pos = p.Value.Pos
 			}
 		}
+		if _, ok := s.Args.(*module.Certbot); ok {
+			return nil, yamlx.Errorf(pos, "certbot stores its hooks in a file that other users can read")
+		}
 		return nil, yamlx.Errorf(pos, "%s: holds a secret, and every user of the host can read the source file", s.Shown.Public)
 	}
 	return out, nil
@@ -1658,8 +1661,11 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 			}
 		}
 	}
-	if r, ok := s.Args.(*module.Repo); ok {
-		sh.Public = publicRepo(r, mods, argsOK)
+	switch a := s.Args.(type) {
+	case *module.Repo:
+		sh.Public = publicRepo(a, mods, argsOK)
+	case *module.Certbot:
+		sh.Public = st.publicHook(e)
 	}
 	e.learn(parts)
 	reads := !argsOK || !contentOK || slices.ContainsFunc(parts, func(p string) bool { return p != "" })
@@ -1685,6 +1691,29 @@ func publicRepo(r *module.Repo, mods [3]module.Module, argsOK bool) string {
 			return "suite"
 		case !slices.Equal(v.Components, r.Components):
 			return "components"
+		}
+	}
+	return ""
+}
+
+// publicHook returns the hook of st, a certbot step, that holds a secret: one
+// that differs in the variants of e, or fails to evaluate in one. It
+// evaluates each hook on its own: a placeholder in another argument, such as
+// email, can fail that argument.
+func (st Step) publicHook(e *Env) string {
+	if st.args == nil {
+		return ""
+	}
+	for _, p := range st.args.node.Pairs {
+		if st.args.computed[p.Value] == nil || !strings.HasSuffix(p.Key, "_hook") {
+			continue
+		}
+		real, _ := st.args.evalNode(p.Value, e, p.Key)
+		for n := 1; n < 3; n++ {
+			v, err := st.args.evalNode(p.Value, e.variant(n), p.Key)
+			if err != nil || !reflect.DeepEqual(yamlx.Value(real), yamlx.Value(v)) {
+				return p.Key
+			}
 		}
 	}
 	return ""

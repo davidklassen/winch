@@ -258,7 +258,8 @@ type Shown struct {
 	// Hidden is true when the output shows no part of the content.
 	Hidden bool
 	// Public is the argument that holds a secret and goes into a file that
-	// every user of the host can read, or "".
+	// every user of the host can read, or "": a repo source or a certbot
+	// renewal file.
 	Public string
 }
 

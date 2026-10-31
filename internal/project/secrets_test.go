@@ -1495,6 +1495,37 @@ func TestSecretValidateFailsWithPlaceholders(t *testing.T) {
 	}
 }
 
+// spec: Modules (commands)
+func TestEvalCertbotHookSecret(t *testing.T) {
+	const msg = "certbot stores its hooks in a file that other users can read"
+	mail := map[string]string{"winch.yaml": strings.Replace(secretProject["winch.yaml"], "vars:\n", "vars:\n  mail: {{secret:ops@acme.com}}\n", 1)}
+	for _, tt := range []struct {
+		name, email, hook string
+		files             map[string]string
+		want              string
+	}{
+		{"deploy_hook from match", "a@example.com", `deploy_hook: !expr '"curl -u " + match("web1")[0].vars.pw'`, nil, "recipes/r/recipe.yaml:6:20: " + msg},
+		{"pre_hook from match", "a@example.com", `pre_hook: !expr '"echo " + match("web1")[0].vars.pw'`, nil, "recipes/r/recipe.yaml:6:17: " + msg},
+		{"a hook from match and a secret email", "!expr vars.mail", `post_hook: !expr '"echo " + match("web1")[0].vars.pw'`, mail, "recipes/r/recipe.yaml:6:18: " + msg},
+		{"a plain hook and a secret email", "!expr vars.mail", "deploy_hook: systemctl reload nginx", mail, ""},
+		{"a plain field of a map with a secret", "a@example.com", `post_hook: !expr '"echo " + match("web1")[0].vars.users.bob'`, nil, ""},
+		{"no secret", "a@example.com", `deploy_hook: !expr '"echo " + match("web1")[0].vars.short'`, nil, ""},
+		{"plain arguments", "a@example.com", "deploy_hook: systemctl reload nginx", nil, ""},
+		{"a hook that fails with a placeholder", "a@example.com", `deploy_hook: !expr 'match("web1")[0].vars.pw != "hunter2" ? string(int(match("web1")[0].vars.pw)) : "echo ok"'`, nil, "recipes/r/recipe.yaml:6:20: " + msg},
+		{"an email that fails with a placeholder", `!expr 'match("web1")[0].vars.pw != "hunter2" ? string(int(match("web1")[0].vars.pw)) : "a@example.com"'`, "deploy_hook: echo x", nil, ""},
+		{"a loop over hosts", "a@example.com", "deploy_hook: !expr '\"echo \" + item.vars.pw'\n    loop: !expr 'match(\"web1\")'", nil, "recipes/r/recipe.yaml:6:20: " + msg},
+		{"a plain hook in a loop over hosts", "a@example.com", "deploy_hook: echo x\n    loop: !expr 'match(\"web1\")'", nil, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			step := "  - certbot:\n      name: a\n      domains: [a.example.com]\n      email: " + tt.email + "\n      " + tt.hook + "\n"
+			_, _, err := evalSecret(t, step, tt.files)
+			if got := errText(err); got != tt.want {
+				t.Errorf("error = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // spec: Modules/repo (a source file that holds a secret fails the plan)
 func TestEvalRepoSecret(t *testing.T) {
 	const msg = "holds a secret, and every user of the host can read the source file"

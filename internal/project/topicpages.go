@@ -683,7 +683,8 @@ key or a token, and is not a !secret.`,
 			`winch warns about a file step whose content reads a secret and
 whose mode is missing or lets others read it.`,
 			`A !secret in a certbot hook is an error: certbot stores its hooks
-in a file that other users can read.`,
+in a file that other users can read. A hook that reads a secret
+through match() fails the host.`,
 		),
 		doc.Example(`# inventories/production.yaml
 hosts:
