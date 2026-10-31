@@ -10,6 +10,8 @@ import (
 	"math/big"
 	"slices"
 	"strings"
+
+	"github.com/davidklassen/winch/internal/secret"
 )
 
 var keyTypes = []string{
@@ -107,15 +109,20 @@ func fingerprint(blob []byte) string {
 }
 
 // keyPlan returns the plan form of an authorized_keys line: "key", then the
-// line with the key data as its fingerprint.
-func keyPlan(line string) string {
+// line with the key data as its fingerprint. With masked, the options show
+// as (secret).
+func keyPlan(line string, masked bool) string {
 	k, err := parseKey(line)
 	if err != nil {
 		return "a line that is not a key"
 	}
 	parts := []string{"key", k.typ, fingerprint(k.blob)}
 	if k.options != "" {
-		parts = slices.Insert(parts, 1, k.options)
+		opts := k.options
+		if masked {
+			opts = secret.Mark
+		}
+		parts = slices.Insert(parts, 1, opts)
 	}
 	if k.comment != "" {
 		parts = append(parts, k.comment)
@@ -124,13 +131,15 @@ func keyPlan(line string) string {
 }
 
 // keyChanges describes how the lines cur of an authorized_keys file become
-// the lines want.
-func keyChanges(cur, want []string) []string {
+// the lines want. fromSecret marks the lines of want that come from a
+// secret. With such a line, the options of each line of cur are masked: they
+// can hold an older secret.
+func keyChanges(cur, want []string, fromSecret []bool) []string {
 	var changes []string
 	seen := map[string]bool{}
-	for _, w := range want {
+	for i, w := range want {
 		if !slices.Contains(cur, w) && !seen[w] {
-			changes = append(changes, "add "+keyPlan(w))
+			changes = append(changes, "add "+keyPlan(w, i < len(fromSecret) && fromSecret[i]))
 		}
 		seen[w] = true
 	}
@@ -139,7 +148,7 @@ func keyChanges(cur, want []string) []string {
 			continue
 		}
 		seen[c] = true
-		changes = append(changes, "remove "+keyPlan(c))
+		changes = append(changes, "remove "+keyPlan(c, slices.Contains(fromSecret, true)))
 	}
 	switch {
 	case len(changes) > 0, slices.Equal(cur, want):

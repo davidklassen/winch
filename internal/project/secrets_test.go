@@ -1,6 +1,8 @@
 package project
 
 import (
+	"encoding/base64"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"slices"
@@ -153,6 +155,36 @@ func shownLines(st Step) string {
 		b.WriteString(l.Show)
 	}
 	return b.String()
+}
+
+// spec: Modules/user and group; Variables/Secrets in output
+func TestEvalSecretKeys(t *testing.T) {
+	blob := binary.BigEndian.AppendUint32(nil, uint32(len("ssh-ed25519")))
+	blob = append(append(blob, "ssh-ed25519"...), make([]byte, 32)...)
+	data := base64.StdEncoding.EncodeToString(blob)
+	blob[len(blob)-1] = 1
+	plain := "no-pty ssh-ed25519 " + base64.StdEncoding.EncodeToString(blob) + " plain"
+	secretLine := `environment="TOKEN=abc" ssh-ed25519 ` + data + " deploy"
+	tests := []struct {
+		name, keys string
+		want       []bool
+	}{
+		{"a secret element", "\n        - !expr vars.ssh_key\n        - " + plain, []bool{true, false}},
+		{"a secret list", ` !expr 'split(vars.ssh_keys, "\n")'`, []bool{true, true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			steps := "  - user:\n      name: deploy\n      authorized_keys:" + tt.keys + "\n"
+			files := map[string]string{"winch.yaml": strings.Replace(secretProject["winch.yaml"], "vars:\n", "vars:\n  ssh_key: {{secret:"+secretLine+"}}\n  ssh_keys: {{secret:"+secretLine+`\n`+plain+"}}\n", 1)}
+			got, _, err := evalSecret(t, steps, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if u := got[0].Args.(*module.User); !slices.Equal(u.SecretKeys, tt.want) {
+				t.Errorf("secret keys = %v, want %v", u.SecretKeys, tt.want)
+			}
+		})
+	}
 }
 
 // spec: Variables/Secrets; Variables/Secrets in output

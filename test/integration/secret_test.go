@@ -127,6 +127,60 @@ func TestSecretBinaryFile(t *testing.T) {
 	}
 }
 
+// spec: Modules/user and group; Variables/Secrets in output
+func TestSecretKeyOptions(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "secret-key")
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(t.TempDir(), "age.key")
+	if err := os.WriteFile(key, []byte(id.String()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"WINCH_AGE_KEY=" + key}
+	// The host has the key line of the first run when winch plans the second,
+	// with another key.
+	keys := []string{fakeKey('a', "deploy"), fakeKey('b', "deploy")}
+	for i, token := range []string{"old-token", "new-token"} {
+		text, err := secret.Encrypt(`environment="TOKEN=`+token+`" `+keys[i], []age.Recipient{id.Recipient()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + id.Recipient().String() + "\n",
+			"inventories/test.yaml": "hosts:\n  " + vm.Name + ":\n    vars:\n      deploy_key: !secret " + text + "\n",
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - user:
+          name: wtdeploy
+          authorized_keys: [!expr vars.deploy_key]
+`,
+		})
+		want := []string{"add key (secret) " + keyLine(keys[i])}
+		args := []string{"apply", "site", "--yes"}
+		if i == 1 {
+			want = append(want, "remove key (secret) "+keyLine(keys[0]))
+			args = []string{"plan", "site"}
+		}
+		r := lab.WinchEnv(t, dir, env, args...)
+		if r.Code != 0 {
+			t.Fatalf("winch %s: exit %d\n%s%s", strings.Join(args, " "), r.Code, r.Stdout, r.Stderr)
+		}
+		for _, w := range want {
+			if !strings.Contains(r.Stdout, w) {
+				t.Errorf("winch %s does not show %q:\n%s", strings.Join(args, " "), w, r.Stdout)
+			}
+		}
+		if strings.Contains(r.Stdout+r.Stderr, "token") {
+			t.Errorf("winch %s shows the token:\n%s%s", strings.Join(args, " "), r.Stdout, r.Stderr)
+		}
+	}
+}
+
 // decoded returns the string values of each JSON event in out.
 func decoded(t *testing.T, out string) string {
 	t.Helper()

@@ -34,6 +34,9 @@ type User struct {
 	Comment        string         `yaml:"comment" json:"comment,omitempty" line:"full name or description" doc:"Full name or description."`
 	AuthorizedKeys *[]string      `yaml:"authorized_keys" json:"authorized_keys,omitempty" line:"exact SSH keys of the user" doc:"Exact SSH keys of the user, in ~/.ssh/authorized_keys."`
 	Absent         bool           `yaml:"absent" json:"absent,omitempty" line:"remove the user; the home stays" doc:"Remove the user; the home stays."`
+	// SecretKeys marks the elements of AuthorizedKeys that come from a
+	// secret. The plan shows their options as (secret).
+	SecretKeys []bool `json:"secret_keys,omitempty"`
 
 	// Check sets these for Apply: the useradd, usermod, or userdel command,
 	// the home to create for a user that exists, and whether to set the
@@ -826,7 +829,7 @@ func (u *User) keyLines(home, group string) ([]string, error) {
 	}
 	defer dir.Close()
 	if len(missing) > 0 {
-		return append(create, keyChanges(nil, *u.AuthorizedKeys)...), nil
+		return append(create, keyChanges(nil, *u.AuthorizedKeys, u.SecretKeys)...), nil
 	}
 	dirFi, err := dir.Stat(".")
 	if err != nil {
@@ -842,10 +845,10 @@ func (u *User) keyLines(home, group string) ([]string, error) {
 	case err != nil:
 		return nil, err
 	case !exists:
-		keys = append([]string{create[1]}, keyChanges(nil, *u.AuthorizedKeys)...)
+		keys = append([]string{create[1]}, keyChanges(nil, *u.AuthorizedKeys, u.SecretKeys)...)
 	case fi.Mode()&fs.ModeSymlink != 0:
 		target, _ := dir.Readlink("authorized_keys")
-		keys = append([]string{fmt.Sprintf("replace the symbolic link %s to %s", file, target), create[1]}, keyChanges(nil, *u.AuthorizedKeys)...)
+		keys = append([]string{fmt.Sprintf("replace the symbolic link %s to %s", file, target), create[1]}, keyChanges(nil, *u.AuthorizedKeys, u.SecretKeys)...)
 	case !fi.Mode().IsRegular():
 		return nil, fmt.Errorf("%s is %s, not a file", file, kind(fi))
 	default:
@@ -895,7 +898,7 @@ func (u *User) fileKeyLines(dir *os.Root, file string, fi fs.FileInfo, group str
 	if len(data) > 0 {
 		cur = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	}
-	changes := keyChanges(cur, *u.AuthorizedKeys)
+	changes := keyChanges(cur, *u.AuthorizedKeys, u.SecretKeys)
 	if len(changes) == 0 {
 		changes = []string{"rewrite " + file}
 	}
