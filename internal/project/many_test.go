@@ -693,12 +693,27 @@ func TestHealthLoad(t *testing.T) {
 		{"      command: x\n      stable: 60\n", "pipelines/site.yaml:5:7: health: stable must be less than timeout (60 seconds); the gate could never pass"},
 		{"      command: x\n      stable: 10\n      timeout: 10\n", "stable must be less than timeout (10 seconds)"},
 		{"      command: \"\"\n", "command: must not be empty"},
+		{"      command: x\n      timeout: 1\n", ""},
+		{"      command: x\n      timeout: 9223372036\n", ""},
 		{"      command: x\n      timeout: 0\n", "timeout: must be 1 or more seconds"},
+		{"      command: x\n      timeout: -1\n", "timeout: must be 1 or more seconds"},
+		{"      command: x\n      timeout: 9223372037\n", "pipelines/site.yaml:6:16: timeout: must be at most 9223372036 seconds"},
+		{"      command: x\n      stable: 0\n", ""},
+		{"      command: x\n      stable: 9223372035\n      timeout: 9223372036\n", ""},
+		{"      command: x\n      stable: -1\n", "stable: must be 0 or more seconds"},
+		{"      command: x\n      stable: 9223372036\n      timeout: 9223372036\n", "stable must be less than timeout (9223372036 seconds)"},
+		{"      command: x\n      stable: 9223372037\n", "stable must be less than timeout (60 seconds)"},
 	}
 	for _, tt := range tests {
 		_, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{
 			"pipelines/site.yaml": "stages:\n  - name: web\n    hosts: all\n    health:\n" + tt.health + "    steps: []\n",
 		})), "", "site", nil, Keys{})
+		if tt.want == "" {
+			if err != nil {
+				t.Errorf("%q: error %v, want none", tt.health, err)
+			}
+			continue
+		}
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%q: error %v, want %q", tt.health, err, tt.want)
 		}

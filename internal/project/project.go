@@ -700,9 +700,11 @@ func (h *healthFile) Validate() error {
 		return &yamlx.FieldError{Field: "command", Msg: "must not be empty"}
 	case h.Stable < 0:
 		return &yamlx.FieldError{Field: "stable", Msg: "must be 0 or more seconds"}
-	case timeout < 1:
-		return &yamlx.FieldError{Field: "timeout", Msg: "must be 1 or more seconds"}
-	case h.Stable >= timeout:
+	}
+	if err := module.CheckSeconds("timeout", timeout); err != nil {
+		return err
+	}
+	if h.Stable >= timeout {
 		return fmt.Errorf("health: stable must be less than timeout (%d seconds); the gate could never pass", timeout)
 	}
 	return nil

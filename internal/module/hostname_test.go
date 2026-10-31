@@ -139,6 +139,20 @@ func TestCurrentZone(t *testing.T) {
 }
 
 // spec: Modules/reboot
+func TestRebootValidate(t *testing.T) {
+	tests := []struct{ name, yaml, want string }{
+		{"smallest timeout", "if_required: true\ntimeout: 1\n", ""},
+		{"largest timeout", "if_required: true\ntimeout: 9223372036\n", ""},
+		{"zero timeout", "if_required: true\ntimeout: 0\n", `t.yaml:2:10: timeout: must be 1 or more seconds`},
+		{"negative timeout", "if_required: true\ntimeout: -1\n", `t.yaml:2:10: timeout: must be 1 or more seconds`},
+		{"overflowing timeout", "if_required: true\ntimeout: 9223372037\n", `t.yaml:2:10: timeout: must be at most 9223372036 seconds`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { validate(t, &Reboot{}, tt.yaml, tt.want) })
+	}
+}
+
+// spec: Modules/reboot
 func TestReboot(t *testing.T) {
 	no, yes := false, true
 	if got := (&Reboot{IfRequired: &yes}).Main(); got != "if required" {
@@ -152,11 +166,6 @@ func TestReboot(t *testing.T) {
 	}
 	if got := (&Reboot{IfRequired: &no, Timeout: new(30)}).Wait(); got != 30*time.Second {
 		t.Errorf("wait = %d, want 30", got)
-	}
-	for _, timeout := range []int{-1, 0} {
-		if err := (&Reboot{IfRequired: &no, Timeout: &timeout}).Validate(); err == nil {
-			t.Errorf("timeout %d validates", timeout)
-		}
 	}
 	res, err := (&Reboot{IfRequired: &no}).Check(t.Context(), &State{}, Silent{})
 	if err != nil || res.Status != Change || res.Deferred {

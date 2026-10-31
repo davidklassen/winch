@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/davidklassen/winch/internal/facts"
-	"github.com/davidklassen/winch/internal/yamlx"
 )
 
 type Reboot struct {
@@ -27,8 +26,8 @@ func (r *Reboot) Main() string {
 }
 
 func (r *Reboot) Validate() error {
-	if r.Timeout != nil && *r.Timeout < 1 {
-		return &yamlx.FieldError{Field: "timeout", Msg: "must be 1 or more seconds"}
+	if r.Timeout != nil {
+		return CheckSeconds("timeout", *r.Timeout)
 	}
 	return nil
 }
