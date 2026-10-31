@@ -551,9 +551,9 @@ func TestHelpOnError(t *testing.T) {
 // spec: Remote execution/Helper
 func TestNoHelpers(t *testing.T) {
 	dir := writeProject(t, motd)
-	const msg = `winch: this binary has no host helpers, so it cannot work on hosts.
-It was probably built with go install, which cannot include them.
-Install a release: curl -fsSL https://winchstack.app/install.sh | sh
+	const msg = `winch: this binary has no host helpers, so it cannot work on hosts
+go install builds winch without them; install a release:
+curl -fsSL https://winchstack.app/install.sh | sh
 `
 	tests := []struct {
 		args []string
@@ -569,7 +569,7 @@ Install a release: curl -fsSL https://winchstack.app/install.sh | sh
 		{[]string{"version"}, exitOK, "winch v0.1.0 " + runtime.GOOS + "/" + runtime.GOARCH + " (built without host helpers)\n", ""},
 		{[]string{"--version"}, exitOK, "winch v0.1.0 " + runtime.GOOS + "/" + runtime.GOARCH + " (built without host helpers)\n", ""},
 		{[]string{"plan", "site", "--json"}, exitFailed, `{"type":"version","time":"2026-10-26T12:00:00Z","version":1}
-{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","message":"winch: this binary has no host helpers, so it cannot work on hosts.\nIt was probably built with go install, which cannot include them.\nInstall a release: curl -fsSL https://winchstack.app/install.sh | sh"}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"error","message":"winch: this binary has no host helpers, so it cannot work on hosts\ngo install builds winch without them; install a release:\ncurl -fsSL https://winchstack.app/install.sh | sh"}
 {"type":"summary","time":"2026-10-26T12:00:00Z","exit_code":1}
 `, ""},
 	}

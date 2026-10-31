@@ -1,1 +1,1 @@
-no inventory: use --inventory, set inventory in winch.yaml, or add a file to inventories/
+the project has no hosts; add hosts to winch.yaml or a file to inventories/

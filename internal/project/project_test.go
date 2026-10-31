@@ -153,6 +153,7 @@ func TestLoad(t *testing.T) {
 			"winch.yaml":            "name: acme\n",
 			"inventories/prod.yaml": "hosts:\n  web2: {}\n",
 		}},
+		{name: "no-hosts", files: map[string]string{"winch.yaml": "name: acme\n", "inventories/test.yaml": ""}},
 		{name: "missing-inventory-file", inventory: "nope"},
 		{name: "missing-default-inventory", files: map[string]string{"winch.yaml": "name: acme\ninventory: prdo\n"}},
 		{name: "pipeline-name-with-dots", pipeline: "web.v2", files: map[string]string{"pipelines/web.v2.yaml": "stages:\n  - {name: a, hosts: all, steps: []}\n"}},

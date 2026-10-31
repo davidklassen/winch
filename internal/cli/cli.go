@@ -170,9 +170,9 @@ func Main(ctx context.Context, args []string, env Env) int {
 	return runs[name](ctx, env, &f, pos)
 }
 
-var errNoHelpers = errors.New(`winch: this binary has no host helpers, so it cannot work on hosts.
-It was probably built with go install, which cannot include them.
-Install a release: curl -fsSL https://winchstack.app/install.sh | sh`)
+var errNoHelpers = errors.New(`winch: this binary has no host helpers, so it cannot work on hosts
+go install builds winch without them; install a release:
+curl -fsSL https://winchstack.app/install.sh | sh`)
 
 func version(_ context.Context, env Env, _ *flags, args []string) int {
 	if len(args) != 0 {

@@ -33,7 +33,8 @@ func Value(n *Node) any {
 }
 
 // FromValue returns a Go value as a node at pos. Map keys must be strings;
-// they go in sorted order.
+// they go in sorted order. The scalars have no Text: they come from an
+// expression, not from source text.
 func FromValue(v any, pos Pos) (*Node, error) {
 	n := &Node{Pos: pos}
 	if v == nil {

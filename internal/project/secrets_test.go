@@ -1267,6 +1267,20 @@ func TestWriteSecretErrors(t *testing.T) {
 }
 
 // spec: Variables/Secrets (winch secret generate); Project layout
+func TestWriteSecretNoHosts(t *testing.T) {
+	k := newKey(t)
+	dir := writeProject(t, map[string]string{
+		"winch.yaml":            "name: acme\nrecipients:\n  - " + k.id.Recipient().String() + "\n",
+		"inventories/test.yaml": "",
+		"pipelines/site.yaml":   readsPipeline("pw"),
+	})
+	_, err := WriteSecret(dir, "", "", "pw", "hunter2")
+	if want := "the project has no hosts; add hosts to winch.yaml or a file to inventories/"; err == nil || err.Error() != want {
+		t.Errorf("err %v; want %q", err, want)
+	}
+}
+
+// spec: Variables/Secrets (winch secret generate); Project layout
 func TestWriteSecretTwoInventoryFiles(t *testing.T) {
 	k := newKey(t)
 	inv := "hosts:\n  web1:\n"

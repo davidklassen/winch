@@ -109,7 +109,11 @@ func (d *decoder) value(n *Node, v reflect.Value, name string) {
 		s, ok := n.Value.(string)
 		if !ok {
 			hint := ""
-			if n.Kind == Scalar {
+			switch {
+			case n.Kind == Scalar && n.Text == "":
+				// A scalar from FromValue, the result of an expression.
+				hint = "; use string(...) in the expression to make it a string"
+			case n.Kind == Scalar:
 				hint = "; quote the value to make it a string"
 			}
 			d.errorf(n.Pos, name, "expected a string, got %s%s", Describe(n), hint)

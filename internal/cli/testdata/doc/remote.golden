@@ -87,9 +87,10 @@ When a connection fails:
 The session:
   A session is one ssh process with the helper at the other end. All
   work on a host goes through it. It opens at the first work of the host
-  and stays open across stages. It closes when the host has no more
-  work, and at the apply question, which can wait for a long time. The
-  access checks open their own connections.
+  and stays open across stages and through the question. The host lock
+  stays held while the question waits; Ctrl-C releases it. A session
+  closes when its host has no more work. The access checks open their
+  own connections.
 
   winch keeps the helper in /var/lib/winch/bin/ and sends it when it is
   missing. The helper exits when the session ends and leaves no process,
