@@ -215,6 +215,92 @@ func TestHelloDeletesOldHelpers(t *testing.T) {
 	}
 }
 
+// spec: Remote execution/Helper (the check of every entry under the state
+// directory)
+func TestCheckTree(t *testing.T) {
+	me := uint32(os.Getuid())
+	tests := []struct {
+		name  string
+		owner uint32
+		setup func(t *testing.T, dir string)
+		want  string
+	}{
+		{"a correct tree", me, func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "handlers", "demo"), "version 1\n")
+			write(t, filepath.Join(dir, "lock"), "")
+			if err := os.Chmod(filepath.Join(dir, "handlers", "demo"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, ""},
+		{"a rollback directory of another user", me + 1, func(t *testing.T, dir string) {
+			mkdir(t, filepath.Join(dir, "rollback"))
+		}, "rollback"},
+		{"a record the group can write", me, func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "handlers", "demo"), "version 1\n")
+			if err := os.Chmod(filepath.Join(dir, "handlers", "demo"), 0o620); err != nil {
+				t.Fatal(err)
+			}
+		}, "handlers/demo"},
+		{"a directory others can write", me, func(t *testing.T, dir string) {
+			mkdir(t, filepath.Join(dir, "then"))
+			if err := os.Chmod(filepath.Join(dir, "then"), 0o703); err != nil {
+				t.Fatal(err)
+			}
+		}, "then"},
+		{"a symbolic link", me, func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "rollback", "a"), "")
+			if err := os.Symlink("a", filepath.Join(dir, "rollback", "timer.json")); err != nil {
+				t.Fatal(err)
+			}
+		}, "rollback/timer.json"},
+		{"a pipe", me, func(t *testing.T, dir string) {
+			if err := syscall.Mkfifo(filepath.Join(dir, "lock"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, "lock"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setup(t, dir)
+			err := checkTree(dir, tt.owner)
+			if tt.want == "" {
+				if err != nil {
+					t.Errorf("error = %v, want none", err)
+				}
+				return
+			}
+			want := filepath.Join(dir, tt.want) + " is not owned by root or can be written by others"
+			if err == nil || err.Error() != want {
+				t.Errorf("error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+// spec: Remote execution/Helper (a wrong entry fails hello before it reads a
+// record)
+func TestHelloChecksTheTree(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rollback", "timer.json")
+	data, _ := json.Marshal(job{Deadline: time.Now().Add(-time.Minute)})
+	write(t, p, string(data))
+	if err := os.Chmod(p, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	c := start(t, dir, "")
+	r := c.call(t, "hello", hello("r1"))
+	if want := p + " is not owned by root or can be written by others"; !strings.Contains(r.Error, want) {
+		t.Errorf("hello error = %q, want %q", r.Error, want)
+	}
+	if _, err := os.Lstat(p); err != nil {
+		t.Errorf("the job ran: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "lock")); !os.IsNotExist(err) {
+		t.Errorf("hello opened the lock: %v", err)
+	}
+}
+
 // spec: Remote execution/Helper
 func TestExitsOnEOF(t *testing.T) {
 	c := start(t, t.TempDir(), "")

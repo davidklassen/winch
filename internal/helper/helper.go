@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -177,6 +178,9 @@ func takeLock(params json.RawMessage, dir, self string) (_ *os.File, project str
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, "", fmt.Errorf("create state directory: %w", err)
 	}
+	if err := checkTree(dir, uint32(os.Geteuid())); err != nil {
+		return nil, "", err
+	}
 	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, "", fmt.Errorf("open lock: %w", err)
@@ -216,6 +220,34 @@ func takeLock(params json.RawMessage, dir, self string) (_ *os.File, project str
 		return nil, "", err
 	}
 	return f, h.Project, nil
+}
+
+// checkTree fails on the first entry under dir that is not a directory or a
+// regular file of owner, or that the group or others can write. A user who
+// once owned dir can have left records and rollback jobs, which the helper
+// runs as root. The start script checks dir itself.
+func checkTree(dir string, owner uint32) error {
+	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if p == dir {
+			return err
+		}
+		var info fs.FileInfo
+		if err == nil {
+			info, err = d.Info()
+		}
+		// A rollback timer, or a helper that holds the lock, removes files.
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || st.Uid != owner || !info.IsDir() && !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("%s is not owned by root or can be written by others", p)
+		}
+		return nil
+	})
 }
 
 // deleteOld keeps the helpers of other winch versions in use, and their

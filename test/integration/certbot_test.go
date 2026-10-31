@@ -433,7 +433,7 @@ func TestCertbotPendingHooks(t *testing.T) {
 	})
 
 	t.Run("record failure prevents issue", func(t *testing.T) {
-		vm.MustRun(t, "mkdir -p /var/lib/winch/certbot-hooks && mount -t tmpfs none /var/lib/winch/certbot-hooks && mount -o remount,ro /var/lib/winch/certbot-hooks")
+		vm.MustRun(t, "mkdir -p /var/lib/winch/certbot-hooks && mount -t tmpfs -o mode=700 none /var/lib/winch/certbot-hooks && mount -o remount,ro /var/lib/winch/certbot-hooks")
 		dir := vmtest.WriteProject(t, map[string]string{
 			"winch.yaml":            "name: hooks\ninventory: test\n",
 			"inventories/test.yaml": "hosts:\n  pending-hooks: {}\n",

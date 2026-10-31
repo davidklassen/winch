@@ -290,6 +290,22 @@ func TestWinch(t *testing.T) {
 		}
 	})
 
+	t.Run("an unsafe entry of the state directory fails the host", func(t *testing.T) {
+		if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 {
+			t.Fatalf("first plan: exit %d\n%s", r.Code, r.Stderr)
+		}
+		job := "/var/lib/winch/rollback/timer.json"
+		vm.MustRun(t, `mkdir -p /var/lib/winch/rollback && echo '{"deadline":"2026-01-01T00:00:00Z","restore":[],"downloads":""}' > `+job+` && chown -R nobody /var/lib/winch/rollback`)
+		defer vm.MustRun(t, "rm -rf /var/lib/winch/rollback")
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "/var/lib/winch/rollback is not owned by root or can be written by others") {
+			t.Errorf("plan with rollback/ owned by nobody: exit %d\n%s", r.Code, r.Stderr)
+		}
+		if _, err := vm.Run(t.Context(), "test -e "+job); err != nil {
+			t.Errorf("the planted rollback job ran: %v", err)
+		}
+	})
+
 	t.Run("a cut helper is sent again", func(t *testing.T) {
 		if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 {
 			t.Fatalf("first plan: exit %d\n%s", r.Code, r.Stderr)
