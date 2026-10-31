@@ -56,7 +56,7 @@ func TestPkgModule(t *testing.T) {
 	// fragileV1 installs version 1 of winch-fragile while the index has version 2.
 	const fragileV1 = "touch /etc/winch-fragile.ok && dpkg -i /root/winch-fragile.deb >/dev/null && " + localOnly + " && apt-cache policy winch-fragile | grep -q 'Candidate: 2'"
 	reset := "[ ! -e /root/virt ] || { rm -r /root/virt /etc/apt/sources.list.d/winch-virt.sources && apt-get update -q >/dev/null; }; pkill -f 'fcntl[.]lockf'; rm -f /root/slow /root/locked /etc/winch-fragile.ok; while pgrep -x dpkg >/dev/null || pgrep -f winch-slo[w].postinst >/dev/null; do sleep 0.1; done; rm -f /etc/apt/apt.conf.d/99norecommends /etc/apt/sources.list.d/winch-down.sources /var/lib/apt/lists/10.0.2.100_test_*; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --purge winch-mta-c:armhf >/dev/null 2>&1; dpkg --remove-architecture armhf 2>/dev/null; " +
-		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-slow winch-uses-fragile winch-fragile winch-conflict hello sl figlet tree fortune-mod fortunes-min " + librecode + " at >/dev/null 2>&1; true"
+		"dpkg --configure -a >/dev/null 2>&1; dpkg --purge winch-virt winch-slow winch-uses-fragile winch-fragile winch-conflict hello sl figlet tree fortune-mod fortunes-min " + librecode + " at >/dev/null 2>&1; true"
 	// The cases with a fresh index need the index of the system's sources,
 	// also when RUN selects one of them alone.
 	vm.MustRun(t, localRepo)
@@ -517,6 +517,23 @@ func TestPkgModule(t *testing.T) {
 			WantState:    module.State{IndexFresh: true},
 			WantApplyErr: "libssl3 is provided by libssl3t64; name that package",
 			After:        "! dpkg -s hello >/dev/null 2>&1",
+			FixArgs:      &module.Pkg{Name: []string{"hello"}},
+		},
+		{
+			Name: "a name that the index of the check does not know fails when only one package provides it",
+			// The source of winch-virt, which provides winch-virtual, has no
+			// index before the refresh, as on a new host.
+			Setup: "mkdir -p /root/virt/pkg/DEBIAN && " +
+				`printf 'Package: winch-virt\nVersion: 1\nArchitecture: all\nProvides: winch-virtual\nMaintainer: winch\nDescription: test\n' > /root/virt/pkg/DEBIAN/control && ` +
+				"dpkg-deb -b /root/virt/pkg /root/virt/winch-virt.deb >/dev/null && cd /root/virt && " +
+				`{ cat pkg/DEBIAN/control && printf 'Filename: winch-virt.deb\nSize: %s\nSHA256: %s\n' "$(stat -c %s winch-virt.deb)" "$(sha256sum winch-virt.deb | cut -d' ' -f1)"; } > Packages && ` +
+				`printf 'Types: deb\nURIs: file:/root/virt\nSuites: ./\nTrusted: yes\n' > /etc/apt/sources.list.d/winch-virt.sources && ` +
+				"! apt-cache showpkg winch-virtual 2>/dev/null | grep -q '^winch-virt '",
+			Args:         &module.Pkg{Name: []string{"hello", "winch-virtual"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{refresh, "install hello, winch-virtual", later}},
+			WantState:    module.State{IndexFresh: true},
+			WantApplyErr: "winch-virtual is provided by winch-virt; name that package",
+			After:        "! dpkg -s hello >/dev/null 2>&1 && ! dpkg -s winch-virt >/dev/null 2>&1",
 			FixArgs:      &module.Pkg{Name: []string{"hello"}},
 		},
 		{

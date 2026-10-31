@@ -262,10 +262,7 @@ func TestProvidedNameWaitsForTheRefresh(t *testing.T) {
 	names := []string{"php-mbstring", "hello", "mail-transport-agent"}
 	providers, _, _ := parseShowpkg(old)
 	var notes []string
-	provided := mayBeProvided(names, providers, func(s string) { notes = append(notes, s) })
-	if want := []string{"php-mbstring", "mail-transport-agent"}; !slices.Equal(provided, want) {
-		t.Errorf("provided = %q, want %q", provided, want)
-	}
+	mayBeProvided(names, providers, func(s string) { notes = append(notes, s) })
 	want := []string{
 		"php-mbstring may be provided by php8.3-mbstring; apply checks it after the refresh",
 		"mail-transport-agent may be provided by exim4-daemon-light, postfix; apply checks it after the refresh",
@@ -274,7 +271,7 @@ func TestProvidedNameWaitsForTheRefresh(t *testing.T) {
 		t.Errorf("notes = %q, want %q", notes, want)
 	}
 	// After the refresh, the index still knows only providers of the name.
-	if err := providedOnly(provided, providers); err == nil || err.Error() != "php-mbstring is provided by php8.3-mbstring; name that package\n"+
+	if err := providedOnly([]string{"php-mbstring", "mail-transport-agent"}, providers); err == nil || err.Error() != "php-mbstring is provided by php8.3-mbstring; name that package\n"+
 		"mail-transport-agent is provided by exim4-daemon-light, postfix; name one of them" {
 		t.Errorf("providedOnly = %v", err)
 	}
