@@ -183,6 +183,9 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ func(string)) (Result, erro
 			if err := noFlags(at, atName, fi, d.Path); err != nil {
 				return Result{}, err
 			}
+			if err := d.sshdSafe(ctx, rs); err != nil {
+				return Result{}, err
+			}
 		}
 		for _, rm := range rs {
 			changes = append(changes, rm.line)
