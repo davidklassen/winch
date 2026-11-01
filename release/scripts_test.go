@@ -2,6 +2,7 @@ package release
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -151,5 +152,101 @@ func TestChangelog(t *testing.T) {
 		if out, err := exec.Command("sh", "notes.sh", v, "../CHANGELOG.md").CombinedOutput(); err != nil {
 			t.Errorf("notes.sh %s: %v\n%s", v, err, out)
 		}
+	}
+}
+
+// spec: docs/design/release.md Install/Homebrew
+func TestNotarized(t *testing.T) {
+	sums := "testdata/notary/checksums.txt"
+	data, err := os.ReadFile(sums)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		sha, archive, _ := strings.Cut(line, "  ")
+		p := strings.TrimSuffix(strings.TrimPrefix(archive, "winch-"), ".tar.gz")
+		name[p] = "winch-" + p + "-" + sha + ".zip"
+	}
+	type sub struct{ name, status, date string }
+	arm := func(status, date string) sub { return sub{name["darwin-arm64"], status, date} }
+	intel := func(status, date string) sub { return sub{name["darwin-amd64"], status, date} }
+	cases := []struct {
+		name    string
+		history string // a file in testdata/notary, or empty for subs
+		subs    []sub
+		want    string
+		wantErr string
+	}{
+		{name: "recorded in progress", history: "history.json", want: "in progress\n"},
+		{name: "accepted", subs: []sub{arm("Accepted", "2026-11-02T10:00:00.000Z"), intel("Accepted", "2026-11-02T10:00:00.000Z")}, want: "accepted\n"},
+		{name: "one in progress", subs: []sub{arm("Accepted", "2026-11-02T10:00:00.000Z"), intel("In Progress", "2026-11-02T10:00:00.000Z")}, want: "in progress\n"},
+		{name: "newest submission counts", subs: []sub{
+			arm("Accepted", "2026-11-03T10:00:00.000Z"), arm("Invalid", "2026-11-02T10:00:00.000Z"),
+			intel("Invalid", "2026-11-02T10:00:00.000Z"), intel("Accepted", "2026-11-03T10:00:00.000Z"),
+		}, want: "accepted\n"},
+		{
+			name:    "invalid",
+			subs:    []sub{arm("Invalid", "2026-11-02T10:00:00.000Z"), intel("Accepted", "2026-11-02T10:00:00.000Z")},
+			wantErr: "notarized.sh: Apple did not accept winch-darwin-arm64.tar.gz: status Invalid, submission id-0\n",
+		},
+		{
+			name:    "rejected after in progress",
+			subs:    []sub{arm("In Progress", "2026-11-02T10:00:00.000Z"), intel("Rejected", "2026-11-02T10:00:00.000Z")},
+			wantErr: "notarized.sh: Apple did not accept winch-darwin-amd64.tar.gz: status Rejected, submission id-1\n",
+		},
+		{
+			name:    "no submission",
+			subs:    []sub{arm("Accepted", "2026-11-02T10:00:00.000Z"), {"winch-darwin-amd64-" + strings.Repeat("1", 64) + ".zip", "Accepted", "2026-11-02T10:00:00.000Z"}},
+			wantErr: "notarized.sh: HISTORY has no submission " + name["darwin-amd64"] + "\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			history := filepath.Join("testdata/notary", tc.history)
+			if tc.history == "" {
+				var entries []string
+				for i, s := range tc.subs {
+					entries = append(entries, fmt.Sprintf(`{"createdDate":%q,"id":"id-%d","name":%q,"status":%q}`, s.date, i, s.name, s.status))
+				}
+				history = filepath.Join(t.TempDir(), "history.json")
+				doc := `{"message":"Successfully received submission history.","history":[` + strings.Join(entries, ",") + `]}`
+				if err := os.WriteFile(history, []byte(doc), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, err := exec.Command("sh", "notarized.sh", sums, history).Output()
+			var stderr []byte
+			if ee, ok := err.(*exec.ExitError); ok {
+				stderr = ee.Stderr
+			}
+			if tc.wantErr != "" {
+				want := strings.ReplaceAll(tc.wantErr, "HISTORY", history)
+				if err == nil || string(stderr) != want || len(out) != 0 {
+					t.Fatalf("err %v, stdout %q, stderr %q, want stderr %q", err, out, stderr, want)
+				}
+				return
+			}
+			if err != nil || string(out) != tc.want {
+				t.Errorf("err %v, stdout %q, stderr %q, want %q", err, out, stderr, tc.want)
+			}
+		})
+	}
+}
+
+// spec: docs/design/release.md Install/Homebrew
+func TestNotarizedMissingArchive(t *testing.T) {
+	sums := filepath.Join(t.TempDir(), "checksums.txt")
+	err := os.WriteFile(sums, []byte("1111111111111111111111111111111111111111111111111111111111111111  winch-darwin-amd64.tar.gz\n"), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("sh", "notarized.sh", sums, "testdata/notary/history.json").Output()
+	var stderr []byte
+	if ee, ok := err.(*exec.ExitError); ok {
+		stderr = ee.Stderr
+	}
+	if want := "notarized.sh: " + sums + " has no line for winch-darwin-arm64.tar.gz\n"; err == nil || string(stderr) != want || len(out) != 0 {
+		t.Errorf("err %v, stdout %q, stderr %q, want stderr %q", err, out, stderr, want)
 	}
 }
