@@ -47,11 +47,12 @@ func TestHashSecretCiphertext(t *testing.T) {
 	}
 }
 
-// spec: Running a pipeline/Plan ("the check results")
+// spec: Running a pipeline/Plan ("the check results"; "The old content on the host of a step that reads a secret does not enter the hash")
 func TestHashSecretResult(t *testing.T) {
 	a := secretPlan("hunter2", "password hunter2 old\n", "sum1")
-	if b := secretPlan("hunter2", "password hunter2 older\n", "sum1"); bytes.Equal(a.HashInput(), b.HashInput()) {
-		t.Error("other old content of a step that reads a secret did not change the hash input")
+	// The host holds an earlier value of the secret.
+	if b := secretPlan("hunter2", "password swordfish old\n", "sum1"); !bytes.Equal(a.HashInput(), b.HashInput()) {
+		t.Errorf("the old content of a step that reads a secret entered the hash input:\n%s\n%s", a.HashInput(), b.HashInput())
 	}
 	b := secretPlan("hunter2", "password hunter2 old\n", "sum1")
 	b.Stages[0].Hosts[0].Steps[0].Result.Changes = []string{"owner root → u" + "hunter2", "mode 0644"}

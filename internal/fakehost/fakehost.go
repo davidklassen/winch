@@ -857,8 +857,12 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 			c.hosts.pending[c.host] = append(c.hosts.pending[c.host], n)
 		}
 	}
-	if then != nil && !slices.ContainsFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return reflect.DeepEqual(t, *then) }) {
-		c.hosts.thens[c.host] = append(c.hosts.thens[c.host], *then)
+	if then != nil {
+		rec := *then
+		rec.Legacy = nil
+		if !slices.ContainsFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return reflect.DeepEqual(t, rec) }) {
+			c.hosts.thens[c.host] = append(c.hosts.thens[c.host], rec)
+		}
 	}
 	c.hosts.mu.Unlock()
 	if cm, ok := m.(*module.Cmd); ok {

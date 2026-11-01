@@ -14,6 +14,7 @@ type hashRun struct {
 	Project string            `json:"project"`
 	Stages  []string          `json:"stages"`
 	Files   map[string]string `json:"files,omitempty"`
+	Set     []string          `json:"set,omitempty"`
 }
 
 type hashHost struct {
@@ -52,7 +53,9 @@ type hashStep struct {
 	Steps []hashStep `json:"steps,omitempty"`
 }
 
-// hashResult is a check result with the old content as its SHA-256.
+// hashResult is a check result with the old content as its SHA-256. A step
+// that reads a secret has no old content: it can hold an earlier value of the
+// secret, which the filter does not know.
 type hashResult struct {
 	module.Result
 	Old string `json:"old,omitempty"`
@@ -67,7 +70,7 @@ func (p *Plan) HashInput() []byte {
 		// The values are plain data; they always encode.
 		_ = enc.Encode(v)
 	}
-	hr := hashRun{Project: p.Project, Files: p.sums}
+	hr := hashRun{Project: p.Project, Files: p.sums, Set: p.set}
 	for _, sp := range p.Stages {
 		hr.Stages = append(hr.Stages, sp.Stage.Name)
 	}
@@ -119,12 +122,8 @@ func (plan *Plan) stepHash(p Planned) hashStep {
 	if p.Step.Args != nil && p.Result.Status != "" {
 		r := hashResult{Result: p.Result}
 		r.Result.Old = nil
-		if p.Result.Old != nil {
-			old := *p.Result.Old
-			if p.Step.Secret {
-				old = plan.filter.Text(old)
-			}
-			r.Old = sum(old)
+		if p.Result.Old != nil && !p.Step.Secret {
+			r.Old = sum(*p.Result.Old)
 		}
 		h.Result = r
 		if p.Step.Secret {

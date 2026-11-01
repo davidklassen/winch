@@ -249,8 +249,9 @@ func TestHashChanges(t *testing.T) {
 	}
 }
 
-// hashSecretProject loads a project whose pipeline reads the secret pw.
-func hashSecretProject(t *testing.T, value, pipeline string, recipe string) *project.Project {
+// hashSecretProject loads a project whose pipeline reads the secret pw, with
+// the recipe app, the other files extra, and the --set flags set.
+func hashSecretProject(t *testing.T, value, pipeline, recipe string, extra map[string]string, set []string) *project.Project {
 	t.Helper()
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
@@ -276,7 +277,8 @@ func hashSecretProject(t *testing.T, value, pipeline string, recipe string) *pro
 	if recipe != "" {
 		files["recipes/app/recipe.yaml"] = recipe
 	}
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
+	maps.Copy(files, extra)
+	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", set, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,12 +329,12 @@ handlers:
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// The old content holds the value and an earlier value.
 			plan := func(value string) *run.Plan {
 				h := fakehost.New()
-				// The old content holds the value too.
 				h.SetFile("web1", "/etc/pw", "password "+value+" old\n")
-				h.SetFile("web1", "/etc/"+value+".key", "password "+value+" old\n")
-				return run.MakePlan(context.Background(), hashSecretProject(t, value, tt.pipeline, tt.recipe), h.Connector(), run.Options{})
+				h.SetFile("web1", "/etc/"+value+".key", "password swordfish old\n")
+				return run.MakePlan(context.Background(), hashSecretProject(t, value, tt.pipeline, tt.recipe, nil, nil), h.Connector(), run.Options{})
 			}
 			for _, short := range []bool{false, true} {
 				old, new := "hunter2", "hunter3"
@@ -351,13 +353,12 @@ handlers:
 						t.Fatalf("the plan failed: %v", p.Failed)
 					}
 					in := string(p.HashInput())
-					for _, v := range []string{old, new} {
+					for _, v := range []string{old, new, "swordfish"} {
 						if strings.Contains(in, v) {
 							t.Errorf("the hash input holds %q:\n%s", v, in)
 						}
-						// The filter skips a value under 4 characters.
 						sum := sha256.Sum256([]byte("password " + v + " old\n"))
-						if !short && strings.Contains(in, hex.EncodeToString(sum[:])) {
+						if strings.Contains(in, hex.EncodeToString(sum[:])) {
 							t.Errorf("the hash input holds the SHA-256 of the old content with %q:\n%s", v, in)
 						}
 					}
@@ -379,7 +380,7 @@ steps:
 	plan := func(recipe string) *run.Plan {
 		// The same key and ciphertext in both projects.
 		cryptotest.SetGlobalRandom(t, 1)
-		p := run.MakePlan(context.Background(), hashSecretProject(t, "hunter2", stage+"      - recipe: app\n", recipe), fakehost.New().Connector(), run.Options{})
+		p := run.MakePlan(context.Background(), hashSecretProject(t, "hunter2", stage+"      - recipe: app\n", recipe, nil, nil), fakehost.New().Connector(), run.Options{})
 		if len(p.Failed) > 0 {
 			t.Fatalf("the plan failed: %v", p.Failed)
 		}
@@ -391,6 +392,36 @@ steps:
 	}
 	if b := plan(strings.Replace(recipe, "port=80", "port=81", 1)); a.Hash() == b.Hash() {
 		t.Error("an edit of the data that a secret selects did not change the hash")
+	}
+}
+
+// spec: Running a pipeline/Plan ("the --set values")
+func TestHashSet(t *testing.T) {
+	// The placeholder variant names a template that does not exist, so the
+	// step enters the hash without its arguments.
+	recipe := `steps:
+  - file:
+      path: /etc/app.conf
+      template: !tpl "{{ .vars.pw }}.tmpl"
+      validate: !tpl "test {{ .vars.v }}"
+`
+	plan := func(set string) *run.Plan {
+		cryptotest.SetGlobalRandom(t, 1)
+		p := run.MakePlan(context.Background(), hashSecretProject(t, "hunter2", stage+"      - recipe: app\n", recipe, map[string]string{"recipes/app/templates/hunter2.tmpl": "x\n"}, []string{set}), fakehost.New().Connector(), run.Options{})
+		if len(p.Failed) > 0 {
+			t.Fatalf("the plan failed: %v", p.Failed)
+		}
+		return p
+	}
+	a := plan("vars.v=a")
+	if in := string(a.HashInput()); strings.Contains(in, "test a") {
+		t.Fatalf("the step entered with its arguments:\n%s", in)
+	}
+	if b := plan("vars.v=a"); a.Hash() != b.Hash() {
+		t.Fatalf("two plans of the same project: %s and %s", a.Hash(), b.Hash())
+	}
+	if b := plan("vars.v=b"); a.Hash() == b.Hash() {
+		t.Errorf("another --set value did not change the hash:\n%s", b.HashInput())
 	}
 }
 

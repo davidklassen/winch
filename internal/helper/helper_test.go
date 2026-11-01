@@ -1157,3 +1157,35 @@ func TestThenRecordsMatchAndDrop(t *testing.T) {
 		t.Errorf("then records = %v, want %v", got, want)
 	}
 }
+
+// spec: Steps (the record of a then)
+func TestThenRecordWithoutLegacy(t *testing.T) {
+	dir := t.TempDir()
+	// A record of winch 0.1.0 with the plain main argument.
+	write(t, filepath.Join(dir, "then", "acme"), "version 1\n"+`{"recipe":"site","module":"file","mains":["/etc/hunter2.key"]}`+"\n")
+	c := start(t, dir, "")
+	h := hello("r1")
+	h.Project = "acme"
+	if r := c.call(t, "hello", h); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	then := protocol.Then{Recipe: "site", Module: "file", Mains: []string{"k"}, Legacy: []string{"/etc/hunter2.key"}}
+	p := filepath.Join(t.TempDir(), "a")
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(module.File{Path: p, Absent: true})
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: args, Then: &then}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	want := []protocol.Then{{Recipe: "site", Module: "file", Mains: []string{"/etc/hunter2.key"}}, {Recipe: "site", Module: "file", Mains: []string{"k"}}}
+	if got := pendingAll(t, c).Then; !reflect.DeepEqual(got, want) {
+		t.Errorf("then records = %v, want %v", got, want)
+	}
+	if r := c.call(t, "command", protocol.Command{Command: "true", Then: then}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if got := pendingAll(t, c).Then; len(got) != 0 {
+		t.Errorf("then records after the then ran = %v, want none", got)
+	}
+}

@@ -5,8 +5,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -141,9 +139,11 @@ type Plan struct {
 	// plan.
 	refreshed map[string]bool
 	hash      string
-	// sums are the SHA-256 of the project files, and filter masks the secret
-	// values in the check results of steps that read a secret.
+	// sums are the SHA-256 of the project files, set the --set flags, and
+	// filter masks the secret values in the check results of steps that read
+	// a secret.
 	sums   map[string]string
+	set    []string
 	filter *secret.Filter
 	opts   Options
 	// mu guards conns, the sessions that the plan kept for Apply.
@@ -410,7 +410,7 @@ func (p *Plan) changed() map[string]bool {
 // facts and starts the host's evaluation. A host that fails stops there.
 func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Options) *Plan {
 	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}, Destinations: map[string]protocol.Destination{}, opts: opts,
-		sums: p.Sums(), filter: p.Filter()}
+		sums: p.Sums(), set: p.SetFlags(), filter: p.Filter()}
 	inStages := map[string]bool{}
 	runs := map[string]*hostRun{}
 	open := func(h project.Host) (Conn, error) {
@@ -1410,7 +1410,9 @@ func scope(stage *project.Stage, p Planned) string {
 }
 
 // thenRecord is the record of the then of the evaluated steps at place, or nil
-// for a step without then.
+// for a step without then. A main argument that reads a secret enters as the
+// main argument of the placeholder variant, so the host keeps nothing that
+// tests a guess of the secret.
 func thenRecord(steps []project.Step, place protocol.Check) *protocol.Then {
 	if len(steps) == 0 || steps[0].Then == "" {
 		return nil
@@ -1419,8 +1421,19 @@ func thenRecord(steps []project.Step, place protocol.Check) *protocol.Then {
 	for _, st := range steps {
 		main := st.Args.Main()
 		if c, ok := st.Args.(*module.Cmd); ok {
-			sum := sha256.Sum256([]byte(c.Command))
-			main = hex.EncodeToString(sum[:])
+			main = sum(c.Command)
+		}
+		// HashArgs that are not a module have no main argument.
+		hm, ok := st.HashArgs.(module.Module)
+		if st.Secret && (!ok || hm.Main() != st.Args.Main()) {
+			t.Legacy = append(t.Legacy, main)
+			main = secret.Mark
+			if ok {
+				main = hm.Main()
+			}
+			if c, ok := hm.(*module.Cmd); ok {
+				main = sum(c.Command)
+			}
 		}
 		t.Mains = append(t.Mains, main)
 	}
