@@ -2,6 +2,8 @@ package module
 
 import (
 	"maps"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -439,4 +441,24 @@ func TestModuleNouns(t *testing.T) {
 			t.Errorf("%s has no Noun %q", name, want)
 		}
 	}
+}
+
+type said struct {
+	Silent
+	notes, warns []string
+}
+
+func (s *said) Note(text string) { s.notes = append(s.notes, text) }
+
+func (s *said) Warn(text string) { s.warns = append(s.warns, text) }
+
+// fakeCommand puts a command name on PATH that prints out.
+func fakeCommand(t *testing.T, name, out string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\ncat <<'EOF'\n" + out + "\nEOF\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 }

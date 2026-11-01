@@ -356,12 +356,8 @@ func (f *Firewall) Check(ctx context.Context, st *State, say Say) (Result, error
 	if err := f.checkSSH(st.SSHConnection); err != nil {
 		return Result{}, err
 	}
-	tables, err := droppingTables(ctx)
-	if err != nil {
+	if err := sayDroppingTables(ctx, say); err != nil {
 		return Result{}, err
-	}
-	for _, t := range tables {
-		say.Note("the table " + t + " also filters input; its rules can drop what this step allows")
 	}
 	id := f.id()
 	f.data = f.render(id)
@@ -423,6 +419,17 @@ func (f *Firewall) Check(ctx context.Context, st *State, say Say) (Result, error
 		res.MissingTools = []Tool{{Name: "nft", Package: "nftables"}}
 	}
 	return res, nil
+}
+
+func sayDroppingTables(ctx context.Context, say Say) error {
+	tables, err := droppingTables(ctx)
+	if err != nil {
+		return err
+	}
+	for _, t := range tables {
+		say.Note("the table " + t + " also filters input, and its rules can drop what this step allows")
+	}
+	return nil
 }
 
 // droppingTables returns the tables other than inet winch with an input base

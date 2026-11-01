@@ -50,3 +50,17 @@ func TestInterruptEndsSecretEncrypt(t *testing.T) {
 		t.Fatal("winch secret encrypt did not end after Ctrl-C")
 	}
 }
+
+// spec: CLI/Messages; Running a pipeline/Apply (Ctrl-C)
+func TestInterruptLine(t *testing.T) {
+	for command, want := range map[string]string{
+		"plan":  "winch plan: interrupted, and the running checks finish; press Ctrl-C again to end the sessions",
+		"apply": "winch apply: interrupted, and the running steps finish; press Ctrl-C again to end the sessions",
+		"run":   "winch run: interrupted, and the running steps finish; press Ctrl-C again to end the sessions",
+		"exec":  "winch exec: interrupted, and the commands stop; press Ctrl-C again to end the sessions",
+	} {
+		if got := interruptLine(command); got != want {
+			t.Errorf("interruptLine(%q) = %q, want %q", command, got, want)
+		}
+	}
+}

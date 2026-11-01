@@ -86,7 +86,7 @@ func unknownZone(dir, name string) error {
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("unknown time zone %s: %s does not exist; install the package tzdata in an earlier pkg step", name, strings.TrimSuffix(dir, "/"))
 	}
-	return fmt.Errorf("unknown time zone %s: %s%s does not exist; an old name such as US/Eastern needs the package tzdata-legacy", name, dir, name)
+	return fmt.Errorf("unknown time zone %s: %s%s does not exist; fix a typo in the name, or for an old name such as US/Eastern, install the package tzdata-legacy in an earlier pkg step", name, dir, name)
 }
 
 // zoneMissing reports whether the zone name has no file in dir: an earlier

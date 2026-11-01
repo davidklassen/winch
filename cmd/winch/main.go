@@ -38,13 +38,7 @@ func main() {
 	// Ctrl-C ends winch.
 	var asking atomic.Bool
 	if len(os.Args) > 1 && slices.Contains([]string{"plan", "apply", "run", "exec"}, os.Args[1]) {
-		msg := "winch " + os.Args[1] + ": interrupted; the running steps finish. Press Ctrl-C again to end the sessions."
-		switch os.Args[1] {
-		case "plan":
-			msg = "winch plan: interrupted; the running checks finish. Press Ctrl-C again to end the sessions."
-		case "exec":
-			msg = "winch exec: interrupted; the commands stop. Press Ctrl-C again to end the sessions."
-		}
+		msg := interruptLine(os.Args[1])
 		interrupts := make(chan os.Signal, 2)
 		signal.Notify(interrupts, os.Interrupt)
 		go func() {
@@ -130,4 +124,15 @@ func connect(sessions context.Context, stderr *color.Writer, display *progress.D
 		return s, nil
 	}
 	return run.Connect{Resolve: resolve, Open: open}
+}
+
+func interruptLine(command string) string {
+	what := "the running steps finish"
+	switch command {
+	case "plan":
+		what = "the running checks finish"
+	case "exec":
+		what = "the commands stop"
+	}
+	return "winch " + command + ": interrupted, and " + what + "; press Ctrl-C again to end the sessions"
 }

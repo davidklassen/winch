@@ -243,7 +243,7 @@ func TestFirewallOtherInputChains(t *testing.T) {
 		"winch.yaml": "name: fw\nhosts:\n  fwother: {}\nsteps:\n  - pkg:\n      name: nftables\n  - firewall:\n      allow:\n        - tcp: [22, 8080]\n",
 	})
 	note := func(table string) string {
-		return "fwother: note: the table " + table + " also filters input; its rules can drop what this step allows\n"
+		return "fwother: note: the table " + table + " also filters input, and its rules can drop what this step allows\n"
 	}
 	want := []string{note("inet drops"), note("inet vmaps"), note("inet strict")}
 	if osRelease().id == "ubuntu" {
