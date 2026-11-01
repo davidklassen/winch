@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 
@@ -11,7 +12,7 @@ import (
 
 type Assert struct {
 	Command string `yaml:"command,required" json:"command" line:"check command" doc:"Check command. It runs during apply, through sh -e as root, in /. Exit 0 passes."`
-	Message string `yaml:"message,required" json:"message" line:"error when the check fails" doc:"Error when the check fails. The host fails with it when the command exits non-zero."`
+	Message string `yaml:"message,required" json:"message" line:"error when the check fails" doc:"Error when the check fails. The host fails with it when the command exits non-zero, followed by the shell's error when the exit is 126 or 127."`
 }
 
 func (a *Assert) Main() string { return strings.TrimSuffix(a.Command, "\n") }
@@ -33,7 +34,10 @@ func (a *Assert) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 
 func (a *Assert) Apply(ctx context.Context, _ Say) error {
 	err := Shell(ctx, a.Command)
-	if errors.As(err, new(*exec.ExitError)) {
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
+		if code := exit.ExitCode(); code == 126 || code == 127 {
+			return fmt.Errorf("%s: %w", a.Message, err)
+		}
 		return errors.New(a.Message)
 	}
 	return err
