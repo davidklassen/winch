@@ -76,8 +76,8 @@ func TestPlanSharedDestination(t *testing.T) {
 		h.SetDestination("web3", protocol.Destination{HostName: "mail.acme.com", Port: "2222"})
 		plan := run.MakePlan(context.Background(), load(t, "web3"), h.Connector(), run.Options{})
 		want := map[string]string{
-			"web1": `host "web1" has the SSH destination of host "web3": Mail.acme.com:2222`,
-			"web3": `host "web3" has the SSH destination of host "web1": mail.acme.com:2222`,
+			"web1": `host web3 has the same SSH destination, Mail.acme.com:2222; keep one host for this destination, or give each host its own address or port`,
+			"web3": `host web1 has the same SSH destination, mail.acme.com:2222; keep one host for this destination, or give each host its own address or port`,
 		}
 		for host, w := range want {
 			if err := plan.Failed[host]; err == nil || err.Error() != w {
@@ -110,8 +110,8 @@ func TestPlanSharedDestination(t *testing.T) {
 		}
 		plan := run.MakePlan(context.Background(), load(t, "web3"), h.Connector(), run.Options{})
 		want := map[string]string{
-			"web1": `host "web1" has the SSH destination of host "web3": 10.0.0.5:22 through bastion-eu`,
-			"web3": `host "web3" has the SSH destination of host "web1": 10.0.0.5:22 through bastion-eu`,
+			"web1": `host web3 has the same SSH destination, 10.0.0.5:22 through bastion-eu; keep one host for this destination, or give each host its own address or port`,
+			"web3": `host web1 has the same SSH destination, 10.0.0.5:22 through bastion-eu; keep one host for this destination, or give each host its own address or port`,
 		}
 		for host, w := range want {
 			if err := plan.Failed[host]; err == nil || err.Error() != w {
@@ -126,9 +126,9 @@ func TestPlanSharedDestination(t *testing.T) {
 		}
 		plan := run.MakePlan(context.Background(), load(t, "web3"), h.Connector(), run.Options{})
 		want := map[string]string{
-			"web1": `host "web1" has the SSH destination of host "web2": 192.0.2.10:22`,
-			"web2": `host "web2" has the SSH destination of host "web1": 192.0.2.10:22`,
-			"web3": `host "web3" has the SSH destination of host "web1": 192.0.2.10:22`,
+			"web1": `host web2 has the same SSH destination, 192.0.2.10:22; keep one host for this destination, or give each host its own address or port`,
+			"web2": `host web1 has the same SSH destination, 192.0.2.10:22; keep one host for this destination, or give each host its own address or port`,
+			"web3": `host web1 has the same SSH destination, 192.0.2.10:22; keep one host for this destination, or give each host its own address or port`,
 		}
 		for host, w := range want {
 			if err := plan.Failed[host]; err == nil || err.Error() != w {

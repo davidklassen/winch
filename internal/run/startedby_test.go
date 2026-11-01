@@ -26,7 +26,7 @@ func TestStartedBy(t *testing.T) {
 	stage := func(name, steps string) string {
 		return "  - name: " + name + "\n    hosts: all\n    steps:\n" + steps
 	}
-	const want = "s: service rpcbind: rpcbind.service is started by rpcbind.socket; add a step for rpcbind.socket"
+	const want = "s: service rpcbind: rpcbind.socket starts rpcbind.service; add a service step that stops and disables rpcbind.socket"
 	tests := []struct {
 		name, pipeline, want string
 	}{
@@ -42,12 +42,12 @@ func TestStartedBy(t *testing.T) {
 		{"two units start the unit", stage("s", `      - service:
           name: nfs
           running: false
-`), "s: service nfs: nfs.service is started by nfs.socket; add a step for nfs.socket\n" +
-			"s: service nfs: nfs.service is started by nfs.path; add a step for nfs.path"},
+`), "s: service nfs: nfs.socket starts nfs.service; add a service step that stops and disables nfs.socket\n" +
+			"s: service nfs: nfs.path starts nfs.service; add a service step that stops and disables nfs.path"},
 		{"a stopped unit", stage("s", `      - service:
           name: stopped
           running: false
-`), "s: service stopped: stopped.service is started by rpcbind.socket; add a step for rpcbind.socket"},
+`), "s: service stopped: rpcbind.socket starts stopped.service; add a service step that stops and disables rpcbind.socket"},
 		{"a step for another unit", stage("s", stop+`      - service:
           name: rpcbind.timer
           running: false

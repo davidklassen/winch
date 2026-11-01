@@ -22,6 +22,8 @@ type Link struct {
 	Replace    bool    `yaml:"replace" json:"replace,omitempty" line:"remove another kind of thing at path first" doc:"Remove another kind of thing at path first, such as a file or a directory. Without it, such a thing fails the check."`
 }
 
+func (*Link) Noun() string { return "a link step" }
+
 func (l *Link) Main() string { return l.Path }
 
 func (l *Link) ValidateCommand() string {

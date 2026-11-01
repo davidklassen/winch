@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -50,8 +51,8 @@ type Config struct {
 	Hello    protocol.Hello
 	Progress *color.Writer
 	// Note takes the notes of the helper: facts about the host that need no
-	// fix.
-	Note func(text string)
+	// fix. With warning, the text is a problem on the host to fix.
+	Note func(text string, warning bool)
 	// Hold is nil, or hides the progress until the function it returns runs.
 	// It covers a login without batch mode, where ssh can ask a question on
 	// the terminal.
@@ -407,12 +408,22 @@ func hint(cfg Config, err error) error {
 	}
 	cmd := "ssh"
 	if cfg.Address != cfg.Host {
-		cmd += " -o HostName=" + cfg.Address
+		cmd += " -o " + shellWord("HostName="+strings.ReplaceAll(cfg.Address, "%", "%%"))
 	}
 	if cfg.User != "" {
-		cmd += " -l " + cfg.User
+		cmd += " -l " + shellWord(cfg.User)
 	}
-	return fmt.Errorf("%w (in batch mode ssh asks nothing; accept the host key once with: %s %s)", err, cmd, cfg.Host)
+	return fmt.Errorf("%w (in batch mode ssh asks nothing; accept the host key once with: %s %s)", err, cmd, shellWord(cfg.Host))
+}
+
+var plainRe = regexp.MustCompile(`^[A-Za-z0-9_./=:,@%+-]+$`)
+
+// shellWord is s as one word of a shell command.
+func shellWord(s string) string {
+	if plainRe.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func (s *Session) exit() sshExit {
@@ -577,12 +588,15 @@ func (s *Session) receive(result any) error {
 		if resp.ID != s.id {
 			return fmt.Errorf("response %d to request %d", resp.ID, s.id)
 		}
-		if resp.Note == "" && resp.Progress == "" {
+		if resp.Note == "" && resp.Warning == "" && resp.Progress == "" {
 			break
 		}
-		if resp.Note != "" {
-			s.cfg.Note(resp.Note)
-		} else {
+		switch {
+		case resp.Note != "":
+			s.cfg.Note(resp.Note, false)
+		case resp.Warning != "":
+			s.cfg.Note(resp.Warning, true)
+		default:
 			fmt.Fprintf(s.progress, "%s: %s\n", s.host, secret.Printable(resp.Progress))
 		}
 	}

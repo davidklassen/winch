@@ -19,6 +19,8 @@ type Debconf struct {
 	Value    string `yaml:"value,required" json:"value" line:"answer, as text" doc:"Answer, as text. Only the scripts of the package read it, so put the step before the pkg step that installs the package."`
 }
 
+func (*Debconf) Noun() string { return "a debconf step" }
+
 func (d *Debconf) Main() string { return d.Question }
 
 var debconfTypes = []string{"string", "password", "boolean", "select", "multiselect"}

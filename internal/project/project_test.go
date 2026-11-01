@@ -674,7 +674,7 @@ func TestLoadRepoKeyExpiry(t *testing.T) {
 		"recipes/nginx/recipe.yaml": recipe(repoStep("  ", "a.asc")),
 		"recipes/nginx/files/a.asc": string(expired),
 	}))
-	const wantErr = "recipes/nginx/recipe.yaml:7:12: key: recipes/nginx/files/a.asc: the key 98E68808D2F3430CFF79D49BADF72694C8CF341E expired on 2024-12-31"
+	const wantErr = "recipes/nginx/recipe.yaml:7:12: key: recipes/nginx/files/a.asc: the key 98E68808D2F3430CFF79D49BADF72694C8CF341E expired on 2024-12-31; get the current key of the vendor"
 	if _, err := Load(t.Context(), dir, "", "site", nil, Keys{}); err == nil || err.Error() != wantErr {
 		t.Errorf("Load error = %v, want %q", err, wantErr)
 	}

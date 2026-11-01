@@ -36,9 +36,9 @@ func TestOrderUserAfterOwner(t *testing.T) {
           name: alice
 `
 	tests := []orderCase{
-		{"both new", "", nil, "users: group staff: an earlier step needs it: files: file /srv/a; move this step before it"},
+		{"both new", "", nil, "users: group staff: this step creates group staff, which an earlier step needs: files#1 file /srv/a; move this step before it"},
 		{"group exists", "", func(h *fakehost.Hosts) { h.SetGroup("web1", "staff") },
-			"users: user alice: an earlier step needs it: files: file /srv/a; move this step before it"},
+			"users: user alice: this step creates user alice, which an earlier step needs: files#1 file /srv/a; move this step before it"},
 		{"both exist", "", func(h *fakehost.Hosts) { h.SetGroup("web1", "staff"); h.SetUser("web1", "alice") }, ""},
 		{"a download", `stages:
   - name: files
@@ -54,7 +54,7 @@ func TestOrderUserAfterOwner(t *testing.T) {
     steps:
       - user:
           name: alice
-`, nil, "users: user alice: an earlier step needs it: files: download /srv/tool; move this step before it"},
+`, nil, "users: user alice: this step creates user alice, which an earlier step needs: files#1 download /srv/tool; move this step before it"},
 	}
 	tests = append(tests, orderCases...)
 	for _, tt := range tests {
@@ -105,13 +105,13 @@ var orderCases = []orderCase{
       - pkg:
           name: postfix
           absent: true
-`), func(h *fakehost.Hosts) { h.SetPkgDeps("mailutils", "postfix") }, "s: pkg postfix: s: pkg mailutils also installs postfix, which this step removes; the two steps undo each other on every run"},
+`), func(h *fakehost.Hosts) { h.SetPkgDeps("mailutils", "postfix") }, "s: pkg postfix: s#1 pkg mailutils also installs postfix, which this step removes; the two steps undo each other on every run"},
 	{"an install that pulls a package that an earlier step removes", steps(`      - pkg:
           name: postfix
           absent: true
       - pkg:
           name: mailutils
-`), func(h *fakehost.Hosts) { h.SetPkgDeps("mailutils", "postfix") }, "s: pkg mailutils: this step also installs postfix, which s: pkg postfix removes; the two steps undo each other on every run"},
+`), func(h *fakehost.Hosts) { h.SetPkgDeps("mailutils", "postfix") }, "s: pkg mailutils: this step also installs postfix, which s#1 pkg postfix removes; the two steps undo each other on every run"},
 	{"a removal that takes a package that an earlier step installs", steps(`      - pkg:
           name: mailutils
       - pkg:
@@ -120,7 +120,7 @@ var orderCases = []orderCase{
 `), func(h *fakehost.Hosts) {
 		h.SetPkgDeps("mailutils", "postfix")
 		h.SetPkg("web1", "mailutils", "postfix")
-	}, "s: pkg postfix: this step also removes mailutils, which s: pkg mailutils installs; the two steps undo each other on every run"},
+	}, "s: pkg postfix: this step also removes mailutils, which s#1 pkg mailutils installs; the two steps undo each other on every run"},
 	{"a removal that takes a package that an earlier step installs in this run", steps(`      - pkg:
           name: mailutils
       - pkg:
@@ -129,7 +129,7 @@ var orderCases = []orderCase{
 `), func(h *fakehost.Hosts) {
 		h.SetPkgDeps("mailutils", "postfix")
 		h.SetPkg("web1", "postfix")
-	}, "s: pkg postfix: this step also removes mailutils, which s: pkg mailutils installs; the two steps undo each other on every run"},
+	}, "s: pkg postfix: this step also removes mailutils, which s#1 pkg mailutils installs; the two steps undo each other on every run"},
 	{"a removal that takes a dependency of a package that an earlier step pulls in", steps(`      - pkg:
           name: mailutils
       - pkg:
@@ -139,7 +139,7 @@ var orderCases = []orderCase{
 		h.SetPkgDeps("mailutils", "postfix")
 		h.SetPkgDeps("postfix", "libfoo")
 		h.SetPkg("web1", "libfoo")
-	}, "s: pkg libfoo: this step also removes mailutils, which s: pkg mailutils installs; the two steps undo each other on every run"},
+	}, "s: pkg libfoo: this step also removes mailutils, which s#1 pkg mailutils installs; the two steps undo each other on every run"},
 	{"a removal that takes a package that a later step installs", steps(`      - pkg:
           name: postfix
           absent: true
@@ -148,7 +148,7 @@ var orderCases = []orderCase{
 `), func(h *fakehost.Hosts) {
 		h.SetPkgDeps("mailutils", "postfix")
 		h.SetPkg("web1", "mailutils", "postfix")
-	}, "s: pkg mailutils: s: pkg postfix also removes mailutils, which this step installs; the two steps undo each other on every run"},
+	}, "s: pkg mailutils: s#1 pkg postfix also removes mailutils, which this step installs; the two steps undo each other on every run"},
 	{"an install and a removal of unrelated packages", steps(`      - pkg:
           name: mailutils
       - pkg:
@@ -165,7 +165,7 @@ var orderCases = []orderCase{
           question: postfix/main_mailer_type
           type: select
           value: Local only
-`), func(h *fakehost.Hosts) { h.SetPkgDeps("mailutils", "postfix") }, "s: debconf postfix/main_mailer_type: s: pkg mailutils installs postfix before this step sets the answer; move this step before it"},
+`), func(h *fakehost.Hosts) { h.SetPkgDeps("mailutils", "postfix") }, "s: debconf postfix/main_mailer_type: s#1 pkg mailutils installs postfix before this step sets the answer; move this step before it"},
 	{"a debconf answer after the removal of its package", steps(`      - pkg:
           name: postfix
           absent: true
@@ -183,32 +183,32 @@ var orderCases = []orderCase{
           group: staff
       - group:
           name: staff
-`), nil, "s: group staff: an earlier step needs it: s: user bob; move this step before it"},
+`), nil, "s: group staff: this step creates group staff, which an earlier step needs: s#1 user bob; move this step before it"},
 	{"a user before a group in its groups", steps(`      - user:
           name: bob
           groups: [sudo, docker]
       - group:
           name: docker
-`), nil, "s: group docker: an earlier step needs it: s: user bob; move this step before it"},
+`), nil, "s: group docker: this step creates group docker, which an earlier step needs: s#1 user bob; move this step before it"},
 	{"a user before a group in its add_groups", steps(`      - user:
           name: bob
           add_groups: [docker]
       - group:
           name: docker
-`), nil, "s: group docker: an earlier step needs it: s: user bob; move this step before it"},
+`), nil, "s: group docker: this step creates group docker, which an earlier step needs: s#1 user bob; move this step before it"},
 	{"a dir before its owner", steps(`      - dir:
           path: /srv/d
           owner: alice
       - user:
           name: alice
-`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/d") }, "s: user alice: an earlier step needs it: s: dir /srv/d; move this step before it"},
+`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/d") }, "s: user alice: this step creates user alice, which an earlier step needs: s#1 dir /srv/d; move this step before it"},
 	{"a file group before the user that makes the group", steps(`      - file:
           path: /srv/a
           content: ""
           group: alice
       - user:
           name: alice
-`), nil, "s: user alice: an earlier step needs it: s: file /srv/a; move this step before it"},
+`), nil, "s: user alice: this step creates group alice, which an earlier step needs: s#1 file /srv/a; move this step before it"},
 	{"a file group of an existing group before a new user", steps(`      - file:
           path: /srv/a
           content: ""
@@ -221,7 +221,7 @@ var orderCases = []orderCase{
           user: deploy
       - user:
           name: deploy
-`), nil, "s: user deploy: an earlier step needs it: s: cmd make install; move this step before it"},
+`), nil, "s: user deploy: this step creates user deploy, which an earlier step needs: s#1 cmd make install; move this step before it"},
 	{"a cmd as an existing user", steps(`      - cmd:
           command: make install
           user: deploy
@@ -240,14 +240,14 @@ var orderCases = []orderCase{
           dir: /srv/app
       - dir:
           path: /srv/app
-`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, "s: dir /srv/app: an earlier step needs it: s: cmd make install; move this step before it"},
+`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, "s: dir /srv/app: this step creates dir /srv/app, which an earlier step needs: s#1 cmd make install; move this step before it"},
 	{"a cmd in a dir that a later step creates as a parent", steps(`      - cmd:
           command: make install
           dir: /srv/app
       - file:
           path: /srv/app/config
           content: ""
-`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, "s: file /srv/app/config: an earlier step needs it: s: cmd make install; move this step before it"},
+`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, "s: file /srv/app/config: this step creates dir /srv/app, which an earlier step needs: s#1 cmd make install; move this step before it"},
 	{"a cmd in a dir that an earlier step creates", steps(`      - dir:
           path: /srv/app
       - cmd:
@@ -304,7 +304,7 @@ var orderCases = []orderCase{
           url: http://x.example/apt/
           suite: trixie
           components: [contrib]
-`), nil, "s: repo b: the source http://x.example/apt/ trixie is also in s: repo a; use one step"},
+`), nil, "s: repo b: the source http://x.example/apt/ trixie is also in s#1 repo a; use one step"},
 	{"two repo steps in two stages", `stages:
   - name: s
     hosts: all
@@ -322,7 +322,7 @@ var orderCases = []orderCase{
           url: http://x.example/apt
           suite: trixie
           components: [main]
-`, nil, "t: repo b: the source http://x.example/apt trixie is also in s: repo a; use one step"},
+`, nil, "t: repo b: the source http://x.example/apt trixie is also in s#1 repo a; use one step"},
 	{"two repo steps with other suites", steps(`      - repo:
           name: a
           url: http://x.example/apt
@@ -406,13 +406,13 @@ handlers:
       - file:
           path: /etc/a
           content: "b\n"
-`), "", "s: file /etc/a: the path /etc/a is also in s: file /etc/a, with other arguments"},
+`), "", "s: file /etc/a: the path /etc/a is also in s#1 file /etc/a, with other arguments; use one step"},
 		{"a file and a dir on one path", steps(`      - file:
           path: /etc/a
           content: "a\n"
       - dir:
           path: /etc/a
-`), "", "s: dir /etc/a: the path /etc/a is also in s: file /etc/a, with other arguments"},
+`), "", "s: dir /etc/a: the path /etc/a is also in s#1 file /etc/a, with other arguments; use one step"},
 		{"a file and a download on one path", steps(`      - file:
           path: /etc/a
           content: "a\n"
@@ -420,7 +420,7 @@ handlers:
           url: https://example.com/a
           sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           path: /etc/a
-`), "", "s: download /etc/a: the path /etc/a is also in s: file /etc/a, with other arguments"},
+`), "", "s: download /etc/a: the path /etc/a is also in s#1 file /etc/a, with other arguments; use one step"},
 		{"two unpacks into one directory", steps(`      - download:
           url: https://example.com/a.tgz
           sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
@@ -429,27 +429,27 @@ handlers:
           url: https://example.com/b.tgz
           sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           unpack: /opt/a
-`), "", "s: download /opt/a: the unpack directory /opt/a is also in s: download /opt/a, with other arguments"},
+`), "", "s: download /opt/a: the unpack directory /opt/a is also in s#1 download /opt/a, with other arguments; use one step"},
 		{"a dir and a link removed on one path", steps(`      - dir:
           path: /etc/a
           absent: true
       - link:
           path: /etc/a
           absent: true
-`), "", "s: link /etc/a: the path /etc/a is also in s: dir /etc/a, with other arguments"},
+`), "", "s: link /etc/a: the path /etc/a is also in s#1 dir /etc/a, with other arguments; use one step"},
 		{"a package installed and removed", steps(`      - pkg:
           name: [exim4, curl]
       - pkg:
           name: exim4
           absent: true
-`), "", "s: pkg exim4: the package exim4 is also in s: pkg exim4, curl, with other arguments"},
+`), "", "s: pkg exim4: the package exim4 is also in s#1 pkg exim4, curl, with other arguments; use one step"},
 		{"one unit in two forms", steps(`      - service:
           name: nginx
           running: true
       - service:
           name: nginx.service
           running: false
-`), "", "s: service nginx.service: the unit nginx.service is also in s: service nginx, with other arguments"},
+`), "", "s: service nginx.service: the unit nginx.service is also in s#1 service nginx, with other arguments; use one step"},
 		{"a user in two stages", `stages:
   - name: s
     hosts: all
@@ -463,7 +463,7 @@ handlers:
       - user:
           name: bob
           shell: /bin/bash
-`, "", "t: user bob: the user bob is also in s: user bob, with other arguments"},
+`, "", "t: user bob: the user bob is also in s#1 user bob, with other arguments; use one step"},
 		{"two add_groups steps for one user", `stages:
   - name: s
     hosts: all
@@ -499,14 +499,14 @@ handlers:
       - user:
           name: bob
           groups: [adm]
-`), "", "s: user bob: the user bob is also in s: user bob, with other arguments"},
+`), "", "s: user bob: the user bob is also in s#1 user bob, with other arguments; use one step"},
 		{"a groups step and an add_groups step", steps(`      - user:
           name: bob
           groups: [adm]
       - user:
           name: bob
           add_groups: [docker]
-`), "", "s: user bob: the user bob is also in s: user bob, with other arguments"},
+`), "", "s: user bob: the user bob is also in s#1 user bob, with other arguments; use one step"},
 		{"two user steps with add_groups and other fields", steps(`      - user:
           name: bob
           shell: /bin/bash
@@ -515,31 +515,31 @@ handlers:
           name: bob
           shell: /bin/bash
           add_groups: [adm]
-`), "", "s: user bob: the user bob is also in s: user bob, with other arguments"},
+`), "", "s: user bob: the user bob is also in s#1 user bob, with other arguments; use one step"},
 		{"a group", steps(`      - group:
           name: staff
       - group:
           name: staff
           gid: 1500
-`), "", "s: group staff: the group staff is also in s: group staff, with other arguments"},
+`), "", "s: group staff: the group staff is also in s#1 group staff, with other arguments; use one step"},
 		{"a hostname and a file on its file", steps(`      - hostname:
           name: web1
       - file:
           path: /etc/hostname
           content: "mail\n"
-`), "", "s: file /etc/hostname: the path /etc/hostname is also in s: hostname web1, with other arguments"},
+`), "", "s: file /etc/hostname: the path /etc/hostname is also in s#1 hostname web1, with other arguments; use one step"},
 		{"a timezone and a link on its file", steps(`      - timezone:
           name: Etc/UTC
       - link:
           path: /etc/localtime
           target: /usr/share/zoneinfo/Europe/Berlin
-`), "", "s: link /etc/localtime: the path /etc/localtime is also in s: timezone Etc/UTC, with other arguments"},
+`), "", "s: link /etc/localtime: the path /etc/localtime is also in s#1 timezone Etc/UTC, with other arguments; use one step"},
 		{"a file on /etc/timezone and a timezone", steps(`      - file:
           path: /etc/timezone
           content: "Europe/Berlin\n"
       - timezone:
           name: Etc/UTC
-`), "", "s: timezone Etc/UTC: the path /etc/timezone is also in s: file /etc/timezone, with other arguments"},
+`), "", "s: timezone Etc/UTC: the path /etc/timezone is also in s#1 file /etc/timezone, with other arguments; use one step"},
 		{"a removal of /etc/timezone and a timezone", steps(`      - file:
           path: /etc/timezone
           absent: true
@@ -560,7 +560,7 @@ handlers:
       - file:
           path: /etc/timezone
           content: "Europe/Berlin\n"
-`), "", "s: file /etc/timezone: the path /etc/timezone is also in s: timezone Etc/UTC, with other arguments"},
+`), "", "s: file /etc/timezone: the path /etc/timezone is also in s#1 timezone Etc/UTC, with other arguments; use one step"},
 		{"a removal of /etc/timezone, a timezone, and a file on it", steps(`      - file:
           path: /etc/timezone
           absent: true
@@ -569,13 +569,13 @@ handlers:
       - file:
           path: /etc/timezone
           content: "Europe/Berlin\n"
-`), "", "s: file /etc/timezone: the path /etc/timezone is also in s: file /etc/timezone, with other arguments"},
+`), "", "s: file /etc/timezone: the path /etc/timezone is also in s#1 file /etc/timezone, with other arguments; use one step"},
 		{"a timezone and a removal of /etc/localtime", steps(`      - timezone:
           name: Etc/UTC
       - file:
           path: /etc/localtime
           absent: true
-`), "", "s: file /etc/localtime: the path /etc/localtime is also in s: timezone Etc/UTC, with other arguments"},
+`), "", "s: file /etc/localtime: the path /etc/localtime is also in s#1 timezone Etc/UTC, with other arguments; use one step"},
 		{"a certbot and a file on its renewal file", steps(`      - certbot:
           name: example.com
           domains: example.com
@@ -583,7 +583,7 @@ handlers:
       - file:
           path: /etc/letsencrypt/renewal/example.com.conf
           content: ""
-`), "", "s: file /etc/letsencrypt/renewal/example.com.conf: the path /etc/letsencrypt/renewal/example.com.conf is also in s: certbot example.com, with other arguments"},
+`), "", "s: file /etc/letsencrypt/renewal/example.com.conf: the path /etc/letsencrypt/renewal/example.com.conf is also in s#1 certbot example.com, with other arguments; use one step"},
 		{"a unit and a file on one path", steps(`      - recipe: web
       - file:
           path: /etc/systemd/system/app.service
@@ -592,7 +592,7 @@ handlers:
   - unit:
       name: app.service
       source: app.service
-`, "s: file /etc/systemd/system/app.service: the path /etc/systemd/system/app.service is also in web: unit app.service, with other arguments"},
+`, "s: file /etc/systemd/system/app.service: the path /etc/systemd/system/app.service is also in web#1 unit app.service, with other arguments; use one step"},
 		{"one unit from two files", steps(`      - recipe: web
 `), `steps:
   - unit:
@@ -601,7 +601,7 @@ handlers:
   - unit:
       name: app.service
       source: other.service
-`, "web: unit app.service: the path /etc/systemd/system/app.service is also in web: unit app.service, with other arguments"},
+`, "web: unit app.service: the path /etc/systemd/system/app.service is also in web#1 unit app.service, with other arguments; use one step"},
 		{"a unit and a service step on one unit", steps(`      - recipe: web
 `), `steps:
   - unit:
@@ -619,7 +619,7 @@ handlers:
   - unit:
       name: app.service
       source: app.service
-`, "web: unit app.service: web: service app uses app.service before this step writes it; move this step before it"},
+`, "web: unit app.service: web#1 service app uses app.service before this step writes it; move this step before it"},
 		{"a service step on an instance before the unit step of its template", `stages:
   - name: s
     hosts: all
@@ -635,21 +635,21 @@ handlers:
   - unit:
       name: app@.service
       source: app.service
-`, "web: unit app@.service: s: service app@a uses app@.service before this step writes it; move this step before it"},
+`, "web: unit app@.service: s#1 service app@a uses app@.service before this step writes it; move this step before it"},
 		{"a dir removed and a file in it", steps(`      - dir:
           path: /etc/nginx/conf.d
           absent: true
       - file:
           path: /etc/nginx/conf.d/a.conf
           content: ""
-`), "", "s: file /etc/nginx/conf.d/a.conf: s: dir /etc/nginx/conf.d removes /etc/nginx/conf.d/a.conf, which this step writes; the two steps undo each other on every run"},
+`), "", "s: file /etc/nginx/conf.d/a.conf: s#1 dir /etc/nginx/conf.d removes /etc/nginx/conf.d/a.conf, which this step writes; the two steps undo each other on every run"},
 		{"a file and a dir removed around it", steps(`      - file:
           path: /etc/nginx/conf.d/a.conf
           content: ""
       - dir:
           path: /etc/nginx/conf.d
           absent: true
-`), "", "s: dir /etc/nginx/conf.d: this step removes /etc/nginx/conf.d/a.conf, which s: file /etc/nginx/conf.d/a.conf writes; the two steps undo each other on every run"},
+`), "", "s: dir /etc/nginx/conf.d: this step removes /etc/nginx/conf.d/a.conf, which s#1 file /etc/nginx/conf.d/a.conf writes; the two steps undo each other on every run"},
 		{"a dir removed and a line in another stage", `stages:
   - name: s
     hosts: all
@@ -664,7 +664,7 @@ handlers:
       - dir:
           path: /etc/app
           absent: true
-`, "", "t: dir /etc/app: this step removes /etc/app/conf/main.conf, which s: line /etc/app/conf/main.conf writes; the two steps undo each other on every run"},
+`, "", "t: dir /etc/app: this step removes /etc/app/conf/main.conf, which s#1 line /etc/app/conf/main.conf writes; the two steps undo each other on every run"},
 		{"a file that replaces a parent of a file", steps(`      - file:
           path: /etc/a
           content: ""
@@ -672,7 +672,7 @@ handlers:
       - file:
           path: /etc/a/b
           content: ""
-`), "", "s: file /etc/a/b: s: file /etc/a removes /etc/a/b, which this step writes; the two steps undo each other on every run"},
+`), "", "s: file /etc/a/b: s#1 file /etc/a removes /etc/a/b, which this step writes; the two steps undo each other on every run"},
 		{"a dir below a link with replace", steps(`      - dir:
           path: /var/www/html/static
       - link:
@@ -695,14 +695,14 @@ handlers:
           path: /etc/a
           content: ""
           replace: true
-`), "", "s: file /etc/a: this step removes /etc/a/b, which s: file /etc/a/b writes; the two steps undo each other on every run"},
+`), "", "s: file /etc/a: this step removes /etc/a/b, which s#1 file /etc/a/b writes; the two steps undo each other on every run"},
 		{"a dir removed and a cmd that creates a path in it", steps(`      - cmd:
           command: make
           creates: /opt/a/done
       - dir:
           path: /opt/a
           absent: true
-`), "", "s: dir /opt/a: this step removes /opt/a/done, which s: cmd make writes; the two steps undo each other on every run"},
+`), "", "s: dir /opt/a: this step removes /opt/a/done, which s#1 cmd make writes; the two steps undo each other on every run"},
 		{"a stopped service before the unit step of its unit", steps(`      - recipe: web
 `), `steps:
   - service:
@@ -741,7 +741,7 @@ handlers:
       - file:
           path: /etc/systemd/system/app.service.d/override.conf
           content: "[Service]\nEnvironment=A=1\n"
-`), "", "s: file /etc/systemd/system/app.service.d/override.conf: s: service app starts or enables app.service before this step changes its drop-in; move this step before it"},
+`), "", "s: file /etc/systemd/system/app.service.d/override.conf: s#1 service app starts or enables app.service before this step changes its drop-in; move this step before it"},
 		{"a line in a drop-in after a service step that enables its unit", steps(`      - service:
           name: app
           enabled: true
@@ -749,21 +749,21 @@ handlers:
           path: /etc/systemd/system/app.service.d/override.conf
           line: Environment=A=1
           match: "^Environment=A="
-`), "", "s: line /etc/systemd/system/app.service.d/override.conf: s: service app starts or enables app.service before this step changes its drop-in; move this step before it"},
+`), "", "s: line /etc/systemd/system/app.service.d/override.conf: s#1 service app starts or enables app.service before this step changes its drop-in; move this step before it"},
 		{"a link drop-in after the service step of an instance", steps(`      - service:
           name: app@a
           running: true
       - link:
           path: /etc/systemd/system/app@.service.d/override.conf
           target: /srv/app/override.conf
-`), "", "s: link /etc/systemd/system/app@.service.d/override.conf: s: service app@a starts or enables app@.service before this step changes its drop-in; move this step before it"},
+`), "", "s: link /etc/systemd/system/app@.service.d/override.conf: s#1 service app@a starts or enables app@.service before this step changes its drop-in; move this step before it"},
 		{"an instance drop-in after the service step of the instance", steps(`      - service:
           name: app@a
           running: true
       - file:
           path: /etc/systemd/system/app@a.service.d/override.conf
           content: ""
-`), "", "s: file /etc/systemd/system/app@a.service.d/override.conf: s: service app@a starts or enables app@a.service before this step changes its drop-in; move this step before it"},
+`), "", "s: file /etc/systemd/system/app@a.service.d/override.conf: s#1 service app@a starts or enables app@a.service before this step changes its drop-in; move this step before it"},
 		{"a drop-in that notifies, after the service step of its unit", steps(`      - recipe: web
 `), `steps:
   - service:
@@ -794,14 +794,14 @@ handlers:
     - service:
         name: app
         restarted: true
-`, "s: file /etc/systemd/system/app.service.d/override.conf: s: service app starts or enables app.service before this step changes its drop-in; move this step before it"},
+`, "s: file /etc/systemd/system/app.service.d/override.conf: s#2 service app starts or enables app.service before this step changes its drop-in; move this step before it"},
 		{"a drop-in removed after the service step of its unit", steps(`      - service:
           name: app.service
           running: true
       - file:
           path: /etc/systemd/system/app.service.d/override.conf
           absent: true
-`), "", "s: file /etc/systemd/system/app.service.d/override.conf: s: service app.service starts or enables app.service before this step changes its drop-in; move this step before it"},
+`), "", "s: file /etc/systemd/system/app.service.d/override.conf: s#1 service app.service starts or enables app.service before this step changes its drop-in; move this step before it"},
 		{"a drop-in before the service step of its unit", steps(`      - file:
           path: /etc/systemd/system/app.service.d/override.conf
           content: ""
@@ -861,7 +861,7 @@ handlers:
           path: /etc/redis/redis.conf
           line: port 6381
           match: "^port "
-`), "", `s: line /etc/redis/redis.conf: the match "^port " finds the line of s: line /etc/redis/redis.conf; the two steps change it on every run`},
+`), "", `s: line /etc/redis/redis.conf: the match "^port " finds the line of s#1 line /etc/redis/redis.conf; the two steps change it on every run`},
 		{"a match that finds the line of an earlier step", steps(`      - line:
           path: /etc/ssh/sshd_config
           line: Port 22
@@ -870,7 +870,7 @@ handlers:
           path: /etc/ssh/sshd_config
           line: Port 2222
           match: "^#?Port "
-`), "", `s: line /etc/ssh/sshd_config: the match "^#?Port " finds the line of s: line /etc/ssh/sshd_config; the two steps change it on every run`},
+`), "", `s: line /etc/ssh/sshd_config: the match "^#?Port " finds the line of s#1 line /etc/ssh/sshd_config; the two steps change it on every run`},
 		{"a line that the match of an earlier step finds", steps(`      - line:
           path: /etc/ssh/sshd_config
           line: Port 22
@@ -879,7 +879,7 @@ handlers:
           path: /etc/ssh/sshd_config
           line: Port 2222
           match: "^Port 2222"
-`), "", `s: line /etc/ssh/sshd_config: the match "^Port" of s: line /etc/ssh/sshd_config finds the line of this step; the two steps change it on every run`},
+`), "", `s: line /etc/ssh/sshd_config: the match "^Port" of s#1 line /etc/ssh/sshd_config finds the line of this step; the two steps change it on every run`},
 		{"an absent line that removes the line of an earlier step", steps(`      - line:
           path: /etc/ssh/sshd_config
           line: PermitRootLogin no
@@ -888,7 +888,7 @@ handlers:
           path: /etc/ssh/sshd_config
           match: "^PermitRootLogin"
           absent: true
-`), "", `s: line /etc/ssh/sshd_config: the match "^PermitRootLogin" finds the line of s: line /etc/ssh/sshd_config; the two steps change it on every run`},
+`), "", `s: line /etc/ssh/sshd_config: the match "^PermitRootLogin" finds the line of s#1 line /etc/ssh/sshd_config; the two steps change it on every run`},
 		{"a line that an earlier absent step removes", steps(`      - line:
           path: /etc/ssh/sshd_config
           match: "^PermitRootLogin"
@@ -897,7 +897,7 @@ handlers:
           path: /etc/ssh/sshd_config
           line: PermitRootLogin no
           match: "^PermitRootLogin "
-`), "", `s: line /etc/ssh/sshd_config: the match "^PermitRootLogin" of s: line /etc/ssh/sshd_config finds the line of this step; the two steps change it on every run`},
+`), "", `s: line /etc/ssh/sshd_config: the match "^PermitRootLogin" of s#1 line /etc/ssh/sshd_config finds the line of this step; the two steps change it on every run`},
 		{"a line and an absent step with other matches", steps(`      - line:
           path: /etc/ssh/sshd_config
           line: Port 2222
@@ -932,7 +932,7 @@ handlers:
           path: /etc/a
           line: port 2
           match: "^port "
-`), "", "s: line /etc/a: the path /etc/a is also in s: file /etc/a, with other arguments"},
+`), "", "s: line /etc/a: the path /etc/a is also in s#1 file /etc/a, with other arguments; use one step"},
 		{"a line and a file on one path", steps(`      - line:
           path: /etc/a
           line: port 2
@@ -940,7 +940,7 @@ handlers:
       - file:
           path: /etc/a
           content: "port 1\n"
-`), "", "s: file /etc/a: the path /etc/a is also in s: line /etc/a, with other arguments"},
+`), "", "s: file /etc/a: the path /etc/a is also in s#1 line /etc/a, with other arguments; use one step"},
 		{"a debconf answer after the install of its package", steps(`      - pkg:
           name: [curl, postfix]
       - debconf:
@@ -948,7 +948,7 @@ handlers:
           question: postfix/main_mailer_type
           type: select
           value: Local only
-`), "", "s: debconf postfix/main_mailer_type: s: pkg curl, postfix installs postfix before this step sets the answer; move this step before it"},
+`), "", "s: debconf postfix/main_mailer_type: s#1 pkg curl, postfix installs postfix before this step sets the answer; move this step before it"},
 		{"a debconf answer in a later stage", `stages:
   - name: s
     hosts: all
@@ -963,7 +963,7 @@ handlers:
           question: postfix/main_mailer_type
           type: select
           value: Local only
-`, "", "t: debconf postfix/main_mailer_type: s: pkg postfix installs postfix before this step sets the answer; move this step before it"},
+`, "", "t: debconf postfix/main_mailer_type: s#1 pkg postfix installs postfix before this step sets the answer; move this step before it"},
 		{"a debconf answer before the install of its package", steps(`      - debconf:
           package: postfix
           question: postfix/main_mailer_type

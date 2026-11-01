@@ -115,6 +115,8 @@ type Module interface {
 type Say interface {
 	// Note tells a fact about the host that needs no fix.
 	Note(text string)
+	// Warn tells a problem on the host to fix.
+	Warn(text string)
 	// Progress tells what the host does now.
 	Progress(text string)
 }
@@ -123,6 +125,8 @@ type Say interface {
 type Silent struct{}
 
 func (Silent) Note(string) {}
+
+func (Silent) Warn(string) {}
 
 func (Silent) Progress(string) {}
 

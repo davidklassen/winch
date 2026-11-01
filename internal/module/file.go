@@ -52,6 +52,8 @@ type File struct {
 	Replace    bool           `yaml:"replace" json:"replace,omitempty" line:"remove another kind of thing at path first" doc:"Remove another kind of thing at path first, such as a directory. Without it, such a thing fails the check."`
 }
 
+func (*File) Noun() string { return "a file step" }
+
 func (f *File) Main() string { return f.Path }
 
 func (f *File) ValidateCommand() string {
@@ -150,10 +152,10 @@ const maxSeconds = math.MaxInt64 / int64(time.Second)
 // a time.Duration.
 func CheckSeconds(field string, n int) error {
 	if n < 1 {
-		return &yamlx.FieldError{Field: field, Msg: "must be 1 or more seconds"}
+		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf("%d is below 1 second", n)}
 	}
 	if int64(n) > maxSeconds {
-		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf("must be at most %d seconds", maxSeconds)}
+		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf("%d is above %d seconds", n, maxSeconds)}
 	}
 	return nil
 }
@@ -769,7 +771,7 @@ func parts(p string) []string {
 func linkAllowed(dir *os.Root, name string) error {
 	safe, err := onlyRoot(dir)
 	if err == nil && !safe {
-		err = fmt.Errorf("%s is a symbolic link in %s, which a user other than root can write", path.Join(dir.Name(), name), dir.Name())
+		err = fmt.Errorf("winch does not follow %s: it is a symbolic link in %s, which a user other than root can write", path.Join(dir.Name(), name), dir.Name())
 	}
 	return err
 }

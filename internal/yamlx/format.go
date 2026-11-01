@@ -9,7 +9,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-var errLayout = errors.New("cannot format the file without a change to its values")
+var errLayout = errors.New("cannot format the file without a change to its values; change this line by hand, then run winch fmt again")
 
 // layoutError is errLayout at a line, counted from 0.
 type layoutError int

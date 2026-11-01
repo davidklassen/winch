@@ -165,6 +165,9 @@ func (ly layout) inventory(name string) (part, error) {
 	if i := slices.IndexFunc(ly.inventories, func(p part) bool { return p.name == name }); i >= 0 {
 		return ly.inventories[i], nil
 	}
+	if len(ly.inventories) == 1 && ly.inventories[0].top {
+		return part{}, yamlx.Errorf(yamlx.Pos{}, "inventory %q: the hosts at the top of %s are the only inventory; leave out the inventory name", name, ly.inventories[0].file)
+	}
 	base := strings.TrimSuffix(strings.TrimSuffix(path.Base(name), ".yaml"), ".yml")
 	if strings.ContainsRune(name, '/') || base != path.Base(name) {
 		return part{}, yamlx.Errorf(yamlx.Pos{}, "unknown inventory %q; name an inventory without its directory and extension, such as %q", name, base)

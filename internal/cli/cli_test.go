@@ -225,9 +225,12 @@ func TestHelp(t *testing.T) {
 		{"secret-rekey", []string{"secret", "rekey", "-h"}},
 		{"doc", []string{"doc", "--help"}},
 		{"version", []string{"version", "--help"}},
+		{"winch", []string{"help"}},
+		{"plan", []string{"help", "plan"}},
+		{"secret-init", []string{"help", "secret", "init"}},
 	}
 	for _, tt := range tests {
-		t.Run(tt.golden, func(t *testing.T) {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
 			r := winch(t, t.TempDir(), fakehost.New(), false, "", tt.args...)
 			if r.code != exitOK || r.err != "" {
 				t.Errorf("exit %d, stderr %q", r.code, r.err)
@@ -582,7 +585,7 @@ curl -fsSL https://winchstack.app/install.sh | sh
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
-			connect := func(bool, func(string, string)) run.Connect {
+			connect := func(bool, func(run.Note)) run.Connect {
 				t.Error("winch contacted a host")
 				return fakehost.New().ConnectorFor(false, nil)
 			}

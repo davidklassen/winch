@@ -19,7 +19,7 @@ func (l *Line) Writes() []string { return present(l.Absent, l.Path) }
 func (u *Unit) Writes() []string { return []string{u.Path()} }
 
 func (r *Repo) Writes() []string {
-	out := []string{r.sourcePath()}
+	out := []string{r.SourcePath()}
 	if r.Key != "" || r.KeyData != nil {
 		out = append(out, r.keyPath())
 	}

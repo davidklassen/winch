@@ -230,7 +230,7 @@ func takeLock(ctx context.Context, params json.RawMessage, dir, self string) (_ 
 		}
 		msg := fmt.Sprintf("locked by run %s (%s@%s, since %s", held.Run, held.User, held.Machine, held.Started.UTC().Format(time.RFC3339))
 		if held.PID <= 1 {
-			return nil, "", errors.New(msg + ")")
+			return nil, "", fmt.Errorf("%s); if that run is gone, end the process that holds %s", msg, f.Name())
 		}
 		return nil, "", fmt.Errorf("%s, helper process %d); if that run is gone, end it with: sudo kill %d", msg, held.PID, held.PID)
 	}
@@ -392,6 +392,8 @@ type sayer struct {
 }
 
 func (s sayer) Note(text string) { _ = s.enc.Encode(protocol.Response{ID: s.id, Note: text}) }
+
+func (s sayer) Warn(text string) { _ = s.enc.Encode(protocol.Response{ID: s.id, Warning: text}) }
 
 func (s sayer) Progress(text string) { _ = s.enc.Encode(protocol.Response{ID: s.id, Progress: text}) }
 
@@ -613,7 +615,7 @@ func readPending(handlers, thens, checks records) (protocol.Pending, error) {
 		}
 		var t protocol.Then
 		if err := json.Unmarshal([]byte(l), &t); err != nil {
-			return protocol.Pending{}, fmt.Errorf("read the pending then records: %s:%d: %w", filepath.Join(thens.dir, thens.project), i+2, err)
+			return protocol.Pending{}, fmt.Errorf("read the pending then records: %s:%d is not a record; delete the file, and the records in it are lost", filepath.Join(thens.dir, thens.project), i+2)
 		}
 		p.Then = append(p.Then, t)
 	}
@@ -627,7 +629,7 @@ func readPending(handlers, thens, checks records) (protocol.Pending, error) {
 		}
 		var c protocol.Check
 		if err := json.Unmarshal([]byte(l), &c); err != nil {
-			return protocol.Pending{}, fmt.Errorf("read the pending health gates and asserts: %s:%d: %w", filepath.Join(checks.dir, checks.project), i+2, err)
+			return protocol.Pending{}, fmt.Errorf("read the pending health gates and asserts: %s:%d is not a record; delete the file, and the records in it are lost", filepath.Join(checks.dir, checks.project), i+2)
 		}
 		p.Checks = append(p.Checks, c)
 	}

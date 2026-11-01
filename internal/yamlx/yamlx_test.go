@@ -169,6 +169,7 @@ func TestInts(t *testing.T) {
 		{"one", "ports: 22\n", `[22]`},
 		{"list", "ports: [22, 80]\n", `[22 80]`},
 		{"string", "ports: ssh\n", `t.yaml:1:8: ports: expected an integer, got the string "ssh"`},
+		{"number", "ports: 1.5\n", `t.yaml:1:8: ports: expected an integer, got the number 1.5`},
 		{"map", "ports: {a: b}\n", `t.yaml:1:8: ports: expected an integer or a list of integers, got a map`},
 		{"string in list", "ports: [22, ssh]\n", `t.yaml:1:13: ports: expected an integer, got the string "ssh"`},
 	}

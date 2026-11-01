@@ -721,6 +721,14 @@ func TestExprTypeError(t *testing.T) {
 	if got := evalOne(t, "  port: 80\n", "  - file:\n      path: /a\n      content: !expr string(vars.port)\n", nil); got != "80" {
 		t.Errorf("the fix gives %q", got)
 	}
+	got = evalOne(t, "  minutes: 2\n", "  - cmd:\n      command: x\n      timeout: !expr vars.minutes * 60 / 2\n", nil)
+	want = "error: recipes/r/recipe.yaml:4:16: timeout: expected an integer, got the number 60; use int(...) in the expression to make it an integer"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	if got := evalOne(t, "  minutes: 2\n", "  - cmd:\n      command: x\n      timeout: !expr int(vars.minutes * 60 / 2)\n", nil); got != "no error" {
+		t.Errorf("the fix gives %q", got)
+	}
 }
 
 // spec: Templates and expressions/Template functions
@@ -1017,6 +1025,29 @@ func TestLoopNull(t *testing.T) {
 	}
 }
 
+// spec: Recipes (require); CLI/Messages
+func TestRecipeCheckShowsTheFactsItReads(t *testing.T) {
+	const host = `the host has os.id "debian", os.version "13", os.codename "trixie"`
+	for text, want := range map[string]string{
+		`facts.os.id == "ubuntu"`:  host,
+		`facts.os.arch == "arm64"`: host + `, os.arch "amd64"`,
+		`facts.reboot_required`:    host + ", reboot_required false",
+	} {
+		n, err := yamlx.Parse("r.yaml", []byte("!expr '"+text+"'\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := compileRequire(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := &Recipe{Name: "r", Require: []Require{req}}
+		if err := r.Check(debian13); err == nil || !strings.HasSuffix(err.Error(), "; "+want) {
+			t.Errorf("%s: error = %v, want it to end with %q", text, err, want)
+		}
+	}
+}
+
 // spec: Variables ("unless when skips the recipe step there"); Running a pipeline/Plan
 func TestStartRecipeWhen(t *testing.T) {
 	files := map[string]string{
@@ -1059,7 +1090,7 @@ func TestStartRecipeWhen(t *testing.T) {
 		}
 	}
 	_, err = p.Start(p.Inventory.Hosts[1], debian13)
-	if want := `recipes/r/recipe.yaml:2:5: vars.r_x has no value on host web2`; err == nil || err.Error() != want {
+	if want := `recipes/r/recipe.yaml:2:5: vars.r_x has no value on host web2; set it in the inventory for this host, or give it a default`; err == nil || err.Error() != want {
 		t.Errorf("web2: got %v, want %s", err, want)
 	}
 }
@@ -1369,15 +1400,15 @@ func TestReadsNeedValue(t *testing.T) {
 		want           []string
 	}{
 		{"both hosts read", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: r\n",
-			[]string{"web1: <nil>", `web2: recipes/r/recipe.yaml:2:5: vars.domain has no value on host web2`}},
+			[]string{"web1: <nil>", `web2: recipes/r/recipe.yaml:2:5: vars.domain has no value on host web2; set it in the inventory for this host, or give it a default`}},
 		{"one host reads", "stages:\n  - name: a\n    hosts: web1\n    steps:\n      - recipe: r\n",
 			[]string{"web1: <nil>", "web2: <nil>"}},
 		{"when skips the recipe", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: r\n        when: !expr 'host.name == \"web1\"'\n",
 			[]string{"web1: <nil>", "web2: <nil>"}},
 		{"a when reads", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: x\n        when: !expr vars.domain != \"\"\n",
-			[]string{"web1: <nil>", `web2: pipelines/site.yaml:8:15: vars.domain has no value on host web2`}},
+			[]string{"web1: <nil>", `web2: pipelines/site.yaml:8:15: vars.domain has no value on host web2; set it in the inventory for this host, or give it a default`}},
 		{"a default reads", "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: !expr vars.url\n",
-			[]string{"web1: <nil>", `web2: pipelines/site.yaml:5:9: vars.domain has no value on host web2`}},
+			[]string{"web1: <nil>", `web2: pipelines/site.yaml:5:9: vars.domain has no value on host web2; set it in the inventory for this host, or give it a default`}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

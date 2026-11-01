@@ -32,6 +32,7 @@ func TestShell(t *testing.T) {
 		{"stops at the first failure", "false; echo after", "false; echo after: exit status 1"},
 		{"runs in /", `[ "$(pwd)" = / ]`, ""},
 		{"a background child keeps the output open", "sleep 15 &", ""},
+		{"a script of several lines", "true\nfalse\ntrue\n", "true ...: exit status 1"},
 		{"failure", "seq 20; echo 'the cause' >&2; exit 3", "seq 20; echo 'the cause' >&2; exit 3: exit status 3: 12\n13\n14\n15\n16\n17\n18\n19\n20\nthe cause"},
 	}
 	for _, tt := range tests {
@@ -117,7 +118,7 @@ func TestTimeLimit(t *testing.T) {
 				"echo $! > " + dir + "/pid; wait"
 			start := time.Now()
 			err := tt.run(t.Context(), command)
-			if err == nil || !strings.HasSuffix(err.Error(), "no result after 1s: 12\n13\n14\n15\n16\n17\n18\n19\n20\nwaiting") {
+			if err == nil || !strings.HasSuffix(err.Error(), "stopped after 1s: 12\n13\n14\n15\n16\n17\n18\n19\n20\nwaiting") {
 				t.Fatalf("error = %v, want the time limit", err)
 			}
 			if d := time.Since(start); d < 2*time.Second || d >= time.Second+KillDelay {
@@ -154,7 +155,7 @@ func TestTimeLimitEndsWhenTheCommandStops(t *testing.T) {
 			t.Parallel()
 			start := time.Now()
 			err := tt.run(t.Context(), "sleep 30 & wait")
-			if err == nil || !strings.HasSuffix(err.Error(), ": no result after 1s") {
+			if err == nil || !strings.HasSuffix(err.Error(), ": stopped after 1s") {
 				t.Fatalf("error = %v, want it to end at the time limit", err)
 			}
 			if d := time.Since(start); d >= time.Second+killDelay {
@@ -238,9 +239,10 @@ func TestRunWithoutLimit(t *testing.T) {
 // spec: CLI/Messages
 func TestNoResultSeconds(t *testing.T) {
 	for limit, want := range map[time.Duration]string{
-		commandLimit:            "no result after 600s",
-		90 * time.Second:        "no result after 90s",
-		1500 * time.Millisecond: "no result after 1.5s",
+		commandLimit:            "stopped after 600s",
+		90 * time.Second:        "stopped after 90s",
+		1500 * time.Millisecond: "stopped after 1.5s",
+		1000000 * time.Second:   "stopped after 1000000s",
 	} {
 		if got := noResult(limit).Error(); got != want {
 			t.Errorf("%v: got %q, want %q", limit, got, want)

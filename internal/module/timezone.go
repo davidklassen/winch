@@ -18,6 +18,8 @@ type Timezone struct {
 	Name string `yaml:"name,required" json:"name" line:"zone name, such as Europe/Berlin" doc:"Zone name, such as Europe/Berlin."`
 }
 
+func (*Timezone) Noun() string { return "a timezone step" }
+
 func (z *Timezone) Main() string { return z.Name }
 
 var zoneRe = regexp.MustCompile(`^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$`)
@@ -79,6 +81,14 @@ func (z *Timezone) missing() (bool, error) {
 	return zoneMissing(zoneinfo, z.Name)
 }
 
+// unknownZone is the error for the zone name that has no file in dir.
+func unknownZone(dir, name string) error {
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("unknown time zone %s: %s does not exist; install the package tzdata in an earlier pkg step", name, strings.TrimSuffix(dir, "/"))
+	}
+	return fmt.Errorf("unknown time zone %s: %s%s does not exist; an old name such as US/Eastern needs the package tzdata-legacy", name, dir, name)
+}
+
 // zoneMissing reports whether the zone name has no file in dir: an earlier
 // step, such as an install of tzdata-legacy, can still add it.
 func zoneMissing(dir, name string) (bool, error) {
@@ -127,7 +137,7 @@ func (z *Timezone) Apply(ctx context.Context, _ Say) error {
 		return err
 	}
 	if missing {
-		return fmt.Errorf("unknown time zone %s: %s%s does not exist; an old name such as US/Eastern needs the package tzdata-legacy", z.Name, zoneinfo, z.Name)
+		return unknownZone(zoneinfo, z.Name)
 	}
 	if _, err := run(ctx, nil, "timedatectl", "set-timezone", "--", z.Name); err != nil {
 		return err

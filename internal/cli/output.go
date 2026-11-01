@@ -112,32 +112,35 @@ func (o *output) plan(pl *run.Plan) {
 		return
 	}
 	for _, n := range pl.Notes() {
-		o.note(n.Host, n.Text)
+		o.note(n)
 	}
 	pl.WriteJSON(o.ev)
 }
 
-// note shows a note about host once per run: on stderr, or as a diagnostic
-// event.
-func (o *output) note(host, text string) {
+// note shows a note or a warning about a host once per run: on stderr, or
+// as a diagnostic event.
+func (o *output) note(n run.Note) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	n := run.Note{Host: host, Text: text}
 	if o.noted[n] {
 		return
 	}
 	o.noted[n] = true
 	if o.ev == nil {
-		run.WriteNote(o.env.stderr, host, text)
+		run.WriteNote(o.env.stderr, n)
 		return
 	}
-	o.ev.Write("diagnostic", diagnostic{Severity: "note", Host: host, Message: secret.Printable(text)})
+	severity := "note"
+	if n.Warning {
+		severity = "warning"
+	}
+	o.ev.Write("diagnostic", diagnostic{Severity: severity, Host: n.Host, Message: secret.Printable(n.Text)})
 }
 
 type summary struct {
 	plan  *run.Plan
 	apply *run.Outcome
-	// command applies the plan when a confirmation is needed.
+	// command applies the plan when winch cannot ask the question.
 	command string
 }
 

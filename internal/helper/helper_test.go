@@ -157,11 +157,11 @@ func TestLockWithoutPID(t *testing.T) {
 	}{
 		{"empty", "", "locked by another run that is starting; run winch again to see which one"},
 		{"half written", `{"run":"r2"}ne","started":"2026-10-24T12:00:00Z"}`, "locked by another run that is starting; run winch again to see which one"},
-		{"no pid", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z"}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
-		{"pid not a number", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":"x"}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
-		{"pid 0", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":0}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
-		{"pid -1", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":-1}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
-		{"pid 1", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":1}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z)"},
+		{"no pid", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z"}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z); if that run is gone, end the process that holds "},
+		{"pid not a number", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":"x"}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z); if that run is gone, end the process that holds "},
+		{"pid 0", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":0}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z); if that run is gone, end the process that holds "},
+		{"pid -1", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":-1}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z); if that run is gone, end the process that holds "},
+		{"pid 1", `{"run":"r1","user":"alice","machine":"laptop","started":"2026-10-24T12:00:00Z","pid":1}`, "locked by run r1 (alice@laptop, since 2026-10-24T12:00:00Z); if that run is gone, end the process that holds "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -176,9 +176,13 @@ func TestLockWithoutPID(t *testing.T) {
 			if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 				t.Fatal(err)
 			}
+			want := tc.want
+			if strings.HasSuffix(want, " holds ") {
+				want += filepath.Join(dir, "lock")
+			}
 			r := start(t, dir, "").call(t, "hello", hello("r1"))
-			if r.Error != tc.want {
-				t.Errorf("hello error = %q, want %q", r.Error, tc.want)
+			if r.Error != want {
+				t.Errorf("hello error = %q, want %q", r.Error, want)
 			}
 		})
 	}
@@ -811,19 +815,19 @@ func TestDamagedState(t *testing.T) {
 	}{
 		{"truncated then record", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "then", "acme"), "version 1\n{\"recipe\":\"a\",\"step\":1}\n\n{\"recipe\":\n")
-		}, "read the pending then records: DIR/then/acme:4: unexpected end of JSON input"},
+		}, "read the pending then records: DIR/then/acme:4 is not a record; delete the file, and the records in it are lost"},
 		{"then line that is not JSON", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "then", "acme"), "version 1\npostmap /etc/postfix/virtual\n")
-		}, "read the pending then records: DIR/then/acme:2: invalid character 'p' looking for beginning of value"},
+		}, "read the pending then records: DIR/then/acme:2 is not a record; delete the file, and the records in it are lost"},
 		{"truncated check record", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "checks", "acme"), "version 1\n{\"pipeline\":\n")
-		}, "read the pending health gates and asserts: DIR/checks/acme:2: unexpected end of JSON input"},
+		}, "read the pending health gates and asserts: DIR/checks/acme:2 is not a record; delete the file, and the records in it are lost"},
 		{"newer version", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "handlers", "acme"), "version 2\napp.restart\n")
 		}, "upgrade winch to read DIR/handlers/acme"},
 		{"no version", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "handlers", "acme"), "app.restart\n")
-		}, "read the pending handlers: DIR/handlers/acme: no format version"},
+		}, "read the pending handlers: DIR/handlers/acme has no format version; delete it, and the records in it are lost"},
 		{"directory in place of the handlers", func(t *testing.T, dir string) {
 			mkdir(t, filepath.Join(dir, "handlers", "acme"))
 		}, "read the pending handlers: read DIR/handlers/acme: is a directory"},
@@ -906,11 +910,11 @@ func TestFailedApplyRemovesItsRecords(t *testing.T) {
 	}
 
 	failing := protocol.Then{Recipe: "nginx", Module: "file", Mains: []string{"2"}}
-	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("false"), Notify: []string{"nginx.reload", "nginx.restart"}, Then: &failing}); !strings.Contains(r.Error, "validate: false") {
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("false"), Notify: []string{"nginx.reload", "nginx.restart"}, Then: &failing}); !strings.Contains(r.Error, "validate failed, and the old file is back: false") {
 		t.Fatalf("apply error = %q, want the validate error", r.Error)
 	}
 	// A failed apply of the same then keeps the record of the earlier apply.
-	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("false"), Then: &earlier}); !strings.Contains(r.Error, "validate: false") {
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("false"), Then: &earlier}); !strings.Contains(r.Error, "validate failed, and the old file is back: false") {
 		t.Fatalf("apply error = %q, want the validate error", r.Error)
 	}
 	p := pendingAll(t, c)

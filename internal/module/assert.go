@@ -15,6 +15,8 @@ type Assert struct {
 	Message string `yaml:"message,required" json:"message" line:"error when the check fails" doc:"Error when the check fails. The host fails with it when the command exits non-zero, followed by the shell's error when the exit is 126 or 127."`
 }
 
+func (*Assert) Noun() string { return "an assert step" }
+
 func (a *Assert) Main() string { return strings.TrimSuffix(a.Command, "\n") }
 
 func (a *Assert) Validate() error {

@@ -45,7 +45,7 @@ func TestFrame(t *testing.T) {
 			h.FailCommand("web1", "probe")
 		}, args: []string{"apply", "site", "--yes"}},
 		{name: "note", pipeline: firewallStep, setup: func(h *fakehost.Hosts) {
-			h.SetNote("web1", "/etc/motd", "the certificate a expires on 2026-11-20; check its renewal")
+			h.SetNote("web1", "/etc/motd", "the certificate a expires on 2026-11-20; certbot renew --dry-run --cert-name a shows why certbot does not renew it", true)
 			h.SetResult("web1", "", module.Result{Status: module.Change, Action: module.Create, Changes: []string{"load the rules"},
 				MissingTools: []module.Tool{{Name: "nft", Package: "nftables"}}})
 		}, args: []string{"apply", "site", "--yes"}},

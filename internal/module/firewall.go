@@ -26,6 +26,8 @@ type Firewall struct {
 	load, stop, reload, deleteTable           bool
 }
 
+func (*Firewall) Noun() string { return "a firewall step" }
+
 // Rule accepts traffic to its ports from the sources in From, or from every
 // source.
 type Rule struct {
@@ -277,6 +279,7 @@ func (f *Firewall) checkSSH(conn string) error {
 	if client.IsLoopback() {
 		return nil
 	}
+	fix := fmt.Sprintf("add a rule with tcp: %d", port)
 	for _, r := range f.Allow {
 		if !slices.Contains(r.TCP, port) {
 			continue
@@ -284,8 +287,9 @@ func (f *Firewall) checkSSH(conn string) error {
 		if r.From == nil || slices.ContainsFunc(r.sources(), func(p netip.Prefix) bool { return p.Contains(client) }) {
 			return nil
 		}
+		fix = fmt.Sprintf("add %s to from in the rule with tcp: %d", client, port)
 	}
-	return fmt.Errorf("the rules close the SSH port %d that winch uses", port)
+	return fmt.Errorf("no rule accepts TCP port %d from %s, the address that winch connects from; %s", port, client, fix)
 }
 
 // ruleChanges lists the rules that the step adds to the file old, and the

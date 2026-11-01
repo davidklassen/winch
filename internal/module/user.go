@@ -58,6 +58,8 @@ type User struct {
 	loginGroups *[]string
 }
 
+func (*User) Noun() string { return "a user step" }
+
 // hashRe matches a crypt hash, such as $y$… or $6$…, also locked with "!",
 // and the passwords "!" and "*" that lock the account.
 var hashRe = regexp.MustCompile(`^(!?\$[0-9a-z]+\$[./0-9A-Za-z$=,+-]+|!|\*)$`)
@@ -320,7 +322,7 @@ func (u *User) checkAbsent(a accounts, cur passwdEntry, exists bool, st *State) 
 		return Result{}, err
 	}
 	if len(procs) > 0 {
-		res.Changes = append(res.Changes, fmt.Sprintf("processes of %s run (%s); userdel fails while they run", u.Name, strings.Join(procs, ", ")))
+		res.Changes = append(res.Changes, fmt.Sprintf("%s has running processes (%s); userdel fails while they run", u.Name, strings.Join(procs, ", ")))
 	}
 	return res, nil
 }
@@ -554,7 +556,7 @@ func (u *User) checkExisting(a accounts, cur passwdEntry, st *State) (Result, st
 			return Result{}, "", "", err
 		}
 		if len(procs) > 0 {
-			changes = append(changes, fmt.Sprintf("processes of %s run (%s); usermod fails while they run", u.Name, strings.Join(procs, ", ")))
+			changes = append(changes, fmt.Sprintf("%s has running processes (%s); usermod fails while they run", u.Name, strings.Join(procs, ", ")))
 		}
 	}
 	// usermod and chpasswd open /etc/passwd and /etc/shadow for any change.
@@ -584,7 +586,7 @@ func passwordChange(cur, want string) string {
 	case !locked(want) && cur == "!"+want:
 		return "unlock the password"
 	}
-	return "change password"
+	return "change the password"
 }
 
 // checkShell fails when shell exists and is not an executable file. It
@@ -711,7 +713,7 @@ func (u *User) checkSSHD(ctx context.Context, sshConnection string, a accounts, 
 			}
 		}
 		if strings.HasPrefix(pw, "!") {
-			return fmt.Errorf(`with UsePAM no, sshd refuses the login of %s: its password is locked with "!"`, u.Name)
+			return fmt.Errorf(`with UsePAM no, sshd refuses the login of %s: its password is locked with "!"; set password: "*" for key logins without a password`, u.Name)
 		}
 	}
 	return nil
@@ -753,7 +755,7 @@ func (u *User) safeHome(a accounts, cur passwdEntry, exists bool, home, group st
 		gid = g.gid
 	}
 	if st.Mode&0o020 != 0 && !u.ownGroup(a, gid, group, owner) {
-		return fmt.Errorf("with StrictModes yes, sshd ignores the keys of %s: the group %s can write %s (mode %04o) and is not the own group of %s alone", u.Name, a.groupName(gid), home, st.Mode&0o7777, u.Name)
+		return fmt.Errorf("with StrictModes yes, sshd ignores the keys of %s: the group %s can write %s (mode %04o), and it is not a group of %s alone", u.Name, a.groupName(gid), home, st.Mode&0o7777, u.Name)
 	}
 	return nil
 }

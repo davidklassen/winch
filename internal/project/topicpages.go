@@ -616,7 +616,7 @@ var workflowTopic = doc.Topic{
 			{"2", "plan --exit-code: apply would change something"},
 			{"3", "invalid command line or project; nothing ran"},
 			{"4", "one or more hosts were unreachable, and no step failed"},
-			{"5", "confirmation needed; nothing changed"},
+			{"5", "winch cannot ask the question; nothing changed"},
 			{"6", "the plan hash differs from --check; nothing changed"},
 		}),
 		doc.Paragraph(`When several apply, the first in the order 3, 1, 4, 6, 5, 2, 0 wins.`),

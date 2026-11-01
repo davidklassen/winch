@@ -107,7 +107,7 @@ systemctl daemon-reload && systemctl enable winch-bsock.socket && systemctl show
 			"pipelines/both.yaml":   pipeline + stopSock + stopSocket,
 		})
 		r := lab.Winch(t, dir, "plan", "alone")
-		if want := "s: service winch-sock: winch-sock.service is started by winch-sock.socket; add a step for winch-sock.socket"; r.Code != 1 || !strings.Contains(r.Stderr, want) {
+		if want := "s: service winch-sock: winch-sock.socket starts winch-sock.service; add a service step that stops and disables winch-sock.socket"; r.Code != 1 || !strings.Contains(r.Stderr, want) {
 			t.Fatalf("plan without a step for the socket: exit %d, stderr %q, want %q", r.Code, r.Stderr, want)
 		}
 		r = lab.Winch(t, dir, "apply", "both", "--yes")

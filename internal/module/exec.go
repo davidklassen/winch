@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,12 +23,12 @@ const (
 
 // noResult is the cause of a command that ran longer than limit.
 func noResult(limit time.Duration) error {
-	return fmt.Errorf("no result after %s", Seconds(limit))
+	return fmt.Errorf("stopped after %s", Seconds(limit))
 }
 
 // Seconds formats d in seconds for a message: 600s, 0.3s.
 func Seconds(d time.Duration) string {
-	return fmt.Sprintf("%gs", d.Seconds())
+	return strconv.FormatFloat(d.Seconds(), 'f', -1, 64) + "s"
 }
 
 // run runs a command and returns its output. On a failure, the error holds
@@ -68,6 +69,15 @@ func runLimited(ctx context.Context, limit, killDelay time.Duration, env []strin
 	return stdout.String(), nil
 }
 
+// FirstLine is the first line of s, and " ..." when it has more.
+func FirstLine(s string) string {
+	first, rest, _ := strings.Cut(strings.TrimSuffix(s, "\n"), "\n")
+	if rest != "" {
+		return first + " ..."
+	}
+	return first
+}
+
 func failure(what string, err error, out string) error {
 	out = strings.TrimSpace(out)
 	if out == "" {
@@ -86,7 +96,7 @@ func Shell(ctx context.Context, command string) error {
 // ShellLimit is Shell with the time limit limit. After the limit, the command
 // gets SIGTERM, and SIGKILL when it still runs after killDelay.
 func ShellLimit(ctx context.Context, command string, limit, killDelay time.Duration) error {
-	return shellLimit(ctx, command, "/", nil, nil, limit, killDelay)
+	return shellLimit(ctx, command, "/", nil, nil, limit, killDelay, "")
 }
 
 // runAs is the user that a command runs as, with the IDs of its groups.
@@ -96,12 +106,12 @@ type runAs struct {
 }
 
 // shellLimit is ShellLimit in dir, with env, and as the user as when it is
-// not nil.
-func shellLimit(ctx context.Context, command, dir string, env []string, as *runAs, limit, killDelay time.Duration) error {
+// not nil. A key that is not empty is the key of the step that sets limit.
+func shellLimit(ctx context.Context, command, dir string, env []string, as *runAs, limit, killDelay time.Duration, key string) error {
 	// The error shows only the end of the output.
 	out := &tailBuffer{max: 64 << 10}
-	if err := shell(ctx, "-ec", command, dir, env, as, limit, killDelay, out); err != nil {
-		return failure(command, err, string(out.tail()))
+	if err := shell(ctx, "-ec", command, dir, env, as, limit, key, killDelay, out); err != nil {
+		return failure(FirstLine(command), err, string(out.tail()))
 	}
 	return nil
 }
@@ -113,8 +123,12 @@ func shellLimit(ctx context.Context, command, dir string, env []string, as *runA
 // sh reads the command from a pipe on fd 3, as every local user can read
 // the arguments of a process. A script file does not work for a user other
 // than root: the file would have to be readable by that user.
-func shell(ctx context.Context, options, command, dir string, env []string, as *runAs, limit, killDelay time.Duration, out *tailBuffer) error {
-	ctx, cancel := context.WithTimeoutCause(ctx, limit, noResult(limit))
+func shell(ctx context.Context, options, command, dir string, env []string, as *runAs, limit time.Duration, key string, killDelay time.Duration, out *tailBuffer) error {
+	stop := noResult(limit)
+	if key != "" {
+		stop = fmt.Errorf("%w; set %s for a longer limit", stop, key)
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, limit, stop)
 	defer cancel()
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -220,7 +234,7 @@ func Exec(ctx context.Context, command string) (ExecResult, error) {
 // results; the time limit is an error.
 func execLimit(ctx context.Context, command string, limit, killDelay time.Duration) (ExecResult, error) {
 	out := &tailBuffer{max: 1 << 20}
-	err := shell(ctx, "-c", command, "/", nil, nil, limit, killDelay, out)
+	err := shell(ctx, "-c", command, "/", nil, nil, limit, "", killDelay, out)
 	tail := out.tail()
 	if err != nil && !errors.As(err, new(*exec.ExitError)) {
 		return ExecResult{}, failure(command, err, string(tail))

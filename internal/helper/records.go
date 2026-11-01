@@ -49,7 +49,7 @@ func (h records) read() ([]string, error) {
 	v, ok := strings.CutPrefix(head, "version ")
 	n, err := strconv.Atoi(v)
 	if !ok || err != nil || n < 1 {
-		return nil, fmt.Errorf("read the %s: %s: no format version", h.what, filepath.Join(h.dir, h.project))
+		return nil, fmt.Errorf("read the %s: %s has no format version; delete it, and the records in it are lost", h.what, filepath.Join(h.dir, h.project))
 	}
 	if n > recordsVersion {
 		return nil, fmt.Errorf("upgrade winch to read %s", filepath.Join(h.dir, h.project))

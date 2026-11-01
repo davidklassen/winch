@@ -11,8 +11,8 @@ func TestLineValidate(t *testing.T) {
 	}{
 		{"line", "path: /etc/redis/redis.conf\nline: maxmemory 256mb\nmatch: ^maxmemory \n", ""},
 		{"absent", "path: /etc/pam.d/sshd\nmatch: pam_motd\nabsent: true\n", ""},
-		{"no path", "line: a\nmatch: ^a\n", `t.yaml:1:1: missing key "path"`},
-		{"no match", "path: /etc/a\nline: a\n", `t.yaml:1:1: missing key "match"`},
+		{"no path", "line: a\nmatch: ^a\n", `t.yaml:1:1: a line step needs path`},
+		{"no match", "path: /etc/a\nline: a\n", `t.yaml:1:1: a line step needs match`},
 		{"relative path", "path: etc/a\nline: a\nmatch: ^a\n", `t.yaml:1:7: path: must be an absolute path`},
 		{"no line", "path: /etc/a\nmatch: ^a\n", `t.yaml:1:1: a line step needs line, or absent: true`},
 		{"line and absent", "path: /etc/a\nline: a\nmatch: ^a\nabsent: true\n", `t.yaml:2:7: line: not with absent: true`},
@@ -31,5 +31,15 @@ func TestLineValidate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Line{}, tt.yaml, tt.want) })
+	}
+}
+
+// spec: Modules/line; CLI/Messages
+func TestLineSeveralMatches(t *testing.T) {
+	l := &Line{Path: "/etc/a", Line: "port 3", Match: "^port "}
+	_, _, err := l.edit([]byte("port 1\nx\nport 2\n"))
+	want := `/etc/a has 2 lines that match "^port ": lines 1, 3; make match find one line`
+	if err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
 	}
 }

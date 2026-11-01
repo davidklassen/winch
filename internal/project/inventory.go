@@ -175,7 +175,7 @@ func patternName(kind, name string, pos yamlx.Pos) error {
 	if kind == "stage" {
 		by = "--stages"
 	}
-	return yamlx.Errorf(pos, `%s %q: a %s name cannot hold ",", "&", "!", or white space; %s could not name it`, kind, name, kind, by)
+	return yamlx.Errorf(pos, `%s %q: a %s name cannot hold ",", "&", "!", or white space; %s cannot name it`, kind, name, kind, by)
 }
 
 // printableName returns the load error for a name with a tab or an
@@ -249,7 +249,7 @@ func (inv *Inventory) resolve(h *Host, own []source, set []setValue) error {
 		for _, s := range g.vars {
 			if first := from[s.name]; first != nil && !reflect.DeepEqual(h.Vars[s.name], s.value) && !slices.ContainsFunc(own, func(o source) bool { return o.name == s.name }) &&
 				!slices.ContainsFunc(set, func(v setValue) bool { return v.name == s.name }) {
-				errs = append(errs, yamlx.Errorf(s.pos, "vars.%s: groups %s and %s of host %s set different values", s.name, first.Name, g.Name, h.Name))
+				errs = append(errs, yamlx.Errorf(s.pos, "vars.%s: groups %s and %s of host %s set different values; set the value on the host", s.name, first.Name, g.Name, h.Name))
 				continue
 			}
 			from[s.name] = g
@@ -259,7 +259,7 @@ func (inv *Inventory) resolve(h *Host, own []source, set []setValue) error {
 			continue
 		}
 		if userFrom != nil && userFrom.User != g.User && h.User == "" {
-			errs = append(errs, yamlx.Errorf(g.UserPos, "user: groups %s and %s of host %s set different users", userFrom.Name, g.Name, h.Name))
+			errs = append(errs, yamlx.Errorf(g.UserPos, "user: groups %s and %s of host %s set different users; set user on the host", userFrom.Name, g.Name, h.Name))
 			continue
 		}
 		userFrom = g

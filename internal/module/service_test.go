@@ -141,3 +141,20 @@ func TestStartWatch(t *testing.T) {
 		})
 	}
 }
+
+// spec: Modules/service; CLI/Messages (a fix works in its case)
+func TestMaskedNamesTheUnmask(t *testing.T) {
+	for _, tt := range []struct {
+		u    unitState
+		want string
+	}{
+		{unitState{id: "a.service", file: "masked", fragment: "/etc/systemd/system/a.service"}, "a.service is masked; systemctl unmask a.service removes the mask"},
+		{unitState{id: "a.service", file: "masked-runtime", fragment: "/run/systemd/system/a.service"}, "a.service is masked; systemctl unmask --runtime a.service removes the mask"},
+		{unitState{id: `mnt-a\x2db.mount`, file: "masked", fragment: `/etc/systemd/system/mnt-a\x2db.mount`}, `mnt-a\x2db.mount is masked; systemctl unmask 'mnt-a\x2db.mount' removes the mask`},
+		{unitState{id: "a.service", file: "masked", fragment: "/usr/lib/systemd/system/a.service"}, "a.service is masked by /usr/lib/systemd/system/a.service, which systemctl unmask does not remove; a unit step that writes a.service overrides it"},
+	} {
+		if got := masked(tt.u).Error(); got != tt.want {
+			t.Errorf("got  %s\nwant %s", got, tt.want)
+		}
+	}
+}

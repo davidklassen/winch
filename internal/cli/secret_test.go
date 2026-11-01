@@ -293,8 +293,8 @@ func TestAgeIdentityCmd(t *testing.T) {
 		{"rekey", "", "cat demo.key", []string{"secret", "rekey"}, exitOK, ""},
 		{"a failing command", "", fail, []string{"plan", "site"}, exitInvalid, "WINCH_AGE_IDENTITY_CMD exited with status 3: " + fail + ": locked\n"},
 		{"not a recipient", "", "cat " + other, []string{"plan", "site"}, exitInvalid, "inventories/test.yaml:4:11: the age key from WINCH_AGE_IDENTITY_CMD is not in recipients; "},
-		{"both variables", identity, "cat demo.key", []string{"plan", "site"}, exitInvalid, "WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set"},
-		{"both variables in rekey", identity, "cat demo.key", []string{"secret", "rekey"}, exitInvalid, "WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set"},
+		{"both variables", identity, "cat demo.key", []string{"plan", "site"}, exitInvalid, "WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set; unset one of the two"},
+		{"both variables in rekey", identity, "cat demo.key", []string{"secret", "rekey"}, exitInvalid, "WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set; unset one of the two"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

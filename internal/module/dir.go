@@ -36,6 +36,8 @@ type Dir struct {
 	removed []string
 }
 
+func (*Dir) Noun() string { return "a dir step" }
+
 func (d *Dir) Main() string { return d.Path }
 
 func (d *Dir) Validate() error {
@@ -423,7 +425,7 @@ func (d *Dir) Apply(ctx context.Context, _ Say) error {
 func openLinked(p string) (*os.Root, error) {
 	dir, missing, err := openPath(p, p)
 	if errors.Is(err, errLinkLevels) {
-		return nil, fmt.Errorf("%s is a symbolic link with %w; add replace: true to remove it", p, errLinkLevels)
+		return nil, fmt.Errorf("%s is a loop of symbolic links; add replace: true to remove it", p)
 	}
 	if e, ok := errors.AsType[*noPathError](err); ok {
 		return nil, fmt.Errorf("%s is a symbolic link to %s; add replace: true to remove it", p, cmp.Or(e.kind, "a missing target"))
@@ -448,7 +450,7 @@ func noMount(dir *os.Root, name string, fi fs.FileInfo, p string) error {
 	if err != nil || len(mounts) == 0 {
 		return err
 	}
-	return fmt.Errorf("%s is a mount point", p+mounts[0][len(target):])
+	return fmt.Errorf("%s is a mount point, and winch does not remove a mounted file system; unmount it first", p+mounts[0][len(target):])
 }
 
 // mountsAt returns the real path of f and the mount points at it or below it.

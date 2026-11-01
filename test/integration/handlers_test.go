@@ -264,7 +264,7 @@ func TestHandlers(t *testing.T) {
 		}
 		vm.MustRun(t, "touch /root/v-ok")
 		r = lab.Winch(t, vdir, "apply", "site", "--yes", "--set", "vars.v_one=b", "--set", "vars.v_two=b", "--set", "vars.v_check=exit 4")
-		if r.Code != 1 || !strings.Contains(r.Stderr, "validate: exit 4") {
+		if r.Code != 1 || !strings.Contains(r.Stderr, "validate failed, and the old file is back: exit 4") {
 			t.Fatalf("apply: exit %d, want the validate error\n%s", r.Code, r.Stderr)
 		}
 		// The person reverts the template: the step has nothing to change.

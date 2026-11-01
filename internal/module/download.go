@@ -49,6 +49,8 @@ type Download struct {
 	fetch bool
 }
 
+func (*Download) Noun() string { return "a download step" }
+
 func (d *Download) Main() string {
 	if d.Unpack != "" {
 		return d.Unpack
@@ -419,7 +421,7 @@ func (d *Download) get(ctx context.Context, w io.Writer, progress func(string)) 
 		return fmt.Errorf("download %s: %w", d.URL, err)
 	}
 	if sum != d.SHA256 {
-		return fmt.Errorf("download %s: the sha256 is %s, not %s", d.URL, sum, d.SHA256)
+		return fmt.Errorf("download %s: the sha256 is %s, not %s; check url, or take sha256 from the checksum file of the vendor", d.URL, sum, d.SHA256)
 	}
 	return nil
 }

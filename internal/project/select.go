@@ -92,7 +92,9 @@ func (p *Project) setUsers(users []string) error {
 		}
 		switch {
 		case name == "":
-			return fmt.Errorf("--user %s: an empty user name", u)
+			return fmt.Errorf("--user %s: the user name is empty", u)
+		case one && host == "":
+			return fmt.Errorf("--user %s: the host before = is empty", u)
 		case !one && all != "":
 			return fmt.Errorf("--user %s: the user for all hosts is %s already", u, all)
 		case !one:

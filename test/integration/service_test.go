@@ -165,7 +165,7 @@ const crashDropIn = `mkdir /etc/systemd/system/winch-test.service.d
 printf '[Service]\nExecStart=\nExecStart=/bin/sh -c "sleep 0.5; exit 1"\n' > /etc/systemd/system/winch-test.service.d/crash.conf
 systemctl daemon-reload`
 
-const noexecErr = `winch-noexec.service has the load state "bad-setting"
+const noexecErr = `systemd cannot load winch-noexec.service (bad-setting); fix its unit file
 winch-noexec.service: Service has no ExecStart=`
 
 // atStartLimit makes 5 starts of winch-test, the start limit of systemd in 10
@@ -188,7 +188,7 @@ func TestServiceModule(t *testing.T) {
 		vm.MustRun(t, "systemctl start winch-vendor && systemctl stop winch-vendor && systemctl mask --runtime winch-vendor")
 		defer vm.MustRun(t, "systemctl unmask --runtime winch-vendor")
 		_, err := vm.Session(t).Check(t.Context(), "service", &module.Service{Name: "winch-vendor", Running: new(true)}, &module.State{})
-		if want := `winch-vendor.service is masked; systemctl unmask winch-vendor.service removes the mask`; err == nil || err.Error() != want {
+		if want := `winch-vendor.service is masked; systemctl unmask --runtime winch-vendor.service removes the mask`; err == nil || err.Error() != want {
 			t.Errorf("check error = %v, want %q", err, want)
 		}
 	})
@@ -245,7 +245,7 @@ func TestServiceModule(t *testing.T) {
 				t.Fatalf("run %d: check: %v", i, err)
 			}
 			_, err := s.Apply(t.Context(), "service", args, &module.State{}, nil, nil, nil, protocol.Guard{})
-			if want := "winch-loop.service restarted after its start\n"; err == nil || !strings.Contains(err.Error(), want) {
+			if want := "winch-loop.service stopped after its start, and systemd started it again\n"; err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("run %d: apply error = %v, want %q", i, err, want)
 			}
 		}
@@ -417,7 +417,7 @@ printf '[Service]\nLimitNOFILE=12345\n' > /etc/systemd/system/winch-test.service
 		{
 			Name:    "enable a static unit fails",
 			Args:    &module.Service{Name: "winch-static", Enabled: new(true)},
-			WantErr: `winch-static.service has the unit file state "static"; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit`,
+			WantErr: `winch-static.service is static: it has no [Install] section, so enabled: true cannot enable it; remove enabled, or enable the unit that wants it`,
 		},
 		{
 			Name: "a static unit is not enabled",
@@ -757,7 +757,7 @@ systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
 		{
 			Name:    "enable a unit with only Also= fails and names its units",
 			Args:    &module.Service{Name: "winch-also", Enabled: new(true)},
-			WantErr: `winch-also.service has the unit file state "indirect"; enabled: true cannot enable it; enable the units in its Also=: winch-a.service, winch-b.socket, winch-c.service`,
+			WantErr: `winch-also.service has no [Install] rule of its own, only Also=; enable these units in place of it: winch-a.service, winch-b.socket, winch-c.service`,
 		},
 		{
 			Name:    "enable an indirect unit without Also= fails",

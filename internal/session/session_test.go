@@ -686,8 +686,9 @@ func TestNotesAndProgress(t *testing.T) {
 read -r line
 echo '{"id":1,"result":{}}'
 read -r line
-echo '{"id":2,"progress":"\\u001b[2Kwaiting for another apt run (pid 42)"}'
+echo '{"id":2,"progress":"\\u001b[2Kwaiting for apt-get (pid 42), which holds the package locks"}'
 echo '{"id":2,"note":"apt does not know hello"}'
+echo '{"id":2,"warning":"the certificate a expires on 2026-11-20"}'
 echo '{"id":2,"result":{"status":"ok"}}'
 cat >/dev/null
 `))
@@ -697,7 +698,7 @@ cat >/dev/null
 		Host: "web1", Address: "web1", Dir: stateDir,
 		Binaries: []helperbin.Binary{helper},
 		Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&progress),
-		Note: func(text string) { notes = append(notes, text) },
+		Note: func(text string, warning bool) { notes = append(notes, fmt.Sprintf("%s %t", text, warning)) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -708,10 +709,10 @@ cat >/dev/null
 	if err != nil || res.Status != module.OK {
 		t.Fatalf("check = %+v, %v", res, err)
 	}
-	if want := "web1: ?[2Kwaiting for another apt run (pid 42)\n"; progress.String() != want {
+	if want := "web1: ?[2Kwaiting for apt-get (pid 42), which holds the package locks\n"; progress.String() != want {
 		t.Errorf("progress = %q, want %q", progress.String(), want)
 	}
-	if want := []string{"apt does not know hello"}; !slices.Equal(notes, want) {
+	if want := []string{"apt does not know hello false", "the certificate a expires on 2026-11-20 true"}; !slices.Equal(notes, want) {
 		t.Errorf("notes = %q, want %q", notes, want)
 	}
 }
@@ -1016,6 +1017,12 @@ func TestOpenBatchHint(t *testing.T) {
 			`Host key verification failed. (in batch mode ssh asks nothing; accept the host key once with: ssh -o HostName=192.0.2.1 web1)`},
 		{"host key of a user", "Host key verification failed.", true, "web1", "deploy",
 			`Host key verification failed. (in batch mode ssh asks nothing; accept the host key once with: ssh -l deploy web1)`},
+		{"host key of a user with a space", "Host key verification failed.", true, "web1", "a b",
+			`Host key verification failed. (in batch mode ssh asks nothing; accept the host key once with: ssh -l 'a b' web1)`},
+		{"host key of an address with a percent sign", "Host key verification failed.", true, "fe80::1%eth0", "",
+			`Host key verification failed. (in batch mode ssh asks nothing; accept the host key once with: ssh -o HostName=fe80::1%%eth0 web1)`},
+		{"host key of an address with a quote", "Host key verification failed.", true, "x'y", "",
+			`Host key verification failed. (in batch mode ssh asks nothing; accept the host key once with: ssh -o 'HostName=x'\''y' web1)`},
 		{"refused login", "admin@web1: Permission denied (publickey).", true, "192.0.2.1", "",
 			`admin@web1: Permission denied (publickey). (batch mode cannot type a passphrase or a password; if the key needs one, add it to the agent with ssh-add)`},
 		{"changed host key", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.", true, "web1", "",

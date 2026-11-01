@@ -1,6 +1,7 @@
 package module
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -40,6 +41,8 @@ type Pkg struct {
 	// pkgs are the packages that dpkg knows.
 	pkgs map[string]dpkgPkg
 }
+
+func (*Pkg) Noun() string { return "a pkg step" }
 
 func (p *Pkg) Main() string { return strings.Join(p.Name, ", ") }
 
@@ -748,11 +751,13 @@ func lockFiles(ctx context.Context, names []string, progress func(string)) (unlo
 				if lk.Type == syscall.F_UNLCK {
 					continue
 				}
-				holder = fmt.Sprintf("another apt run (pid %d)", lk.Pid)
-				progress("waiting for " + holder)
+				// The holder can also end before the read.
+				comm, _ := os.ReadFile(fmt.Sprintf("/proc/%d/comm", lk.Pid))
+				holder = fmt.Sprintf("%s (pid %d)", cmp.Or(strings.TrimSpace(string(comm)), "a process"), lk.Pid)
+				progress("waiting for " + holder + ", which holds the package locks")
 			}
 			if time.Now().After(deadline) {
-				return nil, errors.New(holder + " held the package locks for 5 minutes")
+				return nil, errors.New(holder + " held the package locks for 5 minutes; run winch again when it is done")
 			}
 			select {
 			case <-ctx.Done():

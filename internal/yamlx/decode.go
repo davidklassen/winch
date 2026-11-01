@@ -13,6 +13,8 @@ import (
 // Decode fills the struct that v points to from n.
 //
 // Field tags: `yaml:"name"`, `yaml:"name,required"`, and `yaml:",key"`. A
+// missing required key is "<noun> needs <key>", with the Noun() string of a
+// struct that has one. A
 // slice of structs with a ",key" field decodes from a map: each key goes into
 // that field, in file order. A field `Pos Pos` gets the position of the
 // struct, or of its key in such a map. A field `XPos Pos` gets the position
@@ -131,7 +133,12 @@ func (d *decoder) value(n *Node, v reflect.Value, name string) {
 	case reflect.Int, reflect.Int64:
 		i, ok := n.Value.(int64)
 		if !ok {
-			d.errorf(n.Pos, name, "expected an integer, got %s", Describe(n))
+			hint := ""
+			if _, float := n.Value.(float64); float && n.Text == "" {
+				// The result of an expression, such as a division.
+				hint = "; use int(...) in the expression to make it an integer"
+			}
+			d.errorf(n.Pos, name, "expected an integer, got %s%s", Describe(n), hint)
 			return
 		}
 		v.SetInt(i)
@@ -237,9 +244,13 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 			f.Set(reflect.ValueOf(p.Value.Pos))
 		}
 	}
+	needs := "needs"
+	if nn, ok := v.Addr().Interface().(interface{ Noun() string }); ok {
+		needs = nn.Noun() + " needs"
+	}
 	for _, f := range fs {
 		if _, ok := seen[f.Name]; f.Required && !ok {
-			d.errorf(n.Pos, "", "missing key %q", f.Name)
+			d.errorf(n.Pos, "", "%s %s", needs, f.Name)
 		}
 	}
 	if len(d.errs) > before || d.deferred > deferred {

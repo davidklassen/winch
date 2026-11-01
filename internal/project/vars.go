@@ -233,6 +233,20 @@ func (l *loader) inventoryNames() map[string]bool {
 	return out
 }
 
+// indicators are the characters that start YAML syntax at the start of a
+// value, with what YAML reads them as.
+var indicators = map[byte]string{
+	'[': "the start of a list",
+	'{': "the start of a map",
+	'*': "an alias",
+	'&': "an anchor",
+	'|': "a block scalar",
+	'>': "a block scalar",
+	'%': "a directive",
+	'@': "a reserved character",
+	'`': "a reserved character",
+}
+
 // parseValue parses a value of the command line as YAML. what names the flag
 // or the command. An error names the fix: flag, then key=value with the value
 // quoted, as one shell word.
@@ -243,6 +257,9 @@ func parseValue(text, what, flag, key string) (*yamlx.Node, error) {
 	if err != nil {
 		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
 			problem, _, _ := strings.Cut(ye.Msg, "; ")
+			if what, ok := indicators[text[0]]; ok {
+				problem = fmt.Sprintf("YAML reads %c at the start as %s", text[0], what)
+			}
 			return nil, fmt.Errorf("%s; quote it: %s", problem, whole)
 		}
 		return nil, err
@@ -837,7 +854,7 @@ func (p *Project) evalDefaults(e *Env, names []string, pos yamlx.Pos) error {
 		}
 	}
 	if missing != nil {
-		return yamlx.Errorf(pos, "vars.%s has no value on host %s", slices.Min(missing), e.host.Name)
+		return yamlx.Errorf(pos, "vars.%s has no value on host %s; set it in the inventory for this host, or give it a default", slices.Min(missing), e.host.Name)
 	}
 	for _, v := range p.vars {
 		if _, ok := e.vars[0][v.Name]; ok || !need[v.Name] {

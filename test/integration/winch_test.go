@@ -152,7 +152,7 @@ func TestWinch(t *testing.T) {
       - user:
           name: winch-order
 `), "plan", "site")
-		want := "base: user winch-order: an earlier step needs it: base: cmd make install; move this step before it"
+		want := "base: user winch-order: this step creates user winch-order, which an earlier step needs: base#1 cmd make install; move this step before it"
 		if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
 			t.Errorf("plan: exit %d, want the error %q:\n%s%s", r.Code, want, r.Stdout, r.Stderr)
 		}
@@ -254,7 +254,7 @@ exit 1`))
 		if r.Code != 0 || !strings.Contains(r.Stdout, "+ pkg hello") {
 			t.Fatalf("plan: exit %d", r.Code)
 		}
-		if n := strings.Count(r.Stderr, "winch: waiting for another apt run (pid "+pid+")\n"); n != 1 {
+		if n := strings.Count(r.Stderr, "winch: waiting for python3 (pid "+pid+"), which holds the package locks\n"); n != 1 {
 			t.Errorf("stderr has the wait message for pid %s %d times, want once", pid, n)
 		}
 
@@ -268,7 +268,7 @@ exit 1`))
 			t.Fatalf("apply: exit %d", r.Code)
 		}
 		pid = strings.TrimSpace(vm.MustRun(t, "cat /root/locked"))
-		if n := strings.Count(r.Stderr, "winch: waiting for another apt run (pid "+pid+")\n"); n != 1 {
+		if n := strings.Count(r.Stderr, "winch: waiting for python3 (pid "+pid+"), which holds the package locks\n"); n != 1 {
 			t.Errorf("apply stderr has the wait message for pid %s %d times, want once", pid, n)
 		}
 	})
@@ -287,7 +287,7 @@ exit 1`))
 		if r.Code != 0 {
 			t.Fatalf("apply: exit %d, stderr %q", r.Code, r.Stderr)
 		}
-		if n := strings.Count(r.Stderr, "winch: waiting for another apt run (pid "+pid+")\n"); n != 1 {
+		if n := strings.Count(r.Stderr, "winch: waiting for python3 (pid "+pid+"), which holds the package locks\n"); n != 1 {
 			t.Errorf("stderr has the wait message for pid %s %d times, want once", pid, n)
 		}
 		if out, err := vm.Run(t.Context(), "dpkg-query -W -f='${db:Status-Abbrev}' sl"); err != nil || out != "ii " {

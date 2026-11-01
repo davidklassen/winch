@@ -45,6 +45,8 @@ type Service struct {
 	up bool
 }
 
+func (*Service) Noun() string { return "a service step" }
+
 func (s *Service) Main() string { return s.Name }
 
 var unitRe = regexp.MustCompile(`^[A-Za-z0-9:_.\\@-]+$`)
@@ -152,9 +154,9 @@ func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	case missing, u.load == "loaded", broken && off && !s.Restarted && !s.Reloaded:
 	case u.load == "masked" && off:
 	case u.load == "masked":
-		return Result{}, fmt.Errorf("%s is masked; systemctl unmask %s removes the mask", u.id, u.id)
+		return Result{}, masked(u)
 	default:
-		return Result{}, withJournal(ctx, u.id, fmt.Errorf("%s has the load state %q", u.id, u.load))
+		return Result{}, withJournal(ctx, u.id, fmt.Errorf("systemd cannot load %s (%s); fix its unit file", u.id, u.load))
 	}
 	if s.Started {
 		return Result{Status: OK}, nil
@@ -216,8 +218,11 @@ func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		default:
 			if u.file == "indirect" {
 				if in := sectionKeys(files, "Install"); len(in["Also"]) > 0 {
-					return Result{}, fmt.Errorf("%s has the unit file state %q; enabled: true cannot enable it; enable the units in its Also=: %s", u.id, u.file, strings.Join(in["Also"], ", "))
+					return Result{}, fmt.Errorf("%s has no [Install] rule of its own, only Also=; enable these units in place of it: %s", u.id, strings.Join(in["Also"], ", "))
 				}
+			}
+			if u.file == "static" {
+				return Result{}, fmt.Errorf("%s is static: it has no [Install] section, so enabled: true cannot enable it; remove enabled, or enable the unit that wants it", u.id)
 			}
 			return Result{}, fmt.Errorf("%s has the unit file state %q; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit", u.id, u.file)
 		}
@@ -452,7 +457,7 @@ func checkStarted(ctx context.Context, unit, action string, reload bool) error {
 		return err
 	}
 	if u.invocation != invocation {
-		return withJournal(ctx, unit, fmt.Errorf("%s restarted after its %s", unit, action))
+		return withJournal(ctx, unit, fmt.Errorf("%s stopped after its %s, and systemd started it again", unit, action))
 	}
 	if u.up() && !u.restarting() {
 		return nil
@@ -495,6 +500,28 @@ func failedConditions(unit, out string) []string {
 		return triggers
 	}
 	return failed
+}
+
+// masked is the error for the masked unit u, with the command that removes
+// its mask. systemctl unmask removes a mask in /etc/systemd/system only.
+func masked(u unitState) error {
+	switch {
+	case u.file == "masked-runtime":
+		return fmt.Errorf("%s is masked; systemctl unmask --runtime %s removes the mask", u.id, shellWord(u.id))
+	case strings.HasPrefix(u.fragment, unitDir+"/"):
+		return fmt.Errorf("%s is masked; systemctl unmask %s removes the mask", u.id, shellWord(u.id))
+	}
+	return fmt.Errorf("%s is masked by %s, which systemctl unmask does not remove; a unit step that writes %s overrides it", u.id, u.fragment, u.id)
+}
+
+var plainRe = regexp.MustCompile(`^[A-Za-z0-9_./=:,@%+-]+$`)
+
+// shellWord is s as one word of a shell command.
+func shellWord(s string) string {
+	if plainRe.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // withJournal adds the last 10 lines of the journal of unit to err.

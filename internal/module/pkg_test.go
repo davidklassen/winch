@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"testing/synctest"
@@ -67,9 +68,43 @@ func TestLockFilesNotesTheHolder(t *testing.T) {
 			t.Fatal(err)
 		}
 		unlock()
-		want := []string{fmt.Sprintf("waiting for another apt run (pid %d)", holder.Process.Pid)}
-		if !slices.Equal(notes, want) {
-			t.Errorf("notes = %q, want %q", notes, want)
+		suffix := fmt.Sprintf(" (pid %d), which holds the package locks", holder.Process.Pid)
+		if len(notes) != 1 || !strings.HasPrefix(notes[0], "waiting for ") || !strings.HasSuffix(notes[0], suffix) {
+			t.Errorf("notes = %q, want one wait for the holder", notes)
+		}
+	})
+}
+
+// spec: Modules/pkg (each wait for the package locks lasts at most five
+// minutes)
+func TestLockFilesTimeoutNamesTheFix(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		name := filepath.Join(t.TempDir(), "lock")
+		holder := exec.Command(os.Args[0], "-test.run=^TestLockHolder$")
+		holder.Env = append(os.Environ(), "WINCH_LOCK_HOLDER="+name)
+		release, err := holder.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := holder.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := holder.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			release.Close()
+			holder.Wait() //nolint:errcheck // the holder only holds the lock
+		}()
+		if line, _ := bufio.NewReader(out).ReadString('\n'); line != "locked\n" {
+			t.Fatalf("holder printed %q", line)
+		}
+		_, err = lockFiles(t.Context(), []string{name}, func(string) {})
+		suffix := fmt.Sprintf(" (pid %d) held the package locks for 5 minutes; run winch again when it is done", holder.Process.Pid)
+		if err == nil || !strings.HasSuffix(err.Error(), suffix) {
+			t.Errorf("error = %v, want the holder and the fix", err)
 		}
 	})
 }

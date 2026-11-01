@@ -1,10 +1,10 @@
 text stderr:
-web1: note: the certificate a expires on 2026-11-20; check its renewal
-web1: note: nft is missing; install the package nftables in an earlier pkg step
+web1: warning: the certificate a expires on 2026-11-20; certbot renew --dry-run --cert-name a shows why certbot does not renew it
+web1: warning: nft is missing; install the package nftables in an earlier pkg step
 json stdout:
 {"type":"version","time":"2026-10-26T12:00:00Z","version":1}
-{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"note","host":"web1","message":"the certificate a expires on 2026-11-20; check its renewal"}
-{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"note","host":"web1","message":"nft is missing; install the package nftables in an earlier pkg step"}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"warning","host":"web1","message":"the certificate a expires on 2026-11-20; certbot renew --dry-run --cert-name a shows why certbot does not renew it"}
+{"type":"diagnostic","time":"2026-10-26T12:00:00Z","severity":"warning","host":"web1","message":"nft is missing; install the package nftables in an earlier pkg step"}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hello"]}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#2","stage":"base","step":"firewall","module":"firewall","status":"change","action":"create","changes":["load the rules"]}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"change"}

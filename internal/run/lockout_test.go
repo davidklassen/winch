@@ -175,16 +175,16 @@ func TestRebootStep(t *testing.T) {
 		{name: "always", ifRequired: "false", wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "required", ifRequired: "true", required: true, wantPlan: "    ~ reboot if required\n", wantApply: "web1: base: ~ reboot if required (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "degraded", ifRequired: "false", boot: &protocol.Boot{State: "degraded", Failed: []string{"a.service", "b.service"}},
-			wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted; degraded, failed units: a.service, b.service)\n", wantLog: []string{"reboot 30s", "access"}},
+			wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted; failed units: a.service, b.service)\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "still required", ifRequired: "true", required: true, boot: &protocol.Boot{State: "running", Kernel: "6.12.43+deb13-amd64", Newest: "99.0.0+deb13-amd64"},
 			wantPlan: "    ~ reboot if required\n", wantApply: "", wantLog: []string{"reboot 30s"},
-			wantErr: "base: failed: reboot if required: the host still needs a reboot after the reboot: running kernel 6.12.43+deb13-amd64, newest kernel 99.0.0+deb13-amd64"},
+			wantErr: "base: failed: reboot if required: the host still needs a reboot after it rebooted: running kernel 6.12.43+deb13-amd64, newest kernel 99.0.0+deb13-amd64"},
 		{name: "always, still required", ifRequired: "false", required: true, boot: &protocol.Boot{State: "running", Kernel: "6.12.43+deb13-amd64", Newest: "99.0.0+deb13-amd64"},
 			wantPlan: "    ~ reboot\n", wantApply: "", wantLog: []string{"reboot 30s"},
-			wantErr: "base: failed: reboot: the host still needs a reboot after the reboot: running kernel 6.12.43+deb13-amd64, newest kernel 99.0.0+deb13-amd64"},
+			wantErr: "base: failed: reboot: the host still needs a reboot after it rebooted: running kernel 6.12.43+deb13-amd64, newest kernel 99.0.0+deb13-amd64"},
 		{name: "still required by packages", ifRequired: "true", required: true, boot: &protocol.Boot{State: "running", Kernel: "6.12.43+deb13-amd64", Newest: "6.12.43+deb13-amd64", Packages: []string{"dbus", "libc6"}},
 			wantPlan: "    ~ reboot if required\n", wantApply: "", wantLog: []string{"reboot 30s"},
-			wantErr: "base: failed: reboot if required: the host still needs a reboot after the reboot: /run/reboot-required lists the packages dbus, libc6"},
+			wantErr: "base: failed: reboot if required: the host still needs a reboot after it rebooted: /run/reboot-required lists the packages dbus, libc6"},
 		{name: "maybe, with a change", ifRequired: "true", more: motd, wantPlan: "    * reboot if required\n", wantApply: "web1: base: + file /etc/motd\n", wantLog: []string{"access"}},
 		{name: "maybe, alone", ifRequired: "true", wantPlan: "0 to change, 1 unchanged", wantApply: "", noConnect: true},
 		{name: "an earlier step requires the reboot", ifRequired: "true", more: motd, requiredAfter: true, wantPlan: "    * reboot if required\n",
@@ -292,7 +292,7 @@ func TestTwoFirewalls(t *testing.T) {
 		p := loadWeb1(t, map[string]string{"pipelines/site.yaml": tt.pipeline})
 		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 		err := plan.Failed["web1"]
-		if err == nil || !strings.Contains(err.Error(), ": Open SSH again: firewall: the firewall is also in ") || !strings.Contains(err.Error(), ": Open SSH: firewall; a host has one firewall step") {
+		if err == nil || !strings.Contains(err.Error(), ": Open SSH again: firewall: the firewall is also in ") || !strings.Contains(err.Error(), "base#1 Open SSH: firewall; a host has one firewall step") {
 			t.Errorf("%s: plan error %v", tt.name, err)
 		}
 	}
@@ -307,12 +307,12 @@ func TestFirewallFiles(t *testing.T) {
 	dropIn := "      - file:\n          path: /etc/systemd/system/nftables.service.d/winch.conf\n          content: \"\"\n"
 	service := "      - service:\n          name: winch-firewall\n          running: false\n"
 	for _, tt := range []struct{ name, steps, want string }{
-		{"file after", firewall + file, "file /etc/winch/firewall.nft: the path /etc/winch/firewall.nft is also in base: firewall"},
-		{"file before", file + firewall, "firewall: the path /etc/winch/firewall.nft is also in base: file /etc/winch/firewall.nft"},
-		{"unit", firewall + unit, "the path /etc/systemd/system/winch-firewall.service is also in base: firewall"},
-		{"drop-in", firewall + dropIn, "the path /etc/systemd/system/nftables.service.d/winch.conf is also in base: firewall"},
-		{"service after", firewall + service, "service winch-firewall: the unit winch-firewall.service is also in base: firewall"},
-		{"service before", service + firewall, "firewall: the unit winch-firewall.service is also in base: service winch-firewall"},
+		{"file after", firewall + file, "file /etc/winch/firewall.nft: the path /etc/winch/firewall.nft is also in base#1 firewall, with other arguments; use one step"},
+		{"file before", file + firewall, "firewall: the path /etc/winch/firewall.nft is also in base#1 file /etc/winch/firewall.nft"},
+		{"unit", firewall + unit, "the path /etc/systemd/system/winch-firewall.service is also in base#1 firewall"},
+		{"drop-in", firewall + dropIn, "the path /etc/systemd/system/nftables.service.d/winch.conf is also in base#1 firewall"},
+		{"service after", firewall + service, "service winch-firewall: the unit winch-firewall.service is also in base#1 firewall"},
+		{"service before", service + firewall, "firewall: the unit winch-firewall.service is also in base#1 service winch-firewall"},
 	} {
 		h := fakehost.New()
 		h.SetResult("web1", "winch-firewall", module.Result{Status: module.OK})
@@ -334,7 +334,7 @@ func TestSameCertificate(t *testing.T) {
 		name, second string
 		want         string
 	}{
-		{"other domains", step("example.com, www.example.com"), "base: certbot example.com: the certificate example.com is also in base: certbot example.com, with other arguments"},
+		{"other domains", step("example.com, www.example.com"), "base: certbot example.com: the certificate example.com is also in base#1 certbot example.com, with other arguments; use one step"},
 		{"the same step", step("example.com"), ""},
 	} {
 		h := fakehost.New()

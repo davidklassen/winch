@@ -25,6 +25,8 @@ type Cmd struct {
 	Timeout *int    `yaml:"timeout" json:"timeout,omitempty" line:"limit in seconds, also for unless" doc:"Limit in seconds, also for unless. After it, winch stops the command and the step fails." default:"600"`
 }
 
+func (*Cmd) Noun() string { return "a cmd step" }
+
 func (c *Cmd) Main() string { return strings.TrimSuffix(c.Command, "\n") }
 
 func (c *Cmd) UnlessCommand() string {
@@ -96,7 +98,7 @@ func (c *Cmd) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 
 func (c *Cmd) check(ctx context.Context) (Result, error) {
 	if c.Unless != nil {
-		err := ShellLimit(ctx, *c.Unless, c.limit(), KillDelay)
+		err := shellLimit(ctx, *c.Unless, "/", nil, nil, c.limit(), KillDelay, "timeout")
 		switch {
 		case err == nil:
 			return Result{Status: OK}, nil
@@ -138,7 +140,7 @@ func (c *Cmd) Apply(ctx context.Context, _ Say) error {
 		}
 		as = &runAs{user: u, groups: groups}
 	}
-	err := shellLimit(ctx, c.Command, cmp.Or(c.Dir, "/"), nil, as, c.limit(), KillDelay)
+	err := shellLimit(ctx, c.Command, cmp.Or(c.Dir, "/"), nil, as, c.limit(), KillDelay, "timeout")
 	// exec names sh, not the directory, when the user cannot enter it.
 	if pe, ok := errors.AsType[*fs.PathError](err); ok && pe.Op == "fork/exec" && c.Dir != "" {
 		return fmt.Errorf("dir %s: %w", c.Dir, pe.Err)
@@ -148,7 +150,7 @@ func (c *Cmd) Apply(ctx context.Context, _ Say) error {
 	}
 	_, err = os.Lstat(c.Creates)
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
-		return fmt.Errorf("the command did not create %s", c.Creates)
+		return fmt.Errorf("the command exited 0 but did not create %s, so each run would run it again; make the command create it, or fix creates", c.Creates)
 	}
 	return err
 }

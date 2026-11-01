@@ -17,6 +17,8 @@ type Hostname struct {
 	Name string `yaml:"name,required" json:"name" line:"short name, such as mail" doc:"Short name, such as mail."`
 }
 
+func (*Hostname) Noun() string { return "a hostname step" }
+
 func (h *Hostname) Main() string { return h.Name }
 
 var hostnameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)

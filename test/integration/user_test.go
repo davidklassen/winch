@@ -183,7 +183,7 @@ wtbob wtgrp 700" ]`,
 			Name:         "a uid change with a running process",
 			Setup:        `useradd -m -U -u 2200 wtalice && systemd-run --uid=wtalice --unit=wt-sleep sleep 600 && timeout 10 sh -c 'until pgrep -x -u wtalice sleep; do sleep 0.1; done'`,
 			Args:         &module.User{Name: "wtalice", UID: "2300"},
-			Want:         change("uid 2200 → 2300, also of the files in the home; other files keep the old uid", "processes of wtalice run (sleep); usermod fails while they run"),
+			Want:         change("uid 2200 → 2300, also of the files in the home; other files keep the old uid", "wtalice has running processes (sleep); usermod fails while they run"),
 			WantApplyErr: "usermod: user wtalice is currently used by process",
 			Fix:          "systemctl stop wt-sleep",
 			After:        `[ "$(id -u wtalice)" = 2200 ]`,
@@ -192,7 +192,7 @@ wtbob wtgrp 700" ]`,
 			Name:         "a home change with a running process",
 			Setup:        `useradd -m -U wtalice && systemd-run --uid=wtalice --unit=wt-sleep sleep 600 && timeout 10 sh -c 'until pgrep -x -u wtalice sleep; do sleep 0.1; done'`,
 			Args:         &module.User{Name: "wtalice", Home: "/srv/w/alice"},
-			Want:         change("home /home/wtalice → /srv/w/alice", "create directory /srv/w (owner root, group root, mode 0755)", "create home /srv/w/alice (owner wtalice, group wtalice, mode 0700)", "processes of wtalice run (sleep); usermod fails while they run"),
+			Want:         change("home /home/wtalice → /srv/w/alice", "create directory /srv/w (owner root, group root, mode 0755)", "create home /srv/w/alice (owner wtalice, group wtalice, mode 0700)", "wtalice has running processes (sleep); usermod fails while they run"),
 			WantApplyErr: "usermod: user wtalice is currently used by process",
 			Fix:          "systemctl stop wt-sleep",
 			After:        `[ "$(getent passwd wtalice | cut -d: -f6)" = /home/wtalice ]`,
@@ -371,7 +371,7 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			Name:  "change groups, comment, and password",
 			Setup: `groupadd wtgrp && useradd -m -U -c Alice -p '` + hash1 + `' wtalice`,
 			Args:  &module.User{Name: "wtalice", Groups: &[]string{"wtgrp"}, Comment: "Alice Smith", Password: hash2},
-			Want:  change("add to group wtgrp", `comment "Alice" → "Alice Smith"`, "change password"),
+			Want:  change("add to group wtgrp", `comment "Alice" → "Alice Smith"`, "change the password"),
 			After: `[ "$(id -nG wtalice)" = "wtalice wtgrp" ] && [ "$(getent passwd wtalice | cut -d: -f5)" = "Alice Smith" ] && [ "$(getent shadow wtalice | cut -d: -f2)" = '` + hash2 + `' ]`,
 		},
 		{
@@ -381,10 +381,10 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			WantErr: "password is not a crypt hash, such as one from mkpasswd -m yescrypt, or \"!\" or \"*\"",
 		},
 		{
-			Name:  "change password",
+			Name:  "change the password",
 			Setup: `useradd -m -U -p '` + hash1 + `' wtalice`,
 			Args:  &module.User{Name: "wtalice", Password: hash2},
-			Want:  change("change password"),
+			Want:  change("change the password"),
 			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '` + hash2 + `' ]`,
 		},
 		{
@@ -411,7 +411,7 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			Name:  "a locked new password",
 			Setup: `useradd -m -U -p '` + hash1 + `' wtalice`,
 			Args:  &module.User{Name: "wtalice", Password: "!" + hash2},
-			Want:  change("change password"),
+			Want:  change("change the password"),
 			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '!` + hash2 + `' ]`,
 		},
 		{
@@ -449,7 +449,7 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 		{
 			Name:      "a new user with a Debian name",
 			Args:      &module.User{Name: "Debian-wt"},
-			WantErr:   `user Debian-wt does not exist, and winch creates only names with lowercase letters, digits, _, and - that start with a letter or _`,
+			WantErr:   `user Debian-wt does not exist, and winch cannot create it: a new name has only lowercase letters, digits, _, and -, and starts with a letter or _`,
 			Unchanged: `! getent passwd Debian-wt`,
 		},
 		{
@@ -485,7 +485,7 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			Name:  "a password from the step for a locked password with UsePAM no",
 			Setup: `echo 'UsePAM no' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice && usermod -p '!x' wtalice`,
 			Args:  &module.User{Name: "wtalice", Password: hash1, AuthorizedKeys: keys(k1)},
-			Want: change("change password",
+			Want: change("change the password",
 				"create directory /home/wtalice/.ssh (owner wtalice, group wtalice, mode 0700)",
 				"create file /home/wtalice/.ssh/authorized_keys (owner wtalice, group wtalice, mode 0600)",
 				"add key "+keyLine(k1)),
@@ -494,7 +494,7 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			Name:    "a locked password from the step with UsePAM no",
 			Setup:   `echo 'UsePAM no' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U -p '` + hash1 + `' wtalice`,
 			Args:    &module.User{Name: "wtalice", Password: "!" + hash1, AuthorizedKeys: keys(k1)},
-			WantErr: `with UsePAM no, sshd refuses the login of wtalice: its password is locked with "!"`,
+			WantErr: `with UsePAM no, sshd refuses the login of wtalice: its password is locked with "!"; set password: "*" for key logins without a password`,
 		},
 		{
 			Name: "keys of a new user",
@@ -587,7 +587,7 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Name:      "a link ~/.ssh in the user's home",
 			Setup:     `useradd -m -U wtalice && ln -s /root/.ssh /home/wtalice/.ssh`,
 			Args:      &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
-			WantErr:   "/home/wtalice/.ssh is a symbolic link in /home/wtalice, which a user other than root can write",
+			WantErr:   "winch does not follow /home/wtalice/.ssh: it is a symbolic link in /home/wtalice, which a user other than root can write",
 			Unchanged: `[ ! -e /root/.ssh ]`,
 		},
 		{
@@ -612,7 +612,7 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Name:    "a home that the group can write with StrictModes",
 			Setup:   `echo 'StrictModes yes' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice && chgrp users /home/wtalice && chmod 775 /home/wtalice`,
 			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
-			WantErr: "with StrictModes yes, sshd ignores the keys of wtalice: the group users can write /home/wtalice (mode 0775) and is not the own group of wtalice alone",
+			WantErr: "with StrictModes yes, sshd ignores the keys of wtalice: the group users can write /home/wtalice (mode 0775), and it is not a group of wtalice alone",
 		},
 		{
 			Name:  "a home that the user's private group can write with StrictModes",
@@ -634,13 +634,13 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Name:    "a root home that the user's old private group can write with StrictModes",
 			Setup:   `echo 'StrictModes yes' > /etc/ssh/sshd_config.d/wt.conf && groupadd wtnew && useradd -m -U wtalice && chown root /home/wtalice && chmod 775 /home/wtalice`,
 			Args:    &module.User{Name: "wtalice", Group: "wtnew", AuthorizedKeys: keys(k1)},
-			WantErr: "with StrictModes yes, sshd ignores the keys of wtalice: the group wtalice can write /home/wtalice (mode 0775) and is not the own group of wtalice alone",
+			WantErr: "with StrictModes yes, sshd ignores the keys of wtalice: the group wtalice can write /home/wtalice (mode 0775), and it is not a group of wtalice alone",
 		},
 		{
 			Name:    "a home that a private group with another member can write with StrictModes",
 			Setup:   `echo 'StrictModes yes' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice && chmod 775 /home/wtalice && usermod -aG wtalice admin`,
 			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
-			WantErr: "with StrictModes yes, sshd ignores the keys of wtalice: the group wtalice can write /home/wtalice (mode 0775) and is not the own group of wtalice alone",
+			WantErr: "with StrictModes yes, sshd ignores the keys of wtalice: the group wtalice can write /home/wtalice (mode 0775), and it is not a group of wtalice alone",
 		},
 		{
 			Name:    "an existing home of a new user with StrictModes",
@@ -681,13 +681,13 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Name:    "a new user with UsePAM no",
 			Setup:   `echo 'UsePAM no' > /etc/ssh/sshd_config.d/wt.conf`,
 			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
-			WantErr: `with UsePAM no, sshd refuses the login of wtalice: its password is locked with "!"`,
+			WantErr: `with UsePAM no, sshd refuses the login of wtalice: its password is locked with "!"; set password: "*" for key logins without a password`,
 		},
 		{
 			Name:    "a locked password with UsePAM no",
 			Setup:   `echo 'UsePAM no' > /etc/ssh/sshd_config.d/wt.conf && useradd -m -U wtalice && usermod -p '!x' wtalice`,
 			Args:    &module.User{Name: "wtalice", AuthorizedKeys: keys(k1)},
-			WantErr: `with UsePAM no, sshd refuses the login of wtalice: its password is locked with "!"`,
+			WantErr: `with UsePAM no, sshd refuses the login of wtalice: its password is locked with "!"; set password: "*" for key logins without a password`,
 		},
 		{
 			Name:  "a password without login with UsePAM no",
@@ -796,7 +796,7 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Setup:        `useradd -U wtalice && systemd-run --uid=wtalice --unit=wt-sleep sleep 600 && timeout 10 sh -c 'until pgrep -x -u wtalice sleep; do sleep 0.1; done'`,
 			Args:         &module.User{Name: "wtalice", Absent: true},
 			WantState:    module.State{RemovedUsers: []string{"wtalice"}},
-			Want:         module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove group wtalice", "processes of wtalice run (sleep); userdel fails while they run"}},
+			Want:         module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove group wtalice", "wtalice has running processes (sleep); userdel fails while they run"}},
 			WantApplyErr: "userdel: user wtalice is currently used by process",
 			Fix:          "systemctl stop wt-sleep",
 			After:        `getent passwd wtalice`,
@@ -867,7 +867,7 @@ wtalice wtalice 600" ] && printf '%s\n%s\n' '` + k1 + `' '` + k2 + `' | cmp - /h
 			Name:  "a password with an immutable /etc/group and /etc/gshadow",
 			Setup: `useradd -m -U wtalice && chattr +i /etc/group /etc/gshadow`,
 			Args:  &module.User{Name: "wtalice", Password: hash1},
-			Want:  change("change password"),
+			Want:  change("change the password"),
 			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '` + hash1 + `' ]`,
 		},
 		{
@@ -983,7 +983,7 @@ func TestGroupModule(t *testing.T) {
 		{
 			Name:      "a new group with a Debian name",
 			Args:      &module.Group{Name: "Debian-wt"},
-			WantErr:   `group Debian-wt does not exist, and winch creates only names with lowercase letters, digits, _, and - that start with a letter or _`,
+			WantErr:   `group Debian-wt does not exist, and winch cannot create it: a new name has only lowercase letters, digits, _, and -, and starts with a letter or _`,
 			Unchanged: `! getent group Debian-wt`,
 		},
 		{
@@ -1242,7 +1242,7 @@ func TestUserAddGroupsCombine(t *testing.T) {
 		t.Errorf("second plan create: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 	r = lab.Winch(t, dir, "plan", "exact")
-	want := "s: user wtdev: the user wtdev is also in docker: user wtdev, with other arguments"
+	want := "s: user wtdev: the user wtdev is also in docker#1 user wtdev, with other arguments; use one step"
 	if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
 		t.Errorf("plan exact: exit %d, want the error %q:\n%s%s", r.Code, want, r.Stdout, r.Stderr)
 	}
@@ -1293,13 +1293,13 @@ systemctl reload ssh`
 		{
 			Name:      "a locked login password with UsePAM no",
 			Args:      &module.User{Name: "admin", Password: "!"},
-			WantErr:   `with UsePAM no, sshd refuses the login of admin: its password is locked with "!"`,
+			WantErr:   `with UsePAM no, sshd refuses the login of admin: its password is locked with "!"; set password: "*" for key logins without a password`,
 			Unchanged: `[ "$(getent shadow admin | cut -d: -f2)" = '*' ]`,
 		},
 		{
 			Name:      "a locked login hash with UsePAM no",
 			Args:      &module.User{Name: "admin", Password: "!" + hash1},
-			WantErr:   `with UsePAM no, sshd refuses the login of admin: its password is locked with "!"`,
+			WantErr:   `with UsePAM no, sshd refuses the login of admin: its password is locked with "!"; set password: "*" for key logins without a password`,
 			Unchanged: `[ "$(getent shadow admin | cut -d: -f2)" = '*' ]`,
 		},
 		{
@@ -1311,14 +1311,14 @@ systemctl reload ssh`
 			Name:  "another user's password may be locked",
 			Setup: `useradd -M -d /nonexistent wtalice && usermod -p '*' wtalice`,
 			Args:  &module.User{Name: "wtalice", Password: "!"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"change password"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"change the password"}},
 			After: `[ "$(getent shadow wtalice | cut -d: -f2)" = '!' ]`,
 		},
 		{
 			Name:  "a locked login password with UsePAM yes",
 			Setup: `printf 'UsePAM yes\n' > /etc/ssh/sshd_config.d/wt.conf && systemctl reload ssh`,
 			Args:  &module.User{Name: "admin", Password: "!"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"change password"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"change the password"}},
 			After: `[ "$(getent shadow admin | cut -d: -f2)" = '!' ]`,
 		},
 	})

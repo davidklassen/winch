@@ -100,6 +100,8 @@ type recipeFile struct {
 	inline   bool
 }
 
+func (*recipeFile) Noun() string { return "a recipe" }
+
 var recipeNameRe = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 // errReported is the error of a step that uses a recipe whose recipe.yaml
@@ -124,7 +126,7 @@ func (l *loader) readRecipes() error {
 		}
 		n, err := p.parse(l.dir)
 		if errors.Is(err, fs.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("%s: a recipe needs a recipe.yaml or recipe.yml", dir))
+			errs = append(errs, fmt.Errorf("%s/ has no recipe.yaml", dir))
 			continue
 		}
 		if err != nil {
@@ -455,8 +457,14 @@ func (r *Recipe) Check(f facts.Facts) error {
 			return yamlx.Errorf(req.Pos, "require: %s", exprMessage(err, req.Text, []string{"facts"}))
 		}
 		if ok, _ := out.(bool); !ok {
-			return yamlx.Errorf(req.Pos, "recipe %s requires %s; the host has os.id %q, os.version %q, os.codename %q",
-				r.Name, req.Text, f.OS.ID, f.OS.Version, f.OS.Codename)
+			has := fmt.Sprintf("os.id %q, os.version %q, os.codename %q", f.OS.ID, f.OS.Version, f.OS.Codename)
+			if strings.Contains(req.Text, "os.arch") {
+				has += fmt.Sprintf(", os.arch %q", f.OS.Arch)
+			}
+			if strings.Contains(req.Text, "facts.reboot_required") {
+				has += fmt.Sprintf(", reboot_required %t", f.RebootRequired)
+			}
+			return yamlx.Errorf(req.Pos, "recipe %s requires %s; the host has %s", r.Name, req.Text, has)
 		}
 	}
 	return nil

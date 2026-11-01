@@ -84,11 +84,11 @@ func TestCertbotModule(t *testing.T) {
 		want        []string
 	}{
 		{"nginx without a pkg step", step, []string{
-			"certbot: note: certbot is missing; install the package certbot in an earlier pkg step\n",
-			"certbot: note: /usr/lib/python3/dist-packages/certbot_nginx is missing; install the package python3-certbot-nginx in an earlier pkg step\n",
+			"certbot: warning: certbot is missing; install the package certbot in an earlier pkg step\n",
+			"certbot: warning: /usr/lib/python3/dist-packages/certbot_nginx is missing; install the package python3-certbot-nginx in an earlier pkg step\n",
 		}},
 		{"apache after a pkg step for certbot", "  - pkg:\n      name: certbot\n" + step + "      authenticator: apache\n", []string{
-			"certbot: note: /usr/lib/python3/dist-packages/certbot_apache is missing; install the package python3-certbot-apache in an earlier pkg step\n",
+			"certbot: warning: /usr/lib/python3/dist-packages/certbot_apache is missing; install the package python3-certbot-apache in an earlier pkg step\n",
 		}},
 		{"standalone after a pkg step for certbot", "  - pkg:\n      name: certbot\n" + step + "      authenticator: standalone\n", nil},
 		{"nginx after a pkg step for both packages", "  - pkg:\n      name: [certbot, python3-certbot-nginx]\n" + step, nil},

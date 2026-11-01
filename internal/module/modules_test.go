@@ -37,7 +37,7 @@ func TestPkgValidate(t *testing.T) {
 		{"recommends", "name: postfix\nrecommends: false\n", ""},
 		{"absent", "name: exim4\nabsent: true\n", ""},
 		{"purge", "name: exim4\nabsent: true\npurge: true\n", ""},
-		{"no name", "absent: true\n", `t.yaml:1:1: missing key "name"`},
+		{"no name", "absent: true\n", `t.yaml:1:1: a pkg step needs name`},
 		{"empty list", "name: []\n", `t.yaml:1:7: name: needs at least one package`},
 		{"upper case", "name: Nginx\n", `t.yaml:1:7: name: "Nginx" is not a package name`},
 		{"version", "name: [curl, nginx=1.2]\n", `t.yaml:1:7: name: "nginx=1.2" is not a package name`},
@@ -63,7 +63,7 @@ func TestDirValidate(t *testing.T) {
 		{"path", "path: /var/www\n", ""},
 		{"all fields", "path: /var/www\nowner: www-data\ngroup: www-data\nmode: \"2750\"\n", ""},
 		{"absent", "path: /var/www\nabsent: true\n", ""},
-		{"no path", "mode: \"0755\"\n", `t.yaml:1:1: missing key "path"`},
+		{"no path", "mode: \"0755\"\n", `t.yaml:1:1: a dir step needs path`},
 		{"relative path", "path: var/www\n", `t.yaml:1:7: path: must be an absolute path`},
 		{"unclean path", "path: /var/www/\n", `t.yaml:1:7: path: must be a clean path, such as "/var/www"`},
 		{"root", "path: /\n", `t.yaml:1:7: path: must not be /`},
@@ -109,7 +109,7 @@ func TestLinkValidate(t *testing.T) {
 		{"absolute target", "path: /etc/nginx/sites-enabled/a\ntarget: /etc/nginx/sites-available/a\n", ""},
 		{"relative target", "path: /etc/a\ntarget: ../b\n", ""},
 		{"absent", "path: /etc/a\nabsent: true\n", ""},
-		{"no path", "target: /b\n", `t.yaml:1:1: missing key "path"`},
+		{"no path", "target: /b\n", `t.yaml:1:1: a link step needs path`},
 		{"relative path", "path: a\ntarget: /b\n", `t.yaml:1:7: path: must be an absolute path`},
 		{"no target", "path: /a\n", `t.yaml:1:1: a link step needs target, or absent: true`},
 		{"empty target", "path: /a\ntarget: \"\"\n", `t.yaml:2:9: target: is empty`},
@@ -149,7 +149,7 @@ func TestServiceValidate(t *testing.T) {
 		{"running", "name: nginx\nrunning: true\n", ""},
 		{"enabled", "name: nginx.service\nenabled: false\n", ""},
 		{"timer", "name: certbot.timer\nrunning: true\nenabled: true\n", ""},
-		{"no name", "running: true\n", `t.yaml:1:1: missing key "name"`},
+		{"no name", "running: true\n", `t.yaml:1:1: a service step needs name`},
 		{"empty name", "name: \"\"\nrunning: true\n", `t.yaml:1:7: name: "" is not a unit name`},
 		{"glob", "name: \"ssh*\"\nrunning: false\n", `t.yaml:1:7: name: "ssh*" is not a unit name`},
 		{"shell characters", "name: \"a b;$(id)\"\nrunning: true\n", `t.yaml:1:7: name: "a b;$(id)" is not a unit name`},
@@ -423,5 +423,20 @@ func TestUnitWithoutContent(t *testing.T) {
 	}
 	if u.Data == nil {
 		t.Error("WithoutContent changed the step")
+	}
+}
+
+// spec: CLI/Messages (a missing key is "a <module> step needs <key>")
+func TestModuleNouns(t *testing.T) {
+	for _, name := range Names() {
+		m, _ := New(name)
+		n, ok := m.(interface{ Noun() string })
+		want := "a " + name + " step"
+		if name == "assert" || name == "upgrade" {
+			want = "an " + name + " step"
+		}
+		if !ok || n.Noun() != want {
+			t.Errorf("%s has no Noun %q", name, want)
+		}
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"runtime/debug"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/davidklassen/winch/internal/cli"
@@ -35,16 +36,23 @@ func main() {
 	sessions, kill := context.WithCancel(context.Background())
 	// Other commands run no steps, so a Ctrl-C ends them at once. A third
 	// Ctrl-C ends winch.
+	var asking atomic.Bool
 	if len(os.Args) > 1 && slices.Contains([]string{"plan", "apply", "run", "exec"}, os.Args[1]) {
 		msg := "winch " + os.Args[1] + ": interrupted; the running steps finish. Press Ctrl-C again to end the sessions."
-		if os.Args[1] == "exec" {
+		switch os.Args[1] {
+		case "plan":
+			msg = "winch plan: interrupted; the running checks finish. Press Ctrl-C again to end the sessions."
+		case "exec":
 			msg = "winch exec: interrupted; the commands stop. Press Ctrl-C again to end the sessions."
 		}
 		interrupts := make(chan os.Signal, 2)
 		signal.Notify(interrupts, os.Interrupt)
 		go func() {
 			<-interrupts
-			fmt.Fprintln(stderr, msg)
+			// At the question no step runs, and the answer is no.
+			if !asking.Load() {
+				fmt.Fprintln(stderr, msg)
+			}
 			stop()
 			<-interrupts
 			signal.Stop(interrupts)
@@ -63,9 +71,10 @@ func main() {
 		Out:      stdout,
 		Err:      errOut,
 		Terminal: cli.IsTerminal(os.Stdin) && cli.IsTerminal(os.Stderr),
+		Asking:   &asking,
 		ColorOut: cli.UseColor(cli.IsTerminal(os.Stdout), os.Getenv),
 		ColorErr: cli.UseColor(cli.IsTerminal(os.Stderr), os.Getenv),
-		Connect: func(batch bool, note func(host, text string)) run.Connect {
+		Connect: func(batch bool, note func(run.Note)) run.Connect {
 			return connect(sessions, stderr, display, batch, note)
 		},
 		Progress:  display,
@@ -83,7 +92,7 @@ func main() {
 // connect opens sessions that live until sessions ends, not until the
 // context of the run ends: a session finishes its running step after the
 // first Ctrl-C.
-func connect(sessions context.Context, stderr *color.Writer, display *progress.Display, batch bool, note func(host, text string)) run.Connect {
+func connect(sessions context.Context, stderr *color.Writer, display *progress.Display, batch bool, note func(run.Note)) run.Connect {
 	hello := protocol.Hello{Run: rand.Text()[:8], Started: time.Now().UTC()}
 	if u, err := user.Current(); err == nil {
 		hello.User = u.Username
@@ -107,7 +116,7 @@ func connect(sessions context.Context, stderr *color.Writer, display *progress.D
 			Binaries: bins,
 			Hello:    hello,
 			Progress: stderr,
-			Note:     func(text string) { note(h.Name, text) },
+			Note:     func(text string, warning bool) { note(run.Note{Host: h.Name, Text: text, Warning: warning}) },
 			Hold:     display.Hold,
 			Batch:    batch,
 			Want:     want,

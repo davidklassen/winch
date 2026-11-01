@@ -13,6 +13,8 @@ type Upgrade struct {
 	Mode string `yaml:"mode,required" json:"mode" line:"safe or full" doc:"Safe or full. safe installs the upgrades that remove no package. full also installs the upgrades that add or remove packages."`
 }
 
+func (*Upgrade) Noun() string { return "an upgrade step" }
+
 func (u *Upgrade) Main() string { return u.Mode }
 
 func (u *Upgrade) Validate() error {
