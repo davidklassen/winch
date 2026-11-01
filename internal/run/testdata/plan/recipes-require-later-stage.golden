@@ -20,6 +20,6 @@ web1
           +x
 
 2 hosts: 1 to change, 0 unchanged, 0 unknown, 1 failed
-plan 2edf0e9500d06a3b
+plan 698631083b6bd81c
 stderr:
 web2: recipes/tools/recipe.yaml:2:5: recipe tools requires facts.os.version == "13"; the host has os.id "debian", os.version "12", os.codename "bookworm"

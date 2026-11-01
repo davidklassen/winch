@@ -4,5 +4,5 @@ stdout:
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#2[0]","stage":"base","step":"file /etc/a","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+x"]}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#2[1]","stage":"base","step":"file /etc/b","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+x"]}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"change"}
-{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":1,"unchanged":0,"unknown":0,"failed":0},"hash":"54dc605c9821fcf5","command":"winch apply site --json --check 54dc605c9821fcf5","exit_code":5}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":1,"unchanged":0,"unknown":0,"failed":0},"hash":"1f14b6d2d418970b","command":"winch apply site --json --check 1f14b6d2d418970b","exit_code":5}
 stderr:

@@ -5,5 +5,5 @@ web1
       ! handler nginx.reload
 
 2 hosts: 1 to change, 1 unchanged, 0 unknown
-plan 2078d06fffa8d9d6
+plan 3482fc11c773fa95
 stderr:

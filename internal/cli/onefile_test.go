@@ -74,6 +74,8 @@ func TestOneFile(t *testing.T) {
 	for _, args := range [][]string{{"plan", "site"}, {"plan", "site", "--inventory", "prod"}} {
 		got := winch(t, one, fakehost.New(), false, "", args...)
 		want := winch(t, many, fakehost.New(), false, "", args...)
+		// The hash covers the text of the project files, so it differs.
+		got.out, want.out = hashLineRe.ReplaceAllString(got.out, "\n"), hashLineRe.ReplaceAllString(want.out, "\n")
 		if got.code != exitOK || got.out != want.out || got.err != want.err {
 			t.Errorf("%v: one file: exit %d\n%s%s\nmany files: exit %d\n%s%s", args, got.code, got.out, got.err, want.code, want.out, want.err)
 		}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/cryptotest"
 	"time"
 
 	"filippo.io/age"
@@ -22,8 +23,11 @@ import (
 )
 
 // ageKey writes a new age identity and returns its path and its recipient.
+// The key and the ciphertexts of the test are the same in each run: the plan
+// hash in the golden files covers the ciphertexts.
 func ageKey(t *testing.T) (string, *age.X25519Recipient) {
 	t.Helper()
+	cryptotest.SetGlobalRandom(t, 1)
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)

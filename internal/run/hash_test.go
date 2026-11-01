@@ -2,12 +2,15 @@ package run_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"testing/cryptotest"
 
 	"filippo.io/age"
 
@@ -61,10 +64,11 @@ var hashFiles = map[string]string{
           path: /etc/issue
           content: "x\n"
 `,
+	"recipes/app/templates/app.tmpl": "{{/* app */}}a\n",
 	"recipes/app/recipe.yaml": `steps:
   - file:
       path: /etc/app.conf
-      content: "a\n"
+      template: app.tmpl
     notify: reload
 handlers:
   reload:
@@ -130,13 +134,24 @@ func TestHashStable(t *testing.T) {
 	}
 }
 
+var filesRe = regexp.MustCompile(`,"files":\{[^}]*\}`)
+
+// withoutFiles returns the hash input of p without the SHA-256 of the project
+// files, so that a test sees what the evaluated plan adds.
+func withoutFiles(p *run.Plan) string {
+	return filesRe.ReplaceAllString(string(p.HashInput()), "")
+}
+
 // spec: Running a pipeline/Plan; Modules/file, dir, link
 func TestHashChanges(t *testing.T) {
-	base := planHash(t, hashFiles, nil).Hash()
+	basePlan := planHash(t, hashFiles, nil)
+	base := basePlan.Hash()
 	tests := []struct {
 		name  string
 		files func(t *testing.T) map[string]string
 		setup func(h *fakehost.Hosts)
+		// text is set when only the text of a project file changes.
+		text bool
 	}{
 		{name: "content on the host", setup: func(h *fakehost.Hosts) { h.SetFile("web1", "/etc/motd", "old\n") }},
 		{name: "a step argument", files: func(t *testing.T) map[string]string {
@@ -192,6 +207,21 @@ func TestHashChanges(t *testing.T) {
 		{name: "another project name", files: func(t *testing.T) map[string]string {
 			return edit(t, "winch.yaml", "name: acme", "name: acme2")
 		}},
+		{name: "a comment in winch.yaml", text: true, files: func(t *testing.T) map[string]string {
+			return edit(t, "winch.yaml", "name: acme\n", "name: acme # the shop\n")
+		}},
+		{name: "a comment in the inventory", text: true, files: func(t *testing.T) map[string]string {
+			return edit(t, "inventories/test.yaml", "hosts:\n", "# web hosts\nhosts:\n")
+		}},
+		{name: "a comment in a pipeline", text: true, files: func(t *testing.T) map[string]string {
+			return edit(t, "pipelines/site.yaml", "stages:\n", "# site\nstages:\n")
+		}},
+		{name: "a comment in a recipe", text: true, files: func(t *testing.T) map[string]string {
+			return edit(t, "recipes/app/recipe.yaml", "steps:\n", "# app\nsteps:\n")
+		}},
+		{name: "a template", text: true, files: func(t *testing.T) map[string]string {
+			return edit(t, "recipes/app/templates/app.tmpl", "{{/* app */}}", "{{/* the app */}}")
+		}},
 		{name: "another login user from the ssh config", setup: func(h *fakehost.Hosts) {
 			h.SetDestination("web1", protocol.Destination{User: "admin", HostName: "web1", Port: "22"})
 		}},
@@ -208,8 +238,12 @@ func TestHashChanges(t *testing.T) {
 			if tt.files != nil {
 				files = tt.files(t)
 			}
-			if got := planHash(t, files, tt.setup).Hash(); got == base {
+			p := planHash(t, files, tt.setup)
+			if got := p.Hash(); got == base {
 				t.Errorf("hash %s did not change", got)
+			}
+			if !tt.text && withoutFiles(p) == withoutFiles(basePlan) {
+				t.Errorf("only the project files changed the hash input:\n%s", p.HashInput())
 			}
 		})
 	}
@@ -309,19 +343,54 @@ handlers:
 				if a.Hash() == b.Hash() {
 					t.Errorf("a new secret value %q did not change the hash", new)
 				}
+				if a.Hash() == plan(old).Hash() {
+					t.Error("a new ciphertext of the same value did not change the hash")
+				}
 				for _, p := range []*run.Plan{a, b} {
 					if len(p.Failed) > 0 {
 						t.Fatalf("the plan failed: %v", p.Failed)
 					}
 					in := string(p.HashInput())
-					for _, v := range []string{old, new, secret.Placeholder(1), secret.Placeholder(2)} {
+					for _, v := range []string{old, new} {
 						if strings.Contains(in, v) {
 							t.Errorf("the hash input holds %q:\n%s", v, in)
+						}
+						// The filter skips a value under 4 characters.
+						sum := sha256.Sum256([]byte("password " + v + " old\n"))
+						if !short && strings.Contains(in, hex.EncodeToString(sum[:])) {
+							t.Errorf("the hash input holds the SHA-256 of the old content with %q:\n%s", v, in)
 						}
 					}
 				}
 			}
 		})
+	}
+}
+
+// spec: Running a pipeline/Plan ("the content of each project file that the run loads")
+func TestHashSecretSelects(t *testing.T) {
+	recipe := `vars:
+  app_m: {hunter2: "port=80\n"}
+steps:
+  - file:
+      path: /etc/app.conf
+      content: !expr 'vars.app_m[vars.pw]'
+`
+	plan := func(recipe string) *run.Plan {
+		// The same key and ciphertext in both projects.
+		cryptotest.SetGlobalRandom(t, 1)
+		p := run.MakePlan(context.Background(), hashSecretProject(t, "hunter2", stage+"      - recipe: app\n", recipe), fakehost.New().Connector(), run.Options{})
+		if len(p.Failed) > 0 {
+			t.Fatalf("the plan failed: %v", p.Failed)
+		}
+		return p
+	}
+	a := plan(recipe)
+	if b := plan(recipe); a.Hash() != b.Hash() {
+		t.Fatalf("two plans of the same project: %s and %s", a.Hash(), b.Hash())
+	}
+	if b := plan(strings.Replace(recipe, "port=80", "port=81", 1)); a.Hash() == b.Hash() {
+		t.Error("an edit of the data that a secret selects did not change the hash")
 	}
 }
 
@@ -364,11 +433,11 @@ func TestHashSteps(t *testing.T) {
 		h.SetFile("web1", "/etc/app.conf", "a\n")
 		h.SetFile("web2", "/etc/app.conf", "a\n")
 	}
-	base := planHash(t, handlerFilesWith(t, "reload", "reloaded"), present).Hash()
-	if got := planHash(t, handlerFilesWith(t, "restart", "reloaded"), present).Hash(); got == base {
+	base := withoutFiles(planHash(t, handlerFilesWith(t, "reload", "reloaded"), present))
+	if got := withoutFiles(planHash(t, handlerFilesWith(t, "restart", "reloaded"), present)); got == base {
 		t.Error("a new notify of a step without a change did not change the hash")
 	}
-	if got := planHash(t, handlerFilesWith(t, "reload", "restarted"), present).Hash(); got == base {
+	if got := withoutFiles(planHash(t, handlerFilesWith(t, "reload", "restarted"), present)); got == base {
 		t.Error("a new step of a handler that does not run did not change the hash")
 	}
 }

@@ -24,5 +24,5 @@ web2
         curl -sf http://localhost/
 
 2 hosts: 2 to change, 0 unchanged, 0 unknown
-plan 59cba926e0e2cf5e
+plan e523d81ce15692c0
 stderr:

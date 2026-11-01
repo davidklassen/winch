@@ -18,5 +18,5 @@ web2
     - file /etc/issue
 
 3 hosts: 2 to change, 1 unchanged, 0 unknown
-plan 4227d4533e5c441f
+plan ed53f0c9ed3b9954
 stderr:

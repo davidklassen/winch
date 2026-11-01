@@ -141,7 +141,11 @@ type Plan struct {
 	// plan.
 	refreshed map[string]bool
 	hash      string
-	opts      Options
+	// sums are the SHA-256 of the project files, and filter masks the secret
+	// values in the check results of steps that read a secret.
+	sums   map[string]string
+	filter *secret.Filter
+	opts   Options
 	// mu guards conns, the sessions that the plan kept for Apply.
 	mu    sync.Mutex
 	conns map[string]Conn
@@ -402,7 +406,8 @@ func (p *Plan) changed() map[string]bool {
 // stage run at the same time. At the first contact with a host, it reads the
 // facts and starts the host's evaluation. A host that fails stops there.
 func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Options) *Plan {
-	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}, Destinations: map[string]protocol.Destination{}, opts: opts}
+	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}, Destinations: map[string]protocol.Destination{}, opts: opts,
+		sums: p.Sums(), filter: p.Filter()}
 	inStages := map[string]bool{}
 	runs := map[string]*hostRun{}
 	open := func(h project.Host) (Conn, error) {

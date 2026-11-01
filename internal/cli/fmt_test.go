@@ -16,7 +16,8 @@ func planOf(t *testing.T, dir string) string {
 	if r.code != exitOK {
 		t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
-	return planHash(t, r.out)
+	// The hash covers the text of the project files, so fmt changes it.
+	return hashLineRe.ReplaceAllString(r.out, "\n")
 }
 
 func readFile(t *testing.T, path string) string {
@@ -202,7 +203,7 @@ handlers:
 		}
 	}
 	if after := planOf(t, dir); after != before {
-		t.Errorf("plan hash %s after fmt, %s before", after, before)
+		t.Errorf("plan after fmt:\n%s\nbefore:\n%s", after, before)
 	}
 
 	r = winch(t, dir, fakehost.New(), false, "", "fmt")

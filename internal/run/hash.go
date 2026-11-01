@@ -11,8 +11,9 @@ import (
 )
 
 type hashRun struct {
-	Project string   `json:"project"`
-	Stages  []string `json:"stages"`
+	Project string            `json:"project"`
+	Stages  []string          `json:"stages"`
+	Files   map[string]string `json:"files,omitempty"`
 }
 
 type hashHost struct {
@@ -37,10 +38,10 @@ type hashHealth struct {
 type hashStep struct {
 	Address string `json:"address"`
 	Module  string `json:"module,omitempty"`
-	// Args, Then, and Result are JSON, or the SHA-256 of their JSON for a
-	// step that reads a secret.
+	// A step that reads a secret has the Args and Then of the first
+	// placeholder variant, and its Result as filtered JSON text.
 	Args   any      `json:"args,omitempty"`
-	Then   any      `json:"then,omitempty"`
+	Then   string   `json:"then,omitempty"`
 	Notify []string `json:"notify,omitempty"`
 	// ConfirmAccess changes what apply does, so the hash covers it.
 	ConfirmAccess bool `json:"confirm_access,omitempty"`
@@ -66,7 +67,7 @@ func (p *Plan) HashInput() []byte {
 		// The values are plain data; they always encode.
 		_ = enc.Encode(v)
 	}
-	hr := hashRun{Project: p.Project}
+	hr := hashRun{Project: p.Project, Files: p.sums}
 	for _, sp := range p.Stages {
 		hr.Stages = append(hr.Stages, sp.Stage.Name)
 	}
@@ -88,7 +89,7 @@ func (p *Plan) HashInput() []byte {
 				}
 				write(hs)
 				for _, pl := range hp.Steps {
-					write(stepHash(pl))
+					write(p.stepHash(pl))
 				}
 			}
 		}
@@ -97,35 +98,39 @@ func (p *Plan) HashInput() []byte {
 }
 
 // stepHash is the hash input of a planned step or a handler slot.
-func stepHash(p Planned) hashStep {
+func (plan *Plan) stepHash(p Planned) hashStep {
 	if s := p.Handler; s != nil {
 		h := hashStep{Address: p.Address, Runs: s.Runs}
 		for _, st := range s.Steps {
-			h.Steps = append(h.Steps, stepHash(st))
+			h.Steps = append(h.Steps, plan.stepHash(st))
 		}
 		return h
 	}
 	h := hashStep{Address: p.Address, Module: p.Step.Module, Notify: p.Notify, ConfirmAccess: p.Step.ConfirmAccess, PendingThen: p.PendingThen}
-	args := p.Step.Args
+	var args any = p.Step.Args
+	then := p.Step.Then
+	if p.Step.Secret {
+		args, then = p.Step.HashArgs, p.Step.HashThen
+	}
 	if c, ok := args.(module.WithContent); ok {
 		args = c.WithoutContent()
 	}
-	var then any
-	if p.Step.Then != "" {
-		then = p.Step.Then
-	}
-	var result any
+	h.Args, h.Then = args, then
 	if p.Step.Args != nil && p.Result.Status != "" {
 		r := hashResult{Result: p.Result}
 		r.Result.Old = nil
 		if p.Result.Old != nil {
-			r.Old = sum(*p.Result.Old)
+			old := *p.Result.Old
+			if p.Step.Secret {
+				old = plan.filter.Text(old)
+			}
+			r.Old = sum(old)
 		}
-		result = r
-	}
-	h.Args, h.Then, h.Result = args, then, result
-	if p.Step.Secret {
-		h.Args, h.Then, h.Result = sumJSON(args), sumJSON(then), sumJSON(result)
+		h.Result = r
+		if p.Step.Secret {
+			b, _ := json.Marshal(r)
+			h.Result = plan.filter.Text(string(b))
+		}
 	}
 	return h
 }
@@ -135,12 +140,6 @@ func sum(s string) string { return sumBytes([]byte(s)) }
 func sumBytes(b []byte) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
-}
-
-// sumJSON returns the SHA-256 of the JSON of v.
-func sumJSON(v any) string {
-	b, _ := json.Marshal(v)
-	return sumBytes(b)
 }
 
 // Hash returns the plan hash: the first 16 hex characters of the SHA-256 of

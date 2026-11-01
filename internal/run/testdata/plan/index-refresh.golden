@@ -11,5 +11,5 @@ web1, web2 (2 hosts)
         install jq
 
 2 hosts: 2 to change, 0 unchanged, 0 unknown
-plan 06aa792c405bd394
+plan a942c69f5a7b57c8
 stderr:

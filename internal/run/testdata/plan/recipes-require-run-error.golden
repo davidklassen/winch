@@ -18,7 +18,7 @@ web2
           +web2
 
 2 hosts: 1 to change, 0 unchanged, 0 unknown, 1 failed
-plan 6e270020eef30782
+plan 5ad0c39686af1a9d
 stderr:
 web1: recipes/nginx/recipe.yaml:2:5: require: invalid operation: int()
    | int(facts.os.version) >= 13
