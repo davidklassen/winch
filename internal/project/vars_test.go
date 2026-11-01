@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/yamlx"
 )
 
 var debian13 = facts.Facts{OS: facts.OS{ID: "debian", Version: "13", Codename: "trixie", Arch: "amd64"}}
@@ -411,6 +413,85 @@ func evalAll(t *testing.T, p *Project) string {
 	return b.String()
 }
 
+// spec: Variables
+func TestNumberTextWarning(t *testing.T) {
+	read := "      - file:\n          path: /x\n          content: !expr 'string(vars.php_version)'\n"
+	sources := []struct {
+		name  string
+		files map[string]string
+		line  string
+		col   int
+	}{
+		{"default", map[string]string{
+			"winch.yaml":          "name: acme\ninventory: test\nvars:\n  php_version: V\n",
+			"pipelines/site.yaml": stage(read),
+		}, "winch.yaml:4:", 16},
+		{"recipe default", map[string]string{
+			"recipes/php/recipe.yaml": "vars:\n  php_version: V\nsteps:\n" + strings.ReplaceAll(read, "      - ", "  - "),
+			"pipelines/site.yaml":     stage("      - recipe: php\n"),
+		}, "recipes/php/recipe.yaml:2:", 16},
+		{"group", map[string]string{
+			"inventories/test.yaml": "hosts:\n  web1:\n    address: 192.0.2.1\ngroups:\n  all:\n    vars:\n      php_version: V\n",
+			"pipelines/site.yaml":   stage(read),
+		}, "inventories/test.yaml:7:", 20},
+		{"host", map[string]string{
+			"inventories/test.yaml": "hosts:\n  web1:\n    address: 192.0.2.1\n    vars:\n      php_version: V\n",
+			"pipelines/site.yaml":   stage(read),
+		}, "inventories/test.yaml:5:", 20},
+	}
+	values := []struct {
+		value string
+		col   int
+		want  string
+	}{
+		{"8.0", 0, `vars.php_version: YAML reads 8.0 as 8; quote it: "8.0"`},
+		{"3.10", 0, `vars.php_version: YAML reads 3.10 as 3.1; quote it: "3.10"`},
+		{"1e3", 0, `vars.php_version: YAML reads 1e3 as 1000; quote it: "1e3"`},
+		{"0123", 0, `vars.php_version: YAML reads 0123 as 123; quote it: "0123"`},
+		{"[8, 1.10]", 4, `vars.php_version: YAML reads 1.10 as 1.1; quote it: "1.10"`},
+		{"[&x 8.0, *x]", 1, `vars.php_version: YAML reads 8.0 as 8; quote it: "8.0"`},
+		{"8", 0, ""},
+		{"8.5", 0, ""},
+		{".inf", 0, ""},
+		{"[.nan, -.inf]", 0, ""},
+		{"true", 0, ""},
+		{`"60"`, 0, ""},
+		{`"8.0"`, 0, ""},
+	}
+	for _, s := range sources {
+		for _, v := range values {
+			t.Run(s.name+"/"+v.value, func(t *testing.T) {
+				files := maps.Clone(s.files)
+				for name, content := range files {
+					files[name] = strings.ReplaceAll(content, "php_version: V", "php_version: "+v.value)
+				}
+				dir := writeProject(t, files)
+				p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				warnings, err := Validate(dir, "", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := ""
+				if v.want != "" {
+					want = fmt.Sprintf("%s%d: %s", s.line, s.col+v.col, v.want)
+				}
+				for what, ws := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": warnings} {
+					var got string
+					if len(ws) > 0 {
+						got = ws[0].Error()
+					}
+					if len(ws) > 1 || got != want {
+						t.Errorf("%s warnings = %v, want %q", what, ws, want)
+					}
+				}
+			})
+		}
+	}
+}
+
 // spec: Variables/Sources
 func TestSetValues(t *testing.T) {
 	tests := []struct {
@@ -456,6 +537,7 @@ func TestSetValues(t *testing.T) {
 		{set: "8", want: 8},
 		{set: "-3", want: -3},
 		{set: "1.5", want: 1.5},
+		{set: "-.inf", want: math.Inf(-1)},
 		{set: "true", want: true},
 		{set: "[a, 2]", want: []any{"a", 2}},
 	}
