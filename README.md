@@ -4,7 +4,9 @@ winch is a server configuration tool. It describes the desired state
 of your servers in declarative YAML and provides commands to manage
 that state.
 
-winch has no release yet. The project format can still change.
+winch is at version 0.x: the project format can still change between
+minor versions. The [changelog](CHANGELOG.md) lists the changes and how
+to migrate.
 
 ## Example
 
@@ -64,7 +66,19 @@ $ winch apply
 
 ## Install
 
-Build winch from source with Go 1.27 and make:
+With the install script, on macOS or Linux:
+
+```
+curl -fsSL https://winchstack.app/install.sh | sh
+```
+
+With Homebrew, on macOS:
+
+```
+brew install davidklassen/tap/winch
+```
+
+From source, with Go 1.27 and make:
 
 ```
 git clone https://github.com/davidklassen/winch
