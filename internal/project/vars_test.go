@@ -430,6 +430,10 @@ func TestNumberTextWarning(t *testing.T) {
 			"recipes/php/recipe.yaml": "vars:\n  php_version: V\nsteps:\n" + strings.ReplaceAll(read, "      - ", "  - "),
 			"pipelines/site.yaml":     stage("      - recipe: php\n"),
 		}, "recipes/php/recipe.yaml:2:", 16},
+		{"recipe step", map[string]string{
+			"recipes/php/recipe.yaml": "vars:\n  php_version: \"7\"\nsteps:\n" + strings.ReplaceAll(read, "      - ", "  - "),
+			"pipelines/site.yaml":     stage("      - recipe: php\n        vars:\n          php_version: V\n"),
+		}, "pipelines/site.yaml:7:", 24},
 		{"group", map[string]string{
 			"inventories/test.yaml": "hosts:\n  web1:\n    address: 192.0.2.1\ngroups:\n  all:\n    vars:\n      php_version: V\n",
 			"pipelines/site.yaml":   stage(read),
