@@ -16,7 +16,7 @@ IMAGE_URL.ubuntu-24.04 := https://cloud-images.ubuntu.com/noble/current/noble-se
 IMAGE_URL.ubuntu-26.04 := https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-$(ARCH).img
 VMENV := WINCH_BIN=$(CURDIR)/bin/winch WINCH_VM_OS=$(OS) WINCH_VM_IMAGE=$(IMAGE) WINCH_VM_ARCH=$(ARCH) WINCH_VM_CACHE=$(CACHE) WINCH_VM_ONLINE=$(ONLINE) WINCH_VM_MEM=$(MEM) WINCH_VM_DISK=$(DISK) WINCH_VM_FORWARD='$(FORWARD)'
 
-.PHONY: build helpers tidy lint test test-integration test-repo vm-image vm
+.PHONY: build helpers tidy lint test test-integration test-repo release-check vm-image vm
 
 build: helpers
 	go build -o bin/winch ./cmd/winch
@@ -37,6 +37,11 @@ test: helpers
 
 test-integration: build vm-image
 	$(VMENV) go test $(if $(VERBOSE),-v) -count=1 -parallel $(PARALLEL) -timeout $(TIMEOUT) $(if $(value RUN),-run '$(value RUN)') ./test/...
+
+release-check:
+	goreleaser check
+	goreleaser release --snapshot --clean
+	go test -tags release ./release/
 
 test-repo: build vm-image
 	$(VMENV) go run ./internal/vmtest/vmrun -refresh
