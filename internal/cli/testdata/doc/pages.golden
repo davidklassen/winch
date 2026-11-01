@@ -1875,7 +1875,8 @@ passes.
 assert.message: string, required
 
 Error when the check fails. The host fails with it when the command
-exits non-zero.
+exits non-zero, followed by the shell's error when the exit is 126 or
+127.
 ==> winch doc certbot
 certbot: get a Let's Encrypt certificate
 

@@ -181,7 +181,7 @@ func TestCmdModule(t *testing.T) {
 func TestAssertModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "assert")
-	vmtest.RunCases(t, vm, "assert", "rm -f /root/ran", []vmtest.Case{
+	vmtest.RunCases(t, vm, "assert", "rm -f /root/ran /usr/local/bin/winch-tool", []vmtest.Case{
 		{
 			Name:       "a passing assert",
 			Args:       &module.Assert{Command: "touch /root/ran", Message: "x"},
@@ -196,6 +196,14 @@ func TestAssertModule(t *testing.T) {
 			Want:         module.Result{Status: module.OK, Deferred: true},
 			WantApplyErr: "the marker is missing",
 			Fix:          "touch /root/ran",
+			NoConverge:   true,
+		},
+		{
+			Name:         "an assert that sh cannot find",
+			Args:         &module.Assert{Command: "winch-tool", Message: "the tool is missing"},
+			Want:         module.Result{Status: module.OK, Deferred: true},
+			WantApplyErr: "the tool is missing: winch-tool: exit status 127: sh: 1: eval: winch-tool: not found",
+			Fix:          "printf '#!/bin/sh\\n' > /usr/local/bin/winch-tool && chmod +x /usr/local/bin/winch-tool",
 			NoConverge:   true,
 		},
 	})

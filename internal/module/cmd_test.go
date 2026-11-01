@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -147,6 +148,8 @@ func TestCmdUnless(t *testing.T) {
 	}{
 		{"exit 0", "true", 0, Result{Status: OK}, ""},
 		{"another exit status", "exit 3", 0, Result{Status: Change, Action: Modify}, ""},
+		{"exit 126", "exit 126", 0, Result{Status: Change, Action: Modify}, ""},
+		{"exit 127", "exit 127", 0, Result{Status: Change, Action: Modify}, ""},
 		{"a failed line", "false\ntrue", 0, Result{Status: Change, Action: Modify}, ""},
 		{"in /", `test "$(pwd)" = /`, 0, Result{Status: OK}, ""},
 		{"the step timeout", "sleep 5", 1, Result{}, "unless: sleep 5: no result after 1s"},
@@ -174,6 +177,23 @@ func TestCmdUnless(t *testing.T) {
 				t.Error("the check ran the command")
 			}
 		})
+	}
+}
+
+// spec: Modules/cmd
+func TestCmdUnlessCommandV(t *testing.T) {
+	ran := filepath.Join(t.TempDir(), "ran")
+	unless := "command -v no-such-tool"
+	c := &Cmd{Command: "touch " + ran, Unless: &unless}
+	got, err := c.Check(t.Context(), &State{}, Silent{})
+	if err != nil || got.Status != Change || got.Action != Modify {
+		t.Fatalf("check = %+v, %v; want a change with ~", got, err)
+	}
+	if err := c.Apply(t.Context(), Silent{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ran); err != nil {
+		t.Error("apply did not run the command")
 	}
 }
 
@@ -240,6 +260,14 @@ func TestAssert(t *testing.T) {
 	}
 	if err := (&Assert{Command: "true", Message: "x"}).Apply(t.Context(), Silent{}); err != nil {
 		t.Errorf("a passing assert: %v", err)
+	}
+	err = (&Assert{Command: "no-such-tool", Message: "port 25 is blocked"}).Apply(t.Context(), Silent{})
+	if want := "port 25 is blocked: no-such-tool: exit status 127: "; err == nil || !strings.HasPrefix(err.Error(), want) || len(err.Error()) == len(want) {
+		t.Errorf("an assert with a missing command: %v, want %q and the shell's error", err, want)
+	}
+	err = (&Assert{Command: dir, Message: "m"}).Apply(t.Context(), Silent{})
+	if want := "m: " + dir + ": exit status 126: "; err == nil || !strings.HasPrefix(err.Error(), want) || len(err.Error()) == len(want) {
+		t.Errorf("an assert that sh cannot run: %v, want %q and the shell's error", err, want)
 	}
 }
 
