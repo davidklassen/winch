@@ -122,7 +122,7 @@ func TestTimezoneModule(t *testing.T) {
 			Name:         "a zone without its file: an earlier step can install it",
 			Args:         &module.Timezone{Name: "Mars/Olympus"},
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"time zone Etc/UTC → Mars/Olympus (/usr/share/zoneinfo/Mars/Olympus does not exist yet)"}},
-			WantApplyErr: "unknown time zone Mars/Olympus: /usr/share/zoneinfo/Mars/Olympus does not exist; an old name such as US/Eastern needs the package tzdata-legacy",
+			WantApplyErr: "unknown time zone Mars/Olympus: /usr/share/zoneinfo/Mars/Olympus does not exist; fix a typo in the name, or for an old name such as US/Eastern, install the package tzdata-legacy in an earlier pkg step",
 			After:        `[ "$(timedatectl show -p Timezone --value)" = Etc/UTC ]`,
 			Fix:          "mkdir /usr/share/zoneinfo/Mars && cp /usr/share/zoneinfo/Etc/UTC /usr/share/zoneinfo/Mars/Olympus",
 		},

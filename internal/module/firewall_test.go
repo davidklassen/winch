@@ -182,3 +182,16 @@ func TestFirewallRuleChanges(t *testing.T) {
 		})
 	}
 }
+
+// spec: Modules/firewall; CLI/Messages
+func TestFirewallOtherTableNote(t *testing.T) {
+	fakeCommand(t, "nft", `{"nftables": [{"chain": {"family": "ip", "table": "filter", "name": "INPUT", "hook": "input", "policy": "drop"}}]}`)
+	var s said
+	if err := sayDroppingTables(t.Context(), &s); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"the table ip filter also filters input, and its rules can drop what this step allows"}
+	if !slices.Equal(s.notes, want) || s.warns != nil {
+		t.Errorf("notes %q, warnings %q; want notes %q", s.notes, s.warns, want)
+	}
+}

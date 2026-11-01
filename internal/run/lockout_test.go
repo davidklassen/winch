@@ -175,7 +175,7 @@ func TestRebootStep(t *testing.T) {
 		{name: "always", ifRequired: "false", wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "required", ifRequired: "true", required: true, wantPlan: "    ~ reboot if required\n", wantApply: "web1: base: ~ reboot if required (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "degraded", ifRequired: "false", boot: &protocol.Boot{State: "degraded", Failed: []string{"a.service", "b.service"}},
-			wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted; failed units: a.service, b.service)\n", wantLog: []string{"reboot 30s", "access"}},
+			wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted with failed units: a.service, b.service)\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "still required", ifRequired: "true", required: true, boot: &protocol.Boot{State: "running", Kernel: "6.12.43+deb13-amd64", Newest: "99.0.0+deb13-amd64"},
 			wantPlan: "    ~ reboot if required\n", wantApply: "", wantLog: []string{"reboot 30s"},
 			wantErr: "base: failed: reboot if required: the host still needs a reboot after it rebooted: running kernel 6.12.43+deb13-amd64, newest kernel 99.0.0+deb13-amd64"},

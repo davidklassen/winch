@@ -2,6 +2,7 @@ package module
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -72,5 +73,18 @@ func TestSameAnswer(t *testing.T) {
 		if got := sameAnswer(tt.typ, tt.a, tt.b); got != tt.want {
 			t.Errorf("sameAnswer(%q, %q, %q) = %v, want %v", tt.typ, tt.a, tt.b, got, tt.want)
 		}
+	}
+}
+
+// spec: Modules/debconf; CLI/Messages
+func TestDebconfInstalledNote(t *testing.T) {
+	fakeCommand(t, "dpkg-query", "installed")
+	var s said
+	if err := (&Debconf{Package: "nginx"}).sayInstalled(t.Context(), &s); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"nginx is installed, so the new answer has no effect until dpkg-reconfigure runs"}
+	if !slices.Equal(s.notes, want) || s.warns != nil {
+		t.Errorf("notes %q, warnings %q; want notes %q", s.notes, s.warns, want)
 	}
 }

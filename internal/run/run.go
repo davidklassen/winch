@@ -1117,7 +1117,7 @@ func (hr *hostRun) sshServer(m module.Module, res module.Result, where string) e
 			case disables:
 				verb = "disables"
 			}
-			hr.sshOff = append(hr.sshOff, startedBy{other, fmt.Errorf("%s: this %s %s, and no step starts and enables %s; this cuts off winch's access", where, verb, unit, other)})
+			hr.sshOff = append(hr.sshOff, startedBy{other, fmt.Errorf("%s: this %s %s and cuts off winch's access, since no step starts and enables %s; start and enable %[4]s in a service step", where, verb, unit, other)})
 		}
 	case *module.Link:
 		if res.Status == module.OK || m.Target == nil {

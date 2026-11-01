@@ -89,13 +89,8 @@ func (d *Debconf) Check(ctx context.Context, _ *State, say Say) (Result, error) 
 	if exists && sameAnswer(d.Type, cur, d.Value) {
 		return Result{Status: OK}, nil
 	}
-	// dpkg-query fails for a package that dpkg does not know.
-	status, err := run(ctx, nil, "dpkg-query", "-W", "-f=${db:Status-Status}\n", d.Package)
-	if err != nil && !errors.As(err, new(*exec.ExitError)) {
+	if err := d.sayInstalled(ctx, say); err != nil {
 		return Result{}, err
-	}
-	if slices.Contains(strings.Fields(status), "installed") {
-		say.Note(d.Package + " is installed; the new answer has no effect until dpkg-reconfigure runs")
 	}
 	action, old := Modify, fmt.Sprintf("%q", cur)
 	if !exists {
@@ -124,6 +119,18 @@ func (d *Debconf) checkChoices(choices []string) error {
 		if !slices.Contains(choices, v) {
 			return fmt.Errorf("%q is not a choice of %s; the choices are %s", v, d.Question, strings.Join(choices, ", "))
 		}
+	}
+	return nil
+}
+
+func (d *Debconf) sayInstalled(ctx context.Context, say Say) error {
+	// dpkg-query fails for a package that dpkg does not know.
+	status, err := run(ctx, nil, "dpkg-query", "-W", "-f=${db:Status-Status}\n", d.Package)
+	if err != nil && !errors.As(err, new(*exec.ExitError)) {
+		return err
+	}
+	if slices.Contains(strings.Fields(status), "installed") {
+		say.Note(d.Package + " is installed, so the new answer has no effect until dpkg-reconfigure runs")
 	}
 	return nil
 }

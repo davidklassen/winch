@@ -109,10 +109,11 @@ func TestZoneMissing(t *testing.T) {
 // spec: Modules/hostname and timezone; CLI/Messages
 func TestUnknownZone(t *testing.T) {
 	dir := t.TempDir()
-	if err := unknownZone(dir+"/", "US/Eastern"); err == nil || !strings.HasSuffix(err.Error(), "; an old name such as US/Eastern needs the package tzdata-legacy") {
-		t.Errorf("error = %v, want the tzdata-legacy fix", err)
+	want := "unknown time zone US/Estern: " + dir + "/US/Estern does not exist; fix a typo in the name, or for an old name such as US/Eastern, install the package tzdata-legacy in an earlier pkg step"
+	if err := unknownZone(dir+"/", "US/Estern"); err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
 	}
-	want := "unknown time zone Europe/Berlin: " + dir + "/none does not exist; install the package tzdata in an earlier pkg step"
+	want = "unknown time zone Europe/Berlin: " + dir + "/none does not exist; install the package tzdata in an earlier pkg step"
 	if err := unknownZone(dir+"/none/", "Europe/Berlin"); err == nil || err.Error() != want {
 		t.Errorf("error = %v, want %q", err, want)
 	}

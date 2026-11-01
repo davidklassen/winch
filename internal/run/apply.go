@@ -604,7 +604,7 @@ func (a *hostApply) reboot(ctx context.Context, r *module.Reboot) (string, error
 		return "", errors.New("the host still needs a reboot after it rebooted: /run/reboot-required exists")
 	}
 	if len(b.Failed) > 0 {
-		return "rebooted; failed units: " + strings.Join(b.Failed, ", "), nil
+		return "rebooted with failed units: " + strings.Join(b.Failed, ", "), nil
 	}
 	return "rebooted", nil
 }

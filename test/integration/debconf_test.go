@@ -179,7 +179,7 @@ func TestPackageSources(t *testing.T) {
 			t.Errorf("the plan does not show %q", want)
 		}
 	}
-	const note = "winch-signed is installed; the new answer has no effect until dpkg-reconfigure runs"
+	const note = "winch-signed is installed, so the new answer has no effect until dpkg-reconfigure runs"
 	if strings.Contains(r.Stderr, note) {
 		t.Errorf("the plan notes a package that is not installed: %q", r.Stderr)
 	}
