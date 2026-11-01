@@ -385,7 +385,9 @@ func exprMessage(err error, src string, names []string) string {
 		return err.Error()
 	}
 	msg := fe.Message
-	if m := unknownNameRe.FindStringSubmatch(msg); m != nil {
+	if m := unknownNameRe.FindStringSubmatch(msg); m != nil && m[1] == "toJSON" {
+		msg = `unknown name "toJSON"; use json`
+	} else if m != nil {
 		msg = fmt.Sprintf("unknown name %q%s", m[1], yamlx.Suggest(m[1], names))
 	} else if m := unknownFieldRe.FindStringSubmatch(msg); m != nil {
 		if f, ok := fieldNames[m[1]]; ok {

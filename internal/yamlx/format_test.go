@@ -129,8 +129,8 @@ func TestFormatError(t *testing.T) {
 	}{
 		{"syntax", "a:\n  b: [1,\n", "x.yaml:2:1: "},
 		{"two documents", "a: 1\n---\nb: 2\n", "x.yaml:2:1: a file holds one YAML document"},
-		{"alias before its anchor", "steps:\n  - pkg: &p htop\n    name: *p\n", "x.yaml:2:1: cannot format the file without a change to its values"},
-		{"complex key", "a:\n    ? b\n    : 1\n", "x.yaml:2:1: cannot format the file without a change to its values"},
+		{"alias before its anchor", "steps:\n  - pkg: &p htop\n    name: *p\n", "x.yaml:2:1: cannot format the file without a change to its values; change this line by hand, then run winch fmt again"},
+		{"complex key", "a:\n    ? b\n    : 1\n", "x.yaml:2:1: cannot format the file without a change to its values; change this line by hand, then run winch fmt again"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

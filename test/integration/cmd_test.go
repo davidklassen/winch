@@ -38,7 +38,7 @@ func TestCmdTimeout(t *testing.T) {
 			if r.Code != tt.code {
 				t.Errorf("apply: exit %d, want %d; stderr %q", r.Code, tt.code, r.Stderr)
 			}
-			if tt.code != 0 && !strings.Contains(r.Stderr, "sleep 5: no result after 2s") {
+			if tt.code != 0 && !strings.Contains(r.Stderr, "sleep 5: stopped after 2s; set timeout for a longer limit") {
 				t.Errorf("timeout error does not name the limit: %q", r.Stderr)
 			}
 		})
@@ -71,7 +71,7 @@ func TestCmdModule(t *testing.T) {
 			Name:         "a command that does not make creates",
 			Args:         &module.Cmd{Command: "touch /root/made", Creates: "/root/out"},
 			Want:         module.Result{Status: module.Change, Action: module.Create},
-			WantApplyErr: "the command did not create /root/out",
+			WantApplyErr: "the command exited 0 but did not create /root/out, so each run would run it again; make the command create it, or fix creates",
 			After:        "test -e /root/made",
 			FixArgs:      &module.Cmd{Command: "touch /root/fixed", Creates: "/root/fixed"},
 		},

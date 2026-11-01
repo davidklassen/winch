@@ -241,6 +241,13 @@ func TestTopLevel(t *testing.T) {
 			t.Errorf("err = %v, want %q", err, want)
 		}
 	})
+	t.Run("an inventory name", func(t *testing.T) {
+		_, err := Load(t.Context(), writeProject(t, only), "prod", "", nil, Keys{})
+		want := `inventory "prod": the hosts at the top of winch.yaml are the only inventory; leave out the inventory name`
+		if err == nil || err.Error() != want {
+			t.Errorf("err = %v, want %q", err, want)
+		}
+	})
 	tests := []struct {
 		name     string
 		files    map[string]string

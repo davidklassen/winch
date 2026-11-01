@@ -26,7 +26,7 @@ func TestFileValidate(t *testing.T) {
 		{"all fields", "path: /etc/motd\ncontent: hi\nowner: admin\ngroup: adm\nmode: \"0600\"\n", ""},
 		{"four digit mode", "path: /x\ncontent: hi\nmode: \"1755\"\n", ""},
 		{"absent", "path: /etc/motd\nabsent: true\n", ""},
-		{"no path", "content: hi\n", `t.yaml:1:1: missing key "path"`},
+		{"no path", "content: hi\n", `t.yaml:1:1: a file step needs path`},
 		{"relative path", "path: etc/motd\ncontent: hi\n", `t.yaml:1:7: path: must be an absolute path`},
 		{"dot dot path", "path: /etc/../motd\ncontent: hi\n", `t.yaml:1:7: path: ".." is not allowed; write the path without it`},
 		{"trailing dot dot path", "path: /srv/app/..\ncontent: hi\n", `t.yaml:1:7: path: ".." is not allowed; write the path without it`},

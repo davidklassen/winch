@@ -60,7 +60,7 @@ func TestLineModule(t *testing.T) {
 			Name:      "more than one match fails",
 			Setup:     `printf 'port 1\nbind 127.0.0.1\nport 2\n' > /tmp/w/f`,
 			Args:      port("port 6380"),
-			WantErr:   `/tmp/w/f has 2 lines that match "^port ": lines 1, 3`,
+			WantErr:   `/tmp/w/f has 2 lines that match "^port ": lines 1, 3; make match find one line`,
 			Unchanged: `[ "$(cat /tmp/w/f)" = "$(printf 'port 1\nbind 127.0.0.1\nport 2')" ]`,
 		},
 		{

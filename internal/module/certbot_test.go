@@ -32,9 +32,9 @@ func TestCertbotValidate(t *testing.T) {
 		{"standalone with hooks", base + "authenticator: standalone\npre_hook: systemctl stop nginx\npost_hook: systemctl start nginx\n", ""},
 		{"webroot", base + "authenticator: webroot\nwebroot_path: /var/www/html\n", ""},
 		{"all", base + "deploy_hook: systemctl reload nginx\nreuse_key: true\n", ""},
-		{"no name", "domains: [a.example.com]\nemail: a@example.com\n", `t.yaml:1:1: missing key "name"`},
-		{"no domains", "name: a\nemail: a@example.com\n", `t.yaml:1:1: missing key "domains"`},
-		{"no email", "name: a\ndomains: [a.example.com]\n", `t.yaml:1:1: missing key "email"`},
+		{"no name", "domains: [a.example.com]\nemail: a@example.com\n", `t.yaml:1:1: a certbot step needs name`},
+		{"no domains", "name: a\nemail: a@example.com\n", `t.yaml:1:1: a certbot step needs domains`},
+		{"no email", "name: a\ndomains: [a.example.com]\n", `t.yaml:1:1: a certbot step needs email`},
 		{"name with a slash", "name: a/b\ndomains: [a.example.com]\nemail: a@example.com\n", `t.yaml:1:7: name: "a/b" is not a certificate name: letters, digits, ., _, and -, starting with a letter or digit`},
 		{"name ..", "name: ..\ndomains: [a.example.com]\nemail: a@example.com\n", `t.yaml:1:7: name: ".." is not a certificate name: letters, digits, ., _, and -, starting with a letter or digit`},
 		{"empty domains", "name: a\ndomains: []\nemail: a@example.com\n", `t.yaml:2:10: domains: needs at least one domain`},
@@ -290,7 +290,7 @@ func TestCertbotCheckBrokenLineage(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &Certbot{Name: "a", Domains: []string{"a.example.com"}, Email: "a@example.com"}
-	want := "certificate a: " + filepath.Join(dir, "renewal", "a.conf") + " exists, but its certificate does not; certbot would make a new certificate a-0001 on each run; certbot delete --cert-name a removes the rest"
+	want := "certificate a has a renewal file but no certificate, so certbot would make a-0001 on each run; certbot delete --cert-name a removes the rest"
 	if _, err := c.check(dir, func(string) {}); err == nil || err.Error() != want {
 		t.Errorf("got %v\nwant %s", err, want)
 	}
@@ -331,9 +331,9 @@ func TestCertbotCheckExpiry(t *testing.T) {
 			var want []string
 			switch {
 			case tt.left < 0:
-				want = []string{"the certificate a expired on " + notAfter.UTC().Format(time.DateOnly) + "; check its renewal"}
+				want = []string{"the certificate a expired on " + notAfter.UTC().Format(time.DateOnly) + "; certbot renew --dry-run --cert-name a shows why certbot does not renew it"}
 			case tt.note:
-				want = []string{"the certificate a expires on " + notAfter.UTC().Format(time.DateOnly) + "; check its renewal"}
+				want = []string{"the certificate a expires on " + notAfter.UTC().Format(time.DateOnly) + "; certbot renew --dry-run --cert-name a shows why certbot does not renew it"}
 			}
 			if !slices.Equal(notes, want) {
 				t.Errorf("notes %q, want %q", notes, want)

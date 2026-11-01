@@ -37,6 +37,8 @@ type Certbot struct {
 	issue        bool
 }
 
+func (*Certbot) Noun() string { return "a certbot step" }
+
 func (c *Certbot) Main() string { return c.Name }
 
 var (
@@ -226,7 +228,7 @@ func (c *Certbot) changes(cur *certState) []string {
 		if old == s.value {
 			continue
 		}
-		lines = append(lines, s.key+" "+orNone(firstLine(old))+" →"+settingValue(orNone(s.value)))
+		lines = append(lines, s.key+" "+orNone(FirstLine(old))+" →"+settingValue(orNone(s.value)))
 	}
 	if lines == nil {
 		return nil
@@ -257,15 +259,6 @@ func settingValue(v string) string {
 	return " " + v
 }
 
-// firstLine is the first line of s, and " ..." when it has more.
-func firstLine(s string) string {
-	first, rest, _ := strings.Cut(strings.TrimSuffix(s, "\n"), "\n")
-	if rest != "" {
-		return first + " ..."
-	}
-	return first
-}
-
 func sameSet(a, b []string) bool {
 	x, y := slices.Clone(a), slices.Clone(b)
 	slices.Sort(x)
@@ -274,7 +267,7 @@ func sameSet(a, b []string) bool {
 }
 
 func (c *Certbot) Check(_ context.Context, _ *State, say Say) (Result, error) {
-	res, err := c.check(letsencrypt, say.Note)
+	res, err := c.check(letsencrypt, say.Warn)
 	if err != nil || !c.issue {
 		return res, err
 	}
@@ -303,20 +296,20 @@ func (c *Certbot) missingTools() ([]Tool, error) {
 }
 
 // check checks the step in the certbot directory dir.
-func (c *Certbot) check(dir string, note func(string)) (Result, error) {
+func (c *Certbot) check(dir string, warn func(string)) (Result, error) {
 	cur, err := readCertState(dir, c.Name)
 	if err != nil {
 		return Result{}, err
 	}
 	if cur != nil && cur.domains == nil {
-		return Result{}, fmt.Errorf("certificate %s: %s exists, but its certificate does not; certbot would make a new certificate %s-0001 on each run; certbot delete --cert-name %s removes the rest", c.Name, renewalPath(dir, c.Name), c.Name, c.Name)
+		return Result{}, fmt.Errorf("certificate %s has a renewal file but no certificate, so certbot would make %s-0001 on each run; certbot delete --cert-name %s removes the rest", c.Name, c.Name, c.Name)
 	}
 	if cur != nil && time.Until(cur.notAfter) < 14*24*time.Hour {
 		verb := " expires on "
 		if time.Now().After(cur.notAfter) {
 			verb = " expired on "
 		}
-		note("the certificate " + c.Name + verb + cur.notAfter.UTC().Format(time.DateOnly) + "; check its renewal")
+		warn("the certificate " + c.Name + verb + cur.notAfter.UTC().Format(time.DateOnly) + "; certbot renew --dry-run --cert-name " + c.Name + " shows why certbot does not renew it")
 	}
 	changes := c.changes(cur)
 	c.issue = changes != nil
@@ -418,7 +411,7 @@ func (c *Certbot) Apply(ctx context.Context, _ Say) error {
 				env = []string{"RENEWED_LINEAGE=" + path.Join(letsencrypt, "live", c.Name), "RENEWED_DOMAINS=" + strings.Join(c.Domains, " ")}
 			}
 			if command != nil {
-				if err := shellLimit(ctx, *command, "/", env, nil, commandLimit, KillDelay); err != nil {
+				if err := shellLimit(ctx, *command, "/", env, nil, commandLimit, KillDelay, ""); err != nil {
 					errs = append(errs, fmt.Errorf("%s: %w", hook, err))
 					continue
 				}

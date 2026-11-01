@@ -28,13 +28,13 @@ func TestRepoValidate(t *testing.T) {
 		{"one component", "name: a\nurl: https://example.com/apt\nsuite: trixie\ncomponents: main\n", ""},
 		{"flat", "name: a\nurl: https://example.com/apt\nsuite: ./\n", ""},
 		{"dots and digits", "name: example.com_2-x\n" + base, ""},
-		{"no name", base, `t.yaml:1:1: missing key "name"`},
+		{"no name", base, `t.yaml:1:1: a repo step needs name`},
 		{"bad name", "name: a/b\n" + base, `t.yaml:1:7: name: "a/b" is not a source name; a name has letters, digits, _, -, and ., and does not start with .`},
 		{"hidden name", "name: .a\n" + base, `t.yaml:1:7: name: ".a" is not a source name; a name has letters, digits, _, -, and ., and does not start with .`},
-		{"no url", "name: a\nsuite: trixie\ncomponents: [main]\n", `t.yaml:1:1: missing key "url"`},
+		{"no url", "name: a\nsuite: trixie\ncomponents: [main]\n", `t.yaml:1:1: a repo step needs url`},
 		{"ftp url", "name: a\nurl: ftp://example.com/apt\nsuite: trixie\ncomponents: [main]\n", `t.yaml:2:6: url: must start with http:// or https://`},
 		{"no host", "name: a\nurl: https:///apt\nsuite: trixie\ncomponents: [main]\n", `t.yaml:2:6: url: has no host`},
-		{"user info", "name: a\nurl: https://u:p@example.com/apt\nsuite: trixie\ncomponents: [main]\n", `t.yaml:2:6: url: holds a user name or password, and the source file is world-readable; put them in /etc/apt/auth.conf.d/a.conf with mode 0600`},
+		{"user info", "name: a\nurl: https://u:p@example.com/apt\nsuite: trixie\ncomponents: [main]\n", `t.yaml:2:6: url: holds a user name or password, and every user of the host can read the source file; put them in /etc/apt/auth.conf.d/a.conf with mode 0600`},
 		{"space in url", "name: a\nurl: https://example.com/a b\nsuite: trixie\ncomponents: [main]\n", `t.yaml:2:6: url: has white space or a control character`},
 		{"control in url", "name: a\nurl: \"https://example.com/a\\x01\"\nsuite: trixie\ncomponents: [main]\n", `t.yaml:2:6: url: has white space or a control character`},
 		{"empty suite", "name: a\nurl: https://example.com/apt\nsuite: \"\"\ncomponents: [main]\n", `t.yaml:3:8: suite: is empty`},
@@ -206,6 +206,8 @@ func TestPGPKeyExpirySelfSig(t *testing.T) {
 	}
 }
 
+const vendorFix = "; get the current key of the vendor"
+
 // spec: Modules/repo
 func TestRepoSetKey(t *testing.T) {
 	day := func(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 12, 0, 0, 0, time.UTC) }
@@ -230,28 +232,30 @@ func TestRepoSetKey(t *testing.T) {
 		{"no expiry", string(readTestdata(t, "key.asc")), day(2100, 1, 1), nil, ""},
 		{"expires later", expiring, day(2024, 6, 1), nil, ""},
 		{"expires soon", expiring, day(2024, 12, 21), []string{"a.asc: the key " + expiringFpr + " expires on 2024-12-31"}, ""},
-		{"expired", expiring, day(2025, 1, 1), nil, "a.asc: the key " + expiringFpr + " expired on 2024-12-31"},
+		{"expired", expiring, day(2025, 1, 1), nil, "a.asc: the key " + expiringFpr + " expired on 2024-12-31" + vendorFix},
 		{"renewed", renewed, day(2025, 1, 1), nil, ""},
 		{"second key expired", both, day(2025, 1, 1), []string{"a.asc: the key " + expiringFpr + " expired on 2024-12-31"}, ""},
-		{"every key expired", expiring + string(april), day(2025, 1, 1), nil, "a.asc: the key " + expiringFpr + " expired on 2024-12-31; the key " + aprilFpr + " expired on 2024-04-10"},
+		{"every key expired", expiring + string(april), day(2025, 1, 1), nil, "a.asc: the key " + expiringFpr + " expired on 2024-12-31; the key " + aprilFpr + " expired on 2024-04-10" + vendorFix},
 		{"expired and expires soon", expiring + string(february), day(2025, 1, 10), []string{
 			"a.asc: the key " + expiringFpr + " expired on 2024-12-31",
 			"a.asc: the key " + februaryFpr + " expires on 2025-02-04",
 		}, ""},
 		{"second key expires soon", both, day(2024, 12, 21), []string{"a.asc: the key " + expiringFpr + " expires on 2024-12-31"}, ""},
-		{"signing subkey expired", subExpired, day(2025, 3, 1), nil, "a.asc: the signing subkey " + subFpr + " of the key " + subPrimaryFpr + " expired on 2025-01-31"},
+		{"signing subkey expired", subExpired, day(2025, 3, 1), nil, "a.asc: the signing subkey " + subFpr + " of the key " + subPrimaryFpr + " expired on 2025-01-31" + vendorFix},
 		{"signing subkey expires soon", subExpired, day(2025, 1, 20), []string{"a.asc: the signing subkey " + subFpr + " of the key " + subPrimaryFpr + " expires on 2025-01-31"}, ""},
 		{"signing subkey renewed", string(readTestdata(t, "subkey-renewed.asc")), day(2026, 11, 1), nil, ""},
 		{"signing subkey expired next to a valid key", string(readTestdata(t, "key.asc")) + subExpired, day(2025, 3, 1), []string{"a.asc: the signing subkey " + subFpr + " of the key " + subPrimaryFpr + " expired on 2025-01-31"}, ""},
-		{"no signing key", string(readTestdata(t, "cert-only.asc")), day(2026, 11, 1), nil, "a.asc: the key BD44CA8AB9AC4BFA6B0396B1EFDEA27A4FE0448C has no key or subkey that can sign"},
-		{"signing subkey revoked", string(readTestdata(t, "subkey-revoked.asc")), day(2026, 11, 1), nil, "a.asc: the key BD44CA8AB9AC4BFA6B0396B1EFDEA27A4FE0448C has no key or subkey that can sign"},
-		{"RSA with 1024 bits", string(readTestdata(t, "rsa1024.asc")), day(2026, 11, 1), nil, rsa1024Msg},
-		{"DSA", string(readTestdata(t, "dsa.asc")), day(2026, 11, 1), nil, dsaMsg},
-		{"SHA-1 self-signature", string(readTestdata(t, "sha1.asc")), day(2026, 11, 1), nil, sha1SelfMsg},
-		{"SHA-1 subkey binding", string(readTestdata(t, "sha1-subkey.asc")), day(2026, 11, 1), nil, sha1SubMsg},
+		{"no signing key", string(readTestdata(t, "cert-only.asc")), day(2026, 11, 1), nil, "a.asc: the key BD44CA8AB9AC4BFA6B0396B1EFDEA27A4FE0448C has no key or subkey that can sign" + vendorFix},
+		{"signing subkey revoked", string(readTestdata(t, "subkey-revoked.asc")), day(2026, 11, 1), nil, "a.asc: the key BD44CA8AB9AC4BFA6B0396B1EFDEA27A4FE0448C has no key or subkey that can sign" + vendorFix},
+		{"RSA with 1024 bits", string(readTestdata(t, "rsa1024.asc")), day(2026, 11, 1), nil, rsa1024Msg + vendorFix},
+		{"DSA", string(readTestdata(t, "dsa.asc")), day(2026, 11, 1), nil, dsaMsg + vendorFix},
+		{"SHA-1 self-signature", string(readTestdata(t, "sha1.asc")), day(2026, 11, 1), nil, sha1SelfMsg + vendorFix},
+		{"SHA-1 subkey binding", string(readTestdata(t, "sha1-subkey.asc")), day(2026, 11, 1), nil, sha1SubMsg + vendorFix},
 		{"RSA with 1024 bits next to a valid key", valid + string(readTestdata(t, "rsa1024.asc")), day(2026, 11, 1), []string{rsa1024Msg}, ""},
 		{"DSA next to a valid key", valid + string(readTestdata(t, "dsa.asc")), day(2026, 11, 1), []string{dsaMsg}, ""},
 		{"SHA-1 self-signature next to a valid key", valid + string(readTestdata(t, "sha1.asc")), day(2026, 11, 1), []string{sha1SelfMsg}, ""},
+		{"binary key", string(readTestdata(t, "key.gpg")), day(2026, 11, 1), nil, "a.asc is not an ASCII-armored OpenPGP public key; give the key as ASCII armor, as gpg --armor --export prints it"},
+		{"revoked", string(readTestdata(t, "revoked.asc")), day(2026, 11, 1), nil, "a.asc: the key 06AC54F1582AD1504107DE2CD1EAA49074573A45 is revoked" + vendorFix},
 		{"SHA-1 subkey binding next to a valid key", valid + string(readTestdata(t, "sha1-subkey.asc")), day(2026, 11, 1), []string{sha1SubMsg}, ""},
 	}
 	for _, tt := range tests {

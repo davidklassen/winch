@@ -42,6 +42,8 @@ type Repo struct {
 	refresh bool
 }
 
+func (*Repo) Noun() string { return "a repo step" }
+
 // repoFile is a file that Apply writes, with what Check found at its path.
 type repoFile struct {
 	path    string
@@ -80,7 +82,7 @@ func (r *Repo) Validate() error {
 	case err != nil:
 		return err
 	case u.User != nil:
-		return &yamlx.FieldError{Field: "url", Msg: fmt.Sprintf("holds a user name or password, and the source file is world-readable; put them in /etc/apt/auth.conf.d/%s.conf with mode 0600", r.Name)}
+		return &yamlx.FieldError{Field: "url", Msg: fmt.Sprintf("holds a user name or password, and every user of the host can read the source file; put them in /etc/apt/auth.conf.d/%s.conf with mode 0600", r.Name)}
 	}
 	if r.Suite == "" {
 		return &yamlx.FieldError{Field: "suite", Msg: "is empty"}
@@ -117,10 +119,10 @@ func (r *Repo) Validate() error {
 func (r *Repo) SetKey(name string, data []byte, now time.Time) ([]string, error) {
 	keys, err := parsePGPKeys(data)
 	if errors.Is(err, errNotArmored) {
-		return nil, fmt.Errorf("%s %w", name, err)
+		return nil, fmt.Errorf("%s %w; give the key as ASCII armor, as gpg --armor --export prints it", name, err)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", name, err)
+		return nil, fmt.Errorf("%s: %w; get the current key of the vendor", name, err)
 	}
 	var dead, warnings []string
 	for _, k := range keys {
@@ -154,7 +156,7 @@ func (r *Repo) SetKey(name string, data []byte, now time.Time) ([]string, error)
 		}
 	}
 	if len(dead) == len(keys) {
-		return nil, fmt.Errorf("%s: %s", name, strings.Join(dead, "; "))
+		return nil, fmt.Errorf("%s: %s; get the current key of the vendor", name, strings.Join(dead, "; "))
 	}
 	r.KeyData = data
 	return warnings, nil
@@ -196,7 +198,7 @@ func lastSigner(k pgpKey) (signer string, until time.Time, ok bool) {
 // apt entry.
 func (r *Repo) Source() string { return uriKey(r.URL) + " " + r.Suite }
 
-func (r *Repo) sourcePath() string { return sourcesDir + "/" + r.Name + ".sources" }
+func (r *Repo) SourcePath() string { return sourcesDir + "/" + r.Name + ".sources" }
 func (r *Repo) keyPath() string    { return keyringDir + "/" + r.Name + ".asc" }
 
 // source returns the content of the source file.
@@ -235,7 +237,7 @@ func (r *Repo) Check(_ context.Context, st *State, _ Say) (Result, error) {
 			r.writes = append(r.writes, f)
 		}
 	}
-	f, lines, err := checkRepoFile(r.sourcePath(), r.source())
+	f, lines, err := checkRepoFile(r.SourcePath(), r.source())
 	if err != nil {
 		return Result{}, err
 	}
@@ -248,7 +250,7 @@ func (r *Repo) Check(_ context.Context, st *State, _ Say) (Result, error) {
 		action = Create
 		r.refresh = true
 	case string(f.old) != string(f.content):
-		lines = append(sourceChanges(r.sourcePath(), f.old, f.content), lines...)
+		lines = append(sourceChanges(r.SourcePath(), f.old, f.content), lines...)
 		r.refresh = true
 	}
 	changes = append(changes, lines...)
@@ -449,7 +451,7 @@ func (r *Repo) Apply(ctx context.Context, say Say) error {
 // update refreshes the index of this source only.
 func (r *Repo) update(ctx context.Context) error {
 	_, err := aptGet(ctx, "update", "-q", "--error-on=any",
-		"-o", "Dir::Etc::SourceList="+r.sourcePath(), "-o", "Dir::Etc::SourceParts=-",
+		"-o", "Dir::Etc::SourceList="+r.SourcePath(), "-o", "Dir::Etc::SourceParts=-",
 		"-o", "APT::Get::List-Cleanup=0", "-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=")
 	return err
 }
@@ -512,7 +514,7 @@ func (r *Repo) removed(p string) bool {
 // than one entry or an entry that is not deb. One deb entry is the step's
 // source, perhaps with an old URI or suite.
 func (r *Repo) checkOwnFile(old []byte) error {
-	if r.removed(r.sourcePath()) {
+	if r.removed(r.SourcePath()) {
 		return nil
 	}
 	var entries, keys []string
@@ -540,5 +542,5 @@ func (r *Repo) checkOwnFile(old []byte) error {
 }
 
 func (r *Repo) otherEntry(e string) error {
-	return fmt.Errorf("%s holds %s, which is not this step's source; move it to another file", r.sourcePath(), e)
+	return fmt.Errorf("%s holds %s, which is not this step's source; move it to another file", r.SourcePath(), e)
 }

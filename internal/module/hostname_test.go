@@ -106,6 +106,18 @@ func TestZoneMissing(t *testing.T) {
 	}
 }
 
+// spec: Modules/hostname and timezone; CLI/Messages
+func TestUnknownZone(t *testing.T) {
+	dir := t.TempDir()
+	if err := unknownZone(dir+"/", "US/Eastern"); err == nil || !strings.HasSuffix(err.Error(), "; an old name such as US/Eastern needs the package tzdata-legacy") {
+		t.Errorf("error = %v, want the tzdata-legacy fix", err)
+	}
+	want := "unknown time zone Europe/Berlin: " + dir + "/none does not exist; install the package tzdata in an earlier pkg step"
+	if err := unknownZone(dir+"/none/", "Europe/Berlin"); err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+}
+
 // spec: Modules/hostname and timezone
 func TestCurrentZone(t *testing.T) {
 	dir := t.TempDir()
@@ -146,9 +158,9 @@ func TestRebootValidate(t *testing.T) {
 	tests := []struct{ name, yaml, want string }{
 		{"smallest timeout", "if_required: true\ntimeout: 1\n", ""},
 		{"largest timeout", "if_required: true\ntimeout: 9223372036\n", ""},
-		{"zero timeout", "if_required: true\ntimeout: 0\n", `t.yaml:2:10: timeout: must be 1 or more seconds`},
-		{"negative timeout", "if_required: true\ntimeout: -1\n", `t.yaml:2:10: timeout: must be 1 or more seconds`},
-		{"overflowing timeout", "if_required: true\ntimeout: 9223372037\n", `t.yaml:2:10: timeout: must be at most 9223372036 seconds`},
+		{"zero timeout", "if_required: true\ntimeout: 0\n", `t.yaml:2:10: timeout: 0 is below 1 second`},
+		{"negative timeout", "if_required: true\ntimeout: -1\n", `t.yaml:2:10: timeout: -1 is below 1 second`},
+		{"overflowing timeout", "if_required: true\ntimeout: 9223372037\n", `t.yaml:2:10: timeout: 9223372037 is above 9223372036 seconds`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Reboot{}, tt.yaml, tt.want) })

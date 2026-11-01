@@ -291,6 +291,9 @@ type hostRun struct {
 	lines map[string][]lineStep
 	// pkgs are the checked pkg steps.
 	pkgs []pkgStep
+	// step names the step that the plan checks now in the messages of later
+	// steps: its address and label, as two steps can have one label.
+	step string
 	// written returns the paths that the project writes on the host, for dir
 	// steps with purge. It is set at the first contact.
 	written func() (project.Writes, error)
@@ -567,7 +570,7 @@ func sharedDestinations(ctx context.Context, hosts []project.Host, resolve func(
 			if r.Jump != "" {
 				shown += " through " + r.Jump
 			}
-			errs[name] = fmt.Errorf("host %q has the SSH destination of host %q: %s", name, other, shown)
+			errs[name] = fmt.Errorf("host %s has the same SSH destination, %s; keep one host for this destination, or give each host its own address or port", other, shown)
 		}
 	}
 	return errs
@@ -622,7 +625,9 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		if ctx.Err() != nil {
 			return nil, ErrInterrupted
 		}
-		where := scope(stage, p) + ": " + oneLine(label(p.Step))
+		l := oneLine(label(p.Step))
+		where := scope(stage, p) + ": " + l
+		hr.step = p.Address + " " + l
 		if err := hr.repo(&steps[i].Step, where); err != nil {
 			return nil, err
 		}
@@ -726,7 +731,7 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 	}
 	for _, c := range created {
 		if w, ok := hr.needs[c]; ok {
-			return fmt.Errorf("%s: an earlier step needs it: %s; move this step before it", where, w)
+			return fmt.Errorf("%s: this step creates %s, which an earlier step needs: %s; move this step before it", where, c, w)
 		}
 		hr.created[c] = true
 	}
@@ -736,7 +741,7 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 			continue
 		}
 		if _, ok := hr.needs[n]; !ok {
-			hr.needs[n] = where
+			hr.needs[n] = hr.step
 		}
 	}
 	// Directories that exist after the step, which dropCreatedParents does
@@ -790,7 +795,7 @@ func (hr *hostRun) repo(st *project.Step, where string) error {
 	if w, ok := hr.sources[key]; ok {
 		return fmt.Errorf("%s: the source %s %s is also in %s; use one step", where, r.URL, r.Suite, w)
 	}
-	hr.sources[key] = where
+	hr.sources[key] = hr.step
 	c := *r
 	c.Removed = hr.removed
 	st.Args = &c
@@ -837,7 +842,7 @@ func (hr *hostRun) same(st project.Step, where string) error {
 	add := func(thing string, args module.Module) error {
 		m, ok := hr.managed[thing]
 		if !ok {
-			hr.managed[thing] = managed{where, st.Module, args}
+			hr.managed[thing] = managed{hr.step, st.Module, args}
 			return nil
 		}
 		if removesTimezoneFile(m.args, args) || removesTimezoneFile(args, m.args) {
@@ -852,7 +857,7 @@ func (hr *hostRun) same(st project.Step, where string) error {
 			return fmt.Errorf("%s: %w", where, err)
 		}
 		if m.module != st.Module || !bytes.Equal(a, b) {
-			return fmt.Errorf("%s: %s is also in %s, with other arguments", where, thing, m.where)
+			return fmt.Errorf("%s: %s is also in %s, with other arguments; use one step", where, thing, m.where)
 		}
 		return nil
 	}
@@ -905,9 +910,9 @@ func (hr *hostRun) same(st project.Step, where string) error {
 			key := "the groups of the user " + m.Name
 			e, ok := hr.managed[key]
 			if !ok {
-				hr.managed[key] = managed{where, st.Module, m}
+				hr.managed[key] = managed{hr.step, st.Module, m}
 			} else if (e.args.(*module.User).Groups != nil) != (m.Groups != nil) {
-				return fmt.Errorf("%s: the user %s is also in %s, with other arguments", where, m.Name, e.where)
+				return fmt.Errorf("%s: the user %s is also in %s, with other arguments; use one step", where, m.Name, e.where)
 			}
 		}
 		if addOnly {
@@ -926,7 +931,7 @@ func (hr *hostRun) same(st project.Step, where string) error {
 		if other, ok := hr.managed["the firewall"]; ok {
 			return fmt.Errorf("%s: the firewall is also in %s; a host has one firewall step", where, other.where)
 		}
-		hr.managed["the firewall"] = managed{where, st.Module, m}
+		hr.managed["the firewall"] = managed{hr.step, st.Module, m}
 		if err := add("the unit "+module.FirewallUnit, m); err != nil {
 			return err
 		}
@@ -961,7 +966,7 @@ func (hr *hostRun) tree(m module.Module, where string) error {
 				return fmt.Errorf("%s: this step removes %s, which %s writes; the two steps undo each other on every run", where, w.path, w.where)
 			}
 		}
-		hr.trees = append(hr.trees, pathStep{removes, where})
+		hr.trees = append(hr.trees, pathStep{removes, hr.step})
 	}
 	w, ok := m.(module.Writer)
 	if !ok {
@@ -973,7 +978,7 @@ func (hr *hostRun) tree(m module.Module, where string) error {
 				return fmt.Errorf("%s: %s removes %s, which this step writes; the two steps undo each other on every run", where, t.where, p)
 			}
 		}
-		hr.writes = append(hr.writes, pathStep{p, where})
+		hr.writes = append(hr.writes, pathStep{p, hr.step})
 	}
 	return nil
 }
@@ -989,11 +994,11 @@ func (hr *hostRun) unitOrder(p Planned, where string) error {
 	case *module.Service:
 		if m.Running != nil && *m.Running || m.Enabled != nil && *m.Enabled {
 			if _, ok := hr.services[m.UnitFile()]; !ok {
-				hr.services[m.UnitFile()] = where
+				hr.services[m.UnitFile()] = hr.step
 			}
 			for _, u := range []string{m.Unit(), m.UnitFile()} {
 				if _, ok := hr.started[u]; !ok {
-					hr.started[u] = where
+					hr.started[u] = hr.step
 				}
 			}
 		}
@@ -1041,7 +1046,7 @@ func (hr *hostRun) overlap(l *module.Line, where string) error {
 			return fmt.Errorf("%s: the match %q of %s finds the line of this step; the two steps change it on every run", where, el.Match, e.where)
 		}
 	}
-	hr.lines[l.Path] = append(hr.lines[l.Path], lineStep{where, l, re})
+	hr.lines[l.Path] = append(hr.lines[l.Path], lineStep{hr.step, l, re})
 	return nil
 }
 
@@ -1058,7 +1063,7 @@ func (hr *hostRun) packages(m module.Module, res module.Result, where string) er
 			}
 		}
 	case *module.Pkg:
-		cur := pkgStep{where: where, pkg: m}
+		cur := pkgStep{where: hr.step, pkg: m}
 		cur.installs, cur.others = module.PkgPlan(res.Changes)
 		cur.unknown = slices.Contains(res.Changes, module.OthersUnknown)
 		self := cur
@@ -1091,7 +1096,6 @@ func (hr *hostRun) packages(m module.Module, res module.Result, where string) er
 // step that stops or disables one of the SSH server units: the plan fails it
 // unless another step starts and enables the other unit.
 func (hr *hostRun) sshServer(m module.Module, res module.Result, where string) error {
-	cut := func() error { return fmt.Errorf("%s: this cuts off winch's access", where) }
 	switch m := m.(type) {
 	case *module.Service:
 		unit := m.Unit()
@@ -1106,7 +1110,14 @@ func (hr *hostRun) sshServer(m module.Module, res module.Result, where string) e
 		stops := m.Running != nil && !*m.Running && slices.Contains(res.Changes, "stop")
 		disables := m.Enabled != nil && !*m.Enabled && slices.Contains(res.Changes, "disable")
 		if (stops || disables) && !hr.sshOn[other] {
-			hr.sshOff = append(hr.sshOff, startedBy{other, cut()})
+			verb := "stops"
+			switch {
+			case stops && disables:
+				verb = "stops and disables"
+			case disables:
+				verb = "disables"
+			}
+			hr.sshOff = append(hr.sshOff, startedBy{other, fmt.Errorf("%s: this %s %s, and no step starts and enables %s; this cuts off winch's access", where, verb, unit, other)})
 		}
 	case *module.Link:
 		if res.Status == module.OK || m.Target == nil {
@@ -1119,7 +1130,7 @@ func (hr *hostRun) sshServer(m module.Module, res module.Result, where string) e
 		unit := path.Base(m.Path)
 		if target == "/dev/null" &&
 			sshPair(unit) != "" && (&module.Unit{Name: unit}).Path() == m.Path {
-			return cut()
+			return fmt.Errorf("%s: this cuts off winch's access", where)
 		}
 	}
 	return nil
@@ -1189,7 +1200,7 @@ func (hr *hostRun) trackUnits(m module.Module, res module.Result, where string) 
 	hr.startedBy = slices.DeleteFunc(hr.startedBy, func(s startedBy) bool { return s.unit == unit })
 	for _, u := range res.StartedBy {
 		if !hr.units[u] {
-			hr.startedBy = append(hr.startedBy, startedBy{u, fmt.Errorf("%s: %s is started by %s; add a step for %s", where, unit, u, u)})
+			hr.startedBy = append(hr.startedBy, startedBy{u, fmt.Errorf("%s: %s starts %s; add a service step that stops and disables %s", where, u, unit, u)})
 		}
 	}
 }

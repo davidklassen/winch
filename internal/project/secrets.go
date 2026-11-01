@@ -882,7 +882,7 @@ func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
 	// layout.
 	after, err := yamlx.Parse(file, []byte(out))
 	if err != nil || !reflect.DeepEqual(yamlx.Value(after), withValue(yamlx.Value(n), keys, text)) {
-		return "", fmt.Errorf("cannot write vars.%s into %s; add it by hand", name, label)
+		return "", fmt.Errorf("cannot write vars.%s into %s: winch writes only into block maps, not into flow maps such as {a: 1}; rewrite the map as a block map, or add the value of winch secret encrypt by hand", name, label)
 	}
 	return label, replaceFile(path, []byte(out))
 }
@@ -920,6 +920,16 @@ func insert(text string, root *yamlx.Node, keys []string, leaf string) string {
 			n = p.Value
 			continue
 		case p != nil && p.Value.Kind == yamlx.Null:
+			at, col = p.KeyPos.Line, p.KeyPos.Col+2
+			rest = rest[1:]
+		case p != nil && p.Value.Kind == yamlx.Map && strings.HasPrefix(lines[p.Value.Pos.Line-1][p.Value.Pos.Col-1:], "{}"):
+			// An empty flow map, as in "web1: {}", becomes a null value.
+			line := lines[p.Value.Pos.Line-1]
+			before, after := line[:p.Value.Pos.Col-1], strings.TrimLeft(line[p.Value.Pos.Col+1:], " ")
+			if !strings.HasPrefix(after, "#") {
+				before = strings.TrimRight(before, " ")
+			}
+			lines[p.Value.Pos.Line-1] = before + after
 			at, col = p.KeyPos.Line, p.KeyPos.Col+2
 			rest = rest[1:]
 		case p != nil:

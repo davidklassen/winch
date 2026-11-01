@@ -26,6 +26,8 @@ type Line struct {
 	Absent     bool    `yaml:"absent" json:"absent,omitempty" line:"remove the matching lines" doc:"Remove the matching lines."`
 }
 
+func (*Line) Noun() string { return "a line step" }
+
 func (l *Line) Main() string { return l.Path }
 
 func (l *Line) ValidateCommand() string {
@@ -206,7 +208,7 @@ func (l *Line) edit(data []byte) ([]byte, string, error) {
 		for k, i := range found {
 			nums[k] = strconv.Itoa(i + 1)
 		}
-		return nil, "", fmt.Errorf("%s has %d lines that match %q: lines %s", l.Path, len(found), l.Match, strings.Join(nums, ", "))
+		return nil, "", fmt.Errorf("%s has %d lines that match %q: lines %s; make match find one line", l.Path, len(found), l.Match, strings.Join(nums, ", "))
 	}
 	return []byte(out.String()), old.String(), nil
 }

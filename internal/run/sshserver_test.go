@@ -24,11 +24,11 @@ func TestSSHServerCutOff(t *testing.T) {
 		name, pipeline, want string
 	}{
 		{"stop ssh", stage("s", service("ssh", "          running: false\n")),
-			"s: service ssh: this cuts off winch's access"},
+			"s: service ssh: this stops ssh.service, and no step starts and enables ssh.socket; this cuts off winch's access"},
 		{"disable ssh", stage("s", service("ssh", "          enabled: false\n")),
-			"s: service ssh: this cuts off winch's access"},
+			"s: service ssh: this disables ssh.service, and no step starts and enables ssh.socket; this cuts off winch's access"},
 		{"stop ssh.socket", stage("s", service("ssh.socket", off)),
-			"s: service ssh.socket: this cuts off winch's access"},
+			"s: service ssh.socket: this stops and disables ssh.socket, and no step starts and enables ssh.service; this cuts off winch's access"},
 		{"ssh already stopped", stage("s", service("ssh.service", off)), ""},
 		{"mask ssh", stage("s", maskSSH), "s: link /etc/systemd/system/ssh.service: this cuts off winch's access"},
 		{"ssh.socket already masked", stage("s", "      - link:\n          path: /etc/systemd/system/ssh.socket\n          target: /dev/null\n"), ""},
@@ -39,7 +39,7 @@ func TestSSHServerCutOff(t *testing.T) {
 		{"start ssh, stop ssh.socket", stage("s", service("ssh", on)+service("ssh.socket", off)), ""},
 		{"start ssh in a later stage", stage("s", service("ssh.socket", off)) + stage("t", service("ssh", on)), ""},
 		{"start ssh without enabling it", stage("s", service("ssh.socket", off)+service("ssh", "          running: true\n")),
-			"s: service ssh.socket: this cuts off winch's access"},
+			"s: service ssh.socket: this stops and disables ssh.socket, and no step starts and enables ssh.service; this cuts off winch's access"},
 		{"stop ssh, start ssh.socket", stage("s", service("ssh", off)+service("ssh.socket", on)), ""},
 	}
 	for _, tt := range tests {

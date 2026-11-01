@@ -1,1 +1,1 @@
-recipes/nginx/recipe.yaml:7:12: key: recipes/nginx/files/a.asc is not an ASCII-armored OpenPGP public key
+recipes/nginx/recipe.yaml:7:12: key: recipes/nginx/files/a.asc is not an ASCII-armored OpenPGP public key; give the key as ASCII armor, as gpg --armor --export prints it

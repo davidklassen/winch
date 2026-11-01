@@ -151,7 +151,7 @@ func stockSource(ctx context.Context, p string) (*hostContent, error) {
 		if pkg = ucfOwner(registry, p); pkg != "" {
 			return nil, fmt.Errorf("%s makes %s with ucf and ships no copy; use copy_from with its source in /usr/share", pkg, p)
 		}
-		h.missing = fmt.Errorf("no installed package ships %s", p)
+		h.missing = fmt.Errorf("no installed package ships %s; install its package in an earlier pkg step, or use copy_from for a file that a package script makes", p)
 		return h, nil
 	}
 	out, err := run(ctx, nil, "dpkg-query", "-W", "-f=${Version}\t${Architecture}\t${db:Status-Abbrev}", pkg)
@@ -166,7 +166,7 @@ func stockSource(ctx context.Context, p string) (*hostContent, error) {
 	// The second letter of the status is the state; the first is the
 	// selection, such as h for a held package.
 	if len(status) < 2 || status[1] != 'i' {
-		h.missing = fmt.Errorf("no installed package ships %s; %s is not installed", p, pkg)
+		h.missing = fmt.Errorf("%s is not installed, so no installed package ships %s; install it in an earlier pkg step", pkg, p)
 		return h, nil
 	}
 	name, _, _ := strings.Cut(pkg, ":")

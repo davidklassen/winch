@@ -22,6 +22,8 @@ type Group struct {
 	todo []string
 }
 
+func (*Group) Noun() string { return "a group step" }
+
 func (g *Group) Main() string { return g.Name }
 
 func (g *Group) Validate() error {
@@ -53,7 +55,7 @@ func checkAccountName(field, what, name string) error {
 
 func checkNewAccount(what, name string) error {
 	if !newAccountRe.MatchString(name) {
-		return fmt.Errorf(`%s %s does not exist, and winch creates only names with lowercase letters, digits, _, and - that start with a letter or _`, what, name)
+		return fmt.Errorf(`%s %s does not exist, and winch cannot create it: a new name has only lowercase letters, digits, _, and -, and starts with a letter or _`, what, name)
 	}
 	return nil
 }

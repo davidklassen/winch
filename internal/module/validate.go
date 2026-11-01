@@ -54,20 +54,24 @@ func put(ctx context.Context, top *os.Root, missing []string, dir *os.Root, tmp,
 		}
 		return nil
 	}
+	failed := fmt.Errorf("validate failed: %w", verr)
 	if exists {
 		if isDir {
 			if err := dir.Remove(name); err != nil {
-				return errors.Join(fmt.Errorf("validate: %w", verr), fmt.Errorf("put back the old %s, kept as %s: %w", name, backup, err))
+				return errors.Join(failed, fmt.Errorf("put back the old %s, kept as %s: %w", name, backup, err))
 			}
 		}
 		// A failed restore keeps the backup: it is the only copy of the old
 		// entry.
 		if err := dir.Rename(backup, name); err != nil {
-			return errors.Join(fmt.Errorf("validate: %w", verr), fmt.Errorf("put back the old %s, kept as %s: %w", name, backup, err))
+			return errors.Join(failed, fmt.Errorf("put back the old %s, kept as %s: %w", name, backup, err))
 		}
-		return fmt.Errorf("validate: %w", verr)
+		return fmt.Errorf("validate failed, and the old file is back: %w", verr)
 	}
-	errs := []error{fmt.Errorf("validate: %w", verr), dir.Remove(name)}
+	if err := dir.Remove(name); err != nil {
+		return errors.Join(failed, err)
+	}
+	errs := []error{fmt.Errorf("validate failed, and the new file is removed: %w", verr)}
 	// The missing parents, relative to top, from the deepest.
 	rel := ""
 	var parents []string

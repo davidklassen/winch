@@ -1,1 +1,1 @@
-pipelines/site.yaml:6:11: missing key "if_required"
+pipelines/site.yaml:6:11: a reboot step needs if_required

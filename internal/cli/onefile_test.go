@@ -93,7 +93,7 @@ func TestOneFileValidate(t *testing.T) {
 	cfg := strings.Replace(oneFile, "inventory: staging\n", "", 1)
 	cfg = strings.Replace(cfg, "pipelines:\n", "pipelines:\n  other:\n    stages:\n      - name: o\n        hosts: app1.prod.internal\n        steps:\n          - pkg: {nam: x}\n", 1)
 	r := winch(t, vmtest.WriteProject(t, map[string]string{"winch.yaml": cfg}), fakehost.New(), false, "", "validate")
-	if want := "winch.yaml:16:19: unknown key \"nam\"; did you mean \"name\"?\nwinch.yaml:16:18: missing key \"name\"\n"; r.code != exitInvalid || r.err != want {
+	if want := "winch.yaml:16:19: unknown key \"nam\"; did you mean \"name\"?\nwinch.yaml:16:18: a pkg step needs name\n"; r.code != exitInvalid || r.err != want {
 		t.Errorf("validate: exit %d, stderr %q", r.code, r.err)
 	}
 	// Every inventory of winch.yaml is checked: the host is only in prod.

@@ -1,1 +1,1 @@
-pipelines/other.yaml:5:14: missing key "name"
+pipelines/other.yaml:5:14: a pkg step needs name

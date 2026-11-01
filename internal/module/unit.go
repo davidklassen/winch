@@ -23,6 +23,8 @@ type Unit struct {
 	DataSHA256 string `json:"data_sha256,omitempty"`
 }
 
+func (*Unit) Noun() string { return "a unit step" }
+
 func (u *Unit) Main() string { return u.Name }
 
 // Path is the path of the unit file.
@@ -92,7 +94,7 @@ func (u *Unit) Check(ctx context.Context, st *State, say Say) (Result, error) {
 			return Result{}, err
 		}
 		if target == "/dev/null" {
-			return Result{}, fmt.Errorf("%s is masked; systemctl unmask %s removes the mask", u.Name, u.Name)
+			return Result{}, fmt.Errorf("%s is masked; systemctl unmask %s removes the mask", u.Name, shellWord(u.Name))
 		}
 	case !fi.Mode().IsRegular():
 		return Result{}, fmt.Errorf("%s is %s, not a file", u.Path(), kind(fi))

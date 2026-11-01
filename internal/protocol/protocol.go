@@ -22,10 +22,11 @@ type Response struct {
 	Error  string          `json:"error,omitempty"`
 	// NeedContent marks an apply that must write content it did not get.
 	NeedContent bool `json:"need_content,omitempty"`
-	// Note is a fact about the host that needs no fix, and Progress tells
-	// what the host does now. A response with either is not the answer: more
-	// responses follow.
+	// Note is a fact about the host that needs no fix, Warning a problem on
+	// the host to fix, and Progress tells what the host does now. A response
+	// with one of them is not the answer: more responses follow.
 	Note     string `json:"note,omitempty"`
+	Warning  string `json:"warning,omitempty"`
 	Progress string `json:"progress,omitempty"`
 }
 

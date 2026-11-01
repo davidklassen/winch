@@ -215,12 +215,12 @@ systemctl daemon-reload`
 			Name:    "enable a unit that loses [Install] fails",
 			Setup:   write("winch-k.service", kindInstall),
 			Args:    &module.Service{Name: "winch-k", Enabled: new(true), NewFile: []byte(kindStatic)},
-			WantErr: `winch-k.service has the unit file state "static"`,
+			WantErr: `winch-k.service is static: it has no [Install] section, so enabled: true cannot enable it; remove enabled, or enable the unit that wants it`,
 		},
 		{
 			Name:    "enable a new unit without [Install] fails",
 			Args:    &module.Service{Name: "winch-k", Enabled: new(true), NewFile: []byte(kindStatic)},
-			WantErr: `winch-k.service has the unit file state "static"`,
+			WantErr: `winch-k.service is static: it has no [Install] section, so enabled: true cannot enable it; remove enabled, or enable the unit that wants it`,
 		},
 		{
 			Name:    "run a unit that becomes oneshot fails",

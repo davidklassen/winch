@@ -15,6 +15,8 @@ type Reboot struct {
 	Timeout *int `yaml:"timeout" json:"timeout,omitempty" line:"wait limit in seconds" doc:"Wait limit in seconds." default:"600"`
 }
 
+func (*Reboot) Noun() string { return "a reboot step" }
+
 // defaultRebootTimeout is the wait limit of a reboot in seconds.
 const defaultRebootTimeout = 600
 

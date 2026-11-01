@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/fakehost"
@@ -240,12 +241,18 @@ func TestInterruptAtQuestion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var out, errOut strings.Builder
+	// main prints no interrupt message while winch asks.
+	var asking atomic.Bool
+	var askingAtInterrupt bool
 	code := Main(ctx, []string{"apply", "site"}, Env{
-		Dir: writeProject(t, motd), In: interruptReader{cancel}, Out: &out, Err: &errOut, Terminal: true,
-		Connect: h.ConnectorFor, Filter: secret.NewFilter(),
+		Dir: writeProject(t, motd), In: interruptReader{func() { askingAtInterrupt = asking.Load(); cancel() }}, Out: &out, Err: &errOut, Terminal: true,
+		Connect: h.ConnectorFor, Filter: secret.NewFilter(), Asking: &asking,
 	})
 	if code != exitOK || h.Applies != 0 || !strings.HasSuffix(errOut.String(), "Apply these changes? [y/N] \nNothing changed.\n") {
 		t.Errorf("exit %d, applies %d, stderr %q", code, h.Applies, errOut.String())
+	}
+	if !askingAtInterrupt || asking.Load() {
+		t.Errorf("asking at the interrupt %t, after the question %t; want true, then false", askingAtInterrupt, asking.Load())
 	}
 	// spec: Remote execution/Sessions
 	if h.Open != 0 {

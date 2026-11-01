@@ -19,12 +19,12 @@ func TestCmdValidate(t *testing.T) {
 		{"timeout", "command: make install\ntimeout: 1200\n", ""},
 		{"smallest timeout", "command: x\ntimeout: 1\n", ""},
 		{"largest timeout", "command: x\ntimeout: 9223372036\n", ""},
-		{"zero timeout", "command: x\ntimeout: 0\n", `t.yaml:2:10: timeout: must be 1 or more seconds`},
-		{"negative timeout", "command: x\ntimeout: -1\n", `t.yaml:2:10: timeout: must be 1 or more seconds`},
-		{"overflowing timeout", "command: x\ntimeout: 9223372037\n", `t.yaml:2:10: timeout: must be at most 9223372036 seconds`},
-		{"timeout with user", "command: x\nuser: root\ntimeout: 0\n", `t.yaml:3:10: timeout: must be 1 or more seconds`},
+		{"zero timeout", "command: x\ntimeout: 0\n", `t.yaml:2:10: timeout: 0 is below 1 second`},
+		{"negative timeout", "command: x\ntimeout: -1\n", `t.yaml:2:10: timeout: -1 is below 1 second`},
+		{"overflowing timeout", "command: x\ntimeout: 9223372037\n", `t.yaml:2:10: timeout: 9223372037 is above 9223372036 seconds`},
+		{"timeout with user", "command: x\nuser: root\ntimeout: 0\n", `t.yaml:3:10: timeout: 0 is below 1 second`},
 		{"all fields", "command: make install\ncreates: /usr/local/bin/app\nuser: deploy\ndir: /srv/app\n", ""},
-		{"no command", "creates: /x\n", `t.yaml:1:1: missing key "command"`},
+		{"no command", "creates: /x\n", `t.yaml:1:1: a cmd step needs command`},
 		{"empty command", "command: \"\"\n", `t.yaml:1:10: command: is empty`},
 		{"relative creates", "command: x\ncreates: bin/app\n", `t.yaml:2:10: creates: must be an absolute path`},
 		{"unclean creates", "command: x\ncreates: /usr/local/bin/\n", `t.yaml:2:10: creates: must be a clean path, such as "/usr/local/bin"`},
@@ -55,8 +55,8 @@ func TestAssertValidate(t *testing.T) {
 		want string
 	}{
 		{"both", "command: systemctl is-active nginx\nmessage: nginx does not run\n", ""},
-		{"no message", "command: \"true\"\n", `t.yaml:1:1: missing key "message"`},
-		{"no command", "message: x\n", `t.yaml:1:1: missing key "command"`},
+		{"no message", "command: \"true\"\n", `t.yaml:1:1: an assert step needs message`},
+		{"no command", "message: x\n", `t.yaml:1:1: an assert step needs command`},
 		{"empty command", "command: \"\"\nmessage: x\n", `t.yaml:1:10: command: is empty`},
 		{"empty message", "command: \"true\"\nmessage: \"\"\n", `t.yaml:2:10: message: is empty`},
 	}
@@ -152,7 +152,7 @@ func TestCmdUnless(t *testing.T) {
 		{"exit 127", "exit 127", 0, Result{Status: Change, Action: Modify}, ""},
 		{"a failed line", "false\ntrue", 0, Result{Status: Change, Action: Modify}, ""},
 		{"in /", `test "$(pwd)" = /`, 0, Result{Status: OK}, ""},
-		{"the step timeout", "sleep 5", 1, Result{}, "unless: sleep 5: no result after 1s"},
+		{"the step timeout", "sleep 5", 1, Result{}, "unless: sleep 5: stopped after 1s; set timeout for a longer limit"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -227,7 +227,7 @@ func TestCmdApply(t *testing.T) {
 		t.Errorf("a missing dir: %v, want %q", err, want)
 	}
 	err = (&Cmd{Command: "true", Creates: missing}).Apply(t.Context(), Silent{})
-	if want := "the command did not create " + missing; err == nil || err.Error() != want {
+	if want := "the command exited 0 but did not create " + missing + ", so each run would run it again; make the command create it, or fix creates"; err == nil || err.Error() != want {
 		t.Errorf("creates is missing after the command: %v, want %q", err, want)
 	}
 	if err := (&Cmd{Command: "touch " + missing, Creates: missing}).Apply(t.Context(), Silent{}); err != nil {

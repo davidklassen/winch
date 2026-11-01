@@ -597,7 +597,7 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 
 // spec: Modules (commands)
 func TestLoadSecretCertbotHook(t *testing.T) {
-	const msg = "certbot stores its hooks in a file that other users can read"
+	const msg = "a certbot hook cannot hold a secret: certbot stores its hooks in a file that other users can read; read the secret in the hook from a root-only file that a file step writes"
 	for _, tt := range []struct {
 		name, hook string
 		files      map[string]string
@@ -1215,6 +1215,12 @@ func TestWriteSecret(t *testing.T) {
 			"hosts:\n  web1:\n    vars:\n      pw: !secret S\n  web2:\n"},
 		{"a quoted host", "1234", "hosts:\n  \"1234\":\n    vars:\n      domain: acme.com\n",
 			"hosts:\n  \"1234\":\n    vars:\n      domain: acme.com\n      pw: !secret S\n"},
+		{"an empty host", "web1", "hosts:\n  web1: {}\n  web2: {} # b\n",
+			"hosts:\n  web1:\n    vars:\n      pw: !secret S\n  web2: {} # b\n"},
+		{"an empty host with a comment", "web2", "hosts:\n  web1: {}\n  web2: {} # b\n",
+			"hosts:\n  web1: {}\n  web2: # b\n    vars:\n      pw: !secret S\n"},
+		{"empty vars of all", "", "groups:\n  all:\n    vars: {}\nhosts:\n  web1: {}\n",
+			"groups:\n  all:\n    vars:\n      pw: !secret S\nhosts:\n  web1: {}\n"},
 		{"a flow map", "", "groups:\n  all:\n    vars: {domain: acme.com}\n", ""},
 		{"a flow host", "web1", "hosts: {web1: {}}\n", ""},
 	}
@@ -1232,7 +1238,7 @@ func TestWriteSecret(t *testing.T) {
 				t.Fatal(rerr)
 			}
 			if tt.want == "" {
-				if err == nil || !strings.Contains(err.Error(), "cannot write vars.pw into inventories/test.yaml; add it by hand") || string(data) != tt.inv {
+				if err == nil || !strings.Contains(err.Error(), "cannot write vars.pw into inventories/test.yaml: winch writes only into block maps, not into flow maps such as {a: 1}; rewrite the map as a block map, or add the value of winch secret encrypt by hand") || string(data) != tt.inv {
 					t.Errorf("err %v, inventory %q; want an error and no change", err, data)
 				}
 				return
@@ -1367,7 +1373,7 @@ func TestWinchYML(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := AddRecipient(dir, k.id.Recipient().String())
-		if want := "project file is both winch.yaml and winch.yml; keep one of the two"; err == nil || err.Error() != want {
+		if want := "the project file is both winch.yaml and winch.yml; keep one of the two"; err == nil || err.Error() != want {
 			t.Errorf("err %v; want %q", err, want)
 		}
 	})
@@ -1600,7 +1606,7 @@ func TestSecretValidateFailsWithPlaceholders(t *testing.T) {
 
 // spec: Modules (commands)
 func TestEvalCertbotHookSecret(t *testing.T) {
-	const msg = "certbot stores its hooks in a file that other users can read"
+	const msg = "a certbot hook cannot hold a secret: certbot stores its hooks in a file that other users can read; read the secret in the hook from a root-only file that a file step writes"
 	mail := map[string]string{"winch.yaml": strings.Replace(secretProject["winch.yaml"], "vars:\n", "vars:\n  mail: {{secret:ops@acme.com}}\n", 1)}
 	for _, tt := range []struct {
 		name, email, hook string
@@ -1631,7 +1637,8 @@ func TestEvalCertbotHookSecret(t *testing.T) {
 
 // spec: Modules/repo (a source file that holds a secret fails the plan)
 func TestEvalRepoSecret(t *testing.T) {
-	const msg = "holds a secret, and every user of the host can read the source file"
+	const msg = "a repo step cannot hold a secret: every user of the host can read /etc/apt/sources.list.d/app.sources"
+	const urlFix = "; for a user name and password, put them in /etc/apt/auth.conf.d/app.conf with mode 0600"
 	repo := func(url, suite, components string) string {
 		return "  - repo:\n      name: app\n      url: " + url + "\n      suite: " + suite + "\n      components: " + components + "\n"
 	}
@@ -1639,10 +1646,10 @@ func TestEvalRepoSecret(t *testing.T) {
 	for _, tt := range []struct {
 		name, step, want string
 	}{
-		{"secret in the url path", repo(`!tpl "https://apt.example.com/{{ .vars.pw }}/debian"`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg},
-		{"a default that reads a secret", repo(`!tpl "https://apt.example.com/{{ .vars.line }}"`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg},
-		{"a secret of a host from match", repo(`!expr '"https://apt.example.com/" + match("web1")[0].vars.pw'`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg},
-		{"a loop over secrets", repo(`!tpl "https://apt.example.com/{{ .item }}"`, "trixie", "[main]") + "    loop: !expr values(vars.users)\n", "recipes/r/recipe.yaml:4:12: url: " + msg},
+		{"secret in the url path", repo(`!tpl "https://apt.example.com/{{ .vars.pw }}/debian"`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
+		{"a default that reads a secret", repo(`!tpl "https://apt.example.com/{{ .vars.line }}"`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
+		{"a secret of a host from match", repo(`!expr '"https://apt.example.com/" + match("web1")[0].vars.pw'`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
+		{"a loop over secrets", repo(`!tpl "https://apt.example.com/{{ .item }}"`, "trixie", "[main]") + "    loop: !expr values(vars.users)\n", "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
 		{"suite", repo(plain, "!expr vars.pw", "[main]"), "recipes/r/recipe.yaml:5:14: suite: " + msg},
 		{"components", repo(plain, "trixie", "!expr '[vars.pw]'"), "recipes/r/recipe.yaml:6:19: components: " + msg},
 		{"a plain field of a map with a secret", repo(`!tpl "https://apt.example.com/{{ .vars.users.bob }}"`, "trixie", "[main]"), ""},

@@ -150,7 +150,7 @@ func TestFrozenHostFails(t *testing.T) {
 			Binaries: helperbin.Binaries(),
 			Hello:    protocol.Hello{Run: "test-after-thaw", User: "test", Machine: "test"},
 			Progress: color.NewWriter(io.Discard, secret.NewFilter().Parts, false),
-			Note:     func(string) {},
+			Note:     func(string, bool) {},
 		})
 		if err == nil {
 			s.Close()
@@ -268,7 +268,7 @@ func TestMaxStartupsRetry(t *testing.T) {
 			Binaries: helperbin.Binaries(),
 			Hello:    protocol.Hello{Run: "test-max-startups", User: "test", Machine: "test"},
 			Progress: color.NewWriter(io.Discard, secret.NewFilter().Parts, false),
-			Note:     func(string) {},
+			Note:     func(string, bool) {},
 		})
 		if err == nil {
 			s.Close()

@@ -34,10 +34,11 @@ type Hosts struct {
 	pkgDeps   map[string][]string
 	failCheck map[string]bool
 	failApply map[string]bool
-	// notes are the notes that a check sends, by host and main argument.
-	notes map[string]string
+	// notes are the notes and warnings that a check sends, by host and main
+	// argument.
+	notes map[string]run.Note
 	// note takes the notes, from ConnectorFor.
-	note       func(host, text string)
+	note       func(run.Note)
 	Applies    int
 	Refreshes  map[string]int
 	FactsReads map[string]int
@@ -111,7 +112,7 @@ func New() *Hosts {
 		pkgDeps:      map[string][]string{},
 		failCheck:    map[string]bool{},
 		failApply:    map[string]bool{},
-		notes:        map[string]string{},
+		notes:        map[string]run.Note{},
 		Refreshes:    map[string]int{},
 		FactsReads:   map[string]int{},
 		facts:        map[string]facts.Facts{},
@@ -366,12 +367,12 @@ func (h *Hosts) Fix(key string) {
 }
 
 // SetNote makes each check of the step with the main argument main on host
-// send the note text, as the helper does. It needs a connector of
-// ConnectorFor.
-func (h *Hosts) SetNote(host, main, text string) {
+// send the note text, or with warning the warning text, as the helper does.
+// It needs a connector of ConnectorFor.
+func (h *Hosts) SetNote(host, main, text string, warning bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.notes[host+" "+main] = text
+	h.notes[host+" "+main] = run.Note{Host: host, Text: text, Warning: warning}
 }
 
 // SetUnreachable makes each later connect to host fail as unreachable.
@@ -447,7 +448,7 @@ func (h *Hosts) fails(m map[string]bool, host, path string) bool {
 
 // ConnectorFor returns Connect as a run.Connect, records batch, and gives
 // the notes of SetNote to note.
-func (h *Hosts) ConnectorFor(batch bool, note func(host, text string)) run.Connect {
+func (h *Hosts) ConnectorFor(batch bool, note func(run.Note)) run.Connect {
 	h.mu.Lock()
 	h.Batch = append(h.Batch, batch)
 	h.note = note
@@ -504,8 +505,8 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if c.hosts.OnCheck != nil {
 		c.hosts.OnCheck(c.host, m.Main())
 	}
-	if text := c.hosts.notes[c.host+" "+m.Main()]; text != "" {
-		c.hosts.note(c.host, text)
+	if n, ok := c.hosts.notes[c.host+" "+m.Main()]; ok {
+		c.hosts.note(n)
 	}
 	// A real session finishes a call that has started.
 	if ctx.Err() != nil {

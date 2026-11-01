@@ -290,7 +290,7 @@ func TestReboot(t *testing.T) {
 	defer vm.MustRun(t, "rm /boot/vmlinuz-"+newest)
 	before = boot()
 	r = lab.Winch(t, dir, "apply", "site", "--yes")
-	want := "the host still needs a reboot after the reboot: running kernel " + running + ", newest kernel " + newest
+	want := "the host still needs a reboot after it rebooted: running kernel " + running + ", newest kernel " + newest
 	if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
 		t.Errorf("apply with an old kernel: exit %d, want a failure with %q:\n%s%s", r.Code, want, r.Stdout, r.Stderr)
 	}

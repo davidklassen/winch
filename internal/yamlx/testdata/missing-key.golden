@@ -1,1 +1,1 @@
-test.yaml:1:1: missing key "name"
+test.yaml:1:1: needs name

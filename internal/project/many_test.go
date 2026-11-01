@@ -118,9 +118,9 @@ func TestHostNameCharacters(t *testing.T) {
 		inventory string
 		want      string
 	}{
-		{"hosts:\n  \"web,1\": {address: 192.0.2.1}\n", `inventories/test.yaml:2:3: host "web,1": a host name cannot hold ",", "&", "!", or white space; a host pattern could not name it`},
+		{"hosts:\n  \"web,1\": {address: 192.0.2.1}\n", `inventories/test.yaml:2:3: host "web,1": a host name cannot hold ",", "&", "!", or white space; a host pattern cannot name it`},
 		{"hosts:\n  \"!web\": {address: 192.0.2.1}\n", `host "!web": a host name cannot hold`},
-		{"hosts:\n  web1: {}\ngroups:\n  \"a&b\":\n    hosts: [web1]\n", `inventories/test.yaml:4:3: group "a&b": a group name cannot hold ",", "&", "!", or white space; a host pattern could not name it`},
+		{"hosts:\n  web1: {}\ngroups:\n  \"a&b\":\n    hosts: [web1]\n", `inventories/test.yaml:4:3: group "a&b": a group name cannot hold ",", "&", "!", or white space; a host pattern cannot name it`},
 		{"hosts:\n  web1: {}\ngroups:\n  \"a b\":\n    hosts: [web1]\n", `group "a b": a group name cannot hold`},
 		{"hosts:\n  \"mail.acme.com:2222\": {}\n", `inventories/test.yaml:2:3: host "mail.acme.com:2222": the name has a port or brackets; put the port in the SSH config`},
 		{"hosts:\n  \"[2001:db8::1]\": {}\n", `host "[2001:db8::1]": the name has a port or brackets`},
@@ -152,6 +152,18 @@ func TestHostNameWithoutAddress(t *testing.T) {
 	}
 }
 
+// spec: Pipelines; CLI/Messages
+func TestStageNeedsKeys(t *testing.T) {
+	_, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - hosts: all\n",
+	})), "", "site", nil, Keys{})
+	for _, want := range []string{"pipelines/site.yaml:2:5: a stage needs name", "pipelines/site.yaml:2:5: a stage needs steps"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+	}
+}
+
 // spec: Pipelines; CLI (--stages)
 func TestStageNameCharacters(t *testing.T) {
 	for _, name := range []string{"a,b", "a b", "a&b", `"!a"`} {
@@ -159,7 +171,7 @@ func TestStageNameCharacters(t *testing.T) {
 			_, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{
 				"pipelines/site.yaml": "stages:\n  - name: " + name + "\n    steps: []\n",
 			})), "", "site", nil, Keys{})
-			want := fmt.Sprintf(`pipelines/site.yaml:2:5: stage %q: a stage name cannot hold ",", "&", "!", or white space; --stages could not name it`, strings.Trim(name, `"`))
+			want := fmt.Sprintf(`pipelines/site.yaml:2:5: stage %q: a stage name cannot hold ",", "&", "!", or white space; --stages cannot name it`, strings.Trim(name, `"`))
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Errorf("error = %v, want %q", err, want)
 			}
@@ -200,7 +212,8 @@ func TestSelect(t *testing.T) {
 		{name: "user of an unknown host", sel: Selection{Users: []string{"wbe1=root"}}, wantErr: `--user wbe1=root: unknown host "wbe1"; did you mean "web1"?`},
 		{name: "two users", sel: Selection{Users: []string{"web1=root", "web1=admin"}}, wantErr: `--user web1=admin: host web1 has the user root already`},
 		{name: "two global users", sel: Selection{Users: []string{"root", "admin"}}, wantErr: `--user admin: the user for all hosts is root already`},
-		{name: "empty user", sel: Selection{Users: []string{"web1="}}, wantErr: `--user web1=: an empty user name`},
+		{name: "empty user", sel: Selection{Users: []string{"web1="}}, wantErr: `--user web1=: the user name is empty`},
+		{name: "empty host", sel: Selection{Users: []string{"=x"}}, wantErr: `--user =x: the host before = is empty`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -690,14 +703,15 @@ func TestMatchSecret(t *testing.T) {
 // spec: Running a pipeline/Health gates
 func TestHealthLoad(t *testing.T) {
 	tests := []struct{ health, want string }{
+		{"      timeout: 10\n", "a health gate needs command"},
 		{"      command: x\n      stable: 60\n", "pipelines/site.yaml:5:7: health: stable must be less than timeout (60 seconds); the gate could never pass"},
 		{"      command: x\n      stable: 10\n      timeout: 10\n", "stable must be less than timeout (10 seconds)"},
 		{"      command: \"\"\n", "command: is empty"},
 		{"      command: x\n      timeout: 1\n", ""},
 		{"      command: x\n      timeout: 9223372036\n", ""},
-		{"      command: x\n      timeout: 0\n", "timeout: must be 1 or more seconds"},
-		{"      command: x\n      timeout: -1\n", "timeout: must be 1 or more seconds"},
-		{"      command: x\n      timeout: 9223372037\n", "pipelines/site.yaml:6:16: timeout: must be at most 9223372036 seconds"},
+		{"      command: x\n      timeout: 0\n", "timeout: 0 is below 1 second"},
+		{"      command: x\n      timeout: -1\n", "timeout: -1 is below 1 second"},
+		{"      command: x\n      timeout: 9223372037\n", "pipelines/site.yaml:6:16: timeout: 9223372037 is above 9223372036 seconds"},
 		{"      command: x\n      stable: 0\n", ""},
 		{"      command: x\n      stable: 9223372035\n      timeout: 9223372036\n", ""},
 		{"      command: x\n      stable: -1\n", "stable: must be 0 or more seconds"},

@@ -19,7 +19,7 @@ func TestUpgradeValidate(t *testing.T) {
 	}{
 		{"safe", "mode: safe\n", ""},
 		{"full", "mode: full\n", ""},
-		{"no mode", "{}\n", `t.yaml:1:1: missing key "mode"`},
+		{"no mode", "{}\n", `t.yaml:1:1: an upgrade step needs mode`},
 		{"other mode", "mode: dist\n", `t.yaml:1:7: mode: must be safe or full, not "dist"`},
 		{"unknown key", "mode: safe\nautoremove: true\n", `t.yaml:2:1: unknown key "autoremove"`},
 	}
@@ -151,7 +151,7 @@ func TestExecInterrupt(t *testing.T) {
 func TestExecTimeLimitSendsSIGTERM(t *testing.T) {
 	t.Parallel()
 	_, err := execLimit(t.Context(), "trap 'echo term; exit 1' TERM; sleep 30 & wait", time.Second, time.Second)
-	if err == nil || !strings.HasSuffix(err.Error(), "no result after 1s: term") {
+	if err == nil || !strings.HasSuffix(err.Error(), "stopped after 1s: term") {
 		t.Errorf("error = %v, want SIGTERM at the time limit", err)
 	}
 }
@@ -160,7 +160,7 @@ func TestExecTimeLimitSendsSIGTERM(t *testing.T) {
 func TestExecTimeLimit(t *testing.T) {
 	t.Parallel()
 	_, err := execLimit(t.Context(), "echo started; sleep 30", time.Second, time.Second)
-	if err == nil || !strings.HasSuffix(err.Error(), "no result after 1s: started") {
+	if err == nil || !strings.HasSuffix(err.Error(), "stopped after 1s: started") {
 		t.Errorf("error = %v, want the time limit with the output", err)
 	}
 }

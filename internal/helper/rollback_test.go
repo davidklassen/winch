@@ -259,7 +259,7 @@ func TestTimerRollbackFails(t *testing.T) {
 			l.expire(t, func(j *job) { j.Undo = &undo{Module: "file", Args: failingFileArgs(l.b)} })
 			l.waitTimer(t)
 			r := l.c.call(t, method, nil)
-			want := "file " + l.b + ": validate: false"
+			want := "file " + l.b + ": validate failed, and the old file is back: false"
 			if method == "confirm" {
 				want = "the rollback timer ended first; the rollback failed: " + want
 			}
@@ -579,7 +579,7 @@ func TestFailedGuardedApplyRollsBack(t *testing.T) {
 	}
 	g.Confirm = true
 	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: failingFileArgs(l.b), Guard: g, Notify: []string{"ssh.restart"}, Then: &protocol.Then{Recipe: "ssh", Module: "file", Mains: []string{"2"}}})
-	if !strings.Contains(r.Error, "validate: false") || !strings.HasSuffix(r.Error, "; the old files are back") {
+	if !strings.Contains(r.Error, "validate failed, and the old file is back: false") || !strings.HasSuffix(r.Error, "; the old files are back") {
 		t.Errorf("apply error %q, want the validate error and the rollback", r.Error)
 	}
 	if content(t, l.a) != "old\n" || content(t, l.b) != "old\n" {

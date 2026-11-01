@@ -149,17 +149,19 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 		hosts(len(p.Hosts)), change, unchanged, unknown, failures(failed), p.Hash())
 }
 
-// Note is a fact about a host that needs no fix.
+// Note is a fact about a host that needs no fix, or with Warning, a problem
+// on a host to fix.
 type Note struct {
 	Host, Text string
+	Warning    bool
 }
 
 // Notes returns the notes of the plan about the hosts that did not fail, each
 // once.
 func (p *Plan) Notes() []Note {
 	var notes []Note
-	add := func(host, text string) {
-		if n := (Note{host, text}); !slices.Contains(notes, n) {
+	add := func(host, text string, warning bool) {
+		if n := (Note{host, text, warning}); !slices.Contains(notes, n) {
 			notes = append(notes, n)
 		}
 	}
@@ -169,17 +171,16 @@ func (p *Plan) Notes() []Note {
 				if p.Failed[host.Host.Name] != nil {
 					continue
 				}
-				note := func(text string) { add(host.Host.Name, text) }
 				if len(step.Result.MissingUnitFiles) > 0 {
 					s := module.Service{Name: step.Step.ShownMain()}
-					note(s.Unit() + " does not exist")
+					add(host.Host.Name, s.Unit()+" does not exist", false)
 				}
 				for _, m := range step.Result.Missing {
 					kind, _, _ := strings.Cut(m, " ")
-					note(fmt.Sprintf("%s does not exist yet and no %s step creates it", m, kind))
+					add(host.Host.Name, fmt.Sprintf("%s does not exist yet and no %s step creates it", m, kind), true)
 				}
 				for _, t := range step.Result.MissingTools {
-					note(fmt.Sprintf("%s is missing; install the package %s in an earlier pkg step", t.Name, t.Package))
+					add(host.Host.Name, fmt.Sprintf("%s is missing; install the package %s in an earlier pkg step", t.Name, t.Package), true)
 				}
 			}
 		}
@@ -189,10 +190,10 @@ func (p *Plan) Notes() []Note {
 			continue
 		}
 		for _, t := range p.goneThens[h.Name] {
-			add(h.Name, fmt.Sprintf("a pending then of %s %s matches no step and will not run", t.Module, strings.Join(t.Mains, ", ")))
+			add(h.Name, fmt.Sprintf("a pending then of %s %s matches no step and will not run", t.Module, strings.Join(t.Mains, ", ")), false)
 		}
 		for _, c := range p.gone[h.Name] {
-			add(h.Name, goneNote(c)+" and will not run")
+			add(h.Name, goneNote(c)+" and will not run", false)
 		}
 	}
 	return notes
@@ -200,13 +201,17 @@ func (p *Plan) Notes() []Note {
 
 func (p *Plan) WriteNotes(out *color.Writer) {
 	for _, n := range p.Notes() {
-		WriteNote(out, n.Host, n.Text)
+		WriteNote(out, n)
 	}
 }
 
-// WriteNote writes a note about host.
-func WriteNote(out *color.Writer, host, text string) {
-	fmt.Fprintf(out, "%s: note: %s\n", host, secret.Printable(text))
+// WriteNote writes a note or a warning about a host.
+func WriteNote(out *color.Writer, n Note) {
+	kind := "note"
+	if n.Warning {
+		kind = "warning"
+	}
+	fmt.Fprintf(out, "%s: %s: %s\n", n.Host, kind, secret.Printable(n.Text))
 }
 
 // goneNote names the gate or assert of record c that the project no longer

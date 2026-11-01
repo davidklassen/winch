@@ -71,6 +71,10 @@ type Config struct {
 	file string
 }
 
+const hookSecret = "a certbot hook cannot hold a secret: certbot stores its hooks in a file that other users can read; read the secret in the hook from a root-only file that a file step writes"
+
+func (*Config) Noun() string { return "the project file" }
+
 var projectNameRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
 
 // Validate checks the project name, which names a file on each host, and the
@@ -668,7 +672,7 @@ func projectFile(dir string) (string, error) {
 	yaml, yml := isFile("winch.yaml"), isFile("winch.yml")
 	switch {
 	case yaml && yml:
-		return "", errors.New("project file is both winch.yaml and winch.yml; keep one of the two")
+		return "", errors.New("the project file is both winch.yaml and winch.yml; keep one of the two")
 	case yml:
 		return "winch.yml", nil
 	}
@@ -700,11 +704,15 @@ type stageFile struct {
 	Pos            yamlx.Pos
 }
 
+func (*stageFile) Noun() string { return "a stage" }
+
 type healthFile struct {
 	Command string `yaml:"command,required" line:"must exit 0" doc:"Must exit 0. winch runs it on the host once per second until it exits 0, then keeps running it for stable seconds. A failed run starts the wait again."`
 	Stable  int    `yaml:"stable" default:"0" line:"seconds the command keeps passing" doc:"Seconds the command keeps passing. It is less than timeout."`
 	Timeout *int   `yaml:"timeout" default:"60" line:"seconds the gate has to pass" doc:"Seconds the gate has to pass. Then the host fails, and the error shows the end of the last output."`
 }
+
+func (*healthFile) Noun() string { return "a health gate" }
 
 // defaultTimeout is the timeout of a health gate in seconds.
 const defaultTimeout = 60
@@ -1249,7 +1257,7 @@ func (l *loader) secretChecks(invs []*Inventory, pls []*Pipeline) ([]*yamlx.Erro
 		}
 		for _, h := range st.hooks {
 			if slices.ContainsFunc(h.reads, isSecret) {
-				errs = append(errs, yamlx.Errorf(h.pos, "certbot stores its hooks in a file that other users can read"))
+				errs = append(errs, yamlx.Errorf(h.pos, "%s", hookSecret))
 			}
 		}
 	}
@@ -1491,10 +1499,16 @@ func (st Step) Eval(e *Env) ([]Step, error) {
 				pos = p.Value.Pos
 			}
 		}
-		if _, ok := s.Args.(*module.Certbot); ok {
-			return nil, yamlx.Errorf(pos, "certbot stores its hooks in a file that other users can read")
+		switch a := s.Args.(type) {
+		case *module.Certbot:
+			return nil, yamlx.Errorf(pos, "%s", hookSecret)
+		case *module.Repo:
+			fix := ""
+			if s.Shown.Public == "url" {
+				fix = fmt.Sprintf("; for a user name and password, put them in /etc/apt/auth.conf.d/%s.conf with mode 0600", a.Name)
+			}
+			return nil, yamlx.Errorf(pos, "%s: a repo step cannot hold a secret: every user of the host can read %s%s", s.Shown.Public, a.SourcePath(), fix)
 		}
-		return nil, yamlx.Errorf(pos, "%s: holds a secret, and every user of the host can read the source file", s.Shown.Public)
 	}
 	return out, nil
 }

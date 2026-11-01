@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/davidklassen/winch/internal/color"
@@ -54,7 +55,7 @@ type Env struct {
 	ColorOut, ColorErr bool
 	// Connect returns the function that opens sessions. With batch, ssh asks
 	// no questions. The sessions give the notes of the hosts to note.
-	Connect func(batch bool, note func(host, text string)) run.Connect
+	Connect func(batch bool, note func(run.Note)) run.Connect
 	// Progress is nil, or shows the busy hosts.
 	Progress run.Progress
 	// Home is the home directory, or empty when it is not known.
@@ -70,6 +71,8 @@ type Env struct {
 	NoHelpers bool
 	// Now is the clock of the JSON events. Nil means time.Now.
 	Now func() time.Time
+	// Asking is nil, or true while winch asks the question.
+	Asking *atomic.Bool
 	// stdout and stderr are Out and Err through Filter. Main sets them and
 	// clears Out and Err.
 	stdout, stderr *color.Writer
@@ -118,6 +121,9 @@ func Main(ctx context.Context, args []string, env Env) int {
 	if len(args) == 0 {
 		writeHelp(env.stderr, mainCommand)
 		return exitInvalid
+	}
+	if args[0] == "help" && len(args) > 1 {
+		args = slices.Concat(args[1:], []string{"--help"})
 	}
 	if args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		writeHelp(env.stdout, mainCommand)
@@ -329,7 +335,7 @@ func validate(ctx context.Context, env Env, f *flags, args []string) int {
 func (env Env) identity() (secret.Identity, error) {
 	switch {
 	case env.AgeCmd != "" && env.AgeKey != "":
-		return secret.Identity{}, usage("WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set")
+		return secret.Identity{}, usage("WINCH_AGE_IDENTITY_CMD and WINCH_AGE_KEY are both set; unset one of the two")
 	case env.AgeCmd != "":
 		return secret.Identity{Cmd: env.AgeCmd, Dir: env.Dir}, nil
 	case filepath.IsAbs(env.AgeKey):
@@ -538,7 +544,7 @@ func (o *output) loadCommand(ctx context.Context, f *flags, c project.Command, w
 	})
 }
 
-// ask asks for confirmation. An interrupt answers no. Keys typed before the
+// ask asks the question. An interrupt answers no. Keys typed before the
 // question do not answer it.
 func ask(ctx context.Context, env Env) bool {
 	if f, ok := env.In.(*os.File); ok {
@@ -546,6 +552,10 @@ func ask(ctx context.Context, env Env) bool {
 			env.fail(usage("discard the typed input: %v", err))
 			return false
 		}
+	}
+	if env.Asking != nil {
+		env.Asking.Store(true)
+		defer env.Asking.Store(false)
 	}
 	fmt.Fprint(env.stderr, "Apply these changes? [y/N] ")
 	answer := make(chan string, 1)

@@ -659,7 +659,7 @@ func TestPkgPlanRules(t *testing.T) {
 
 	// A fresh VM has no index, but the plan knows the packages that a step
 	// names.
-	fails("a debconf answer after the install", "late", "s: debconf winch-reconf/enabled: s: pkg winch-reconf installs winch-reconf before this step sets the answer; move this step before it")
+	fails("a debconf answer after the install", "late", "s: debconf winch-reconf/enabled: s#1 pkg winch-reconf installs winch-reconf before this step sets the answer; move this step before it")
 	if r := lab.Winch(t, dir, "apply", "early", "--yes"); r.Code != 0 {
 		t.Fatalf("a debconf answer before the install: exit %d, stderr %q", r.Code, r.Stderr)
 	}
@@ -671,10 +671,10 @@ func TestPkgPlanRules(t *testing.T) {
 	}
 
 	vm.MustRun(t, "apt-get update -q >/dev/null")
-	fails("an install that pulls a removed package", "install", "s: pkg winch-up-new: s: pkg winch-up-deps also installs winch-up-new, which this step removes"+undo)
-	fails("a removed package that an install pulls", "remove", "s: pkg winch-up-deps: this step also installs winch-up-new, which s: pkg winch-up-new removes"+undo)
+	fails("an install that pulls a removed package", "install", "s: pkg winch-up-new: s#1 pkg winch-up-deps also installs winch-up-new, which this step removes"+undo)
+	fails("a removed package that an install pulls", "remove", "s: pkg winch-up-deps: this step also installs winch-up-new, which s#1 pkg winch-up-new removes"+undo)
 	vm.MustRun(t, "DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-up-new >/dev/null")
-	fails("a removal that takes a package of an earlier install", "install", "s: pkg winch-up-new: this step also removes winch-up-deps, which s: pkg winch-up-deps installs"+undo)
+	fails("a removal that takes a package of an earlier install", "install", "s: pkg winch-up-new: this step also removes winch-up-deps, which s#1 pkg winch-up-deps installs"+undo)
 	vm.MustRun(t, "DEBIAN_FRONTEND=noninteractive apt-get install -y -q hello >/dev/null")
 	plans := func(name, pipeline string) {
 		t.Helper()
@@ -687,7 +687,7 @@ func TestPkgPlanRules(t *testing.T) {
 	vm.MustRun(t, "mkdir -p /tmp/winch-local/DEBIAN && printf 'Package: winch-local\\nVersion: 1\\nArchitecture: all\\nMaintainer: winch\\nDepends: hello\\nDescription: test\\n' >/tmp/winch-local/DEBIAN/control && dpkg-deb -b /tmp/winch-local /tmp/winch-local.deb >/dev/null && dpkg -i /tmp/winch-local.deb >/dev/null")
 	plans("a removal of a package that an earlier removal takes and the index does not know", "cleanup")
 	vm.MustRun(t, "DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-up-deps >/dev/null")
-	fails("a removal that takes an installed package", "install", "s: pkg winch-up-new: this step also removes winch-up-deps, which s: pkg winch-up-deps installs"+undo)
-	fails("an installed package that a removal takes", "remove", "s: pkg winch-up-deps: s: pkg winch-up-new also removes winch-up-deps, which this step installs"+undo)
-	fails("an install that pulls back a package that an earlier removal takes", "top", "s: pkg winch-up-top: this step also installs winch-up-new, which s: pkg winch-up-new removes"+undo)
+	fails("a removal that takes an installed package", "install", "s: pkg winch-up-new: this step also removes winch-up-deps, which s#1 pkg winch-up-deps installs"+undo)
+	fails("an installed package that a removal takes", "remove", "s: pkg winch-up-deps: s#1 pkg winch-up-new also removes winch-up-deps, which this step installs"+undo)
+	fails("an install that pulls back a package that an earlier removal takes", "top", "s: pkg winch-up-top: this step also installs winch-up-new, which s#1 pkg winch-up-new removes"+undo)
 }
