@@ -1,4 +1,7 @@
 version: "2"
+run:
+  build-tags:
+    - release
 linters:
   default: standard
   settings:

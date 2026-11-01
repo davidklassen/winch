@@ -4,12 +4,15 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
 
+# In a called workflow, github.workflow names the caller. The ref keeps two
+# tags of one commit apart.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.sha) }}
   cancel-in-progress: true
 
 jobs:
@@ -49,6 +52,23 @@ jobs:
           version: v2.15.0
           install-only: true
       - run: make lint test
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  release-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: v2.18.3
+          install-only: true
+      - run: make release-check
 
   integration:
     runs-on: ubuntu-24.04

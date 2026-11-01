@@ -2,6 +2,8 @@ module github.com/davidklassen/winch
 
 go 1.27
 
+toolchain go1.27.3
+
 require (
 	filippo.io/age v1.3.2
 	github.com/expr-lang/expr v1.17.8

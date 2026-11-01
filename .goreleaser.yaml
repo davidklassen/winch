@@ -1,0 +1,49 @@
+version: 2
+
+project_name: winch
+
+before:
+  hooks:
+    - make helpers
+
+builds:
+  - id: winch
+    main: ./cmd/winch
+    binary: winch
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # Without ldflags, GoReleaser adds -X main.version and others. The Go
+    # toolchain writes the version from the tag.
+    ldflags:
+      - -s -w
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+
+notarize:
+  macos:
+    - enabled: "{{ not .IsSnapshot }}"
+      ids: [winch]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
+
+archives:
+  - formats: [tar.gz]
+    name_template: "winch-{{ .Os }}-{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true
