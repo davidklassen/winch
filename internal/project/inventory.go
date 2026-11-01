@@ -159,6 +159,7 @@ func (l *loader) values(n *yamlx.Node) ([]source, []error) {
 			continue
 		}
 		errs = append(errs, l.seal(p.Value, fmt.Sprintf("vars.%s: an inventory holds no expressions or templates", p.Key))...)
+		l.warnNumbers(p.Key, p.Value)
 		out = append(out, source{name: p.Key, value: yamlx.Value(p.Value), pos: p.Value.Pos})
 	}
 	return out, errs

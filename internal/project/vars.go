@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -56,6 +57,7 @@ func (l *loader) declare(n *yamlx.Node, recipe string) []error {
 			continue
 		}
 		errs = append(errs, l.seal(p.Value, "")...)
+		l.warnNumbers(p.Key, p.Value)
 		v := &Var{Name: p.Key, Pos: p.KeyPos, node: p.Value}
 		l.vars[p.Key] = v
 		l.decls = append(l.decls, v)
@@ -277,12 +279,30 @@ func number(n *yamlx.Node) string {
 	case int64:
 		s = strconv.FormatInt(v, 10)
 	case float64:
+		// Quotes make .inf or .nan a string, not the same number.
+		if math.IsInf(v, 0) || math.IsNaN(v) {
+			return ""
+		}
 		s = strconv.FormatFloat(v, 'f', -1, 64)
 	}
 	if s == n.Text {
 		return ""
 	}
 	return s
+}
+
+// warnNumbers adds a warning for each number in n, the value of the variable
+// name, that YAML reads with other text.
+func (l *loader) warnNumbers(name string, n *yamlx.Node) {
+	seen := map[*yamlx.Node]bool{}
+	for _, c := range textChanges(n, nil) {
+		// An alias gives a number twice.
+		if seen[c] {
+			continue
+		}
+		seen[c] = true
+		l.warnings = append(l.warnings, yamlx.Errorf(c.Pos, "vars.%s: YAML reads %s as %s; quote it: %s", name, c.Text, number(c), strconv.Quote(c.Text)))
+	}
 }
 
 // textChanges appends to out the numbers in n that YAML reads with other text.

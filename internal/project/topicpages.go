@@ -318,7 +318,7 @@ var variablesTopic = doc.Topic{
 		doc.Heading("Names and reads"),
 		doc.Paragraph(`A variable name has lowercase letters, digits, and _. A read names the variable: vars.domain, .vars.domain, $.vars.domain, or host.vars.domain. Any other read of the whole map, such as keys(vars) or range .vars, is an error. A map variable holds data that a step reads by key: vars.users[item]. host.vars holds the variables of the host without the vars of a recipe step.`),
 		doc.Heading("Types"),
-		doc.Paragraph(`Variables have no types. A value keeps the type that YAML gives it. --set parses its value as YAML. Quote a value that YAML would change: --set 'vars.php_version="8.0"'.`),
+		doc.Paragraph(`Variables have no types. A value keeps the type that YAML gives it. YAML reads 8.0 as 8 and 3.10 as 3.1. Quote such a value: php_version: "8.0". In the inventory or a default, an unquoted one is a warning. --set parses its value as YAML, and there it is an error: --set 'vars.php_version="8.0"'.`),
 		doc.Example(`# winch.yaml
 name: demo
 hosts:
