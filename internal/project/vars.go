@@ -41,18 +41,18 @@ func (l *loader) declare(n *yamlx.Node, recipe string) []error {
 	for _, p := range n.Pairs {
 		switch {
 		case !varNameRe.MatchString(p.Key):
-			errs = append(errs, yamlx.Errorf(p.KeyPos, "variable %q: a variable name has only lowercase letters, digits, and _", p.Key))
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "%q is not a variable name; a variable name has only lowercase letters, digits, and _", p.Key))
 			continue
 		case recipe != "" && !strings.HasPrefix(p.Key, recipe+"_"):
-			errs = append(errs, yamlx.Errorf(p.KeyPos, "variable %q: a variable of recipe %s starts with %q", p.Key, recipe, recipe+"_"))
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "vars.%s: a variable of recipe %s starts with %s", p.Key, recipe, recipe+"_"))
 			continue
 		}
 		if first, ok := l.vars[p.Key]; ok {
-			errs = append(errs, yamlx.Errorf(p.KeyPos, "variable %q is declared twice; it is first declared at %s", p.Key, first.Pos))
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "vars.%s has two defaults; the first is at %s", p.Key, first.Pos))
 			continue
 		}
 		if p.Value.Kind == yamlx.Null {
-			errs = append(errs, yamlx.Errorf(p.KeyPos, "variable %q: a variable without a default has no declaration; remove it", p.Key))
+			errs = append(errs, yamlx.Errorf(p.KeyPos, "vars.%s: null is not a value; give it a default, or remove it", p.Key))
 			continue
 		}
 		errs = append(errs, l.seal(p.Value, "")...)
@@ -96,7 +96,7 @@ func (l *loader) compileDefaults() error {
 			for _, p := range path[i:] {
 				cycle = append(cycle, p.Name)
 			}
-			errs = append(errs, yamlx.Errorf(v.Pos, "variable %q: the defaults form a cycle: %s → %s", v.Name, strings.Join(cycle, " → "), v.Name))
+			errs = append(errs, yamlx.Errorf(v.Pos, "vars.%s: the defaults form a cycle: %s → %s", v.Name, strings.Join(cycle, " → "), v.Name))
 			return
 		}
 		state[v] = visiting
@@ -185,7 +185,7 @@ func (l *loader) checkNames(sets []setValue) error {
 func unreadValue(name string, read map[string]bool) string {
 	switch {
 	case !varNameRe.MatchString(name):
-		return fmt.Sprintf("variable %q: a variable name has only lowercase letters, digits, and _", name)
+		return fmt.Sprintf("%q is not a variable name; a variable name has only lowercase letters, digits, and _", name)
 	case !read[name]:
 		return fmt.Sprintf("vars.%s is set but nothing reads it%s", name, yamlx.Suggest(name, slices.Sorted(maps.Keys(read))))
 	}
@@ -748,7 +748,7 @@ func (p *Project) stepEnv(e *Env, st *Step) (*Env, error) {
 			return nil, err
 		}
 		if vals[0] == nil {
-			return nil, yamlx.Errorf(v.node.Pos, "variable %q: null is not a value", v.Name)
+			return nil, yamlx.Errorf(v.node.Pos, "vars.%s: null is not a value", v.Name)
 		}
 		for n := range vals {
 			se.vars[n][v.Name] = vals[n]
@@ -817,7 +817,7 @@ func (p *Project) evalDefaults(e *Env, names []string, pos yamlx.Pos) error {
 		}
 	}
 	if missing != nil {
-		return yamlx.Errorf(pos, "variable %q has no value on host %s", slices.Min(missing), e.host.Name)
+		return yamlx.Errorf(pos, "vars.%s has no value on host %s", slices.Min(missing), e.host.Name)
 	}
 	for _, v := range p.vars {
 		if _, ok := e.vars[0][v.Name]; ok || !need[v.Name] {
@@ -853,7 +853,7 @@ func (p *Project) evalValue(e *Env, v *Var) ([3]any, bool, error) {
 	if !e.secrets {
 		node, err := v.computed.eval(e, "")
 		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
-			return vals, false, yamlx.Errorf(ye.Pos, "variable %q: %s", v.Name, ye.Msg)
+			return vals, false, yamlx.Errorf(ye.Pos, "vars.%s: %s", v.Name, ye.Msg)
 		}
 		if err != nil {
 			return vals, false, err
@@ -878,7 +878,7 @@ func (p *Project) evalValue(e *Env, v *Var) ([3]any, bool, error) {
 	if errs[0] != nil {
 		err := maskError(errs[0], [2]error{errs[1], errs[2]})
 		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
-			return vals, false, yamlx.Errorf(ye.Pos, "variable %q: %s", v.Name, ye.Msg)
+			return vals, false, yamlx.Errorf(ye.Pos, "vars.%s: %s", v.Name, ye.Msg)
 		}
 		return vals, false, err
 	}

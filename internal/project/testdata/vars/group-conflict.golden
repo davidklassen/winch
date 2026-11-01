@@ -1,2 +1,2 @@
-inventories/test.yaml:22:18: variable "web_sites": groups mail and web of host mail.acme.com set different values
+inventories/test.yaml:22:18: vars.web_sites: groups mail and web of host mail.acme.com set different values
 inventories/test.yaml:20:11: user: groups mail and web of host mail.acme.com set different users

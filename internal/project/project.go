@@ -75,7 +75,7 @@ var projectNameRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
 // recipients.
 func (c *Config) Validate() error {
 	if !projectNameRe.MatchString(c.Name) {
-		return &yamlx.FieldError{Field: "name", Msg: `a project name has only letters, digits, ".", "_", and "-", and does not start with "."`}
+		return &yamlx.FieldError{Field: "name", Msg: "a project name has only letters, digits, ., _, and -, and does not start with ."}
 	}
 	if _, err := secret.ParseRecipients(c.Recipients); err != nil {
 		return &yamlx.FieldError{Field: "recipients", Msg: err.Error()}
@@ -377,7 +377,9 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 }
 
 type loader struct {
-	dir    string
+	dir string
+	// file is the project file: winch.yaml or winch.yml.
+	file   string
 	layout layout
 	// vars are the defaults by name, decls in file order, and order in the
 	// order in which they evaluate.
@@ -399,7 +401,7 @@ type loader struct {
 // newLoader adds the defaults of winch.yaml and of every recipe, then
 // loads the recipes.
 func newLoader(dir string, cfg *Config) (*loader, error) {
-	l := &loader{dir: dir, vars: map[string]*Var{}, files: map[string]*recipeFile{}, recipes: map[string]*Recipe{}}
+	l := &loader{dir: dir, file: cfg.file, vars: map[string]*Var{}, files: map[string]*recipeFile{}, recipes: map[string]*Recipe{}}
 	var err error
 	l.layout, err = readLayout(dir, cfg)
 	errs := append([]error{err}, l.declare(cfg.Vars, "")...)
@@ -407,7 +409,14 @@ func newLoader(dir string, cfg *Config) (*loader, error) {
 	return l, errors.Join(errs...)
 }
 
-var errNoHosts = errors.New("the project has no hosts; add hosts to winch.yaml or a file to inventories/")
+// noInventory is the error of a project without a default inventory and
+// without exactly one inventory.
+func (l *loader) noInventory() error {
+	if len(l.layout.inventories) == 0 {
+		return fmt.Errorf("the project has no hosts; add hosts to %s or a file to inventories/", l.file)
+	}
+	return fmt.Errorf("name an inventory with --inventory: %s; or set inventory in %s", strings.Join(partNames(l.layout.inventories), ", "), l.file)
+}
 
 // loadInventories loads the inventory flag, the default from winch.yaml, or
 // the only inventory.
@@ -428,11 +437,8 @@ func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setVa
 		}
 		return []*Inventory{inv}, nil
 	}
-	if len(l.layout.inventories) == 0 {
-		return nil, errNoHosts
-	}
-	if !all {
-		return nil, errors.New("no inventory: use --inventory, or set inventory in winch.yaml")
+	if len(l.layout.inventories) == 0 || !all {
+		return nil, l.noInventory()
 	}
 	var invs []*Inventory
 	var errs []error
@@ -620,7 +626,7 @@ func projectPath(dir, file string) string {
 
 type notFound string
 
-func (f notFound) Error() string        { return string(f) + ": no such file" }
+func (f notFound) Error() string        { return string(f) + " does not exist" }
 func (f notFound) Is(target error) bool { return target == fs.ErrNotExist }
 
 func loadConfig(dir string) (*Config, error) {
@@ -697,7 +703,7 @@ func (h *healthFile) Validate() error {
 	}
 	switch {
 	case strings.TrimSpace(h.Command) == "":
-		return &yamlx.FieldError{Field: "command", Msg: "must not be empty"}
+		return &yamlx.FieldError{Field: "command", Msg: "is empty"}
 	case h.Stable < 0:
 		return &yamlx.FieldError{Field: "stable", Msg: "must be 0 or more seconds"}
 	}
@@ -713,19 +719,19 @@ func (h *healthFile) Validate() error {
 func (l *loader) loadPipeline(name string) (*Pipeline, error) {
 	if pls := l.layout.pipelines; len(pls) > 0 && pls[0].top {
 		if name != "" {
-			return nil, yamlx.Errorf(yamlx.Pos{}, "pipeline %q: the steps at the top of winch.yaml are the only pipeline; leave out the pipeline name", name)
+			return nil, yamlx.Errorf(yamlx.Pos{}, "pipeline %q: the steps at the top of %s are the only pipeline; leave out the pipeline name", name, l.file)
 		}
 		return l.decodePipeline(pls[0])
 	}
 	if len(l.layout.pipelines) == 0 {
-		return nil, errors.New("no pipeline: add steps to winch.yaml, or a file to pipelines/")
+		return nil, fmt.Errorf("no pipeline: add steps to %s, or a file to pipelines/", l.file)
 	}
 	if name == "" {
-		return nil, yamlx.Errorf(yamlx.Pos{}, "name a pipeline: %s; only steps at the top of winch.yaml run without a name", strings.Join(partNames(l.layout.pipelines), ", "))
+		return nil, yamlx.Errorf(yamlx.Pos{}, "name a pipeline: %s; only steps at the top of %s run without a name", strings.Join(partNames(l.layout.pipelines), ", "), l.file)
 	}
 	i := slices.IndexFunc(l.layout.pipelines, func(p part) bool { return p.name == name })
 	if i < 0 {
-		return nil, yamlx.Errorf(yamlx.Pos{}, "unknown pipeline %q%s", name, yamlx.Suggest(name, partNames(l.layout.pipelines)))
+		return nil, yamlx.Errorf(yamlx.Pos{}, "unknown pipeline %q%s", name, suggestOrList(name, partNames(l.layout.pipelines)))
 	}
 	return l.decodePipeline(l.layout.pipelines[i])
 }
@@ -843,7 +849,7 @@ type stepKeys struct {
 	When          *yamlx.Node   `yaml:"when" type:"expression" line:"skips the step when false" doc:"Skips the step when false. It is an !expr that gives true or false. winch evaluates none of the other keys of a skipped step. when runs once, before loop, and cannot use item."`
 	Loop          *yamlx.Node   `yaml:"loop" type:"list or expression" line:"elements to run the step for, as item" doc:"Elements to run the step for, as item. An !expr gives the list. loop: [] runs nothing and notifies nothing. A null element fails the host."`
 	Then          string        `yaml:"then" line:"command after a change" doc:"Command after a change. It runs right after the step changes something, before the next step. A failure of then fails the step. With loop, then runs once after the last element and cannot use item. A then that did not run stays pending on the host, and the next run runs it."`
-	ConfirmAccess bool          `yaml:"confirm_access" line:"SSH check with rollback, for a service step" doc:"SSH check with rollback, for a service step. Only a service step can use it, in steps or in handlers. A firewall step gets the same check without it.\n\nBefore the step, winch keeps the old state of each path that the changed steps of the recipe wrote or removed in this run. It starts a 60-second rollback timer in a process of its own.\n\nAfter the step, winch opens a new SSH connection and runs a command, through sudo -n when the login user is not root. It tries twice, 5 seconds apart.\n\nWhen both tries fail, winch puts back the old files and runs daemon-reload after a unit file. It reverses a start or a stop of the step, and reloads or restarts the unit again. The host fails with the error \"no new SSH connection works: <error>; the old files are back\". When the SSH connection ends first, winch rolls back as it ends. When the process of winch on the host is gone, the timer rolls back.\n\nWhen a run ends before a notified handler with confirm_access ran, winch puts back the files of that handler at once. The next run applies the change again.\n\nA rollback puts back files only. It does not undo a change of a user or a group."`
+	ConfirmAccess bool          `yaml:"confirm_access" line:"access check with rollback, for a service step" doc:"Access check with rollback, for a service step. Only a service step can use it, in steps or in handlers. A firewall step gets the same check without it.\n\nBefore the step, winch keeps the old state of each path that the changed steps of the recipe wrote or removed in this run. It starts a 60-second rollback timer in a process of its own.\n\nAfter the step, winch runs the access check: it opens a new SSH connection and runs a command, through sudo -n when the login user is not root. It tries twice, 5 seconds apart.\n\nWhen both tries fail, winch puts back the old files and runs daemon-reload after a unit file. It reverses a start or a stop of the step, and reloads or restarts the unit again. The host fails with the error \"the access check failed: <error>; the old files are back\". When the SSH connection ends first, winch rolls back as it ends. When the helper is gone, the timer rolls back.\n\nWhen a run ends before a notified handler with confirm_access ran, winch puts back the files of that handler at once. The next run applies the change again.\n\nA rollback puts back files only. It does not undo a change of a user or a group."`
 	Notify        yamlx.Strings `yaml:"notify" line:"handlers to run after a change" doc:"Handlers to run after a change. Not a template or an expression. With loop, notify fires once when any element changed. Run winch doc handlers."`
 }
 
@@ -879,7 +885,7 @@ func (st Step) newModule(name string) (module.Module, bool) {
 // loadStep loads a step of a stage, or of the recipe r.
 func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error) {
 	if n.Kind != yamlx.Map {
-		return Step{}, yamlx.Errorf(n.Pos, "a step must be a map, got %s", yamlx.Describe(n))
+		return Step{}, yamlx.Errorf(n.Pos, "expected a step as a map, got %s", yamlx.Describe(n))
 	}
 	st := Step{Pos: n.Pos, in: r, actions: kind != plainStep}
 	isRecipe := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "recipe" })
@@ -1011,9 +1017,9 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 			case kind == runStep:
 				return Step{}, yamlx.Errorf(p.Value.Pos, "works only in a recipe")
 			case r != nil:
-				return Step{}, yamlx.Errorf(p.Value.Pos, "%s: a recipe in winch.yaml cannot use %s; use %s, or move the recipe to recipes/%s/", p.Key, p.Key, alt, r.Name)
+				return Step{}, yamlx.Errorf(p.Value.Pos, "a recipe in %s cannot use %s; use %s, or move the recipe to recipes/%s/", l.file, p.Key, alt, r.Name)
 			}
-			return Step{}, yamlx.Errorf(p.Value.Pos, "%s: a step in a stage cannot use %s; use it in a recipe", p.Key, p.Key)
+			return Step{}, yamlx.Errorf(p.Value.Pos, "a step in a stage cannot use %s; use it in a recipe", p.Key)
 		}
 	}
 	if f, ok := args.(*module.File); ok {
@@ -1248,11 +1254,11 @@ func (l *loader) stepVars(n *yamlx.Node) ([]*Var, error) {
 	for _, p := range n.Pairs {
 		l.given = append(l.given, varRead{name: p.Key, pos: p.KeyPos})
 		if p.Value.Kind == yamlx.Null {
-			errs = append(errs, yamlx.Errorf(p.Value.Pos, "variable %q: null is not a value", p.Key))
+			errs = append(errs, yamlx.Errorf(p.Value.Pos, "vars.%s: null is not a value", p.Key))
 			continue
 		}
 		if t := findTag(p.Value); t != nil && t.Tag == "!secret" {
-			errs = append(errs, yamlx.Errorf(t.Pos, "variable %q: a recipe step gives no !secret values; put the secret in the inventory", p.Key))
+			errs = append(errs, yamlx.Errorf(t.Pos, "vars.%s: a recipe step gives no !secret values; put the secret in the inventory", p.Key))
 			continue
 		}
 		c, err := compileValue(p.Value, scope{reads: &l.reads, noItem: itemOutsideLoop})
@@ -1304,7 +1310,7 @@ func thenText(n *yamlx.Node) (string, error) {
 	case n.Kind != yamlx.Scalar || !ok:
 		return "", yamlx.Errorf(n.Pos, "then: expected a string, got %s", yamlx.Describe(n))
 	case text == "":
-		return "", yamlx.Errorf(n.Pos, "then: must not be empty")
+		return "", yamlx.Errorf(n.Pos, "then: is empty")
 	}
 	return text, nil
 }
@@ -1445,7 +1451,7 @@ func (st Step) runs(e *Env) (bool, error) {
 	}
 	b, ok := out.(bool)
 	if !ok {
-		return false, yamlx.Errorf(st.when.pos, "when: must be true or false, got %s", describeValue(out))
+		return false, yamlx.Errorf(st.when.pos, "when: expected true or false, got %s", describeValue(out))
 	}
 	return b, nil
 }
@@ -1553,7 +1559,7 @@ func (st Step) items(e *Env) ([]any, error) {
 		return nil, err
 	}
 	if n.Kind != yamlx.List {
-		return nil, yamlx.Errorf(n.Pos, "loop: must be a list, got %s", yamlx.Describe(n))
+		return nil, yamlx.Errorf(n.Pos, "loop: expected a list, got %s", yamlx.Describe(n))
 	}
 	var out []any
 	for i, item := range n.Items {

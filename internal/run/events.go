@@ -72,7 +72,7 @@ func (p *Plan) WriteJSON(e *Events) {
 	}
 	kinds := p.hostKinds()
 	for _, h := range p.Hosts {
-		ev := HostEvent{Phase: "plan", Host: h.Name, Status: cmp.Or(kinds[h.Name], "ok")}
+		ev := HostEvent{Phase: "plan", Host: h.Name, Status: cmp.Or(kinds[h.Name], "unchanged")}
 		if err := p.Failed[h.Name]; err != nil {
 			ev.Status, ev.Error = hostStatus(err), err.Error()
 		}

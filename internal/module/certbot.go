@@ -46,7 +46,7 @@ var (
 
 func (c *Certbot) Validate() error {
 	if !certNameRe.MatchString(c.Name) {
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf(`%q is not a certificate name: letters, digits, ".", "_", and "-", starting with a letter or digit`, c.Name)}
+		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf(`%q is not a certificate name: letters, digits, ., _, and -, starting with a letter or digit`, c.Name)}
 	}
 	if len(c.Domains) == 0 {
 		return &yamlx.FieldError{Field: "domains", Msg: "needs at least one domain"}
@@ -60,7 +60,7 @@ func (c *Certbot) Validate() error {
 		case len(d) > 253:
 			return &yamlx.FieldError{Field: "domains", Msg: fmt.Sprintf("%q is longer than 253 characters", d)}
 		case slices.Contains(c.Domains[:i], d):
-			return &yamlx.FieldError{Field: "domains", Msg: fmt.Sprintf("%q is in the list twice", d)}
+			return &yamlx.FieldError{Field: "domains", Msg: fmt.Sprintf("%s is in the list twice", d)}
 		}
 	}
 	if user, host, ok := strings.Cut(c.Email, "@"); !ok || user == "" || host == "" || strings.ContainsFunc(c.Email, unicode.IsSpace) {
@@ -309,7 +309,7 @@ func (c *Certbot) check(dir string, note func(string)) (Result, error) {
 		return Result{}, err
 	}
 	if cur != nil && cur.domains == nil {
-		return Result{}, fmt.Errorf("certificate %s: %s exists, but its certificate does not; certbot would make a new certificate %s-0001 on each run; remove the rest with certbot delete --cert-name %s", c.Name, renewalPath(dir, c.Name), c.Name, c.Name)
+		return Result{}, fmt.Errorf("certificate %s: %s exists, but its certificate does not; certbot would make a new certificate %s-0001 on each run; certbot delete --cert-name %s removes the rest", c.Name, renewalPath(dir, c.Name), c.Name, c.Name)
 	}
 	if cur != nil && time.Until(cur.notAfter) < 14*24*time.Hour {
 		verb := " expires on "

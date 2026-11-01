@@ -43,7 +43,7 @@ var (
 
 func checkAccountName(field, what, name string) error {
 	if !accountRe.MatchString(name) {
-		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf(`%q is not a %s name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`, name, what)}
+		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf(`%q is not a %s name; a name has letters, digits, _, ., and -, and starts with a letter or _`, name, what)}
 	}
 	if len(name) > 32 {
 		return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf("has %d characters; a name has at most 32", len(name))}
@@ -53,7 +53,7 @@ func checkAccountName(field, what, name string) error {
 
 func checkNewAccount(what, name string) error {
 	if !newAccountRe.MatchString(name) {
-		return fmt.Errorf(`%s %s does not exist, and winch creates only names with lower-case letters, digits, "_", and "-" that start with a letter or "_"`, what, name)
+		return fmt.Errorf(`%s %s does not exist, and winch creates only names with lowercase letters, digits, _, and - that start with a letter or _`, what, name)
 	}
 	return nil
 }

@@ -166,7 +166,7 @@ func TestTopLevelSecretGenerate(t *testing.T) {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 	r = winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw", "--host", "web1")
-	if r.code != exitOK || r.out != "wrote vars.pw into the vars of host \"web1\" in winch.yaml\n" {
+	if r.code != exitOK || r.out != "wrote vars.pw into the vars of host web1 in winch.yaml\n" {
 		t.Errorf("--host: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 	if got := readFile(t, filepath.Join(dir, "winch.yaml")); !strings.Contains(got, "\nhosts:\n  web1:\n    vars:\n      pw: !secret ") || !strings.Contains(got, "\ngroups:\n  all:\n    vars:\n      pw: !secret ") {

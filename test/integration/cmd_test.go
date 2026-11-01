@@ -154,7 +154,7 @@ func TestCmdModule(t *testing.T) {
 			Name:         "a missing user",
 			Args:         &module.Cmd{Command: "true", User: "winch-nobody"},
 			Want:         module.Result{Status: module.Unknown, Missing: []string{"user winch-nobody"}},
-			WantApplyErr: "user winch-nobody does not exist",
+			WantApplyErr: "user winch-nobody does not exist; no earlier user step creates it",
 			Fix:          "useradd winch-nobody",
 			NoConverge:   true,
 		},

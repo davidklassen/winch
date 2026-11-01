@@ -53,13 +53,13 @@ func (u *Unit) Validate() error {
 	}
 	switch {
 	case u.Content != nil && u.SourcePos.Line > 0:
-		return &yamlx.FieldError{Field: "content", Msg: "a unit has only one of content and source"}
+		return &yamlx.FieldError{At: "content", Msg: "a unit step has at most one of content and source"}
 	case u.Content != nil:
 		return nil
 	case u.SourcePos.Line > 0 && u.Source == "":
-		return &yamlx.FieldError{Field: "source", Msg: "must not be empty"}
+		return &yamlx.FieldError{Field: "source", Msg: "is empty"}
 	case u.Source == "":
-		return &yamlx.FieldError{Field: "content", Msg: "a unit needs content or source"}
+		return &yamlx.FieldError{Msg: "a unit step needs content or source"}
 	}
 	return CheckRelative("source", u.Source)
 }

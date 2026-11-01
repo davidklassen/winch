@@ -169,7 +169,7 @@ func (ly layout) inventory(name string) (part, error) {
 	if strings.ContainsRune(name, '/') || base != path.Base(name) {
 		return part{}, yamlx.Errorf(yamlx.Pos{}, "unknown inventory %q; name an inventory without its directory and extension, such as %q", name, base)
 	}
-	return part{}, yamlx.Errorf(yamlx.Pos{}, "unknown inventory %q%s", name, yamlx.Suggest(name, partNames(ly.inventories)))
+	return part{}, yamlx.Errorf(yamlx.Pos{}, "unknown inventory %q%s", name, suggestOrList(name, partNames(ly.inventories)))
 }
 
 // parse returns the content of p.
@@ -178,4 +178,13 @@ func (p part) parse(dir string) (*yamlx.Node, error) {
 		return p.node, nil
 	}
 	return parse(dir, p.file)
+}
+
+// suggestOrList returns the close match of name in names, or the list of
+// names when none is close.
+func suggestOrList(name string, names []string) string {
+	if s := yamlx.Suggest(name, names); s != "" || len(names) == 0 {
+		return s
+	}
+	return "; use " + strings.Join(names, ", ")
 }

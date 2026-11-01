@@ -23,7 +23,7 @@ var hostnameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 func (h *Hostname) Validate() error {
 	if !hostnameRe.MatchString(h.Name) {
-		msg := fmt.Sprintf("%q is not a short host name: 1 to 63 lowercase letters, digits, and \"-\", without \"-\" at the start or the end", h.Name)
+		msg := fmt.Sprintf("%q is not a short host name: 1 to 63 lowercase letters, digits, and -, without - at the start or the end", h.Name)
 		if strings.Contains(h.Name, ".") {
 			msg += "; for the first part of the inventory name, use !expr host.short"
 		}

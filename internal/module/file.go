@@ -78,14 +78,14 @@ func (f *File) Validate() error {
 			set++
 		}
 		if a.set && set > 1 {
-			return &yamlx.FieldError{Field: a.name, Msg: "a file has only one of content, template, source, copy_from, and stock"}
+			return &yamlx.FieldError{At: a.name, Msg: "a file step has at most one of content, template, source, copy_from, and stock"}
 		}
 	}
 	if set == 0 {
 		if f.Owner == "" && f.Group == "" && f.Mode == "" {
-			return &yamlx.FieldError{Field: "content", Msg: "a file needs content, template, source, copy_from, or stock, one of owner, group, and mode, or absent: true"}
+			return &yamlx.FieldError{Msg: "a file step needs content, template, source, copy_from, or stock, one of owner, group, and mode, or absent: true"}
 		}
-		if err := takesNone("a file without content", arg{"validate", f.Validation != nil}, arg{"replace", f.Replace}); err != nil {
+		if err := takesNone("needs content, template, source, copy_from, or stock", arg{"validate", f.Validation != nil}, arg{"replace", f.Replace}); err != nil {
 			return err
 		}
 	}
@@ -114,7 +114,7 @@ func (f *File) Validate() error {
 
 func checkCommand(field string, c *string) error {
 	if c != nil && *c == "" {
-		return &yamlx.FieldError{Field: field, Msg: "must not be empty"}
+		return &yamlx.FieldError{Field: field, Msg: "is empty"}
 	}
 	return nil
 }
@@ -194,14 +194,14 @@ type arg struct {
 }
 
 func absentTakesNone(args ...arg) error {
-	return takesNone("absent: true", args...)
+	return takesNone("not with absent: true", args...)
 }
 
-// takesNone fails for the first of args that is set: what takes none of them.
-func takesNone(what string, args ...arg) error {
+// takesNone fails with msg at the first of args that is set.
+func takesNone(msg string, args ...arg) error {
 	for _, a := range args {
 		if a.set {
-			return &yamlx.FieldError{Field: a.name, Msg: what + " takes no " + a.name}
+			return &yamlx.FieldError{Field: a.name, Msg: msg}
 		}
 	}
 	return nil
@@ -254,14 +254,14 @@ func ids(owner, group string) (uid, gid int, err error) {
 		return 0, 0, err
 	}
 	if !ok {
-		return 0, 0, fmt.Errorf("user %q does not exist", owner)
+		return 0, 0, fmt.Errorf("user %s does not exist", owner)
 	}
 	gid, ok, err = lookupGroup(group)
 	if err != nil {
 		return 0, 0, err
 	}
 	if !ok {
-		return 0, 0, fmt.Errorf("group %q does not exist", group)
+		return 0, 0, fmt.Errorf("group %s does not exist", group)
 	}
 	return uid, gid, nil
 }
@@ -1053,10 +1053,10 @@ func groupName(id uint32) string {
 func userNote(owner, group string) string {
 	note := ""
 	if _, ok, err := lookupUser(owner); err == nil && !ok {
-		note += fmt.Sprintf("; user %q does not exist yet", owner)
+		note += fmt.Sprintf("; user %s does not exist yet", owner)
 	}
 	if _, ok, err := lookupGroup(group); err == nil && !ok {
-		note += fmt.Sprintf("; group %q does not exist yet", group)
+		note += fmt.Sprintf("; group %s does not exist yet", group)
 	}
 	return note
 }

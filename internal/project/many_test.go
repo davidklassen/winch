@@ -365,11 +365,11 @@ func TestStepVarsLoad(t *testing.T) {
 		{name: "undeclared", pipeline: "      - recipe: site\n        vars:\n          site_prot: 1\n",
 			want: `pipelines/site.yaml:7:11: vars.site_prot is set but nothing reads it; did you mean "site_port"?`},
 		{name: "null", pipeline: "      - recipe: site\n        vars:\n          site_port:\n",
-			want: `pipelines/site.yaml:7:21: variable "site_port": null is not a value`},
+			want: `pipelines/site.yaml:7:21: vars.site_port: null is not a value`},
 		{name: "not a map", pipeline: "      - recipe: site\n        vars: [a]\n",
 			want: `pipelines/site.yaml:6:15: vars: expected a map, got a list`},
 		{name: "secret", pipeline: "      - recipe: site\n        vars:\n          site_name: !secret YWdl\n",
-			want: `pipelines/site.yaml:7:22: variable "site_name": a recipe step gives no !secret values; put the secret in the inventory`},
+			want: `pipelines/site.yaml:7:22: vars.site_name: a recipe step gives no !secret values; put the secret in the inventory`},
 		{name: "item", pipeline: "      - recipe: site\n        vars:\n          site_name: !expr item\n",
 			want: "item is defined only in a step with loop"},
 		{name: "other key", pipeline: "      - recipe: site\n        loop: [a]\n",
@@ -692,7 +692,7 @@ func TestHealthLoad(t *testing.T) {
 	tests := []struct{ health, want string }{
 		{"      command: x\n      stable: 60\n", "pipelines/site.yaml:5:7: health: stable must be less than timeout (60 seconds); the gate could never pass"},
 		{"      command: x\n      stable: 10\n      timeout: 10\n", "stable must be less than timeout (10 seconds)"},
-		{"      command: \"\"\n", "command: must not be empty"},
+		{"      command: \"\"\n", "command: is empty"},
 		{"      command: x\n      timeout: 1\n", ""},
 		{"      command: x\n      timeout: 9223372036\n", ""},
 		{"      command: x\n      timeout: 0\n", "timeout: must be 1 or more seconds"},
@@ -762,7 +762,7 @@ func TestStepVarNull(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = p.Start(p.Inventory.Hosts[0], debian13)
-	if err == nil || !strings.Contains(err.Error(), `pipelines/site.yaml:7:22: variable "site_name": null is not a value`) {
+	if err == nil || !strings.Contains(err.Error(), `pipelines/site.yaml:7:22: vars.site_name: null is not a value`) {
 		t.Errorf("error %v", err)
 	}
 }

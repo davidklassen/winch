@@ -86,29 +86,29 @@ func TestOneFileLoad(t *testing.T) {
 		{name: "a recipe directory without recipe.yaml", files: map[string]string{"winch.yaml": withKey, "inventories/test.yaml": "", "pipelines/site.yaml": "", "recipes/app/templates/x": "x"},
 			want: `winch.yaml:14:3: recipe "app" is also recipes/app/; keep one of the two`},
 		{name: "a bad recipe name", files: files(withKey + "  App:\n    steps: []\n"), want: `winch.yaml:35:3: recipe "App": a recipe name has only lowercase letters, digits, and _`},
-		{name: "template in a recipe in winch.yaml", files: files(asFile("template: x.tmpl")), want: "winch.yaml:18:21: template: a recipe in winch.yaml cannot use template; use content with !tpl"},
-		{name: "source of file in a recipe in winch.yaml", files: files(asFile("source: x")), want: "winch.yaml:18:19: source: a recipe in winch.yaml cannot use source; use content"},
+		{name: "template in a recipe in winch.yaml", files: files(asFile("template: x.tmpl")), want: "winch.yaml:18:21: a recipe in winch.yaml cannot use template; use content with !tpl"},
+		{name: "source of file in a recipe in winch.yaml", files: files(asFile("source: x")), want: "winch.yaml:18:19: a recipe in winch.yaml cannot use source; use content"},
 		{name: "source of unit in a recipe in winch.yaml", files: files(strings.Replace(oneFile, `content: "[Service]\n"`, "source: app.service", 1)),
-			want: "winch.yaml:18:19: source: a recipe in winch.yaml cannot use source; use content"},
+			want: "winch.yaml:18:19: a recipe in winch.yaml cannot use source; use content"},
 		{name: "key in a recipe in winch.yaml", files: files(strings.Replace(oneFile, "key_content: KEY", "key: vendor.asc", 1)),
-			want: "winch.yaml:24:16: key: a recipe in winch.yaml cannot use key; use key_content"},
+			want: "winch.yaml:24:16: a recipe in winch.yaml cannot use key; use key_content"},
 		{name: "key_content that is not a key", files: files(oneFile), want: "winch.yaml:24:24: key_content is not an ASCII-armored OpenPGP public key"},
 		{name: "unit with content and source", files: map[string]string{"pipelines/site.yaml": stage("      - recipe: app\n"),
 			"recipes/app/recipe.yaml":       "steps:\n  - unit: {name: app.service, content: x, source: app.service}\n",
 			"recipes/app/files/app.service": "x"},
-			want: "a unit has only one of content and source"},
+			want: "a unit step has at most one of content and source"},
 		{name: "unit with content and an empty source", files: map[string]string{"pipelines/site.yaml": stage("      - recipe: app\n"),
 			"recipes/app/recipe.yaml": "steps:\n  - unit: {name: app.service, content: x, source: \"\"}\n"},
-			want: "a unit has only one of content and source"},
+			want: "a unit step has at most one of content and source"},
 		{name: "unit without content", files: map[string]string{"pipelines/site.yaml": stage("      - unit: {name: app.service}\n")},
-			want: "a unit needs content or source"},
+			want: "a unit step needs content or source"},
 		{name: "repo with key and key_content", files: map[string]string{"pipelines/site.yaml": stage("      - recipe: app\n"),
 			"recipes/app/recipe.yaml": "steps:\n  - repo: {name: v, url: https://a.example.com, suite: s/, key: k.asc, key_content: x}\n",
 			"recipes/app/files/k.asc": "x"},
-			want: "a repo has at most one of key and key_content"},
+			want: "a repo step has at most one of key and key_content"},
 		{name: "repo with an empty key and key_content", files: map[string]string{"pipelines/site.yaml": stage("      - recipe: app\n"),
 			"recipes/app/recipe.yaml": "steps:\n  - repo: {name: v, url: https://a.example.com, suite: s/, key: \"\", key_content: x}\n"},
-			want: "a repo has at most one of key and key_content"},
+			want: "a repo step has at most one of key and key_content"},
 		{name: "an inventory path", inventory: "inventories/test.yaml", want: `unknown inventory "inventories/test.yaml"; name an inventory without its directory and extension, such as "test"`},
 		{name: "an inventory file name", inventory: "test.yml", want: `unknown inventory "test.yml"; name an inventory without its directory and extension, such as "test"`},
 	}
@@ -144,7 +144,7 @@ func TestWriteSecretInWinchYAML(t *testing.T) {
 	if _, err := WriteSecret(dir, "", "web1", "token", "s3cret"); err != nil {
 		t.Fatalf("WriteSecret --host: %v", err)
 	}
-	if _, err := WriteSecret(dir, "", "web9", "token", "s3cret"); err == nil || err.Error() != `host "web9" is not in inventories.prod of winch.yaml` {
+	if _, err := WriteSecret(dir, "", "web9", "token", "s3cret"); err == nil || err.Error() != `host web9 is not in inventories.prod of winch.yaml` {
 		t.Errorf("WriteSecret for an unknown host: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "winch.yaml"))
@@ -267,6 +267,34 @@ func TestTopLevel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Load(t.Context(), writeProject(t, tt.files), "", tt.pipeline, nil, Keys{})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// spec: CLI/Messages; Project layout
+func TestMessagesNameWinchYML(t *testing.T) {
+	inv := "inventories:\n  prod:\n    hosts: {web1: {}}\n  test:\n    hosts: {web2: {}}\n"
+	pipelines := "pipelines:\n  site:\n    steps: []\n  web:\n    steps: []\n"
+	tests := []struct {
+		name, yml, pipeline, want string
+	}{
+		{"no hosts", "name: acme\nsteps: []\n", "", "the project has no hosts; add hosts to winch.yml or a file to inventories/"},
+		{"no inventory", "name: acme\n" + inv + "steps: []\n", "", "name an inventory with --inventory: prod, test; or set inventory in winch.yml"},
+		{"no pipeline", "name: acme\nhosts: {web1: {}}\n", "", "no pipeline: add steps to winch.yml, or a file to pipelines/"},
+		{"a pipeline name", "name: acme\nhosts: {web1: {}}\nsteps: []\n", "site", `pipeline "site": the steps at the top of winch.yml are the only pipeline`},
+		{"no pipeline name", "name: acme\nhosts: {web1: {}}\n" + pipelines, "", "name a pipeline: site, web; only steps at the top of winch.yml run without a name"},
+		{"a recipe with template", "name: acme\nhosts: {web1: {}}\nrecipes:\n  app:\n    steps:\n      - file: {path: /x, template: a.tmpl}\nsteps:\n  - recipe: app\n", "", "a recipe in winch.yml cannot use template"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "winch.yml"), []byte(tt.yml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(t.Context(), dir, "", tt.pipeline, nil, Keys{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want %q", err, tt.want)
 			}

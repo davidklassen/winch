@@ -24,5 +24,5 @@ json:
 {"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:site#1[0]","stage":"web","recipe":"site","step":"file /var/www/index.html","module":"file","status":"ok"}
 {"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:site#1[1]","stage":"web","recipe":"site","step":"file /var/www/about.html","module":"file","status":"ok"}
 {"type":"host","time":"0001-01-01T00:00:00Z","phase":"plan","host":"web1","status":"change"}
-{"type":"host","time":"0001-01-01T00:00:00Z","phase":"plan","host":"web2","status":"ok"}
+{"type":"host","time":"0001-01-01T00:00:00Z","phase":"plan","host":"web2","status":"unchanged"}
 stderr:

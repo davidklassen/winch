@@ -661,7 +661,7 @@ func (s *Session) Access(ctx context.Context) error {
 	switch {
 	// Open logged in without a prompt, so the change refuses the login.
 	case err != nil && strings.Contains(msg, "Permission denied ("):
-		return fmt.Errorf("the access check cannot log in after this change: %s", msg)
+		return fmt.Errorf("cannot log in after this change: %s", msg)
 	case err != nil && msg != "":
 		return hint(cfg, errors.New(msg))
 	case !ok && extra != "":

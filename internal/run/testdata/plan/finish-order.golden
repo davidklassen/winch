@@ -41,4 +41,4 @@ json:
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web2","status":"failed","error":"base: file /etc/motd: permission denied"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web3","status":"change"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web4","status":"failed","error":"app: file /etc/app.conf: permission denied"}
-{"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web5","status":"ok"}
+{"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web5","status":"unchanged"}

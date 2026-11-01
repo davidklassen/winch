@@ -138,13 +138,13 @@ func TestLinkModule(t *testing.T) {
 			Name:    "replace an immutable file fails",
 			Setup:   `touch /tmp/w/f && chattr +i /tmp/w/f`,
 			Args:    &module.Link{Path: "/tmp/w/f", Target: new("/etc/hostname"), Replace: true},
-			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
+			WantErr: "/tmp/w/f is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:    "replace a directory with an append-only directory fails",
 			Setup:   `mkdir -p /tmp/w/d/x && touch /tmp/w/d/x/b && chattr +a /tmp/w/d/x`,
 			Args:    &module.Link{Path: "/tmp/w/d", Target: new("/tmp"), Replace: true},
-			WantErr: "/tmp/w/d/x is append-only; chattr -a changes it",
+			WantErr: "/tmp/w/d/x is append-only; chattr -a removes the flag",
 		},
 		{
 			Name:    "replace a tree with a mount point fails",

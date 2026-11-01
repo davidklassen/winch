@@ -35,15 +35,15 @@ func TestCertbotValidate(t *testing.T) {
 		{"no name", "domains: [a.example.com]\nemail: a@example.com\n", `t.yaml:1:1: missing key "name"`},
 		{"no domains", "name: a\nemail: a@example.com\n", `t.yaml:1:1: missing key "domains"`},
 		{"no email", "name: a\ndomains: [a.example.com]\n", `t.yaml:1:1: missing key "email"`},
-		{"name with a slash", "name: a/b\ndomains: [a.example.com]\nemail: a@example.com\n", `t.yaml:1:7: name: "a/b" is not a certificate name: letters, digits, ".", "_", and "-", starting with a letter or digit`},
-		{"name ..", "name: ..\ndomains: [a.example.com]\nemail: a@example.com\n", `t.yaml:1:7: name: ".." is not a certificate name: letters, digits, ".", "_", and "-", starting with a letter or digit`},
+		{"name with a slash", "name: a/b\ndomains: [a.example.com]\nemail: a@example.com\n", `t.yaml:1:7: name: "a/b" is not a certificate name: letters, digits, ., _, and -, starting with a letter or digit`},
+		{"name ..", "name: ..\ndomains: [a.example.com]\nemail: a@example.com\n", `t.yaml:1:7: name: ".." is not a certificate name: letters, digits, ., _, and -, starting with a letter or digit`},
 		{"empty domains", "name: a\ndomains: []\nemail: a@example.com\n", `t.yaml:2:10: domains: needs at least one domain`},
 		{"upper case", "name: a\ndomains: [Example.com]\nemail: a@example.com\n", `t.yaml:2:10: domains: "Example.com" is not a domain name such as example.com; certbot takes lowercase names`},
 		{"bad domain", "name: a\ndomains: [a..example.com]\nemail: a@example.com\n", `t.yaml:2:10: domains: "a..example.com" is not a domain name such as example.com; certbot takes lowercase names`},
 		{"long label", "name: a\ndomains: [" + strings.Repeat("a", 64) + ".com]\nemail: a@example.com\n", `t.yaml:2:10: domains: "` + strings.Repeat("a", 64) + `.com" is not a domain name such as example.com; certbot takes lowercase names`},
 		{"long name", "name: a\ndomains: [" + strings.Repeat("a.", 127) + "com]\nemail: a@example.com\n", `t.yaml:2:10: domains: "` + strings.Repeat("a.", 127) + `com" is longer than 253 characters`},
 		{"wildcard", "name: a\ndomains: [\"*.example.com\"]\nemail: a@example.com\n", `t.yaml:2:10: domains: "*.example.com" is a wildcard, which needs a DNS challenge; the nginx, apache, standalone, and webroot authenticators answer only HTTP challenges`},
-		{"repeated domain", "name: a\ndomains: [a.example.com, a.example.com]\nemail: a@example.com\n", `t.yaml:2:10: domains: "a.example.com" is in the list twice`},
+		{"repeated domain", "name: a\ndomains: [a.example.com, a.example.com]\nemail: a@example.com\n", `t.yaml:2:10: domains: a.example.com is in the list twice`},
 		{"bad email", "name: a\ndomains: [a.example.com]\nemail: admin\n", `t.yaml:3:8: email: "admin" is not an email address`},
 		{"email with a space", "name: a\ndomains: [a.example.com]\nemail: a b@example.com\n", `t.yaml:3:8: email: "a b@example.com" is not an email address`},
 		{"unknown authenticator", base + "authenticator: dns\n", `t.yaml:4:16: authenticator: "dns" is not an authenticator; use nginx, apache, standalone, or webroot`},
@@ -51,9 +51,9 @@ func TestCertbotValidate(t *testing.T) {
 		{"path without webroot", base + "webroot_path: /var/www/html\n", `t.yaml:4:15: webroot_path: needs authenticator: webroot`},
 		{"relative path", base + "authenticator: webroot\nwebroot_path: var/www\n", `t.yaml:5:15: webroot_path: must be an absolute path`},
 		{"path with a comma", base + "authenticator: webroot\nwebroot_path: /var/www/a,b\n", `t.yaml:5:15: webroot_path: has a ",", which certbot reads as a list`},
-		{"empty hook", base + "deploy_hook: \"\"\n", `t.yaml:4:14: deploy_hook: must not be empty`},
-		{"empty pre_hook", base + "pre_hook: \"\"\n", `t.yaml:4:11: pre_hook: must not be empty`},
-		{"empty post_hook", base + "post_hook: \"\"\n", `t.yaml:4:12: post_hook: must not be empty`},
+		{"empty hook", base + "deploy_hook: \"\"\n", `t.yaml:4:14: deploy_hook: is empty`},
+		{"empty pre_hook", base + "pre_hook: \"\"\n", `t.yaml:4:11: pre_hook: is empty`},
+		{"empty post_hook", base + "post_hook: \"\"\n", `t.yaml:4:12: post_hook: is empty`},
 		{"unknown key", base + "reuse-key: true\n", `t.yaml:4:1: unknown key "reuse-key"; did you mean "reuse_key"?`},
 	}
 	for _, tt := range tests {
@@ -290,7 +290,7 @@ func TestCertbotCheckBrokenLineage(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &Certbot{Name: "a", Domains: []string{"a.example.com"}, Email: "a@example.com"}
-	want := "certificate a: " + filepath.Join(dir, "renewal", "a.conf") + " exists, but its certificate does not; certbot would make a new certificate a-0001 on each run; remove the rest with certbot delete --cert-name a"
+	want := "certificate a: " + filepath.Join(dir, "renewal", "a.conf") + " exists, but its certificate does not; certbot would make a new certificate a-0001 on each run; certbot delete --cert-name a removes the rest"
 	if _, err := c.check(dir, func(string) {}); err == nil || err.Error() != want {
 		t.Errorf("got %v\nwant %s", err, want)
 	}

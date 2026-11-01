@@ -1,1 +1,1 @@
-winch.yaml:7:3: variable "Bad-Name": a variable name has only lowercase letters, digits, and _
+winch.yaml:7:3: "Bad-Name" is not a variable name; a variable name has only lowercase letters, digits, and _

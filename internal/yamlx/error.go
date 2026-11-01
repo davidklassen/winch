@@ -40,9 +40,12 @@ func Errorf(pos Pos, format string, args ...any) *Error {
 }
 
 // FieldError is returned by a Validate method. The decoder places it at the
-// value of Field, or at the struct when Field is empty.
+// value of Field, or at the struct when Field is empty. At places it at the
+// value of a key without the key in the message, for a message that names
+// the key itself.
 type FieldError struct {
 	Field string
+	At    string
 	Msg   string
 }
 

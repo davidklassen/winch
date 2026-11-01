@@ -110,20 +110,20 @@ func TestRepoModule(t *testing.T) {
 			Name:      "an immutable source file",
 			Setup:     signedSource("bookworm") + " && chattr +i " + signedFile,
 			Args:      args(),
-			WantErr:   signedFile + " is immutable; chattr -i changes it",
+			WantErr:   signedFile + " is immutable; chattr -i removes the flag",
 			Unchanged: "grep -q bookworm " + signedFile,
 		},
 		{
 			Name:    "an immutable key file with another mode",
 			Setup:   signedSource(suite) + " && chmod 600 " + signedAsc + " && chattr +i " + signedAsc,
 			Args:    args(),
-			WantErr: signedAsc + " is immutable; chattr -i changes it",
+			WantErr: signedAsc + " is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:    "an append-only key file with another key",
 			Setup:   signedSource(suite) + " && cat > " + signedAsc + " <<'EOF'\n" + string(otherKey) + "EOF\nchattr +a " + signedAsc,
 			Args:    args(),
-			WantErr: signedAsc + " is append-only; chattr -a changes it",
+			WantErr: signedAsc + " is append-only; chattr -a removes the flag",
 		},
 		{
 			Name:  "immutable files that are as the step declares",

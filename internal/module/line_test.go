@@ -14,9 +14,9 @@ func TestLineValidate(t *testing.T) {
 		{"no path", "line: a\nmatch: ^a\n", `t.yaml:1:1: missing key "path"`},
 		{"no match", "path: /etc/a\nline: a\n", `t.yaml:1:1: missing key "match"`},
 		{"relative path", "path: etc/a\nline: a\nmatch: ^a\n", `t.yaml:1:7: path: must be an absolute path`},
-		{"no line", "path: /etc/a\nmatch: ^a\n", `t.yaml:1:1: line: a line step needs line, or absent: true`},
-		{"line and absent", "path: /etc/a\nline: a\nmatch: ^a\nabsent: true\n", `t.yaml:2:7: line: absent: true takes no line`},
-		{"empty match", "path: /etc/a\nline: a\nmatch: \"\"\n", `t.yaml:3:8: match: must not be empty`},
+		{"no line", "path: /etc/a\nmatch: ^a\n", `t.yaml:1:1: a line step needs line, or absent: true`},
+		{"line and absent", "path: /etc/a\nline: a\nmatch: ^a\nabsent: true\n", `t.yaml:2:7: line: not with absent: true`},
+		{"empty match", "path: /etc/a\nline: a\nmatch: \"\"\n", `t.yaml:3:8: match: is empty`},
 		{"bad match", "path: /etc/a\nline: a\nmatch: \"a(\"\n", "t.yaml:3:8: match: not a regular expression: missing closing ): a("},
 		{"Perl syntax", "path: /etc/a\nline: a\nmatch: \"^(?!#)PermitRootLogin\"\n", "t.yaml:3:8: match: (?! is not supported; match has the RE2 syntax, without lookahead, lookbehind, or backreferences"},
 		{"two lines", "path: /etc/a\nline: \"a\\nb\"\nmatch: ^a\n", `t.yaml:2:7: line: must be one line`},
@@ -27,7 +27,7 @@ func TestLineValidate(t *testing.T) {
 		{"match of an empty line", "path: /etc/a\nmatch: ^$\nabsent: true\n", `t.yaml:2:8: match: matches an empty line`},
 		{"validate", "path: /etc/ssh/sshd_config\nline: PermitRootLogin no\nmatch: ^PermitRootLogin \nvalidate: sshd -t\n", ""},
 		{"validate with absent", "path: /etc/ssh/sshd_config\nmatch: ^PermitRootLogin \nabsent: true\nvalidate: sshd -t\n", ""},
-		{"empty validate", "path: /etc/a\nline: a\nmatch: ^a\nvalidate: \"\"\n", `t.yaml:4:11: validate: must not be empty`},
+		{"empty validate", "path: /etc/a\nline: a\nmatch: ^a\nvalidate: \"\"\n", `t.yaml:4:11: validate: is empty`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Line{}, tt.yaml, tt.want) })

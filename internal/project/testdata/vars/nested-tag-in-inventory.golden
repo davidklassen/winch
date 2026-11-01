@@ -1,1 +1,1 @@
-inventories/test.yaml:17:22: variable "web_sites": an inventory holds no expressions or templates
+inventories/test.yaml:17:22: vars.web_sites: an inventory holds no expressions or templates

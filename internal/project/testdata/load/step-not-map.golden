@@ -1,1 +1,1 @@
-pipelines/site.yaml:5:9: a step must be a map, got the string "file"
+pipelines/site.yaml:5:9: expected a step as a map, got the string "file"

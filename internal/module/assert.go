@@ -22,7 +22,7 @@ func (a *Assert) Validate() error {
 		return err
 	}
 	if a.Message == "" {
-		return &yamlx.FieldError{Field: "message", Msg: "must not be empty"}
+		return &yamlx.FieldError{Field: "message", Msg: "is empty"}
 	}
 	return nil
 }

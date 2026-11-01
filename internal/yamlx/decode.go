@@ -1,6 +1,7 @@
 package yamlx
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"reflect"
@@ -253,7 +254,7 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 		return
 	}
 	if fe, ok := errors.AsType[*FieldError](err); ok {
-		pos, ok := seen[fe.Field]
+		pos, ok := seen[cmp.Or(fe.Field, fe.At)]
 		if !ok {
 			pos = n.Pos
 		}

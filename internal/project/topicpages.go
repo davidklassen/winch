@@ -572,7 +572,7 @@ var workflowTopic = doc.Topic{
 	Name: "workflow",
 	Text: "how to plan and apply changes",
 	Blocks: []doc.Block{
-		doc.Paragraph(`A run of winch plans the changes, asks for approval, and then applies them.`),
+		doc.Paragraph(`A run of winch plans the changes, asks the question "Apply these changes?", and then applies them.`),
 		doc.Heading("Plan and apply"),
 		doc.Paragraph(`winch plan shows the changes and changes nothing. winch apply shows the same plan, asks, and then makes the changes. For each host, the plan connects to the host, reads the facts, evaluates the steps, checks the requirements of the recipes, and checks each step on the host. Apply checks each step again right before it changes it. The second check decides.`),
 		doc.Heading("Apply output"),
@@ -582,7 +582,7 @@ var workflowTopic = doc.Topic{
 			{"+", "create"},
 			{"~", "change"},
 			{"-", "remove"},
-			{"?", "unknown: a cmd without creates or unless"},
+			{"?", "unknown: a cmd step without creates or unless"},
 			{"!", "a handler, or a pending then, gate, or assert that will run"},
 			{"*", "a reboot, assert, or health gate that runs during apply"},
 		}),
@@ -593,7 +593,7 @@ var workflowTopic = doc.Topic{
 		doc.Heading("What winch changes"),
 		doc.Paragraph(`winch changes only what steps declare. Deleting a step changes nothing on the host. To remove a thing, declare it with absent: true. The plan fails a host when two steps manage the same path, package, unit, user, or group with different arguments.`),
 		doc.Heading("Stopping and resuming"),
-		doc.Paragraph(`The first Ctrl-C lets the running step of each host finish, starts no new step, and ends with the summary. A second Ctrl-C closes the connections to the hosts. A new run is the resume: steps that already succeeded check as ok, and pending handlers run.`),
+		doc.Paragraph(`The first Ctrl-C lets the running step of each host finish, starts no new step, and ends with the summary. A second Ctrl-C ends the sessions with the hosts. A new run is the resume: steps that already succeeded check as ok, and pending handlers run.`),
 		doc.Heading("Access to the host"),
 		doc.Paragraph(`winch keeps its access to each host.`),
 		doc.List(
@@ -707,7 +707,7 @@ winch apply site --batch
 		doc.Paragraph(`A cmd with dir runs in that directory. A cmd with user runs as that user, with the home of that user as HOME, and its name as USER and LOGNAME. It starts no login session: PAM does not run, so the login umask and limits of the user do not apply.`),
 		doc.Heading("The time limit"),
 		doc.Paragraph(`A command stops after 10 minutes, or after the timeout of a cmd step in seconds. The helper sends SIGTERM to the command and its child processes, and SIGKILL 10 seconds later to those that still run. The step fails, and the error shows the last 10 lines of output. apt-get in pkg, repo, and upgrade has no time limit.`),
-		doc.Paragraph(`When the connection to winch ends, the helper lets the running command finish within its limit, and then exits. A package install is not cut off in the middle. winch exec is different: on Ctrl-C, or when its session breaks, its command gets SIGINT, and SIGKILL after 10 seconds.`),
+		doc.Paragraph(`When the session ends, the helper lets the running command finish within its limit, and then exits. A package install is not cut off in the middle. winch exec is different: on Ctrl-C, or when its session breaks, its command gets SIGINT, and SIGKILL after 10 seconds.`),
 		doc.Heading("What winch leaves on the host"),
 		doc.Paragraph(`winch keeps its files in /var/lib/winch/:`),
 		doc.Table([][]string{

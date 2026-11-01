@@ -86,7 +86,7 @@ func TestInvalid(t *testing.T) {
 		{"unknown flag with one dash", []string{"plan", "site", "-nope"}, "winch plan: unknown flag --nope\n"},
 		{"a flag without its value", []string{"plan", "site", "--inventory"}, "winch plan: --inventory needs a value\n"},
 		{"a value for a flag without one", []string{"apply", "site", "--yes=maybe"}, "winch apply: --yes takes no value\n"},
-		{"an empty value", []string{"plan", "site", "--hosts="}, "winch plan: --hosts must not be empty\n"},
+		{"an empty value", []string{"plan", "site", "--hosts="}, "winch plan: --hosts is empty\n"},
 		{"no pipeline", []string{"plan"}, "winch plan: name a pipeline: site; only steps at the top of winch.yaml run without a name\n"},
 		{"two pipelines", []string{"apply", "site", "other"}, "winch apply: takes at most one pipeline"},
 		{"unknown pipeline", []string{"plan", "sit"}, "winch plan: unknown pipeline \"sit\"; did you mean \"site\"?\n"},

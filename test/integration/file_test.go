@@ -270,7 +270,7 @@ func TestFileModule(t *testing.T) {
 			Setup:        `printf 'x\n' > /tmp/w/f`,
 			Args:         &module.File{Path: "/tmp/w/f", Data: []byte("x\n"), Owner: "later"},
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner root → later (does not exist yet)"}},
-			WantApplyErr: `user "later" does not exist`,
+			WantApplyErr: `user later does not exist`,
 			Fix:          "useradd later",
 		},
 		{
@@ -344,7 +344,7 @@ func TestFileModule(t *testing.T) {
 			Name:    "an immutable file fails",
 			Setup:   `printf 'hello\n' > /tmp/w/f && chattr +i /tmp/w/f`,
 			Args:    &module.File{Path: "/tmp/w/f", Data: []byte("bye\n")},
-			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
+			WantErr: "/tmp/w/f is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:  "an immutable file that is already right is ok",
@@ -362,25 +362,25 @@ func TestFileModule(t *testing.T) {
 			Name:    "an immutable file with a wrong mode fails",
 			Setup:   `printf 'hello\n' > /tmp/w/f && chmod 600 /tmp/w/f && chattr +i /tmp/w/f`,
 			Args:    &module.File{Path: "/tmp/w/f", Data: []byte("hello\n")},
-			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
+			WantErr: "/tmp/w/f is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:    "an append-only file fails",
 			Setup:   `printf 'hello\n' > /tmp/w/f && chattr +a /tmp/w/f`,
 			Args:    &module.File{Path: "/tmp/w/f", Data: []byte("bye\n")},
-			WantErr: "/tmp/w/f is append-only; chattr -a changes it",
+			WantErr: "/tmp/w/f is append-only; chattr -a removes the flag",
 		},
 		{
 			Name:    "absent on an immutable file fails",
 			Setup:   `touch /tmp/w/f && chattr +i /tmp/w/f`,
 			Args:    &module.File{Path: "/tmp/w/f", Absent: true},
-			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
+			WantErr: "/tmp/w/f is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:    "replace a directory with an immutable file fails",
 			Setup:   `mkdir -p /tmp/w/d/x && touch /tmp/w/d/a /tmp/w/d/x/b && chattr +i /tmp/w/d/x/b`,
 			Args:    &module.File{Path: "/tmp/w/d", Data: []byte("x\n"), Replace: true},
-			WantErr: "/tmp/w/d/x/b is immutable; chattr -i changes it",
+			WantErr: "/tmp/w/d/x/b is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:      "mode without content keeps the content, owner, and group",
@@ -443,7 +443,7 @@ func TestFileModule(t *testing.T) {
 			Name:    "without content fails on an immutable file it must change",
 			Setup:   `touch /tmp/w/f && chattr +i /tmp/w/f`,
 			Args:    &module.File{Path: "/tmp/w/f", Mode: "0640"},
-			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
+			WantErr: "/tmp/w/f is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:  "a path with spaces, shell characters, and UTF-8",

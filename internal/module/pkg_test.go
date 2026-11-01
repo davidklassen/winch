@@ -77,7 +77,7 @@ func TestLockFilesNotesTheHolder(t *testing.T) {
 func TestLockFilesNamesAMissingDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "lists")
 	_, err := lockFiles(t.Context(), []string{filepath.Join(dir, "lock")}, nil)
-	if want := dir + " not found: the host needs apt and dpkg"; err == nil || err.Error() != want {
+	if want := dir + " does not exist; pkg steps need apt and dpkg"; err == nil || err.Error() != want {
 		t.Errorf("err = %v, want %q", err, want)
 	}
 }

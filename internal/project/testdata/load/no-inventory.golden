@@ -1,1 +1,1 @@
-no inventory: use --inventory, or set inventory in winch.yaml
+name an inventory with --inventory: prod, test; or set inventory in winch.yaml

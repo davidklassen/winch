@@ -84,19 +84,19 @@ func (s *Service) Validate() error {
 	case at && instance == "":
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs an instance name after \"@\"", s.Name)}
 	case stem == "":
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs a name before the suffix", s.Name)}
+		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs a name before the type", s.Name)}
 	case n > 255 && added:
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters with .service added; a unit name has at most 255", n)}
 	case n > 255:
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters; a unit name has at most 255", n)}
 	case s.Reloaded && s.Restarted:
-		return &yamlx.FieldError{Field: "restarted", Msg: "a service step has one of reloaded and restarted"}
+		return &yamlx.FieldError{At: "restarted", Msg: "a service step has at most one of reloaded and restarted"}
 	case s.Reloaded || s.Restarted:
 		action := "reloaded"
 		if s.Restarted {
 			action = "restarted"
 		}
-		return takesNone(action, arg{"running", s.Running != nil}, arg{"enabled", s.Enabled != nil})
+		return takesNone("not with "+action+": true", arg{"running", s.Running != nil}, arg{"enabled", s.Enabled != nil})
 	case s.Running == nil && s.Enabled == nil && s.Actions:
 		return &yamlx.FieldError{Msg: "a service step needs running, enabled, reloaded, or restarted"}
 	case s.Running == nil && s.Enabled == nil:
@@ -152,7 +152,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	case missing, u.load == "loaded", broken && off && !s.Restarted && !s.Reloaded:
 	case u.load == "masked" && off:
 	case u.load == "masked":
-		return Result{}, fmt.Errorf("%s has the load state %q", u.id, u.load)
+		return Result{}, fmt.Errorf("%s is masked; systemctl unmask %s removes the mask", u.id, u.id)
 	default:
 		return Result{}, withJournal(ctx, u.id, fmt.Errorf("%s has the load state %q", u.id, u.load))
 	}

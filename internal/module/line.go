@@ -40,7 +40,7 @@ func (l *Line) Validate() error {
 		return err
 	}
 	if l.Match == "" {
-		return &yamlx.FieldError{Field: "match", Msg: "must not be empty"}
+		return &yamlx.FieldError{Field: "match", Msg: "is empty"}
 	}
 	re, err := regexp.Compile(l.Match)
 	if se, ok := errors.AsType[*syntax.Error](err); ok && se.Code == syntax.ErrInvalidPerlOp {
@@ -58,7 +58,7 @@ func (l *Line) Validate() error {
 	case l.Absent:
 		return absentTakesNone(arg{"line", l.Line != ""})
 	case l.Line == "":
-		return &yamlx.FieldError{Field: "line", Msg: "a line step needs line, or absent: true"}
+		return &yamlx.FieldError{Msg: "a line step needs line, or absent: true"}
 	case strings.ContainsAny(l.Line, "\n\r"):
 		return &yamlx.FieldError{Field: "line", Msg: "must be one line"}
 	case !re.MatchString(l.Line):
@@ -123,7 +123,7 @@ func (l *Line) Apply(ctx context.Context, _ Say) error {
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("%s does not exist; line does not create a file", l.Path)
+		return fmt.Errorf("%s does not exist; a line step does not create it", l.Path)
 	}
 	out, _, err := l.edit(data)
 	if err != nil {

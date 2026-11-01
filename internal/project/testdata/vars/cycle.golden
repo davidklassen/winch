@@ -1,1 +1,1 @@
-winch.yaml:7:3: variable "a": the defaults form a cycle: a → b → c → a
+winch.yaml:7:3: vars.a: the defaults form a cycle: a → b → c → a

@@ -32,7 +32,7 @@ func TestFirewallModule(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "winch.yaml"), []byte("name: fw\nhosts:\n  firewall2: {}\nsteps:\n"+firewall+"        - tcp: 22\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if r := lab.Winch(t, dir, "plan"); r.Code != 0 || !strings.Contains(r.Stderr, "firewall2: note: nft is missing and no pkg step installs nftables\n") {
+	if r := lab.Winch(t, dir, "plan"); r.Code != 0 || !strings.Contains(r.Stderr, "firewall2: note: nft is missing; install the package nftables in an earlier pkg step\n") {
 		t.Fatalf("plan without nftables: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	vm.MustRun(t, "[ ! -e /usr/sbin/nft.off ] || mv /usr/sbin/nft.off /usr/sbin/nft")
@@ -165,7 +165,7 @@ func TestFirewallModule(t *testing.T) {
 	project("  - cmd:\n      command: |\n        nft add table inet block\n        nft add set inet block ssh '{ type inet_service; timeout 60s; elements = { 22 }; }'\n        nft add chain inet block input '{ type filter hook input priority -10; }'\n        nft add rule inet block input tcp dport @ssh ct state new drop\n" +
 		firewall + "        - tcp: [22, 443]\n")
 	r = lab.Winch(t, dir, "apply", "--yes")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "failed: firewall: no new SSH connection works: ") || !strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+	if r.Code != 1 || !strings.Contains(r.Stderr, "failed: firewall: the access check failed: ") || !strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply with a failed access check: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)

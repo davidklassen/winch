@@ -47,7 +47,7 @@ func (c *Cmd) Validate() error {
 		return err
 	}
 	if c.Unless != nil && c.Creates != "" {
-		return &yamlx.FieldError{Field: "unless", Msg: "a cmd has at most one of creates and unless"}
+		return &yamlx.FieldError{At: "unless", Msg: "a cmd step has at most one of creates and unless"}
 	}
 	if c.Creates != "" {
 		if err := checkAbs("creates", c.Creates); err != nil {
@@ -127,7 +127,7 @@ func (c *Cmd) Apply(ctx context.Context, _ Say) error {
 		}
 		u, ok := a.user(c.User)
 		if !ok {
-			return fmt.Errorf("user %s does not exist", c.User)
+			return fmt.Errorf("user %s does not exist; no earlier user step creates it", c.User)
 		}
 		// The groups that initgroups gives a login of the user.
 		groups := []uint32{u.gid}

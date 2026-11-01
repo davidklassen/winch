@@ -459,7 +459,7 @@ func TestStageHandlers(t *testing.T) {
 
 	t.Run("a rule that drops SSH rolls back the file of the stage", func(t *testing.T) {
 		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.fw_ports=[80]")
-		if r.Code != 1 || !strings.Contains(r.Stderr, "stage-handlers: firewall: failed: handler firewall.reload: service nftables: no new SSH connection works: ") ||
+		if r.Code != 1 || !strings.Contains(r.Stderr, "stage-handlers: firewall: failed: handler firewall.reload: service nftables: the access check failed: ") ||
 			!strings.HasSuffix(r.Stderr, "; the old files are back\n") {
 			t.Fatalf("apply: exit %d\n%s", r.Code, r.Stderr)
 		}

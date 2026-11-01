@@ -56,14 +56,14 @@ func (p *Pkg) Validate() error {
 		case strings.HasSuffix(n, "-"):
 			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf(`%q ends in "-", which apt reads as a removal; use absent: true`, n)}
 		case slices.Contains(p.Name[:i], n):
-			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q is in the list twice", n)}
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%s is in the list twice", n)}
 		}
 	}
 	switch {
 	case p.Purge && !p.Absent:
 		return &yamlx.FieldError{Field: "purge", Msg: "needs absent: true"}
 	case p.Absent && p.Recommends != nil:
-		return &yamlx.FieldError{Field: "recommends", Msg: "absent: true takes no recommends"}
+		return &yamlx.FieldError{Field: "recommends", Msg: "not with absent: true"}
 	}
 	return nil
 }
@@ -145,7 +145,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 			p.Absent && (pkg.state == installed || pkg.half != 0),
 			p.Purge && pkg.state == configFiles:
 			if pkg.held {
-				return Result{}, fmt.Errorf("%s is held; apt-mark unhold %s changes it", n, n)
+				return Result{}, fmt.Errorf("%s is held; apt-mark unhold %s removes the hold", n, n)
 			}
 			p.todo = append(p.todo, n)
 		case !p.Absent:
@@ -484,7 +484,7 @@ func (p *Pkg) others(ctx context.Context, progress func(string)) ([]string, erro
 	var errs []error
 	for _, n := range parseRemovals(out, nil) {
 		if strings.Contains(n, ":") {
-			errs = append(errs, fmt.Errorf("apt must remove %s; first run apt-get remove %s", n, n))
+			errs = append(errs, fmt.Errorf("apt must remove %s; apt-get remove %s removes it", n, n))
 		} else {
 			errs = append(errs, fmt.Errorf("apt must remove %s; add a pkg step with name: %s and absent: true before this step", n, n))
 		}
@@ -500,7 +500,7 @@ func (p *Pkg) others(ctx context.Context, progress func(string)) ([]string, erro
 	installs, upgrades := parseSimulation(out, own)
 	for _, n := range slices.Concat(installs, upgrades) {
 		if p.pkgs[n].held {
-			errs = append(errs, fmt.Errorf("%s is held; apt-mark unhold %s changes it", n, n))
+			errs = append(errs, fmt.Errorf("%s is held; apt-mark unhold %s removes the hold", n, n))
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
@@ -725,7 +725,7 @@ func lockFiles(ctx context.Context, names []string, progress func(string)) (unlo
 	for _, name := range names {
 		f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE, 0o640)
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("%s not found: the host needs apt and dpkg", filepath.Dir(name))
+			return nil, fmt.Errorf("%s does not exist; pkg steps need apt and dpkg", filepath.Dir(name))
 		}
 		if err != nil {
 			return nil, err

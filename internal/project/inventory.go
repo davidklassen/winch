@@ -155,10 +155,10 @@ func (l *loader) values(n *yamlx.Node) ([]source, []error) {
 	for _, p := range n.Pairs {
 		l.given = append(l.given, varRead{name: p.Key, pos: p.KeyPos})
 		if p.Value.Kind == yamlx.Null {
-			errs = append(errs, yamlx.Errorf(p.Value.Pos, "variable %q: null is not a value", p.Key))
+			errs = append(errs, yamlx.Errorf(p.Value.Pos, "vars.%s: null is not a value", p.Key))
 			continue
 		}
-		errs = append(errs, l.seal(p.Value, fmt.Sprintf("variable %q: an inventory holds no expressions or templates", p.Key))...)
+		errs = append(errs, l.seal(p.Value, fmt.Sprintf("vars.%s: an inventory holds no expressions or templates", p.Key))...)
 		out = append(out, source{name: p.Key, value: yamlx.Value(p.Value), pos: p.Value.Pos})
 	}
 	return out, errs
@@ -248,7 +248,7 @@ func (inv *Inventory) resolve(h *Host, own []source, set []setValue) error {
 		for _, s := range g.vars {
 			if first := from[s.name]; first != nil && !reflect.DeepEqual(h.Vars[s.name], s.value) && !slices.ContainsFunc(own, func(o source) bool { return o.name == s.name }) &&
 				!slices.ContainsFunc(set, func(v setValue) bool { return v.name == s.name }) {
-				errs = append(errs, yamlx.Errorf(s.pos, "variable %q: groups %s and %s of host %s set different values", s.name, first.Name, g.Name, h.Name))
+				errs = append(errs, yamlx.Errorf(s.pos, "vars.%s: groups %s and %s of host %s set different values", s.name, first.Name, g.Name, h.Name))
 				continue
 			}
 			from[s.name] = g

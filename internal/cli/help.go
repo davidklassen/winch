@@ -226,8 +226,8 @@ assert.`,
 		},
 		usage: []string{"winch apply [<pipeline>] [flags]"},
 		description: []string{
-			`Apply shows the plan of a pipeline, asks for approval, and then makes
-the changes.`,
+			`Apply shows the plan of a pipeline, asks the question "Apply these
+changes?", and then makes the changes.`,
 			`Leave out the pipeline name when the steps are at the top of
 winch.yaml.`,
 			`winch asks only when stdin and stderr are terminals. Without a
@@ -245,7 +245,7 @@ order.`,
 hosts one at a time. Without one, or with --batch, ssh asks nothing,
 and winch connects to them in parallel. The apply question stays.`,
 			`The first Ctrl-C lets the running step on each host finish and starts
-no new step. A second Ctrl-C closes the connections at once.`,
+no new step. A second Ctrl-C ends the sessions at once.`,
 		},
 		flags: []flagDoc{
 			inventoryFlag,

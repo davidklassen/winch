@@ -2,7 +2,6 @@ package module
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -41,16 +40,23 @@ func (z *Timezone) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	cur, err := currentZone(localtime)
+	cur, gone, err := currentZone(localtime)
 	if err != nil {
 		return Result{}, err
+	}
+	old := cur
+	switch {
+	case gone:
+		old = "(none)"
+	case cur == "":
+		old = "unknown"
 	}
 	var changes []string
 	switch {
 	case missing:
-		changes = append(changes, "time zone "+cmp.Or(cur, "unknown")+" → "+z.Name+" ("+zoneinfo+z.Name+" does not exist yet)")
+		changes = append(changes, "time zone "+old+" → "+z.Name+" ("+zoneinfo+z.Name+" does not exist yet)")
 	case cur != z.Name:
-		changes = append(changes, "time zone "+cmp.Or(cur, "unknown")+" → "+z.Name)
+		changes = append(changes, "time zone "+old+" → "+z.Name)
 	}
 	data, err := os.ReadFile(TimezoneFile)
 	switch {
@@ -96,20 +102,23 @@ func zoneMissing(dir, name string) (bool, error) {
 }
 
 // currentZone returns the zone that the link p names, or "" when p is not a
-// link into the zone files.
-func currentZone(p string) (string, error) {
+// link into the zone files. gone reports that p does not exist.
+func currentZone(p string) (zone string, gone bool, err error) {
 	target, err := os.Readlink(p)
-	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.EINVAL) {
-		return "", nil
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", true, nil
+	}
+	if errors.Is(err, syscall.EINVAL) {
+		return "", false, nil
 	}
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	_, zone, ok := strings.Cut(target, strings.TrimPrefix(zoneinfo, "/"))
 	if !ok {
-		return "", nil
+		return "", false, nil
 	}
-	return zone, nil
+	return zone, false, nil
 }
 
 func (z *Timezone) Apply(ctx context.Context, _ Say) error {

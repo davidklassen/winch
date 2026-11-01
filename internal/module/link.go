@@ -39,9 +39,9 @@ func (l *Link) Validate() error {
 	case l.Absent:
 		return absentTakesNone(arg{"target", l.Target != nil}, arg{"validate", l.Validation != nil}, arg{"replace", l.Replace})
 	case l.Target == nil:
-		return &yamlx.FieldError{Field: "target", Msg: "a link needs a target, or absent: true"}
+		return &yamlx.FieldError{Msg: "a link step needs target, or absent: true"}
 	case *l.Target == "":
-		return &yamlx.FieldError{Field: "target", Msg: "must not be empty"}
+		return &yamlx.FieldError{Field: "target", Msg: "is empty"}
 	case strings.ContainsFunc(*l.Target, unicode.IsControl):
 		return &yamlx.FieldError{Field: "target", Msg: "has a control character"}
 	case dotDotAfterPart(*l.Target):

@@ -128,24 +128,24 @@ handlers.
 `},
 		{"step.confirm_access", `step.confirm_access: boolean, default false
 
-SSH check with rollback, for a service step. Only a service step can use
-it, in steps or in handlers. A firewall step gets the same check without
-it.
+Access check with rollback, for a service step. Only a service step can
+use it, in steps or in handlers. A firewall step gets the same check
+without it.
 
 Before the step, winch keeps the old state of each path that the changed
 steps of the recipe wrote or removed in this run. It starts a 60-second
 rollback timer in a process of its own.
 
-After the step, winch opens a new SSH connection and runs a command,
-through sudo -n when the login user is not root. It tries twice, 5
-seconds apart.
+After the step, winch runs the access check: it opens a new SSH
+connection and runs a command, through sudo -n when the login user is
+not root. It tries twice, 5 seconds apart.
 
 When both tries fail, winch puts back the old files and runs
 daemon-reload after a unit file. It reverses a start or a stop of the
 step, and reloads or restarts the unit again. The host fails with the
-error "no new SSH connection works: <error>; the old files are back".
-When the SSH connection ends first, winch rolls back as it ends. When
-the process of winch on the host is gone, the timer rolls back.
+error "the access check failed: <error>; the old files are back". When
+the SSH connection ends first, winch rolls back as it ends. When the
+helper is gone, the timer rolls back.
 
 When a run ends before a notified handler with confirm_access ran, winch
 puts back the files of that handler at once. The next run applies the

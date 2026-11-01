@@ -1,1 +1,1 @@
-recipes/db/recipe.yaml:5:11: then: must not be empty
+recipes/db/recipe.yaml:5:11: then: is empty

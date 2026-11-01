@@ -109,8 +109,8 @@ func TestDirModule(t *testing.T) {
 		{
 			Name:         "owner that does not exist yet",
 			Args:         &module.Dir{Path: "/tmp/w/d", Owner: "later"},
-			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{`owner later, group root, mode 0755; user "later" does not exist yet`}},
-			WantApplyErr: `user "later" does not exist`,
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{`owner later, group root, mode 0755; user later does not exist yet`}},
+			WantApplyErr: `user later does not exist`,
 			Fix:          "useradd later",
 		},
 		{
@@ -206,13 +206,13 @@ func TestDirModule(t *testing.T) {
 			Name:    "absent on a tree with an immutable file fails",
 			Setup:   `mkdir -p /tmp/w/d/a /tmp/w/d/b && touch /tmp/w/d/a/1 /tmp/w/d/b/2 /tmp/w/d/c && chattr +i /tmp/w/d/b/2`,
 			Args:    &module.Dir{Path: "/tmp/w/d", Absent: true},
-			WantErr: "/tmp/w/d/b/2 is immutable; chattr -i changes it",
+			WantErr: "/tmp/w/d/b/2 is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:    "absent on an append-only directory fails",
 			Setup:   `mkdir -p /tmp/w/d && touch /tmp/w/d/f && chattr +a /tmp/w/d`,
 			Args:    &module.Dir{Path: "/tmp/w/d", Absent: true},
-			WantErr: "/tmp/w/d is append-only; chattr -a changes it",
+			WantErr: "/tmp/w/d is append-only; chattr -a removes the flag",
 		},
 		{
 			Name:  "absent on a tree with a link to an immutable file works",
@@ -232,7 +232,7 @@ func TestDirModule(t *testing.T) {
 			Name:    "replace an immutable file fails",
 			Setup:   `touch /tmp/w/f && chattr +i /tmp/w/f`,
 			Args:    &module.Dir{Path: "/tmp/w/f", Replace: true},
-			WantErr: "/tmp/w/f is immutable; chattr -i changes it",
+			WantErr: "/tmp/w/f is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:  "an immutable directory that is already right is ok",
@@ -244,13 +244,13 @@ func TestDirModule(t *testing.T) {
 			Name:    "an immutable directory fails",
 			Setup:   `mkdir /tmp/w/d && chmod 700 /tmp/w/d && chattr +i /tmp/w/d`,
 			Args:    &module.Dir{Path: "/tmp/w/d"},
-			WantErr: "/tmp/w/d is immutable; chattr -i changes it",
+			WantErr: "/tmp/w/d is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:    "an immutable directory behind a link fails",
 			Setup:   `mkdir /tmp/wsrc && chmod 700 /tmp/wsrc && chattr +i /tmp/wsrc && ln -s /tmp/wsrc /tmp/w/l`,
 			Args:    &module.Dir{Path: "/tmp/w/l"},
-			WantErr: "/tmp/w/l is immutable; chattr -i changes it",
+			WantErr: "/tmp/w/l is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:    "absent on a file fails",
@@ -456,7 +456,7 @@ func TestDirModule(t *testing.T) {
 			Name:    "recurse fails on an immutable entry it must change",
 			Setup:   `mkdir -p /tmp/w/d/x && touch /tmp/w/d/x/b && chattr +i /tmp/w/d/x/b`,
 			Args:    &module.Dir{Path: "/tmp/w/d", Owner: "admin", Recurse: true},
-			WantErr: "/tmp/w/d/x/b is immutable; chattr -i changes it",
+			WantErr: "/tmp/w/d/x/b is immutable; chattr -i removes the flag",
 		},
 		{
 			Name:  "recurse in an append-only directory that is already right",

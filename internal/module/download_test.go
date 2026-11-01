@@ -37,11 +37,11 @@ func TestDownloadValidate(t *testing.T) {
 		{"no sha256", "url: https://example.com/tool\npath: /x\n", `t.yaml:1:1: missing key "sha256"`},
 		{"no url", sum + "path: /x\n", `t.yaml:1:1: missing key "url"`},
 		{"no path", "url: https://example.com/tool\n" + sum, `t.yaml:1:1: a download step needs path or unpack`},
-		{"path and unpack", "url: https://example.com/a.zip\n" + sum + "path: /opt/a.zip\nunpack: /opt/a\n", `t.yaml:4:9: unpack: a download step takes path or unpack, not both`},
+		{"path and unpack", "url: https://example.com/a.zip\n" + sum + "path: /opt/a.zip\nunpack: /opt/a\n", `t.yaml:4:9: a download step has at most one of path and unpack`},
 		{"short sha256", "url: https://example.com/tool\nsha256: abc\npath: /x\n", `t.yaml:2:9: sha256: must be 64 lowercase hexadecimal digits, as sha256sum prints them`},
 		{"upper case sha256", "url: https://example.com/tool\nsha256: 0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef\npath: /x\n", `t.yaml:2:9: sha256: must be 64 lowercase hexadecimal digits, as sha256sum prints them`},
-		{"ftp url", "url: ftp://example.com/tool\n" + sum + "path: /x\n", `t.yaml:1:6: url: must be an http or https URL`},
-		{"url without host", "url: https:///tool\n" + sum + "path: /x\n", `t.yaml:1:6: url: must be an http or https URL`},
+		{"ftp url", "url: ftp://example.com/tool\n" + sum + "path: /x\n", `t.yaml:1:6: url: must start with http:// or https://`},
+		{"url without host", "url: https:///tool\n" + sum + "path: /x\n", `t.yaml:1:6: url: has no host`},
 		{"url with control character", "url: \"https://example.com/a\\nb\"\n" + sum + "path: /x\n", `t.yaml:1:6: url: has a control character`},
 		{"relative path", "url: https://example.com/tool\n" + sum + "path: x\n", `t.yaml:3:7: path: must be an absolute path`},
 		{"relative unpack", "url: https://example.com/a.zip\n" + sum + "unpack: opt\n", `t.yaml:3:9: unpack: must be an absolute path`},
@@ -50,7 +50,7 @@ func TestDownloadValidate(t *testing.T) {
 		{"unpack without an archive suffix", "url: https://example.com/download?f=a.zip\n" + sum + "unpack: /opt/a\n", `t.yaml:1:6: url: unpack needs a URL whose path ends in .tar.gz, .tgz, .tar.xz, or .zip`},
 		{"unpack and mode", "url: https://example.com/a.zip\n" + sum + "unpack: /opt/a\nmode: \"0755\"\n", `t.yaml:4:7: mode: unpack takes the modes of the archive, without write permission for group and others; it takes no mode`},
 		{"bad mode", "url: https://example.com/a\n" + sum + "path: /x\nmode: \"0855\"\n", `t.yaml:4:7: mode: must be an octal mode such as "0755"`},
-		{"bad owner", "url: https://example.com/a\n" + sum + "path: /x\nowner: \"a:b\"\n", `t.yaml:4:8: owner: "a:b" is not a user name; a name has letters, digits, "_", ".", and "-", and starts with a letter or "_"`},
+		{"bad owner", "url: https://example.com/a\n" + sum + "path: /x\nowner: \"a:b\"\n", `t.yaml:4:8: owner: "a:b" is not a user name; a name has letters, digits, _, ., and -, and starts with a letter or _`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Download{}, tt.yaml, tt.want) })

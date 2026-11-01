@@ -399,14 +399,14 @@ func TestPurgeModule(t *testing.T) {
 			Name:      "an immutable entry fails",
 			Setup:     `touch /tmp/w/d/a && chattr +i /tmp/w/d/a`,
 			Args:      &module.Dir{Path: "/tmp/w/d", Purge: true},
-			WantErr:   "/tmp/w/d/a is immutable; chattr -i changes it",
+			WantErr:   "/tmp/w/d/a is immutable; chattr -i removes the flag",
 			Unchanged: `[ -e /tmp/w/d/a ]`,
 		},
 		{
 			Name:      "an append-only purge directory fails",
 			Setup:     `touch /tmp/w/d/a && chattr +a /tmp/w/d`,
 			Args:      &module.Dir{Path: "/tmp/w/d", Purge: true},
-			WantErr:   "/tmp/w/d is append-only; chattr -a changes it",
+			WantErr:   "/tmp/w/d is append-only; chattr -a removes the flag",
 			Unchanged: `[ -e /tmp/w/d/a ]`,
 		},
 		{

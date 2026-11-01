@@ -123,17 +123,20 @@ func TestCurrentZone(t *testing.T) {
 		if err := os.Symlink(tt.target, p); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := currentZone(p); err != nil || got != tt.want {
-			t.Errorf("currentZone(link to %s) = %q, %v; want %q", tt.target, got, err, tt.want)
+		if got, gone, err := currentZone(p); err != nil || got != tt.want || gone {
+			t.Errorf("currentZone(link to %s) = %q, %v, %v; want %q", tt.target, got, gone, err, tt.want)
 		}
 	}
 	file := filepath.Join(dir, "file")
 	if err := os.WriteFile(file, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{file, filepath.Join(dir, "missing")} {
-		if got, err := currentZone(p); err != nil || got != "" {
-			t.Errorf("currentZone(%s) = %q, %v; want no zone", p, got, err)
+	for _, tt := range []struct {
+		p    string
+		gone bool
+	}{{file, false}, {filepath.Join(dir, "missing"), true}} {
+		if got, gone, err := currentZone(tt.p); err != nil || got != "" || gone != tt.gone {
+			t.Errorf("currentZone(%s) = %q, %v, %v; want no zone, gone %v", tt.p, got, gone, err, tt.gone)
 		}
 	}
 }

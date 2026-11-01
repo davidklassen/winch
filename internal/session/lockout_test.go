@@ -463,7 +463,7 @@ func TestAccessBatchHint(t *testing.T) {
 		want         string
 	}{
 		{"refused login", "admin@web1: Permission denied (publickey).", 255,
-			"the access check cannot log in after this change: admin@web1: Permission denied (publickey)."},
+			"cannot log in after this change: admin@web1: Permission denied (publickey)."},
 		{"login without a home directory", "Could not chdir to home directory /home/admin: Permission denied\nthe login user needs passwordless sudo", 1,
 			"Could not chdir to home directory /home/admin: Permission denied\nthe login user needs passwordless sudo"},
 		{"unknown host key", "Host key verification failed.", 255,

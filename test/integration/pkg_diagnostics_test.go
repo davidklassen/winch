@@ -107,7 +107,7 @@ func TestPkgForeignRemovalHint(t *testing.T) {
 		"pipelines/conflict.yaml": "stages:\n  - name: packages\n    hosts: all\n    steps:\n      - pkg: {name: winch-conflict}\n",
 	})
 	r := lab.Winch(t, dir, "plan", "conflict")
-	want := "apt must remove hello:armhf; first run apt-get remove hello:armhf"
+	want := "apt must remove hello:armhf; apt-get remove hello:armhf removes it"
 	if r.Code == 0 || !strings.Contains(r.Stdout+r.Stderr, want) {
 		t.Fatalf("plan: exit %d, want %q, stdout %q, stderr %q", r.Code, want, r.Stdout, r.Stderr)
 	}

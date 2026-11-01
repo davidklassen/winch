@@ -110,9 +110,9 @@ func noFlags(dir *os.Root, name string, fi fs.FileInfo, p string) error {
 	case err != nil:
 		return fmt.Errorf("read the flags of %s: %w", p, err)
 	case flags&fsImmutableFl != 0:
-		return fmt.Errorf("%s is immutable; chattr -i changes it", p)
+		return fmt.Errorf("%s is immutable; chattr -i removes the flag", p)
 	case flags&fsAppendFl != 0:
-		return fmt.Errorf("%s is append-only; chattr -a changes it", p)
+		return fmt.Errorf("%s is append-only; chattr -a removes the flag", p)
 	}
 	return nil
 }

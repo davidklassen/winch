@@ -611,7 +611,7 @@ Keys:
   when            expression                 -      skips the step when false
   loop            list or expression         -      elements to run the step for, as item
   then            string                     -      command after a change
-  confirm_access  boolean                    false  SSH check with rollback, for a service step
+  confirm_access  boolean                    false  access check with rollback, for a service step
   notify          string or list of strings  -      handlers to run after a change
 
 Example:
@@ -677,24 +677,24 @@ not run stays pending on the host, and the next run runs it.
 ==> winch doc step.confirm_access
 step.confirm_access: boolean, default false
 
-SSH check with rollback, for a service step. Only a service step can use
-it, in steps or in handlers. A firewall step gets the same check without
-it.
+Access check with rollback, for a service step. Only a service step can
+use it, in steps or in handlers. A firewall step gets the same check
+without it.
 
 Before the step, winch keeps the old state of each path that the changed
 steps of the recipe wrote or removed in this run. It starts a 60-second
 rollback timer in a process of its own.
 
-After the step, winch opens a new SSH connection and runs a command,
-through sudo -n when the login user is not root. It tries twice, 5
-seconds apart.
+After the step, winch runs the access check: it opens a new SSH
+connection and runs a command, through sudo -n when the login user is
+not root. It tries twice, 5 seconds apart.
 
 When both tries fail, winch puts back the old files and runs
 daemon-reload after a unit file. It reverses a start or a stop of the
 step, and reloads or restarts the unit again. The host fails with the
-error "no new SSH connection works: <error>; the old files are back".
-When the SSH connection ends first, winch rolls back as it ends. When
-the process of winch on the host is gone, the timer rolls back.
+error "the access check failed: <error>; the old files are back". When
+the SSH connection ends first, winch rolls back as it ends. When the
+helper is gone, the timer rolls back.
 
 When a run ends before a notified handler with confirm_access ran, winch
 puts back the files of that handler at once. The next run applies the
@@ -1736,8 +1736,8 @@ Example:
 ==> winch doc workflow
 workflow: how to plan and apply changes
 
-A run of winch plans the changes, asks for approval, and then applies
-them.
+A run of winch plans the changes, asks the question "Apply these
+changes?", and then applies them.
 
 Plan and apply:
   winch plan shows the changes and changes nothing. winch apply shows
@@ -1758,7 +1758,7 @@ Plan marks:
     +  create
     ~  change
     -  remove
-    ?  unknown: a cmd without creates or unless
+    ?  unknown: a cmd step without creates or unless
     !  a handler, or a pending then, gate, or assert that will run
     *  a reboot, assert, or health gate that runs during apply
 
@@ -1782,9 +1782,9 @@ What winch changes:
 
 Stopping and resuming:
   The first Ctrl-C lets the running step of each host finish, starts no
-  new step, and ends with the summary. A second Ctrl-C closes the
-  connections to the hosts. A new run is the resume: steps that already
-  succeeded check as ok, and pending handlers run.
+  new step, and ends with the summary. A second Ctrl-C ends the sessions
+  with the hosts. A new run is the resume: steps that already succeeded
+  check as ok, and pending handlers run.
 
 Access to the host:
   winch keeps its access to each host.
@@ -2115,9 +2115,8 @@ keep needs purge.
 ==> winch doc download
 download: download a file or an archive
 
-The host fetches the file and checks its SHA-256. A download with
-another checksum fails and keeps the old file. A step has path or
-unpack.
+The host fetches the file and checks its sha256. A download with another
+checksum fails and keeps the old file. A step has path or unpack.
 
 Keys:
   url     string      required  fetched by the host
@@ -2278,8 +2277,8 @@ in a run.
 
 The step needs nft: install the package nftables in an earlier pkg step.
 
-Every change gets the SSH check and the rollback of confirm_access. When
-no new SSH connection works after the new rules load, the old rules come
+Every change gets the access check and the rollback of confirm_access.
+When the access check fails after the new rules load, the old rules come
 back.
 
 Keys:
@@ -2560,13 +2559,13 @@ has at most one of key and key_content.
 ==> winch doc service
 service: control a systemd unit
 
-With running: false, a missing unit file is ok, with the note <unit>:
-unit file not found. A service step with confirm_access: true checks
-that a new SSH connection works after the step, and rolls back when none
-does. Run winch doc step.confirm_access. In a handler, restarted and
-reloaded check as ok when a service step of the run started the unit
-after the handler's last notify, no earlier step of the handler changed
-anything, and the step has no confirm_access.
+With running: false, a missing unit file is ok, with the note <unit>
+does not exist. A service step with confirm_access: true runs the access
+check after the step, and rolls back when it fails. Run winch doc
+step.confirm_access. In a handler, restarted and reloaded check as ok
+when a service step of the run started the unit after the handler's last
+notify, no earlier step of the handler changed anything, and the step
+has no confirm_access.
 
 Keys:
   name       string   required  unit, with or without .service

@@ -328,7 +328,7 @@ func TestSecretErrors(t *testing.T) {
 			files: map[string]string{"recipes/r/templates/t.tmpl": "{{ index .vars.users .vars.pw }}"},
 			want:  `error calling index: map has no entry for key "(secret)"`},
 		{name: "a type error that shows the value", step: "  - file:\n      path: /a\n      content: x\n    when: !expr vars.pw\n",
-			want: `recipes/r/recipe.yaml:5:11: when: must be true or false, got the string "(secret)"`},
+			want: `recipes/r/recipe.yaml:5:11: when: expected true or false, got the string "(secret)"`},
 		{name: "an error that the placeholders do not have", step: "  - file:\n      path: /a\n      content: !expr 'vars.pw == \"hunter2\" ? string(int(vars.pw)) : \"ok\"'\n",
 			want: `recipes/r/recipe.yaml:4:16: (secret)`},
 	}
@@ -998,7 +998,7 @@ func TestSecretDefaultError(t *testing.T) {
 		"recipes/r/recipe.yaml": "vars:\n  r_n: !expr 'string(int(vars.pw))'\nsteps:\n  - file:\n      path: /a\n      content: !expr vars.r_n\n",
 	}
 	_, _, err := evalSecret(t, "", files)
-	if err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), `variable "r_n": invalid operation: int((secret))`) {
+	if err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), `vars.r_n: invalid operation: int((secret))`) {
 		t.Errorf("error = %v", err)
 	}
 }
@@ -1235,13 +1235,13 @@ func TestWriteSecretErrors(t *testing.T) {
 	tests := []struct {
 		name, cfg, inventory, host, variable, want string
 	}{
-		{"a value in all", "", "", "", "token", `variable "token" is already in the vars of the group all in inventories/test.yaml`},
-		{"a value in the host", "", "", "web1", "pw", `variable "pw" is already in the vars of host "web1" in inventories/test.yaml`},
+		{"a value in all", "", "", "", "token", `vars.token is already in the vars of the group all in inventories/test.yaml`},
+		{"a value in the host", "", "", "web1", "pw", `vars.pw is already in the vars of host web1 in inventories/test.yaml`},
 		{"not read", "", "", "", "tokn", `nothing reads vars.tokn; did you mean "token"?`},
-		{"an unknown host", "", "", "web9", "token", `host "web9" is not in inventories/test.yaml`},
-		{"two inventories and no default", "name: acme\nrecipients:\n  - KEY\ninventories:\n  prod:\n    hosts: {}\n", "", "", "pw", "no inventory: use --inventory, or set inventory in winch.yaml"},
+		{"an unknown host", "", "", "web9", "token", `host web9 is not in inventories/test.yaml`},
+		{"two inventories and no default", "name: acme\nrecipients:\n  - KEY\ninventories:\n  prod:\n    hosts: {}\n", "", "", "pw", "name an inventory with --inventory: prod, test; or set inventory in winch.yaml"},
 		{"a missing inventory", "", "prod", "", "pw", `unknown inventory "prod"`},
-		{"a null value", "", "", "web2", "pw", `variable "pw" is already in the vars of host "web2" in inventories/test.yaml`},
+		{"a null value", "", "", "web2", "pw", `vars.pw is already in the vars of host web2 in inventories/test.yaml`},
 		{"no recipients", "name: acme\ninventory: test\n", "", "", "pw", "winch.yaml has no recipients; run winch secret init"},
 	}
 	for _, tt := range tests {
