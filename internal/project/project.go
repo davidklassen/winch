@@ -47,7 +47,8 @@ type Project struct {
 	// peers are the vars of each host for match(), with sealed values.
 	peers map[string]map[string]any
 	// sums are the SHA-256 of the project files by path.
-	sums map[string]string
+	sums     map[string]string
+	setFlags []string
 }
 
 type Config struct {
@@ -278,11 +279,14 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 		setNames[v.name] = true
 	}
 	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, others: others, othersErr: othersErr, Warnings: warnings, vars: l.order, defaults: l.vars, filter: keys.Filter, secrets: len(l.sealed) > 0,
-		set: setNames, peers: peerVars(invs[0], l.decls), sums: sums}, nil
+		set: setNames, peers: peerVars(invs[0], l.decls), sums: sums, setFlags: set}, nil
 }
 
 // Sums returns the SHA-256 of each project file by its path.
 func (p *Project) Sums() map[string]string { return p.sums }
+
+// SetFlags returns the --set flags.
+func (p *Project) SetFlags() []string { return p.setFlags }
 
 // Filter returns the filter of the secret values.
 func (p *Project) Filter() *secret.Filter { return p.filter }

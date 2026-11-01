@@ -133,13 +133,19 @@ type Then struct {
 	Handler  string   `json:"handler,omitempty"`
 	Module   string   `json:"module,omitempty"`
 	Mains    []string `json:"mains,omitempty"`
+	// Legacy are the main arguments that winch 0.1.0 recorded for a step
+	// whose main argument reads a secret: the plain argument, or the SHA-256
+	// of the plain command. They match a record of that version, and a host
+	// never gets them in a new record.
+	Legacy []string `json:"legacy,omitempty"`
 }
 
 // Matches reports whether o is a record of the same step as t: the same scope
 // and module, and a main argument in common.
 func (t Then) Matches(o Then) bool {
+	in := func(m string) bool { return slices.Contains(o.Mains, m) }
 	return t.Recipe == o.Recipe && t.Pipeline == o.Pipeline && t.Stage == o.Stage && t.Handler == o.Handler && t.Module == o.Module &&
-		slices.ContainsFunc(t.Mains, func(m string) bool { return slices.Contains(o.Mains, m) })
+		(slices.ContainsFunc(t.Mains, in) || slices.ContainsFunc(t.Legacy, in))
 }
 
 // Command is the params of command, which runs the command and then removes
