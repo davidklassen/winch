@@ -3,12 +3,10 @@ name: tap
 on:
   release:
     types: [published]
-  # Writes the cask of an earlier release again, after a bad release.
+  # Apple can hold a notarization for days.
+  schedule:
+    - cron: "23 * * * *"
   workflow_dispatch:
-    inputs:
-      tag:
-        description: The release tag, such as v0.1.0
-        required: true
 
 permissions:
   contents: read
@@ -18,12 +16,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  cask:
-    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.release.prerelease }}
+  find:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.find.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: davidklassen/homebrew-tap
+          persist-credentials: false
+      - name: Find the newest release that the tap lacks
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release list --repo "$GITHUB_REPOSITORY" --json tagName,isLatest --jq '.[] | select(.isLatest) | .tagName')
+          cask=
+          [ ! -f Casks/winch.rb ] || cask=v$(sed -n 's/^  version "\(.*\)"$/\1/p' Casks/winch.rb)
+          echo "newest release: ${tag:-none}; tap: ${cask:-none}"
+          if [ -n "$tag" ] && [ "$tag" != "$cask" ]; then
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          fi
+
+  cask:
+    needs: find
+    if: needs.find.outputs.tag != ''
+    runs-on: macos-26
     timeout-minutes: 10
     env:
-      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      TAG: ${{ needs.find.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,22 +55,32 @@ jobs:
           repository: davidklassen/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
-      - name: Write the cask from the checksums of the published release
+      - name: Check that Apple accepted the macOS binaries
+        id: notary
         env:
           GH_TOKEN: ${{ github.token }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
         run: |
           gh release download "$TAG" --pattern checksums.txt --dir "$RUNNER_TEMP"
+          printf '%s' "$MACOS_NOTARY_KEY" | base64 -d > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool history --output-format json \
+            --key "$RUNNER_TEMP/notary.p8" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID" > "$RUNNER_TEMP/history.json"
+          state=$(sh release/notarized.sh "$RUNNER_TEMP/checksums.txt" "$RUNNER_TEMP/history.json")
+          echo "notarization of $TAG: $state"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+      - name: Write the cask from the checksums of the published release
+        if: steps.notary.outputs.state == 'accepted'
+        run: |
           mkdir -p tap/Casks
           sh release/cask.sh "$TAG" "$RUNNER_TEMP/checksums.txt" > tap/Casks/winch.rb
       - name: Push the cask
+        if: steps.notary.outputs.state == 'accepted'
         working-directory: tap
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Casks/winch.rb
-          if git diff --cached --quiet; then
-            echo "the cask of $TAG is already in the tap"
-            exit 0
-          fi
           git commit -m "winch $TAG"
           git push

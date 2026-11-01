@@ -1,0 +1,4 @@
+dea20c31acbc743f5d3eba70bbce7d9da164f243f924dcf6f1132468bf908f96  winch-darwin-amd64.tar.gz
+0df2053f3dc7436200a8a038a81b37b118d88267b5c54b5daa1c6714a71415a8  winch-darwin-arm64.tar.gz
+345f0d8dd77f45c10dab33ae61df4abb864a96f4ec499bc5d9105b889fed9f2f  winch-linux-amd64.tar.gz
+bea86062789d3e9182828d68e2e12c1c9a3902223b57cde7f700be9e799a7cc6  winch-linux-arm64.tar.gz

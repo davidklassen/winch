@@ -13,7 +13,7 @@ jobs:
 
   release:
     needs: ci
-    runs-on: ubuntu-24.04
+    runs-on: macos-26
     timeout-minutes: 45
     permissions:
       contents: write
@@ -35,17 +35,31 @@ jobs:
         env:
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
           MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
-          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
-          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
       - run: go test -tags release ./release/
       - name: Check that winch prints the version of the tag
         run: |
-          tar -xzf dist/winch-linux-amd64.tar.gz -C "$RUNNER_TEMP" winch
-          "$RUNNER_TEMP/winch" version | tee /dev/stderr | grep -qx "winch $GITHUB_REF_NAME linux/amd64"
+          tar -xzf dist/winch-darwin-arm64.tar.gz -C "$RUNNER_TEMP" winch
+          "$RUNNER_TEMP/winch" version | tee /dev/stderr | grep -qx "winch $GITHUB_REF_NAME darwin/arm64"
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/*.tar.gz
+      # Apple can hold a submission for days. The tap workflow waits for
+      # Apple's verdict and finds each submission by its name.
+      - name: Submit the macOS binaries to Apple's notary service
+        env:
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          printf '%s' "$MACOS_NOTARY_KEY" | base64 -d > "$RUNNER_TEMP/notary.p8"
+          for arch in arm64 amd64; do
+            sha=$(awk -v name="winch-darwin-$arch.tar.gz" '$2 == name { print $1 }' dist/checksums.txt)
+            mkdir "$RUNNER_TEMP/$arch"
+            tar -xzf "dist/winch-darwin-$arch.tar.gz" -C "$RUNNER_TEMP/$arch" winch
+            ditto -c -k "$RUNNER_TEMP/$arch/winch" "$RUNNER_TEMP/winch-darwin-$arch-$sha.zip"
+            xcrun notarytool submit "$RUNNER_TEMP/winch-darwin-$arch-$sha.zip" --no-wait \
+              --key "$RUNNER_TEMP/notary.p8" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID"
+          done
       - name: Make the draft release
         env:
           GH_TOKEN: ${{ github.token }}
