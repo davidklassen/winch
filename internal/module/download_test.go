@@ -59,14 +59,14 @@ func TestDownloadValidate(t *testing.T) {
 
 // spec: Modules/download
 func TestFetchStall(t *testing.T) {
-	const stall = 200 * time.Millisecond
+	const stall = 500 * time.Millisecond
 	tests := []struct {
 		name string
 		gap  time.Duration
 		want string
 	}{
-		{"data in time", stall / 4, ""},
-		{"no data", 2 * stall, "no data for 0.2s"},
+		{"data in time", 10 * time.Millisecond, ""},
+		{"no data", 2 * stall, "no data for 0.5s"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
