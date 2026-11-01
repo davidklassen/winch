@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -645,20 +647,20 @@ func replaceFile(path string, data []byte) error {
 }
 
 // scanProject returns a warning for each private key or token in the
-// project files that is not a !secret. It calls plain with the text of each
-// file.
-func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, error) {
+// project files that is not a !secret, and the SHA-256 of each file by its
+// path. It calls plain with the text of each file.
+func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, map[string]string, error) {
 	invs, err := list(dir, "inventories")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	pipelines, err := list(dir, "pipelines")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	recipes, err := recipeFiles(dir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	files := slices.Concat([]string{project}, invs, pipelines, recipes)
 	kinds := map[string]string{project: "project"}
@@ -671,14 +673,23 @@ func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, error
 	for _, sub := range []string{"templates", "files"} {
 		roots, err := filepath.Glob(filepath.Join(dir, "recipes", "*", sub))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, root := range roots {
-			err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			// The recipe reads a linked directory too.
+			real, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				return nil, nil, err
+			}
+			err = filepath.WalkDir(real, func(path string, d fs.DirEntry, err error) error {
 				if err != nil || !d.Type().IsRegular() {
 					return err
 				}
-				rel, err := filepath.Rel(dir, path)
+				rel, err := filepath.Rel(real, path)
+				if err != nil {
+					return err
+				}
+				rel, err = filepath.Rel(dir, filepath.Join(root, rel))
 				if err != nil {
 					return err
 				}
@@ -687,16 +698,17 @@ func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, error
 				return nil
 			})
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
 	var out []*yamlx.Error
+	sums := map[string]string{}
 	seen := map[string]bool{}
 	for _, file := range files {
 		path, err := filepath.EvalSymlinks(projectPath(dir, file))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if seen[path] {
 			continue
@@ -704,9 +716,11 @@ func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, error
 		seen[path] = true
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		plain(data)
+		sum := sha256.Sum256(data)
+		sums[file] = hex.EncodeToString(sum[:])
 		found := secret.Scan(data)
 		if len(found) == 0 {
 			continue
@@ -742,7 +756,7 @@ func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, error
 		}
 	}
 	slices.SortStableFunc(out, func(a, b *yamlx.Error) int { return strings.Compare(a.Pos.File, b.Pos.File) })
-	return out, nil
+	return out, sums, nil
 }
 
 // varLines returns the lines of the variable values in n, the tree of lines,

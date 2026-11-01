@@ -9,5 +9,5 @@ web1, web2 (2 hosts)
         +hello
 
 2 hosts: 2 to change, 0 unchanged, 0 unknown
-plan 098a343b252e77da
+plan 6309702a3955bfcc
 stderr:

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -242,6 +243,31 @@ func TestEvalSecrets(t *testing.T) {
 }
 
 // spec: Variables/Secrets in output (two evaluations)
+// spec: Running a pipeline/Plan ("A secret enters the hash as its !secret ciphertext")
+func TestEvalSecretHashArgs(t *testing.T) {
+	ph := secret.Placeholder(1)
+	steps, _, err := evalSecret(t, "  - file:\n      path: !tpl \"/etc/{{ .vars.pw }}.conf\"\n      content: !tpl \"pw={{ .vars.pw }}\\n\"\n    then: !tpl \"echo {{ .vars.pw }}\"\n"+
+		"  - service:\n      name: !tpl \"app-{{ .vars.pw }}\"\n      enabled: true\n"+
+		"  - file:\n      path: /a\n      content: x\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, ok := steps[0].HashArgs.(*module.File)
+	if !ok || f.Path != "/etc/"+ph+".conf" || string(f.Data) != "pw="+ph+"\n" {
+		t.Errorf("hash args = %#v, want the file of the placeholder variant", steps[0].HashArgs)
+	}
+	if got := steps[0].HashThen; got != "echo "+ph {
+		t.Errorf("hash then = %q", got)
+	}
+	// The service module rejects the placeholder in a unit name.
+	if got, want := steps[1].HashArgs, map[string]any{"name": "app-" + ph, "enabled": true}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hash args = %#v, want %#v", got, want)
+	}
+	if steps[2].Secret || steps[2].HashArgs != nil {
+		t.Errorf("a step without a secret has hash args %#v", steps[2].HashArgs)
+	}
+}
+
 func TestSecretContentFailsWithPlaceholders(t *testing.T) {
 	files := map[string]string{
 		"recipes/r/recipe.yaml":      "vars:\n  r_m: {hunter2: found}\nsteps:\n  - file:\n      path: !tpl \"/etc/{{ .vars.short }}\"\n      template: t.tmpl\n",
@@ -1660,7 +1686,7 @@ func TestScanProjectFix(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := scanProject(dir, "winch.yaml", func([]byte) {})
+	got, _, err := scanProject(dir, "winch.yaml", func([]byte) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1698,5 +1724,29 @@ func TestRekeyCannotReadOnce(t *testing.T) {
 	want := "inventories/a.yaml:4:11: the secrets are not encrypted for the age key " + k.path + " yet; a member who can read them must run winch secret rekey"
 	if err == nil || err.Error() != want {
 		t.Errorf("Rekey = %v, want %q", err, want)
+	}
+}
+
+// spec: Running a pipeline/Plan ("the content of each project file that the run loads")
+func TestScanProjectLinkedDir(t *testing.T) {
+	dir := writeProject(t, map[string]string{
+		"winch.yaml":                "name: acme\n",
+		"recipes/app/recipe.yaml":   "steps: []\n",
+		"shared/templates/app.tmpl": "a\n",
+		"shared/files/app.txt":      "b\n",
+	})
+	for _, sub := range []string{"templates", "files"} {
+		if err := os.Symlink(filepath.Join("..", "..", "shared", sub), filepath.Join(dir, "recipes", "app", sub)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, sums, err := scanProject(dir, "winch.yaml", func([]byte) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"recipes/app/templates/app.tmpl", "recipes/app/files/app.txt"} {
+		if sums[file] == "" {
+			t.Errorf("no SHA-256 of %s: %v", file, sums)
+		}
 	}
 }

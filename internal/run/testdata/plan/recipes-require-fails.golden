@@ -26,6 +26,6 @@ web2
           +web2
 
 2 hosts: 1 to change, 0 unchanged, 0 unknown, 1 failed
-plan 2a4f238f890b398e
+plan 78c358dac1a58644
 stderr:
 web1: recipes/nginx/recipe.yaml:2:5: recipe nginx requires facts.os.id == "debian"; the host has os.id "ubuntu", os.version "24.04", os.codename "noble"

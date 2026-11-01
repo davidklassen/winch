@@ -11,5 +11,5 @@ json stdout:
 {"type":"applied","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"]}
 {"type":"applied","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#2","stage":"base","step":"firewall","module":"firewall","status":"change","action":"create","changes":["load the rules"]}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"apply","host":"web1","status":"changed"}
-{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":1,"unchanged":0,"unknown":0,"failed":0},"apply":{"hosts":1,"changed":1,"unchanged":0,"failed":0},"hash":"fe16c8792515bf54","exit_code":0}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":1,"unchanged":0,"unknown":0,"failed":0},"apply":{"hosts":1,"changed":1,"unchanged":0,"failed":0},"hash":"db28a7b2e7edb7ef","exit_code":0}
 json stderr:

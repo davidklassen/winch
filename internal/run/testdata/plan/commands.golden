@@ -30,7 +30,7 @@ web1
             sleep 1
 
 1 host: 1 to change, 0 unchanged, 0 unknown
-plan 072e0d32aa8a4e1d
+plan 54cfaa1416c77f73
 json:
 {"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"Clean: cmd true\nrm -rf /srv/x","module":"cmd","status":"unknown"}
 {"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:base#2","stage":"base","step":"assert test -d /srv\ntest -d /etc","module":"assert","status":"ok"}

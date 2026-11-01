@@ -46,6 +46,8 @@ type Project struct {
 	set map[string]bool
 	// peers are the vars of each host for match(), with sealed values.
 	peers map[string]map[string]any
+	// sums are the SHA-256 of the project files by path.
+	sums map[string]string
 }
 
 type Config struct {
@@ -149,6 +151,11 @@ type Step struct {
 	// Secret is true after Eval when the evaluation of the step reads a
 	// secret.
 	Secret bool
+	// HashArgs and HashThen are the arguments and the command of then in
+	// the first placeholder variant of a step that reads a secret. HashArgs
+	// is the module, or the computed arguments when the module rejects them.
+	HashArgs any
+	HashThen string
 	// in is the recipe that holds the step, or nil in a stage.
 	in *Recipe
 	// actions is set on a handler step and on the step of winch run.
@@ -249,7 +256,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 	if len(l.sealed) > 0 {
 		plain = keys.Filter.Plain
 	}
-	warnings, err := scanProject(dir, cfg.file, plain)
+	warnings, sums, err := scanProject(dir, cfg.file, plain)
 	if err != nil {
 		return nil, err
 	}
@@ -267,8 +274,14 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 		setNames[v.name] = true
 	}
 	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, others: others, othersErr: othersErr, Warnings: warnings, vars: l.order, defaults: l.vars, filter: keys.Filter, secrets: len(l.sealed) > 0,
-		set: setNames, peers: peerVars(invs[0], l.decls)}, nil
+		set: setNames, peers: peerVars(invs[0], l.decls), sums: sums}, nil
 }
+
+// Sums returns the SHA-256 of each project file by its path.
+func (p *Project) Sums() map[string]string { return p.sums }
+
+// Filter returns the filter of the secret values.
+func (p *Project) Filter() *secret.Filter { return p.filter }
 
 // commandPipeline builds the pipeline of c. Errors name the argument as a
 // position without a line, or have no position.
@@ -361,7 +374,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err := l.checkNames(sets); err != nil {
 		return nil, err
 	}
-	warnings, err := scanProject(dir, cfg.file, func([]byte) {})
+	warnings, _, err := scanProject(dir, cfg.file, func([]byte) {})
 	if err != nil {
 		return nil, err
 	}
@@ -1536,7 +1549,11 @@ func (st Step) eval(e *Env) ([]Step, error) {
 		}
 		s.Then = then
 		if variants {
-			s.Shown, s.Secret = st.shown(ie, s, args, thens)
+			var hash any
+			s.Shown, s.Secret, hash = st.shown(ie, s, args, thens)
+			if s.Secret {
+				s.HashArgs, s.HashThen = hash, thens[1]
+			}
 		}
 		out = append(out, s)
 	}
@@ -1629,10 +1646,10 @@ func (st Step) instance(e *Env) (Step, any, error) {
 // shown returns how the output shows s, the step for the real variant of e,
 // or nil when no part of it comes from a secret. It also reports whether the
 // step reads a secret: a part comes from a secret, or a placeholder variant
-// fails. real are the computed
-// arguments of s, and thens the commands of then in the three variants. The
-// parts that come from a secret go to the filter.
-func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
+// fails, and it returns the HashArgs of s. real are the computed arguments
+// of s, and thens the commands of then in the three variants. The parts that
+// come from a secret go to the filter.
+func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool, any) {
 	mods := [3]module.Module{s.Args}
 	args := [3]any{real}
 	argsOK, contentOK := true, true
@@ -1704,10 +1721,14 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool) {
 	}
 	e.learn(parts)
 	reads := !argsOK || !contentOK || slices.ContainsFunc(parts, func(p string) bool { return p != "" })
-	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Unless == unless && sh.Lines == nil && !sh.Hidden && sh.Public == "" {
-		return nil, reads
+	hash := args[1]
+	if mods[1] != nil {
+		hash = mods[1]
 	}
-	return sh, reads
+	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Unless == unless && sh.Lines == nil && !sh.Hidden && sh.Public == "" {
+		return nil, reads, hash
+	}
+	return sh, reads, hash
 }
 
 // secretKeys marks the authorized_keys elements of the arguments real that

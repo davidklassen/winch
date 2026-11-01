@@ -11,5 +11,5 @@ stdout:
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"change"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web2","status":"change"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web3","status":"unreachable","error":"ssh: connect to host unreachable: Connection refused"}
-{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":3,"change":2,"unchanged":0,"unknown":0,"failed":1},"hash":"e3f7971ece24eec8","exit_code":4}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":3,"change":2,"unchanged":0,"unknown":0,"failed":1},"hash":"7940a6f2db8dc133","exit_code":4}
 stderr:

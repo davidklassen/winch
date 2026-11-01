@@ -1,5 +1,5 @@
 stdout:
 {"type":"version","time":"2026-10-26T12:00:00Z","version":1}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"failed","error":"pipelines/site.yaml:7:20: content: invalid operation: int(?web1)\n | string(int(\"?\" + host.name))\n | .......^"}
-{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":0,"unchanged":0,"unknown":0,"failed":1},"hash":"b78ae141161aba1c","exit_code":1}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":0,"unchanged":0,"unknown":0,"failed":1},"hash":"5e0eb332d7499dd7","exit_code":1}
 stderr:
