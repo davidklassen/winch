@@ -1274,6 +1274,7 @@ func (l *loader) stepVars(n *yamlx.Node) ([]*Var, error) {
 			errs = append(errs, yamlx.Errorf(t.Pos, "vars.%s: a recipe step gives no !secret values; put the secret in the inventory", p.Key))
 			continue
 		}
+		l.warnNumbers(p.Key, p.Value)
 		c, err := compileValue(p.Value, scope{reads: &l.reads, noItem: itemOutsideLoop})
 		errs = append(errs, err)
 		out = append(out, &Var{Name: p.Key, Pos: p.KeyPos, node: p.Value, computed: c})

@@ -809,9 +809,9 @@ Names and reads:
 Types:
   Variables have no types. A value keeps the type that YAML gives it.
   YAML reads 8.0 as 8 and 3.10 as 3.1. Quote such a value: php_version:
-  "8.0". In the inventory or a default, an unquoted one is a warning.
-  --set parses its value as YAML, and there it is an error: --set
-  'vars.php_version="8.0"'.
+  "8.0". In the inventory, a default, or the vars of a recipe step, an
+  unquoted one is a warning. --set parses its value as YAML, and there
+  it is an error: --set 'vars.php_version="8.0"'.
 
 Example:
   # winch.yaml
