@@ -152,8 +152,8 @@ func TestReboot(t *testing.T) {
 	if data, _ := os.ReadFile(argsFile); !strings.Contains(string(data), "\nBatchMode=yes\n") {
 		t.Errorf("the reconnect passes %q", data)
 	}
-	if holds != 1 {
-		t.Errorf("the progress held for %d logins, want only the first", holds)
+	if holds != 0 {
+		t.Errorf("the progress held for %d batch logins, want none", holds)
 	}
 	if _, err := s.Facts(context.Background()); err != nil {
 		t.Errorf("the session after the reboot: %v", err)

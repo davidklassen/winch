@@ -1040,43 +1040,60 @@ func TestOpenBatchHint(t *testing.T) {
 
 // spec: CLI/Output (progress)
 func TestHoldDuringLogin(t *testing.T) {
-	fakeBin(t, "aarch64", "0", goodSudo)
-	var log []string
-	var progress bytes.Buffer
-	s, err := Open(context.Background(), Config{
-		Host: "web1", Address: "web1", Dir: t.TempDir(),
-		Binaries: []helperbin.Binary{helperbin.New("arm64", []byte("#!/bin/sh\nread -r line\necho '{\"id\":1,\"result\":{}}'\ncat >/dev/null\n"))},
-		Hello:    protocol.Hello{Run: "r1"},
-		Progress: plain(&progress),
-		Hold: func() func() {
-			log = append(log, "hold")
-			return func() { log = append(log, "resume after "+strconv.Quote(progress.String())) }
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
+	const refused = "admin@web1: Permission denied (publickey)."
+	held := []string{"hold after the batch login", `resume after ""`}
+	tests := []struct {
+		name, stderr string
+		batch        bool
+		// noSudo makes the interactive login fail after ssh starts.
+		noSudo bool
+		ok     bool
+		want   []string
+	}{
+		{"batch login", "", false, false, true, nil},
+		{"refused batch login", refused, false, false, true, held},
+		{"unknown host key", "Host key verification failed.", false, false, true, held},
+		{"failed interactive login", refused, false, true, false, held},
+		{"refused connection", "ssh: connect to host web1 port 22: Connection refused", false, false, false, nil},
+		{"refused login in batch mode", refused, true, false, false, nil},
 	}
-	s.Close()
-	if want := []string{"hold", `resume after ""`}; !slices.Equal(log, want) {
-		t.Errorf("holds %q, want %q", log, want)
-	}
-
-	log = nil
-	t.Setenv("SSH_FAIL_ONCE", filepath.Join(t.TempDir(), "failed"))
-	t.Setenv("SSH_FAIL_ERR", "ssh: connect to host web1 port 22: Connection refused")
-	t.Setenv("SSH_FAIL_CODE", "255")
-	progress.Reset()
-	if _, err := Open(context.Background(), Config{Host: "web1", Address: "web1", Dir: t.TempDir(),
-		Hello: protocol.Hello{Run: "r1"}, Progress: plain(&progress),
-		Hold: func() func() {
-			log = append(log, "hold")
-			return func() { log = append(log, "resume") }
-		},
-	}); err == nil {
-		t.Fatal("open did not fail")
-	}
-	if want := []string{"hold", "resume"}; !slices.Equal(log, want) {
-		t.Errorf("holds after a failed login %q, want %q", log, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.noSudo {
+				fakeBin(t, "aarch64", "1000", "#!/bin/sh\nexit 1\n")
+			} else {
+				fakeBin(t, "aarch64", "0", goodSudo)
+			}
+			failed := filepath.Join(t.TempDir(), "failed")
+			if tt.stderr != "" {
+				failed = failOnce(t, "", tt.stderr, 255)
+			}
+			var log []string
+			var progress bytes.Buffer
+			s, err := Open(context.Background(), Config{
+				Host: "web1", Address: "web1", Dir: stateDir, Batch: tt.batch,
+				Binaries: []helperbin.Binary{helperbin.New("arm64", []byte("#!/bin/sh\nread -r line\necho '{\"id\":1,\"result\":{}}'\ncat >/dev/null\n"))},
+				Hello:    protocol.Hello{Run: "r1"},
+				Progress: plain(&progress),
+				Hold: func() func() {
+					if _, err := os.Stat(failed); err == nil {
+						log = append(log, "hold after the batch login")
+					} else {
+						log = append(log, "hold before the batch login")
+					}
+					return func() { log = append(log, "resume after "+strconv.Quote(progress.String())) }
+				},
+			})
+			if s != nil {
+				s.Close()
+			}
+			if (err == nil) != tt.ok {
+				t.Fatalf("error %v, want ok %v", err, tt.ok)
+			}
+			if !slices.Equal(log, tt.want) {
+				t.Errorf("holds %q, want %q", log, tt.want)
+			}
+		})
 	}
 }
 

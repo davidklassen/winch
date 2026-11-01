@@ -82,13 +82,8 @@ func main() {
 
 // connect opens sessions that live until sessions ends, not until the
 // context of the run ends: a session finishes its running step after the
-// first Ctrl-C. Without batch, ssh can ask a question: the display holds
-// during the login.
+// first Ctrl-C.
 func connect(sessions context.Context, stderr *color.Writer, display *progress.Display, batch bool, note func(host, text string)) run.Connect {
-	var hold func() func()
-	if !batch {
-		hold = display.Hold
-	}
 	hello := protocol.Hello{Run: rand.Text()[:8], Started: time.Now().UTC()}
 	if u, err := user.Current(); err == nil {
 		hello.User = u.Username
@@ -113,7 +108,7 @@ func connect(sessions context.Context, stderr *color.Writer, display *progress.D
 			Hello:    hello,
 			Progress: stderr,
 			Note:     func(text string) { note(h.Name, text) },
-			Hold:     hold,
+			Hold:     display.Hold,
 			Batch:    batch,
 			Want:     want,
 		})

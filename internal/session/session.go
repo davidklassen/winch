@@ -53,7 +53,8 @@ type Config struct {
 	// fix.
 	Note func(text string)
 	// Hold is nil, or hides the progress until the function it returns runs.
-	// It covers the login, where ssh can ask a question on the terminal.
+	// It covers a login without batch mode, where ssh can ask a question on
+	// the terminal.
 	Hold func() func()
 	// RetryDelay is the wait before another ssh start: the retry of a
 	// dropped connection, and each connect after a reboot. Zero means 2s.
@@ -364,7 +365,7 @@ func dial(ctx context.Context, cfg Config, jump string) (*Session, sshExit, erro
 	// A child of ssh, such as a ProxyCommand, can keep stderr open.
 	cmd.WaitDelay = 5 * time.Second
 	resume := func() {}
-	if cfg.Hold != nil {
+	if cfg.Hold != nil && !cfg.Batch {
 		resume = cfg.Hold()
 	}
 	if err := cmd.Start(); err != nil {
@@ -699,7 +700,7 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 	// The helper ends when its input closes, before the reboot.
 	s.Close() //nolint:errcheck // the reboot ends the connection
 	cfg := s.cfg
-	cfg.Batch, cfg.Hold = true, nil
+	cfg.Batch = true
 	cfg.Hello.Resume = true
 	cfg.Want = &s.dest
 	last := errors.New("no connection yet")
