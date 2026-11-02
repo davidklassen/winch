@@ -342,6 +342,70 @@ func TestSecretAtErrors(t *testing.T) {
 	}
 }
 
+// spec: Variables/Secrets (winch secret generate, winch secret decrypt, paths)
+func TestSecretPathDottedKey(t *testing.T) {
+	k := newKey(t)
+	head := "name: acme\nrecipients:\n  - " + k.id.Recipient().String() + "\n"
+	inv := "groups:\n  all:\n    vars:\n      users:\n        a.b: x\n"
+	for _, tt := range []struct{ name, cfg, path, want string }{
+		{"the rest of the path", "vars:\n  dkim_keys:\n    acme.com: x\n", "vars.dkim_keys.acme.com", `vars.dkim_keys has a key acme.com; use 'vars.dkim_keys["acme.com"]'`},
+		{"a part of the rest", "vars:\n  dkim_keys:\n    acme.com:\n      key: x\n", "vars.dkim_keys.acme.com.key", `vars.dkim_keys has a key acme.com; use 'vars.dkim_keys["acme.com"].key'`},
+		{"below a key with dots", "vars:\n  dkim_keys:\n    acme.com:\n      a.b: x\n", `vars.dkim_keys["acme.com"].a.b`, `vars.dkim_keys["acme.com"] has a key a.b; use 'vars.dkim_keys["acme.com"]["a.b"]'`},
+		{"a key with more dots", "vars:\n  dkim_keys:\n    mail.acme.com: x\n", "vars.dkim_keys.mail.acme.com", `vars.dkim_keys has a key mail.acme.com; use 'vars.dkim_keys["mail.acme.com"]'`},
+		{"in an inventory file", "", "inventories.test.groups.all.vars.users.a.b", `inventories.test.groups.all.vars.users has a key a.b; use 'inventories.test.groups.all.vars.users["a.b"]'`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeProject(t, map[string]string{
+				"winch.yaml":            head + tt.cfg,
+				"inventories/test.yaml": inv,
+				"pipelines/site.yaml":   readsPipeline("dkim_keys", "users"),
+			})
+			before := readFiles(t, dir)
+			if _, err := writeSecret(dir, tt.path); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("write: err %v; want %q", err, tt.want)
+			}
+			for name, content := range readFiles(t, dir) {
+				if content != before[name] {
+					t.Errorf("%s changed:\n%s", name, content)
+				}
+			}
+			cfg, err := loadConfig(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := secretText(dir, cfg, tt.path); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("decrypt: err %v; want %q", err, tt.want)
+			}
+		})
+	}
+	for _, tt := range []struct{ name, cfg, path, added string }{
+		{"a missing path", "vars:\n  dkim_keys:\n    acme.com: x\n", "vars.dkim_keys.acme.org", "    acme:\n      org: !secret "},
+		{"a variable name", "vars:\n  a.b: x\n", "vars.a.b", "  a:\n    b: !secret "},
+		{"a key with dots after the plain keys", "vars:\n  dkim_keys:\n    acme.com.x.y: x\n", `vars.dkim_keys.acme.com["x.y"]`, "    acme:\n      com:\n        x.y: !secret "},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeProject(t, map[string]string{
+				"winch.yaml":          head + tt.cfg,
+				"pipelines/site.yaml": readsPipeline("dkim_keys", "a"),
+			})
+			cfg, err := loadConfig(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := secretText(dir, cfg, tt.path); err == nil || !strings.HasSuffix(err.Error(), tt.path+" is not in winch.yaml") {
+				t.Errorf("decrypt: err %v; want %q", err, tt.path+" is not in winch.yaml")
+			}
+			out, err := writeSecret(dir, tt.path)
+			if want := "added " + tt.path + " in winch.yaml"; err != nil || out != want {
+				t.Errorf("write: %q, %v; want %q", out, err, want)
+			}
+			if data, _ := os.ReadFile(filepath.Join(dir, "winch.yaml")); !strings.Contains(string(data), tt.added) {
+				t.Errorf("winch.yaml:\n%s\nwant %q", data, tt.added)
+			}
+		})
+	}
+}
+
 // spec: Variables/Secrets (winch secret generate, paths)
 func TestSecretAtFlowHost(t *testing.T) {
 	k := newKey(t)
