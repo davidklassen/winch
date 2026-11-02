@@ -34,7 +34,7 @@ const changelog = `# Changelog
 - The first module.
 `
 
-// spec: docs/design/release.md Build; Release notes
+// spec: dev/design/release.md Build; Release notes
 func TestNotes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
 	if err := os.WriteFile(path, []byte(changelog), 0o644); err != nil {
@@ -71,7 +71,7 @@ func TestNotes(t *testing.T) {
 	}
 }
 
-// spec: docs/design/release.md Build; Install/Homebrew
+// spec: dev/design/release.md Build; Install/Homebrew
 func TestCask(t *testing.T) {
 	sums := filepath.Join(t.TempDir(), "checksums.txt")
 	err := os.WriteFile(sums, []byte(
@@ -89,7 +89,7 @@ func TestCask(t *testing.T) {
 	golden.Assert(t, "testdata/winch.rb", out)
 }
 
-// spec: docs/design/release.md Build; Install/Homebrew
+// spec: dev/design/release.md Build; Install/Homebrew
 func TestCaskMissingArchive(t *testing.T) {
 	sums := filepath.Join(t.TempDir(), "checksums.txt")
 	err := os.WriteFile(sums, []byte("1111111111111111111111111111111111111111111111111111111111111111  winch-darwin-amd64.tar.gz\n"), 0o644)
@@ -106,7 +106,7 @@ func TestCaskMissingArchive(t *testing.T) {
 	}
 }
 
-// spec: docs/design/release.md Release notes
+// spec: dev/design/release.md Release notes
 func TestChangelog(t *testing.T) {
 	data, err := os.ReadFile("../CHANGELOG.md")
 	if errors.Is(err, fs.ErrNotExist) {
@@ -155,7 +155,7 @@ func TestChangelog(t *testing.T) {
 	}
 }
 
-// spec: docs/design/release.md Install/Homebrew
+// spec: dev/design/release.md Install/Homebrew
 func TestNotarized(t *testing.T) {
 	sums := "testdata/notary/checksums.txt"
 	data, err := os.ReadFile(sums)
@@ -234,7 +234,7 @@ func TestNotarized(t *testing.T) {
 	}
 }
 
-// spec: docs/design/release.md Install/Homebrew
+// spec: dev/design/release.md Install/Homebrew
 func TestNotarizedMissingArchive(t *testing.T) {
 	sums := filepath.Join(t.TempDir(), "checksums.txt")
 	err := os.WriteFile(sums, []byte("1111111111111111111111111111111111111111111111111111111111111111  winch-darwin-amd64.tar.gz\n"), 0o644)
