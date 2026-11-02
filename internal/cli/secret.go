@@ -1,10 +1,15 @@
 package cli
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/secret"
@@ -69,6 +74,9 @@ func secretGenerate(ctx context.Context, env Env, f *flags, args []string) int {
 
 func secretEncrypt(ctx context.Context, env Env, f *flags, args []string) int {
 	return writeSecret(env, args, func() (string, error) {
+		if env.Terminal {
+			return promptValue(env)
+		}
 		in, err := io.ReadAll(env.In)
 		if err != nil {
 			return "", usage("read stdin: %v", err)
@@ -79,6 +87,66 @@ func secretEncrypt(ctx context.Context, env Env, f *flags, args []string) int {
 		}
 		return value, nil
 	})
+}
+
+// promptValue asks for one line twice on the terminal, without echo. A signal
+// ends the prompt, so that it does not leave the echo off.
+func promptValue(env Env) (string, error) {
+	var signals chan os.Signal
+	if f, ok := env.In.(*os.File); ok {
+		if err := discardInput(f); err != nil {
+			return "", usage("discard the typed input: %v", err)
+		}
+		signals = make(chan os.Signal, 1)
+		signal.Notify(signals, os.Interrupt, syscall.SIGQUIT, syscall.SIGTERM)
+		// Notify turns on a SIGHUP that nohup ignores.
+		if !signal.Ignored(syscall.SIGHUP) {
+			signal.Notify(signals, syscall.SIGHUP)
+		}
+		defer signal.Stop(signals)
+		restore, err := echoOff(f)
+		if err != nil {
+			return "", usage("turn off the echo of the terminal: %v", err)
+		}
+		defer restore()
+	}
+	type result struct {
+		value string
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		var lines [2]string
+		in := bufio.NewReader(env.In)
+		for i, prompt := range []string{"Value: ", "Again: "} {
+			fmt.Fprint(env.stderr, prompt)
+			line, err := in.ReadString('\n')
+			// The terminal does not echo the newline either.
+			fmt.Fprintln(env.stderr)
+			if err != nil && !errors.Is(err, io.EOF) {
+				done <- result{err: usage("read the terminal: %v", err)}
+				return
+			}
+			lines[i] = line
+		}
+		value, err := secret.OneLine(lines[0])
+		if err != nil {
+			done <- result{err: usage("%v", err)}
+			return
+		}
+		if again, _ := secret.OneLine(lines[1]); again != value {
+			done <- result{err: usage("the two values differ")}
+			return
+		}
+		done <- result{value: value}
+	}()
+	select {
+	case r := <-done:
+		return r.value, r.err
+	case <-signals:
+		fmt.Fprintln(env.stderr)
+		return "", usage("interrupted; nothing was written")
+	}
 }
 
 // writeSecret encrypts the value of plain and writes it at the path in args,

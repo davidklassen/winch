@@ -1677,8 +1677,9 @@ Commands:
                                     recipients
     winch secret generate [<path>]  make a random password as a secret:
                                     write it at the path, or print it
-    winch secret encrypt [<path>]   encrypt a value from stdin: write it
-                                    at the path, or print it
+    winch secret encrypt [<path>]   encrypt a value from stdin or a
+                                    prompt: write it at the path, or
+                                    print it
     winch secret decrypt [<path>]   print the plaintext of the secret at
                                     the path, or of a secret on stdin
     winch secret rekey              encrypt all secrets for the current
@@ -1686,6 +1687,10 @@ Commands:
 
   winch secret generate and winch secret encrypt need the recipients,
   but no age key. generate never prints the password.
+
+  winch secret encrypt reads a pipe on stdin. At a terminal, it asks for
+  one line twice and does not show what you type. When the two values
+  differ, it writes nothing.
 
   winch secret decrypt needs the age key. It prints the plaintext and
   nothing else. It reads a !secret value on stdin, with or without the

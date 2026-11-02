@@ -420,8 +420,9 @@ password.`,
 	},
 	{
 		name:    "secret encrypt",
-		summary: "encrypt a value from stdin as a secret",
+		summary: "encrypt a value from stdin or a prompt as a secret",
 		examples: []example{
+			{"type a password and write it as the default of a variable", "winch secret encrypt vars.db_password"},
 			{"write the content of a file as the default of a variable", "winch secret encrypt vars.dkim_key < dkim.key"},
 			{"print the output of a command as a !secret value", "openssl rand -hex 16 | winch secret encrypt"},
 		},
@@ -430,6 +431,8 @@ password.`,
 			`Encrypt reads a value from stdin and encrypts it for the recipients in
 winch.yaml. With a path, it writes the !secret value at the path;
 without one, it prints it.`,
+			`When stdin is a terminal, encrypt asks for one line twice and does not
+show what you type. When the two values differ, it writes nothing.`,
 			`A value of one line loses its trailing newline. A value of more lines
 stays as it is.`,
 			pathHelp,
