@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -257,6 +259,37 @@ func TestMissingAgeKey(t *testing.T) {
 	js := winchWith(t, dir, home, "", "", fakehost.New(), false, "", "plan", "site", "--json")
 	got := strings.ReplaceAll("text:\n"+text.err+"json:\n"+js.out, home, "HOME")
 	golden.Assert(t, filepath.Join("testdata", "errors", "missing-age-key.golden"), []byte(got))
+}
+
+// spec: Variables/Secrets (age key, winch secret init)
+func TestAgeKeyDanglingLink(t *testing.T) {
+	_, id := newIdentity(t)
+	dir := secretProject(t, id)
+	setPassword(t, dir, encrypt(t, dir, "hunter2\n"))
+	tmp := t.TempDir()
+	link, target := filepath.Join(tmp, "age.key"), filepath.Join(tmp, "volume", "age.key")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	msg := "the age key " + link + " links to " + target + ", which does not exist\n"
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"plan", "site"}, msg},
+		{[]string{"secret", "init"}, "winch secret init: " + msg},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			r := winchWith(t, dir, "", link, "", fakehost.New(), false, "", tt.args...)
+			if r.code != exitInvalid || r.err != tt.want {
+				t.Errorf("exit %d, stderr %q; want %q", r.code, r.err, tt.want)
+			}
+			if _, err := os.Lstat(target); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("winch made the target: %v", err)
+			}
+		})
+	}
 }
 
 // spec: Variables/Secrets (no key)
