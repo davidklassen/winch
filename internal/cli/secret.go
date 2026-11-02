@@ -75,7 +75,14 @@ func secretGenerate(ctx context.Context, env Env, f *flags, args []string) int {
 func secretEncrypt(ctx context.Context, env Env, f *flags, args []string) int {
 	return writeSecret(env, args, func() (string, error) {
 		if env.Terminal {
-			return promptValue(env)
+			what := "Secret"
+			if len(args) == 1 {
+				what = "Secret for " + args[0]
+			}
+			return promptValue(env, what)
+		}
+		if f, ok := env.In.(*os.File); ok && IsTerminal(f) {
+			return "", usage("stdin is a terminal, but stderr is not, so winch cannot ask for the secret; pipe the value, or run with stderr on the terminal")
 		}
 		in, err := io.ReadAll(env.In)
 		if err != nil {
@@ -89,9 +96,10 @@ func secretEncrypt(ctx context.Context, env Env, f *flags, args []string) int {
 	})
 }
 
-// promptValue asks for one line twice on the terminal, without echo. A signal
-// ends the prompt, so that it does not leave the echo off.
-func promptValue(env Env) (string, error) {
+// promptValue asks for one line twice on the terminal, without echo. The
+// first prompt names what. A signal ends the prompt, so that it does not
+// leave the echo off.
+func promptValue(env Env, what string) (string, error) {
 	var signals chan os.Signal
 	if f, ok := env.In.(*os.File); ok {
 		if err := discardInput(f); err != nil {
@@ -118,7 +126,7 @@ func promptValue(env Env) (string, error) {
 	go func() {
 		var lines [2]string
 		in := bufio.NewReader(env.In)
-		for i, prompt := range []string{"Value: ", "Again: "} {
+		for i, prompt := range []string{what + ": ", "Confirm secret: "} {
 			fmt.Fprint(env.stderr, prompt)
 			line, err := in.ReadString('\n')
 			// The terminal does not echo the newline either.

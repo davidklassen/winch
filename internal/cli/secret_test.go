@@ -129,7 +129,7 @@ func TestSecretEncryptPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := winch(t, dir, fakehost.New(), true, "hunter2\nhunter3\n", "secret", "encrypt", "inventories.test.hosts.web1.vars.pw")
-	if r.code != exitInvalid || r.out != "" || r.err != "Value: \nAgain: \nwinch secret encrypt: the two values differ\n" {
+	if r.code != exitInvalid || r.out != "" || r.err != "Secret for inventories.test.hosts.web1.vars.pw: \nConfirm secret: \nwinch secret encrypt: the two values differ\n" {
 		t.Errorf("different values: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 	if after, _ := os.ReadFile(path); string(after) != string(before) {
@@ -140,7 +140,7 @@ func TestSecretEncryptPrompt(t *testing.T) {
 		t.Errorf("empty value: exit %d, stderr %q", r.code, r.err)
 	}
 	r = winch(t, dir, fakehost.New(), true, "hunter2\r\nhunter2\r\n", "secret", "encrypt")
-	if r.code != exitOK || r.err != "Value: \nAgain: \n" {
+	if r.code != exitOK || r.err != "Secret: \nConfirm secret: \n" {
 		t.Fatalf("equal values: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 	got, err := secret.Decrypt(strings.TrimPrefix(strings.TrimSuffix(r.out, "\n"), "!secret "), []age.Identity{id})
@@ -190,6 +190,20 @@ func TestSecretEncryptInterrupt(t *testing.T) {
 			}
 			readEcho(t, controller)
 		})
+	}
+}
+
+// spec: Variables/Secrets (winch secret encrypt); CLI/Prompts
+func TestSecretEncryptTerminalWithoutStderr(t *testing.T) {
+	_, id := newIdentity(t)
+	_, terminal := vmtest.OpenPTY(t)
+	var out, errOut strings.Builder
+	code := Main(context.Background(), []string{"secret", "encrypt"}, Env{
+		Dir: secretProject(t, id), In: terminal, Out: &out, Err: &errOut, Filter: secret.NewFilter(),
+	})
+	want := "winch secret encrypt: stdin is a terminal, but stderr is not, so winch cannot ask for the secret; pipe the value, or run with stderr on the terminal\n"
+	if code != exitInvalid || out.String() != "" || errOut.String() != want {
+		t.Errorf("exit %d, stdout %q, stderr %q; want %q", code, out.String(), errOut.String(), want)
 	}
 }
 
