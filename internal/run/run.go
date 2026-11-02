@@ -252,9 +252,8 @@ type hostRun struct {
 	conn Conn
 	dest protocol.Destination
 	// needs are the users, groups, and directories, as "user <name>",
-	// "group <name>", or "dir <path>", that steps that run need, with the
-	// first such step.
-	needs map[string]string
+	// "group <name>", or "dir <path>", that steps that run need.
+	needs map[string]need
 	// created are the users, groups, and directories, in the form of needs,
 	// that checked steps create.
 	created map[string]bool
@@ -454,7 +453,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]string{}, created: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]need{}, created: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -651,7 +650,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		hr.trackRemoved(p.Step.Args)
 		hr.trackUnitFile(p.Step.Args, steps[i].Result)
 		hr.dropCreated(&steps[i].Result)
-		if err := hr.order(p.Step.Args, steps[i].Result, where); err != nil {
+		if err := hr.order(p.Step, steps[i].Result, where); err != nil {
 			return nil, err
 		}
 		if err := hr.packages(p.Step.Args, steps[i].Result, where); err != nil {
@@ -680,11 +679,17 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 	return steps, nil
 }
 
+// need is a step that needs a user, a group, or a directory, and that need as
+// the output shows it.
+type need struct {
+	step, shown string
+}
+
 // order fails a step that creates a user, a group, or a directory that an
 // earlier step that runs needs: as its owner, group, one of its groups, or the
 // user or directory of a cmd. That earlier step fails in apply. Otherwise it
 // records what the step at where needs.
-func (hr *hostRun) order(m module.Module, res module.Result, where string) error {
+func (hr *hostRun) order(st project.Step, res module.Result, where string) error {
 	if res.Status == module.OK {
 		return nil
 	}
@@ -695,7 +700,7 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 		}
 	}
 	slices.Sort(created)
-	switch m := m.(type) {
+	switch m := st.Args.(type) {
 	case *module.Cmd:
 		needs = []string{"user " + m.User}
 		if !hr.dirs[m.Dir] {
@@ -731,7 +736,7 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 	}
 	for _, c := range created {
 		if w, ok := hr.needs[c]; ok {
-			return fmt.Errorf("%s: this step creates %s, which an earlier step needs: %s; move this step before it", where, c, w)
+			return fmt.Errorf("%s: this step creates %s, which an earlier step needs: %s; move this step before it", where, w.shown, w.step)
 		}
 		hr.created[c] = true
 	}
@@ -741,13 +746,21 @@ func (hr *hostRun) order(m module.Module, res module.Result, where string) error
 			continue
 		}
 		if _, ok := hr.needs[n]; !ok {
-			hr.needs[n] = hr.step
+			shown := n
+			if _, ok := st.Args.(*module.Cmd); ok {
+				kind, _, _ := strings.Cut(n, " ")
+				shown = "dir " + st.ShownDir()
+				if kind == "user" {
+					shown = "user " + st.ShownUser()
+				}
+			}
+			hr.needs[n] = need{step: hr.step, shown: shown}
 		}
 	}
 	// Directories that exist after the step, which dropCreatedParents does
 	// not see.
 	var made []string
-	switch m := m.(type) {
+	switch m := st.Args.(type) {
 	case *module.Cmd:
 		if m.Creates != "" {
 			made = []string{path.Dir(m.Creates)}

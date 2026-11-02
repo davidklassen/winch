@@ -15,6 +15,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/module"
@@ -413,6 +414,59 @@ func TestSecretCmdUser(t *testing.T) {
 	}
 	if strings.Contains(out.String()+errOut.String(), "deploy") {
 		t.Errorf("the plan shows the secret:\n%s%s", out.String(), errOut.String())
+	}
+}
+
+// spec: Variables/Secrets in output; Modules/cmd
+func TestSecretCmdMissing(t *testing.T) {
+	const cmdUser = "      - cmd:\n          command: make install\n          user: !expr '\"u-\" + vars.pw'\n"
+	// The user fails the placeholder variants, so the filter does not know
+	// the dir.
+	const cmdDir = cmdUser + "          dir: !expr '\"/srv/\" + trimPrefix(vars.pw, \"hun\")'\n"
+	noDir := func(h *fakehost.Hosts) {
+		h.SetUser("web1", "u-hunter2")
+		h.RemoveDir("web1", "/srv/ter2")
+	}
+	for _, tt := range []struct {
+		name, steps string
+		host        func(h *fakehost.Hosts)
+		want        string
+	}{
+		{"a missing user", cmdUser, func(*fakehost.Hosts) {}, "web1: warning: user (secret) does not exist yet and no user step creates it\n"},
+		{"a missing dir", cmdDir, noDir, "web1: warning: dir (secret) does not exist yet and no dir step creates it\n"},
+		{"a user that a later step creates", cmdUser + "      - user:\n          name: !expr '\"u-\" + vars.pw'\n", func(*fakehost.Hosts) {},
+			"this step creates user (secret), which an earlier step needs: s#1 cmd (secret); move this step before it\n"},
+		{"a dir that a later step creates", cmdDir + "      - dir:\n          path: !expr '\"/srv/\" + trimPrefix(vars.pw, \"hun\")'\n          owner: !expr '\"u-\" + vars.pw'\n", noDir,
+			"this step creates dir (secret), which an earlier step needs: s#1 cmd (secret); move this step before it\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			identity, recipient := ageKey(t)
+			text, err := secret.Encrypt("hunter2", []age.Recipient{recipient})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
+				"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + text + "\n",
+				"pipelines/site.yaml":   steps(tt.steps),
+			})
+			filter := secret.NewFilter()
+			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: filter})
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := fakehost.New()
+			tt.host(h)
+			plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+			var out, errOut bytes.Buffer
+			plan.Write(color.NewWriter(&out, filter.Parts, false), color.NewWriter(&errOut, filter.Parts, false))
+			if !strings.HasSuffix(errOut.String(), tt.want) {
+				t.Errorf("stderr = %q, want the end %q", errOut.String(), tt.want)
+			}
+			if strings.Contains(out.String()+errOut.String(), "u-") || strings.Contains(out.String()+errOut.String(), "ter2") {
+				t.Errorf("the plan shows a value from the secret:\n%s%s", out.String(), errOut.String())
+			}
+		})
 	}
 }
 
