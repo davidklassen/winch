@@ -35,6 +35,9 @@ type Conn interface {
 	// Prompted reports whether the login needed a prompt, which the access
 	// check cannot answer.
 	Prompted(ctx context.Context) bool
+	// Mask sets the mask of the notes, warnings, and progress lines that the
+	// helper sends from now on. A nil mask masks nothing.
+	Mask(mask func(string) string)
 	Facts(ctx context.Context) (facts.Facts, error)
 	Pending(ctx context.Context) (protocol.Pending, error)
 	Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
@@ -135,6 +138,9 @@ type Plan struct {
 	gone map[string][]protocol.Check
 	// goneThens are the then records of each host that match no step.
 	goneThens map[string][]protocol.Then
+	// parts are the secret parts of the checked steps of each host. A then
+	// record of winch 0.1.0 can hold a part.
+	parts map[string][]string
 	// refreshed are the hosts whose package index a step refreshed in the
 	// plan.
 	refreshed map[string]bool
@@ -494,9 +500,11 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	}
 	plan.gone = map[string][]protocol.Check{}
 	plan.goneThens = map[string][]protocol.Then{}
+	plan.parts = map[string][]string{}
 	plan.refreshed = map[string]bool{}
 	for name, hr := range runs {
 		plan.refreshed[name] = hr.refreshed
+		plan.parts[name] = hr.parts
 		if hr.pending != nil {
 			plan.Pending[name] = *hr.pending
 			if !p.Pipeline.AdHoc {
@@ -647,7 +655,9 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		}
 		hr.newUnitFile(&steps[i].Step)
 		progress.Busy(h.Name, where)
+		conn.Mask(p.Step.HostText)
 		steps[i].Result, err = conn.Check(context.WithoutCancel(ctx), p.Step.Module, steps[i].Step.Args, &hr.state)
+		conn.Mask(nil)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", where, maskError(err, p.Step.HostText))
 		}

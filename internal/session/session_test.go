@@ -694,28 +694,44 @@ echo '{"id":2,"warning":"the certificate a expires on 2026-11-20"}'
 echo '{"id":2,"result":{"status":"ok"}}'
 cat >/dev/null
 `))
-	var progress bytes.Buffer
-	var notes []string
-	s, err := Open(context.Background(), Config{
-		Host: "web1", Address: "web1", Dir: stateDir,
-		Binaries: []helperbin.Binary{helper},
-		Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&progress),
-		Note: func(text string, warning bool) { notes = append(notes, fmt.Sprintf("%s %t", text, warning)) },
-	})
-	if err != nil {
-		t.Fatal(err)
+	mask := func(text string) string {
+		return strings.NewReplacer("hello", "(secret)", "apt-get", "(secret)", "certificate a", "certificate (secret)").Replace(text)
 	}
-	defer s.Close()
-	progress.Reset()
-	res, err := s.Check(context.Background(), "pkg", &module.Pkg{Name: []string{"hello"}}, &module.State{})
-	if err != nil || res.Status != module.OK {
-		t.Fatalf("check = %+v, %v", res, err)
-	}
-	if want := "web1: ?[2Kwaiting for apt-get (pid 42), which holds the package locks\n"; progress.String() != want {
-		t.Errorf("progress = %q, want %q", progress.String(), want)
-	}
-	if want := []string{"apt does not know hello false", "the certificate a expires on 2026-11-20 true"}; !slices.Equal(notes, want) {
-		t.Errorf("notes = %q, want %q", notes, want)
+	for _, tt := range []struct {
+		name     string
+		mask     func(string) string
+		progress string
+		notes    []string
+	}{
+		{"no mask", nil, "apt-get", []string{"apt does not know hello false", "the certificate a expires on 2026-11-20 true"}},
+		{"a mask", mask, "(secret)", []string{"apt does not know (secret) false", "the certificate (secret) expires on 2026-11-20 true"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var progress bytes.Buffer
+			var notes []string
+			s, err := Open(context.Background(), Config{
+				Host: "web1", Address: "web1", Dir: stateDir,
+				Binaries: []helperbin.Binary{helper},
+				Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&progress),
+				Note: func(text string, warning bool) { notes = append(notes, fmt.Sprintf("%s %t", text, warning)) },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			progress.Reset()
+			s.Mask(tt.mask)
+			res, err := s.Check(context.Background(), "pkg", &module.Pkg{Name: []string{"hello"}}, &module.State{})
+			if err != nil || res.Status != module.OK {
+				t.Fatalf("check = %+v, %v", res, err)
+			}
+			if want := "web1: ?[2Kwaiting for " + tt.progress + " (pid 42), which holds the package locks\n"; progress.String() != want {
+				t.Errorf("progress = %q, want %q", progress.String(), want)
+			}
+			if !slices.Equal(notes, tt.notes) {
+				t.Errorf("notes = %q, want %q", notes, tt.notes)
+			}
+		})
 	}
 }
 

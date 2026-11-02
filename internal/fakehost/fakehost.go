@@ -482,6 +482,7 @@ type Conn struct {
 	dest     protocol.Destination
 	kill     int
 	prompted bool
+	mask     func(string) string
 }
 
 // dead returns the error of a session that Kill ended, or nil.
@@ -498,6 +499,9 @@ func (c *Conn) Destination() protocol.Destination { return c.dest }
 
 func (c *Conn) Prompted(ctx context.Context) bool { return c.prompted }
 
+// Mask sets the mask of the notes that SetNote gives.
+func (c *Conn) Mask(mask func(string) string) { c.mask = mask }
+
 func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
 	if err := c.dead(); err != nil {
 		return module.Result{}, err
@@ -506,6 +510,9 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		c.hosts.OnCheck(c.host, m.Main())
 	}
 	if n, ok := c.hosts.notes[c.host+" "+m.Main()]; ok {
+		if c.mask != nil {
+			n.Text = c.mask(n.Text)
+		}
 		c.hosts.note(n)
 	}
 	// A real session finishes a call that has started.

@@ -667,7 +667,9 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 // command returns a change. After a step that started the rollback timer, it
 // checks the access. After a changed reboot step, it reboots the host.
 func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned, g protocol.Guard) (module.Result, error) {
+	a.conn.Mask(p.Step.HostText)
 	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, p.Check, g)
+	a.conn.Mask(nil)
 	err = maskError(err, p.Step.HostText)
 	// The access check error is text of winch around host errors.
 	if err == nil && res.Timer != 0 {
