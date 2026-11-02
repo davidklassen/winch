@@ -1076,8 +1076,9 @@ type place struct {
 // the error.
 func (pl place) walk(what string) error {
 	n := pl.root
+	brackets := len(pl.above) + pl.vars + 2
 	for i, key := range pl.keys {
-		shown := showPath(slices.Concat(pl.above, pl.keys[:i]), len(pl.above)+pl.vars+2)
+		shown := showPath(slices.Concat(pl.above, pl.keys[:i]), brackets)
 		if n.Kind == yamlx.List {
 			return fmt.Errorf("%s: %s is a list; a path cannot name a list item", what, shown)
 		}
@@ -1086,6 +1087,19 @@ func (pl place) walk(what string) error {
 		}
 		q := find(n, []string{key})
 		if q == nil {
+			// A plain path below the variable name splits a key such as
+			// acme.com at its dots.
+			end := i
+			for i >= pl.vars+2 && end < len(pl.keys) && !strings.Contains(pl.keys[end], ".") {
+				end++
+			}
+			for j := end; j > i+1; j-- {
+				joined := strings.Join(pl.keys[i:j], ".")
+				if find(n, []string{joined}) != nil {
+					use := showPath(slices.Concat(pl.above, pl.keys[:i], []string{joined}, pl.keys[j:]), brackets)
+					return fmt.Errorf("%s: %s has a key %s; use '%s'", what, shown, joined, use)
+				}
+			}
 			break
 		}
 		n = q.Value
