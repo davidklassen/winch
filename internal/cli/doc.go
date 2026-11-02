@@ -165,6 +165,7 @@ func writeIndex(out io.Writer, groups []doc.Group) {
 	}
 	w.Flush()
 	fmt.Fprintln(out, "\nRun \"winch doc <topic>\" or \"winch doc <module>\" for more.")
+	fmt.Fprintf(out, "\n%s\n", userGuide)
 }
 
 // writeTopic writes the blocks of t, then each of its keys with the keys of

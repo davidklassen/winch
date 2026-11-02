@@ -101,6 +101,9 @@ helper programs that winch sends to them are built by `make`.
 modules. `winch doc <topic>` shows one. `winch <command> --help` shows
 the examples of each command.
 
+The user guide is at https://winchstack.app/docs/, and
+https://winchstack.app/llms.txt lists the docs for AI agents.
+
 ## Try it on a VM
 
 `examples/demo` puts a small web site on one VM. It needs QEMU.
