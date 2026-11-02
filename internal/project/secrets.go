@@ -331,6 +331,9 @@ type Shown struct {
 	Unless   string
 	User     string
 	Dir      string
+	// Names maps an owner or group name that comes from a secret to its
+	// shown form.
+	Names map[string]string
 	// Lines are the lines of the content with their masks, or nil when the
 	// content holds no secret.
 	Lines []secret.Line
@@ -400,6 +403,16 @@ func (st Step) ShownDir() string {
 		return c.Dir
 	}
 	return ""
+}
+
+// ShownName is an owner or group name of the step as the output shows it.
+func (st Step) ShownName(name string) string {
+	if st.Shown != nil {
+		if s, ok := st.Shown.Names[name]; ok {
+			return s
+		}
+	}
+	return name
 }
 
 // Recipients returns the recipients in the project file.

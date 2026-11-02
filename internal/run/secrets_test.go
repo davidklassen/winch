@@ -420,8 +420,6 @@ func TestSecretCmdUser(t *testing.T) {
 // spec: Variables/Secrets in output; Modules/cmd
 func TestSecretCmdMissing(t *testing.T) {
 	const cmdUser = "      - cmd:\n          command: make install\n          user: !expr '\"u-\" + vars.pw'\n"
-	// The user fails the placeholder variants, so the filter does not know
-	// the dir.
 	const cmdDir = cmdUser + "          dir: !expr '\"/srv/\" + trimPrefix(vars.pw, \"hun\")'\n"
 	noDir := func(h *fakehost.Hosts) {
 		h.SetUser("web1", "u-hunter2")
@@ -541,6 +539,44 @@ func TestSecretThenRecord(t *testing.T) {
 			}
 			if got := h.ThenOf("web1"); len(got) != 0 {
 				t.Errorf("then records after the then ran = %+v", got)
+			}
+		})
+	}
+}
+
+// spec: Variables/Secrets in output
+func TestSecretNameMessages(t *testing.T) {
+	// The placeholder variants of the name fail the account name check.
+	const name = `!expr 'trimPrefix(vars.pw, "hun")'`
+	const later = "      - user:\n          name: " + name + "\n"
+	for _, tt := range []struct {
+		name, steps string
+		host        func(h *fakehost.Hosts)
+		want        string
+	}{
+		{"a file owner", "      - file:\n          path: /a\n          content: x\n          owner: " + name + "\n" + later, func(*fakehost.Hosts) {},
+			"this step creates user (secret), which an earlier step needs: s#1 file (secret); move this step before it\n"},
+		{"a dir owner", "      - dir:\n          path: /a\n          owner: " + name + "\n" + later, func(h *fakehost.Hosts) { h.RemoveDir("web1", "/a") },
+			"this step creates user (secret), which an earlier step needs: s#1 dir (secret); move this step before it\n"},
+		{"a download owner", "      - download:\n          url: https://example.com/a\n          sha256: \"" + strings.Repeat("a", 64) + "\"\n          path: /a\n          owner: " + name + "\n" + later, func(*fakehost.Hosts) {},
+			"this step creates user (secret), which an earlier step needs: s#1 download (secret); move this step before it\n"},
+		{"a group of a user", "      - user:\n          name: app\n          groups: [" + name + "]\n      - group:\n          name: " + name + "\n", func(*fakehost.Hosts) {},
+			"this step creates group (secret), which an earlier step needs: s#1 user (secret); move this step before it\n"},
+		{"a short name", "      - file:\n          path: /a\n          content: x\n          owner: !expr 'trimPrefix(vars.pw, \"hunte\")'\n      - user:\n          name: !expr 'trimPrefix(vars.pw, \"hunte\")'\n", func(*fakehost.Hosts) {},
+			"this step creates user (secret), which an earlier step needs: s#1 file (secret); move this step before it\n"},
+		{"a change line from the host", "      - dir:\n          path: /a\n          owner: " + name + "\n", func(h *fakehost.Hosts) {
+			h.SetResult("web1", "/a", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner root → ter2; user ter2 does not exist yet"}})
+		}, "        owner root → (secret); user (secret) does not exist yet\n\n1 host: 1 to change, 0 unchanged, 0 unknown\nplan "},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := hashSecretProject(t, "hunter2", steps(tt.steps), "", nil, nil)
+			h := fakehost.New()
+			tt.host(h)
+			plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+			var out, errOut bytes.Buffer
+			plan.Write(color.NewWriter(&out, p.Filter().Parts, false), color.NewWriter(&errOut, p.Filter().Parts, false))
+			if all := out.String() + errOut.String(); !strings.Contains(all, tt.want) || strings.Contains(all, "ter2") {
+				t.Errorf("output = %q, want %q and no ter2", all, tt.want)
 			}
 		})
 	}

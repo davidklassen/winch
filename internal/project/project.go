@@ -1735,8 +1735,14 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool, a
 		if dir != "" {
 			sh.Dir, _ = secret.MaskLines(dir, mods[1].(*module.Cmd).Dir, mods[2].(*module.Cmd).Dir)
 		}
+	}
+	// A variant that fails only its checks, such as a placeholder in a user
+	// name, still has its arguments. Their parts go to the filter, so a host
+	// message with a name from a secret shows (secret).
+	if args[1] != nil && args[2] != nil {
 		parts = secret.Parts(args[0], args[1], args[2])
 	}
+	sh.Names = shownNames(args)
 	var thenParts []string
 	sh.Then, thenParts = secret.MaskLines(thens[0], thens[1], thens[2])
 	parts = append(parts, thenParts...)
@@ -1771,10 +1777,53 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool, a
 	if mods[1] != nil {
 		hash = mods[1]
 	}
-	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Unless == unless && sh.User == user && sh.Dir == dir && sh.Lines == nil && !sh.Hidden && sh.Public == "" {
+	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Unless == unless && sh.User == user && sh.Dir == dir && sh.Lines == nil && !sh.Hidden && sh.Public == "" && sh.Names == nil {
 		return nil, reads, hash
 	}
 	return sh, reads, hash
+}
+
+// shownNames maps each owner, group, and element of groups and add_groups in
+// the arguments real that comes from a secret to its shown form, or returns
+// nil.
+func shownNames(args [3]any) map[string]string {
+	var m [3]map[string]any
+	for n, a := range args {
+		m[n], _ = a.(map[string]any)
+	}
+	var out map[string]string
+	add := func(real, a, b any) {
+		r, _ := real.(string)
+		as, ok1 := a.(string)
+		bs, ok2 := b.(string)
+		shown := secret.Mark
+		if ok1 && ok2 {
+			shown, _ = secret.Mask(r, as, bs)
+		}
+		if r != "" && shown != r {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[r] = shown
+		}
+	}
+	for _, key := range []string{"owner", "group", "groups", "add_groups"} {
+		switch r := m[0][key].(type) {
+		case string:
+			add(r, m[1][key], m[2][key])
+		case []any:
+			al, _ := m[1][key].([]any)
+			bl, _ := m[2][key].([]any)
+			for i, g := range r {
+				var a, b any
+				if len(al) == len(r) && len(bl) == len(r) {
+					a, b = al[i], bl[i]
+				}
+				add(g, a, b)
+			}
+		}
+	}
+	return out
 }
 
 // secretKeys marks the authorized_keys elements of the arguments real that

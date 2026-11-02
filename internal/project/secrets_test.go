@@ -1528,3 +1528,29 @@ func TestScanProjectLinkedDir(t *testing.T) {
 		}
 	}
 }
+
+// spec: Variables/Secrets in output (three evaluations, text filter)
+func TestSecretFilterLearnsNames(t *testing.T) {
+	const name = `!expr 'trimPrefix(vars.pw, "hun")'`
+	for _, tt := range []struct{ name, steps, in string }{
+		{"file owner", "  - file:\n      path: /a\n      content: x\n      owner: " + name + "\n", "user ter2"},
+		{"dir group", "  - dir:\n      path: /a\n      group: " + name + "\n", "group ter2"},
+		{"download owner", "  - download:\n      url: https://example.com/a\n      sha256: " + strings.Repeat("a", 64) + "\n      path: /a\n      owner: " + name + "\n", "user ter2"},
+		{"user groups", "  - user:\n      name: app\n      groups: [" + name + "]\n", "group ter2"},
+		{"user name", "  - user:\n      name: !expr 'upper(trimPrefix(vars.pw, \"hun\"))'\n", "user TER2"},
+		{"cmd dir", "  - cmd:\n      command: make\n      user: " + name + "\n      dir: !expr '\"/srv/\" + trimPrefix(vars.pw, \"hun\")'\n", "user ter2, dir /srv/ter2"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, keys, err := evalSecret(t, tt.steps, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The values that do not come from the secret stay.
+			in := tt.in + ", /a app make root"
+			want := strings.NewReplacer("ter2", secret.Mark, "TER2", secret.Mark).Replace(in)
+			if got := keys.Filter.Text(in); got != want {
+				t.Errorf("filter: %q, want %q", got, want)
+			}
+		})
+	}
+}

@@ -746,9 +746,9 @@ func (hr *hostRun) order(st project.Step, res module.Result, where string) error
 			continue
 		}
 		if _, ok := hr.needs[n]; !ok {
-			shown := n
+			kind, _, _ := strings.Cut(n, " ")
+			shown := kind + " " + st.ShownName(name)
 			if _, ok := st.Args.(*module.Cmd); ok {
-				kind, _, _ := strings.Cut(n, " ")
 				shown = "dir " + st.ShownDir()
 				if kind == "user" {
 					shown = "user " + st.ShownUser()
