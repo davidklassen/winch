@@ -232,7 +232,7 @@ handlers:
 	t.Run("a health command that hangs fails at the timeout", func(t *testing.T) {
 		start := time.Now()
 		r := winch("apply", "hang", "--yes")
-		if r.Code != 1 || !strings.Contains(r.Stderr, "many-a: hang: failed: health: sleep 300: did not pass within 3s") {
+		if r.Code != 1 || !strings.Contains(r.Stderr, "many-a: hang: failed: health: sleep 300: did not pass within 3s: the command did not finish") {
 			t.Errorf("apply: exit %d", r.Code)
 		}
 		if took := time.Since(start); took > time.Minute {

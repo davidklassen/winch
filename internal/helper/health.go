@@ -33,17 +33,21 @@ func runHealth(ctx context.Context, params json.RawMessage, checks records) erro
 // interval apart, and each run ends when the gate time ends. The gate fails
 // when it does not pass within h.Timeout.
 func health(ctx context.Context, h protocol.Health, interval, killDelay time.Duration) error {
-	start := time.Now()
-	deadline := start.Add(h.Timeout)
+	deadline := time.Now().Add(h.Timeout)
+	gate, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 	var passing time.Time
 	var last error
 	for {
 		run := time.Now()
-		left := deadline.Sub(run)
-		if left <= 0 {
+		if !run.Before(deadline) {
 			break
 		}
-		err := module.ShellLimit(ctx, h.Command, left, killDelay)
+		err := module.ShellLimit(gate, h.Command, h.Timeout, killDelay)
+		// The end of the gate stopped this run, so it has no result.
+		if err != nil && gate.Err() != nil {
+			break
+		}
 		switch {
 		case err != nil:
 			passing, last = time.Time{}, err
@@ -54,13 +58,18 @@ func health(ctx context.Context, h protocol.Health, interval, killDelay time.Dur
 			return nil
 		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-gate.Done():
 		case <-time.After(time.Until(run.Add(interval))):
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !passing.IsZero() {
 		return fmt.Errorf("passed, but not for %s within %s", module.Seconds(h.Stable), module.Seconds(h.Timeout))
+	}
+	if last == nil {
+		return fmt.Errorf("did not pass within %s: the command did not finish", module.Seconds(h.Timeout))
 	}
 	msg := strings.TrimPrefix(last.Error(), module.FirstLine(h.Command)+": ")
 	return fmt.Errorf("did not pass within %s: %s", module.Seconds(h.Timeout), msg)
