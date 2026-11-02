@@ -1,12 +1,22 @@
 package main
 
 import (
+	"context"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/davidklassen/winch/internal/cli"
+	"github.com/davidklassen/winch/internal/fakehost"
+	"github.com/davidklassen/winch/internal/secret"
+	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 func TestMain(m *testing.M) {
@@ -48,6 +58,98 @@ func TestInterruptEndsSecretEncrypt(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		cmd.Process.Kill() //nolint:errcheck // the test failed already
 		t.Fatal("winch secret encrypt did not end after Ctrl-C")
+	}
+}
+
+// spec: Running a pipeline/Apply (Ctrl-C)
+func TestTerminateActsAsInterrupt(t *testing.T) {
+	// guard keeps the test binary alive when winch does not catch SIGTERM.
+	guard := make(chan os.Signal, 2)
+	signal.Notify(guard, syscall.SIGTERM)
+	defer signal.Stop(guard)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
+		// With parallelism 1, web2 starts only after web1.
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    parallelism: 1
+    steps:
+      - file:
+          path: /etc/a
+          content: "a\n"
+      - file:
+          path: /etc/b
+          content: "b\n"
+`,
+	})
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	sessions, kill := context.WithCancel(context.Background())
+	defer kill()
+	var errOut strings.Builder
+	var asking atomic.Bool
+	handleInterrupts("interrupted", &errOut, &asking, stop, kill)
+	terminate := func(done context.Context) bool {
+		if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-done.Done():
+			return true
+		case <-time.After(2 * time.Second):
+			return false
+		}
+	}
+	h := fakehost.New()
+	h.OnApply = func(host, main string) {
+		if host != "web1" || main != "/etc/a" {
+			return
+		}
+		if !terminate(ctx) {
+			t.Error("SIGTERM did not interrupt the apply")
+		}
+		if sessions.Err() != nil {
+			t.Error("the first SIGTERM ended the sessions")
+		}
+	}
+	var out strings.Builder
+	code := cli.Main(ctx, []string{"apply", "site", "--yes"}, cli.Env{
+		Dir: dir, In: strings.NewReader(""), Out: &out, Err: &errOut,
+		Connect: h.ConnectorFor, Filter: secret.NewFilter(), Asking: &asking,
+	})
+	if code != 1 || !strings.HasSuffix(out.String(), "2 hosts: 0 changed, 0 unchanged, 2 failed\n") {
+		t.Errorf("exit %d, stdout %q", code, out.String())
+	}
+	if want := "interrupted\nweb1: interrupted\nweb2: interrupted\n"; errOut.String() != want {
+		t.Errorf("stderr %q, want %q", errOut.String(), want)
+	}
+	if _, ok := h.File("web1", "/etc/b"); ok {
+		t.Error("a new step started after SIGTERM")
+	}
+	if !terminate(sessions) {
+		t.Error("a second SIGTERM did not end the sessions")
+	}
+}
+
+// nohup starts winch with SIGHUP ignored.
+//
+// spec: Running a pipeline/Apply (Ctrl-C)
+func TestIgnoredHangupStaysIgnored(t *testing.T) {
+	signal.Ignore(syscall.SIGHUP)
+	defer signal.Reset(syscall.SIGHUP)
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	var asking atomic.Bool
+	handleInterrupts("interrupted", io.Discard, &asking, stop, func() {})
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+		t.Error("an ignored SIGHUP interrupted winch")
+	case <-time.After(500 * time.Millisecond):
 	}
 }
 

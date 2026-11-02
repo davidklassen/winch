@@ -103,7 +103,7 @@ func TestExecInterrupt(t *testing.T) {
 	t.Run("Ctrl-C sends SIGINT and frees the lock", func(t *testing.T) {
 		w := start(t, "touch /root/started; sleep 300")
 		began := time.Now()
-		w.interrupt(t)
+		w.signal(t, syscall.SIGINT)
 		code := w.wait(t)
 		if took := time.Since(began); took > 5*time.Second {
 			t.Errorf("winch ended after %s", took)
@@ -117,7 +117,7 @@ func TestExecInterrupt(t *testing.T) {
 	t.Run("a command that ignores SIGINT gets SIGKILL after 10 seconds", func(t *testing.T) {
 		w := start(t, "trap '' INT; touch /root/started; sleep 300")
 		began := time.Now()
-		w.interrupt(t)
+		w.signal(t, syscall.SIGINT)
 		code := w.wait(t)
 		if took := time.Since(began); took < 10*time.Second || took > 20*time.Second {
 			t.Errorf("winch ended after %s, want 10s", took)

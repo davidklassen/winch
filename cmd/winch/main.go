@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"os/user"
 	"runtime/debug"
 	"slices"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/davidklassen/winch/internal/cli"
@@ -35,23 +37,11 @@ func main() {
 	ctx, stop := context.WithCancel(context.Background())
 	sessions, kill := context.WithCancel(context.Background())
 	// Other commands run no steps, so a Ctrl-C ends them at once. A third
-	// Ctrl-C ends winch.
+	// Ctrl-C ends winch. A cancelled CI job sends SIGTERM, and a closed
+	// terminal SIGHUP: both act as Ctrl-C.
 	var asking atomic.Bool
 	if len(os.Args) > 1 && slices.Contains([]string{"plan", "apply", "run", "exec"}, os.Args[1]) {
-		msg := interruptLine(os.Args[1])
-		interrupts := make(chan os.Signal, 2)
-		signal.Notify(interrupts, os.Interrupt)
-		go func() {
-			<-interrupts
-			// At the question no step runs, and the answer is no.
-			if !asking.Load() {
-				fmt.Fprintln(stderr, msg)
-			}
-			stop()
-			<-interrupts
-			signal.Stop(interrupts)
-			kill()
-		}()
+		handleInterrupts(interruptLine(os.Args[1]), stderr, &asking, stop, kill)
 	}
 	// Without a home directory and the WINCH_AGE_ variables, only a project
 	// with secrets fails: it cannot read the age key.
@@ -124,6 +114,26 @@ func connect(sessions context.Context, stderr *color.Writer, display *progress.D
 		return s, nil
 	}
 	return run.Connect{Resolve: resolve, Open: open}
+}
+
+func handleInterrupts(msg string, stderr io.Writer, asking *atomic.Bool, stop, kill func()) {
+	interrupts := make(chan os.Signal, 2)
+	signal.Notify(interrupts, os.Interrupt, syscall.SIGTERM)
+	// Notify turns on a SIGHUP that nohup ignores.
+	if !signal.Ignored(syscall.SIGHUP) {
+		signal.Notify(interrupts, syscall.SIGHUP)
+	}
+	go func() {
+		<-interrupts
+		// At the question no step runs, and the answer is no.
+		if !asking.Load() {
+			fmt.Fprintln(stderr, msg)
+		}
+		stop()
+		<-interrupts
+		signal.Stop(interrupts)
+		kill()
+	}()
 }
 
 func interruptLine(command string) string {
