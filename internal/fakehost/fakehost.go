@@ -912,7 +912,7 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 		return res, nil
 	}
 	switch m := m.(type) {
-	case *module.Reboot, *module.Hostname, *module.Timezone, *module.Certbot, *module.Firewall, *module.Download, *module.Repo, *module.Upgrade:
+	case *module.Reboot, *module.Hostname, *module.Timezone, *module.Certbot, *module.Firewall, *module.Download, *module.Repo, *module.Upgrade, *module.Line, *module.Link:
 		return res, nil
 	case *module.User:
 		c.hosts.SetUser(c.host, m.Name)
