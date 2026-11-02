@@ -134,9 +134,6 @@ func TestNoHost(t *testing.T) {
 		pipeline  string
 		want      string
 	}{
-		{"an empty inventory", "", motd, `the host pattern "all" matches no host in inventories/test.yaml`},
-		{"a comment-only inventory", "# no hosts yet\n", motd, `the host pattern "all" matches no host in inventories/test.yaml`},
-		{"two stages on an empty inventory", "groups:\n  mail:\n    hosts: []\n", twoStages, noStage},
 		{"no stage matches a host", "hosts:\n  web1: {}\ngroups:\n  mail:\n    hosts: []\n", strings.Replace(twoStages, "hosts: all\n", "hosts: mail\n", 1), noStage},
 	}
 	for _, tt := range tests {

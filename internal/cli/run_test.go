@@ -19,6 +19,47 @@ func runProject(t *testing.T) string {
 	})
 }
 
+// spec: Inventory; CLI
+func TestEmptyInventory(t *testing.T) {
+	tests := []struct {
+		name      string
+		inventory string
+		want      string
+	}{
+		{"empty hosts", "hosts: {}\n", "inventories/test.yaml:1:8: inventory test has no hosts\n"},
+		{"an empty file", "", "inventories/test.yaml:1:1: inventory test has no hosts\n"},
+		{"a comment-only file", "# no hosts yet\n", "inventories/test.yaml:1:1: inventory test has no hosts\n"},
+		{"an empty group", "groups:\n  mail:\n    hosts: []\n", "inventories/test.yaml:1:1: inventory test has no hosts\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: test\n",
+				"inventories/test.yaml": tt.inventory,
+				"pipelines/site.yaml":   motd,
+			})
+			for _, args := range [][]string{
+				{"plan", "site"},
+				{"apply", "site", "--yes"},
+				{"run", "all", "pkg", "name=htop", "--yes"},
+				{"exec", "all", "--", "uptime"},
+			} {
+				h := fakehost.New()
+				r := winch(t, dir, h, false, "", args...)
+				if r.code != exitInvalid || r.err != tt.want {
+					t.Errorf("winch %s: exit %d, stderr %q, want %q", strings.Join(args, " "), r.code, r.err, tt.want)
+				}
+				if len(h.Connects) != 0 {
+					t.Errorf("winch %s: winch contacted a host", strings.Join(args, " "))
+				}
+			}
+			if r := winch(t, dir, fakehost.New(), false, "", "validate"); r.code != exitOK {
+				t.Errorf("winch validate: exit %d, stderr %q", r.code, r.err)
+			}
+		})
+	}
+}
+
 // spec: CLI (winch run)
 func TestRun(t *testing.T) {
 	dir := runProject(t)
