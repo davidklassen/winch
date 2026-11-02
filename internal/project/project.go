@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"text/template"
+	"unicode/utf8"
 
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/module"
@@ -159,6 +160,9 @@ type Step struct {
 	// Secret is true after Eval when the evaluation of the step reads a
 	// secret.
 	Secret bool
+	// Parts are the parts of the arguments, then, and content that come
+	// from a secret, after Eval.
+	Parts []string
 	// HashArgs and HashThen are the arguments and the command of then in
 	// the first placeholder variant of a step that reads a secret. HashArgs
 	// is the module, or the computed arguments when the module rejects them.
@@ -1542,6 +1546,21 @@ func (st Step) Shown() Step {
 	return st
 }
 
+// HostText returns text from the host with each secret part of the step as
+// secret.Mark. A part of 1 or 2 characters can match text that does not hold
+// it, so with such a part the text shows only secret.Mark.
+func (st Step) HostText(s string) string {
+	if s == "" {
+		return s
+	}
+	for _, p := range st.Parts {
+		if utf8.RuneCountInString(p) < 3 {
+			return secret.Mark
+		}
+	}
+	return secret.Hide(s, st.Parts)
+}
+
 // public returns the argument of s that holds a secret and goes into a file
 // that every user of the host can read, or "": a repo source or a certbot
 // hook.
@@ -1634,7 +1653,7 @@ func (st Step) eval(e *Env) ([]Step, error) {
 				return nil, err
 			}
 			if s.masked != nil {
-				s.Secret, s.HashArgs, s.HashThen = true, hash, thens[1]
+				s.Secret, s.HashArgs, s.HashThen, s.Parts = true, hash, thens[1], s.masked.Parts
 			}
 		}
 		out = append(out, s)
@@ -1777,10 +1796,12 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, any, err
 			}
 		}
 	}
+	parts = slices.DeleteFunc(parts, func(p string) bool { return p == "" })
 	e.learn(parts)
-	if contentOK && !slices.ContainsFunc(parts, func(p string) bool { return p != "" }) {
+	if contentOK && len(parts) == 0 {
 		return nil, nil, nil
 	}
+	sh.Parts = parts
 	if real != nil {
 		n, err := yamlx.FromValue(tree, st.Pos)
 		if err != nil {

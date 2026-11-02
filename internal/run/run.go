@@ -293,6 +293,9 @@ type hostRun struct {
 	// step names the step that the plan checks now in the messages of later
 	// steps: its address and label, as two steps can have one label.
 	step string
+	// parts are the secret parts of the checked steps. A plan error can name
+	// the value of an earlier step.
+	parts []string
 	// written returns the paths that the project writes on the host, for dir
 	// steps with purge. It is set at the first contact.
 	written func() (project.Writes, error)
@@ -469,6 +472,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 					err = errors.Join(err, s.err)
 				}
 			}
+			err = maskError(err, func(s string) string { return secret.Hide(s, hr.parts) })
 			if err != nil || !opts.Keep && last[hosts[i].Name] == si {
 				if cerr := hr.close(); err == nil {
 					err = cerr
@@ -624,6 +628,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		if ctx.Err() != nil {
 			return nil, ErrInterrupted
 		}
+		hr.parts = append(hr.parts, p.Step.Parts...)
 		l := oneLine(label(p.Step))
 		where := scope(stage, p) + ": " + l
 		hr.step = p.Address + " " + l
@@ -644,7 +649,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		progress.Busy(h.Name, where)
 		steps[i].Result, err = conn.Check(context.WithoutCancel(ctx), p.Step.Module, steps[i].Step.Args, &hr.state)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", where, err)
+			return nil, fmt.Errorf("%s: %w", where, maskError(err, p.Step.HostText))
 		}
 		hr.refreshed = hr.refreshed || hr.state.Refreshed
 		hr.trackRemoved(p.Step.Args)
@@ -661,7 +666,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
 		hr.trackUnits(p.Step.Args, steps[i].Result, where)
-		maskOldSecrets(p.Step, &steps[i].Result)
+		maskResult(p.Step, &steps[i].Result)
 		steps[i].PendingAssert = p.Check != nil && hr.checks[*p.Check]
 		if steps[i].Result.Status != module.OK {
 			changed = true
@@ -1572,10 +1577,59 @@ func oneLine(label string) string {
 
 var marks = map[module.Action]string{module.Create: "+", module.Modify: "~", module.Remove: "-"}
 
-// maskOldSecrets masks the changes of a secret step that show the value on
-// the host. It can be an older secret, which the text filter does not know.
-func maskOldSecrets(s project.Step, res *module.Result) {
-	if _, ok := s.Args.(*module.Debconf); ok && s.Secret && res.Status == module.Change {
-		res.Changes = []string{"answer (secret)"}
+// maskResult masks the text from the host in the result of a step that reads
+// a secret. A change line whose new value holds a secret part loses its old
+// value, which can be an older secret.
+func maskResult(st project.Step, res *module.Result) {
+	if len(st.Parts) == 0 {
+		return
 	}
+	changes := make([]string, len(res.Changes))
+	for i, c := range res.Changes {
+		if head, after, ok := strings.Cut(c, " →"); ok && secret.Hide(after, st.Parts) != after {
+			c = withoutOld(head) + " →" + after
+		}
+		changes[i] = st.HostText(c)
+	}
+	res.Changes = changes
+	res.Link = st.HostText(res.Link)
+}
+
+// withoutOld returns the head of a change line, "<field> <old>", without
+// the old value: a quoted string at its end, or its last word.
+func withoutOld(head string) string {
+	for i := range len(head) - 1 {
+		if head[i] != ' ' {
+			continue
+		}
+		if _, err := strconv.Unquote(head[i+1:]); err == nil {
+			return head[:i]
+		}
+	}
+	if i := strings.LastIndex(head, " "); i >= 0 {
+		return head[:i]
+	}
+	return head
+}
+
+// maskedError is an error with its text masked.
+type maskedError struct {
+	text string
+	err  error
+}
+
+func (e maskedError) Error() string { return e.text }
+
+func (e maskedError) Unwrap() error { return e.err }
+
+// maskError returns err with its text masked by mask, or nil.
+func maskError(err error, mask func(string) string) error {
+	if err == nil {
+		return nil
+	}
+	s := err.Error()
+	if t := mask(s); t != s {
+		return maskedError{t, err}
+	}
+	return err
 }
