@@ -63,7 +63,9 @@ func run(m *testing.M) int {
 //
 // ssh -G writes its arguments to $SSH_G_ARGS when it is set. It prints
 // $SSH_G, or prints $SSH_G_ERR on stderr and exits with 255 when that is
-// set. ssh sends itself SIGINT when $SSH_INT is set. It
+// set. ssh, also ssh -G, sends itself the signal $SSH_SIGNAL when it is set. When
+// $SSH_HUP_CHILD is set, a child of ssh sends itself SIGHUP and then creates
+// that file, so the file exists only when the child ignores SIGHUP. It
 // writes its arguments to $SSH_ARGS when it is set, prints $SSH_BANNER and
 // the output of $SSH_BANNER_CMD when they are set, runs $SSH_CHILD with its
 // stdout and stderr when it is set, and runs its last argument
@@ -78,11 +80,11 @@ func fakeSSH(bin string) error {
 		return err
 	}
 	scripts := map[string]string{
-		"ssh": "#!/bin/sh\nif [ \"$1\" = -G ]; then\n[ -z \"$SSH_G_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_G_ARGS\"\n" +
+		"ssh": "#!/bin/sh\n[ -z \"$SSH_SIGNAL\" ] || kill -$SSH_SIGNAL $$\nif [ \"$1\" = -G ]; then\n[ -z \"$SSH_G_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_G_ARGS\"\n" +
 			"[ -z \"$SSH_G_ERR\" ] || { printf '%s\\n' \"$SSH_G_ERR\" >&2; exit 255; }\nprintf '%s\\n' \"$SSH_G\"; exit\nfi\n" +
-			"[ -z \"$SSH_INT\" ] || kill -INT $$\n[ -z \"$SSH_FAIL_ONCE\" ] || [ ! -e \"$SSH_FAIL_ONCE\" ] || : > \"$SSH_FAIL_ONCE.again\"\n" +
+			"[ -z \"$SSH_FAIL_ONCE\" ] || [ ! -e \"$SSH_FAIL_ONCE\" ] || : > \"$SSH_FAIL_ONCE.again\"\n" +
 			"if [ -n \"$SSH_FAIL_ONCE\" ] && [ ! -e \"$SSH_FAIL_ONCE\" ]; then : > \"$SSH_FAIL_ONCE\"; [ -z \"$SSH_FAIL_OUT\" ] || printf '%s\\n' \"$SSH_FAIL_OUT\"; printf '%s\\n' \"$SSH_FAIL_ERR\" >&2; exit \"$SSH_FAIL_CODE\"; fi\n" +
-			"[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\n[ -z \"$SSH_CHILD\" ] || sh -c \"$SSH_CHILD\"\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
+			"[ -z \"$SSH_ARGS\" ] || printf '%s\\n' \"$@\" > \"$SSH_ARGS\"\n[ -z \"$SSH_BANNER\" ] || echo \"$SSH_BANNER\"\n[ -z \"$SSH_BANNER_CMD\" ] || sh -c \"$SSH_BANNER_CMD\" 2>/dev/null\n[ -z \"$SSH_CHILD\" ] || sh -c \"$SSH_CHILD\"\n[ -z \"$SSH_HUP_CHILD\" ] || sh -c 'kill -HUP $$; : > \"$SSH_HUP_CHILD\"'\neval \"cmd=\\${$#}\"\nexec sh -c \"$cmd\"\n",
 		"uname": "#!/bin/sh\necho \"$FAKE_UNAME\"\n",
 		"id":    "#!/bin/sh\necho \"$FAKE_UID\"\n",
 		"sudo":  "#!/bin/sh\nexec sh -c \"$FAKE_SUDO\" sudo \"$@\"\n",
@@ -899,11 +901,33 @@ func TestOpenUnreachable(t *testing.T) {
 // spec: Running a pipeline/Apply ("Ctrl-C reaches only winch, not its SSH
 // sessions")
 func TestSSHIgnoresInterrupt(t *testing.T) {
+	for _, sig := range []string{"INT", "TERM"} {
+		t.Run(sig, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			t.Setenv("SSH_SIGNAL", sig)
+			if _, err := open(t, stateDir, []helperbin.Binary{fakeHelper("arm64")}); err == nil || err.Error() != "ran arm64" {
+				t.Errorf("error = %v, want the helper to run", err)
+			}
+			s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+			if err := s.Access(context.Background()); err != nil {
+				t.Errorf("Access = %v", err)
+			}
+		})
+	}
+}
+
+// ssh ends its ProxyCommand with SIGHUP when ssh exits.
+//
+// spec: Remote execution/Sessions
+func TestSSHChildKeepsHangup(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
-	t.Setenv("SSH_INT", "1")
-	_, err := open(t, stateDir, []helperbin.Binary{fakeHelper("arm64")})
-	if err == nil || err.Error() != "ran arm64" {
-		t.Errorf("error = %v, want the helper to run", err)
+	survived := filepath.Join(t.TempDir(), "survived")
+	t.Setenv("SSH_HUP_CHILD", survived)
+	if _, err := open(t, stateDir, []helperbin.Binary{fakeHelper("arm64")}); err == nil || err.Error() != "ran arm64" {
+		t.Fatalf("error = %v, want the helper to run", err)
+	}
+	if _, err := os.Stat(survived); err == nil {
+		t.Error("a child of ssh ignores SIGHUP")
 	}
 }
 

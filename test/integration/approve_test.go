@@ -79,12 +79,14 @@ func TestApprove(t *testing.T) {
 		}
 	})
 
-	t.Run("SIGINT during a package install lets the install finish", func(t *testing.T) {
-		vm.MustRun(t, "apt-get update -qq && rm -f /root/winch-wait.started /root/winch-wait.go /root/after")
-		dir := vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: demo\ninventory: test\n",
-			"inventories/test.yaml": "hosts:\n  approve:\n    address: 127.0.0.1\n",
-			"pipelines/site.yaml": `stages:
+	vm.MustRun(t, "apt-get update -qq")
+	for name, sig := range map[string]syscall.Signal{"SIGINT": syscall.SIGINT, "SIGTERM": syscall.SIGTERM} {
+		t.Run(name+" during a package install lets the install finish", func(t *testing.T) {
+			vm.MustRun(t, "dpkg --purge winch-wait >/dev/null; rm -f /root/winch-wait.started /root/winch-wait.go /root/after")
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: demo\ninventory: test\n",
+				"inventories/test.yaml": "hosts:\n  approve:\n    address: 127.0.0.1\n",
+				"pipelines/site.yaml": `stages:
   - name: base
     hosts: all
     steps:
@@ -94,30 +96,31 @@ func TestApprove(t *testing.T) {
           path: /root/after
           content: "after\n"
 `,
+			})
+			w := startWinch(t, dir, "apply", "site", "--yes")
+			vm.MustRun(t, "timeout 120 sh -c 'until [ -e /root/winch-wait.started ]; do sleep 0.2; done'")
+			w.signal(t, sig)
+			time.Sleep(2 * time.Second)
+			if w.exited() {
+				t.Fatalf("winch ended during the install: %s", w.stderr.String())
+			}
+			vm.MustRun(t, "touch /root/winch-wait.go")
+			code := w.wait(t)
+			if code != 1 || !strings.Contains(w.stderr.String(), "approve: interrupted") {
+				t.Errorf("exit %d, want 1 and the host interrupted", code)
+			}
+			if out := vm.MustRun(t, "dpkg-query -W -f='${db:Status-Abbrev}' winch-wait; test -e /root/after && echo after; true"); out != "ii " {
+				t.Errorf("after the interrupt: %q, want winch-wait installed and no /root/after", out)
+			}
+			r := lab.Winch(t, dir, "plan", "site", "--exit-code")
+			if r.Code != 2 || strings.Contains(r.Stdout, "winch-wait") || !strings.Contains(r.Stdout, "+ file /root/after") {
+				t.Errorf("the next plan: exit %d, want only the file", r.Code)
+			}
+			if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+				t.Errorf("the next apply: exit %d", r.Code)
+			}
 		})
-		w := startWinch(t, dir, "apply", "site", "--yes")
-		vm.MustRun(t, "timeout 120 sh -c 'until [ -e /root/winch-wait.started ]; do sleep 0.2; done'")
-		w.interrupt(t)
-		time.Sleep(2 * time.Second)
-		if w.exited() {
-			t.Fatalf("winch ended during the install: %s", w.stderr.String())
-		}
-		vm.MustRun(t, "touch /root/winch-wait.go")
-		code := w.wait(t)
-		if code != 1 || !strings.Contains(w.stderr.String(), "approve: interrupted") {
-			t.Errorf("exit %d, want 1 and the host interrupted", code)
-		}
-		if out := vm.MustRun(t, "dpkg-query -W -f='${db:Status-Abbrev}' winch-wait; test -e /root/after && echo after; true"); out != "ii " {
-			t.Errorf("after the interrupt: %q, want winch-wait installed and no /root/after", out)
-		}
-		r := lab.Winch(t, dir, "plan", "site", "--exit-code")
-		if r.Code != 2 || strings.Contains(r.Stdout, "winch-wait") || !strings.Contains(r.Stdout, "+ file /root/after") {
-			t.Errorf("the next plan: exit %d, want only the file", r.Code)
-		}
-		if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
-			t.Errorf("the next apply: exit %d", r.Code)
-		}
-	})
+	}
 
 	t.Run("a second SIGINT ends winch, and the install finishes on the host", func(t *testing.T) {
 		vm.MustRun(t, "dpkg --purge winch-wait >/dev/null; rm -f /root/winch-wait.started /root/winch-wait.go /root/after")
@@ -128,9 +131,9 @@ func TestApprove(t *testing.T) {
 		})
 		w := startWinch(t, dir, "apply", "site", "--yes")
 		vm.MustRun(t, "timeout 120 sh -c 'until [ -e /root/winch-wait.started ]; do sleep 0.2; done'")
-		w.interrupt(t)
+		w.signal(t, syscall.SIGINT)
 		time.Sleep(500 * time.Millisecond)
-		w.interrupt(t)
+		w.signal(t, syscall.SIGINT)
 		select {
 		case <-w.done:
 		case <-time.After(30 * time.Second):
@@ -198,11 +201,11 @@ func startWinch(t *testing.T, dir string, args ...string) *winchProcess {
 	return w
 }
 
-// interrupt sends SIGINT to the process group, as a Ctrl-C in a terminal
-// does.
-func (w *winchProcess) interrupt(t *testing.T) {
+// signal sends sig to the process group, as a Ctrl-C in a terminal does with
+// SIGINT.
+func (w *winchProcess) signal(t *testing.T, sig syscall.Signal) {
 	t.Helper()
-	if err := syscall.Kill(-w.cmd.Process.Pid, syscall.SIGINT); err != nil {
+	if err := syscall.Kill(-w.cmd.Process.Pid, sig); err != nil {
 		t.Fatal(err)
 	}
 }

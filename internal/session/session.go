@@ -239,7 +239,7 @@ type resolved struct {
 // resolve reads the SSH config of the host of cfg with ssh -G. It fails when
 // the host name, port, or jump host differs from cfg.Want.
 func resolve(ctx context.Context, cfg Config) (resolved, error) {
-	out, err := exec.CommandContext(ctx, "ssh", append([]string{"-G"}, argv(cfg, "")...)...).Output()
+	out, err := sshCommand(ctx, append([]string{"-G"}, argv(cfg, "")...)...).Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
@@ -341,6 +341,15 @@ type sshExit struct {
 	started bool
 }
 
+// sshCommand runs ssh with SIGINT and SIGTERM ignored. ssh keeps an ignored
+// signal ignored, so a Ctrl-C in the terminal or a SIGTERM to the process
+// group reaches only winch. ssh stays in the terminal's process group and can
+// still ask for a host key or a passphrase. It keeps SIGHUP: its ProxyCommand
+// inherits what ssh ignores, and ssh ends it with SIGHUP.
+func sshCommand(ctx context.Context, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT TERM; exec ssh "$@"`, "ssh"}, args...)...)
+}
+
 // dial starts ssh and the helper. When it fails after ssh started, it also
 // returns how ssh ended.
 func dial(ctx context.Context, cfg Config, jump string) (*Session, sshExit, error) {
@@ -349,10 +358,7 @@ func dial(ctx context.Context, cfg Config, jump string) (*Session, sshExit, erro
 		dir = StateDir
 	}
 	args := append(argv(cfg, jump), command(Script(cfg.Binaries, dir)))
-	// ssh keeps an ignored SIGINT ignored, so a Ctrl-C in the terminal reaches
-	// only winch. ssh stays in the terminal's process group and can still ask
-	// for a host key or a passphrase.
-	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, args...)...)
+	cmd := sshCommand(ctx, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, sshExit{}, err
@@ -665,7 +671,7 @@ func (s *Session) Access(ctx context.Context) error {
 		now.User = r.user
 		return DestinationChanged(s.dest, now)
 	}
-	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `trap "" INT; exec ssh "$@"`, "ssh"}, append(argv(cfg, r.proxyJump), accessCommand)...)...)
+	cmd := sshCommand(ctx, append(argv(cfg, r.proxyJump), accessCommand)...)
 	stdout, stderr := &limitedBuffer{max: 4 << 10}, &limitedBuffer{max: 4 << 10}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = 5 * time.Second
