@@ -39,7 +39,8 @@ type Project struct {
 	// the same by name.
 	vars     []*Var
 	defaults map[string]*Var
-	// filter learns the secret values that the evaluation derives.
+	// filter knows the lines of plain project text, which a line of a
+	// multi-line part does not count as.
 	filter *secret.Filter
 	// secrets is true when the inventory or a default holds a !secret.
 	secrets bool
@@ -298,9 +299,6 @@ func (p *Project) Sums() map[string]string { return p.sums }
 
 // SetFlags returns the --set flags.
 func (p *Project) SetFlags() []string { return p.setFlags }
-
-// Filter returns the filter of the secret values.
-func (p *Project) Filter() *secret.Filter { return p.filter }
 
 // commandPipeline builds the pipeline of c. Errors name the argument as a
 // position without a line, or have no position.
@@ -1750,8 +1748,7 @@ func (st Step) instance(e *Env, decode func(*yamlx.Node, any) error) (Step, any,
 // placeholder variant fails. It also returns the HashArgs of s. real are the
 // computed arguments of s, and thens the commands of then in the three
 // variants. The placeholder variants skip the checks of the module, which
-// can reject a placeholder. The parts that come from a secret go to the
-// filter.
+// can reject a placeholder.
 func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, any, error) {
 	mods := [3]module.Module{s.Args}
 	args := [3]any{real}
@@ -1798,7 +1795,6 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, any, err
 		}
 	}
 	parts = slices.DeleteFunc(parts, func(p string) bool { return p == "" })
-	e.learn(parts)
 	if contentOK && len(parts) == 0 {
 		return nil, nil, nil
 	}

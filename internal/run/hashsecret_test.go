@@ -12,14 +12,13 @@ import (
 // secretPlan returns a plan with one file step that reads the secret value,
 // with the old content old, of a project whose inventory has the SHA-256 inv.
 func secretPlan(value, old, inv string) *Plan {
-	f := secret.NewFilter()
-	f.Add(value)
 	ph := secret.Placeholder(1)
 	st := project.Step{
 		Module:   "file",
 		Args:     &module.File{Path: "/etc/" + value, Data: []byte("password " + value + "\n")},
 		Then:     "passwd " + value,
 		Secret:   true,
+		Parts:    []string{value},
 		HashArgs: &module.File{Path: "/etc/" + ph, Data: []byte("password " + ph + "\n")},
 		HashThen: "passwd " + ph,
 	}
@@ -31,8 +30,7 @@ func secretPlan(value, old, inv string) *Plan {
 		Stages: []StagePlan{{Stage: &project.Stage{Name: "base"}, Hosts: []HostPlan{{Host: h, Steps: []Planned{
 			{Step: st, Result: res, Address: "base#1"},
 		}}}}},
-		sums:   map[string]string{"inventories/test.yaml": inv},
-		filter: f,
+		sums: map[string]string{"inventories/test.yaml": inv},
 	}
 }
 
@@ -41,6 +39,9 @@ func TestHashSecretCiphertext(t *testing.T) {
 	a := secretPlan("hunter2", "password hunter2 old\n", "sum1").HashInput()
 	if b := secretPlan("swordfish", "password swordfish old\n", "sum1").HashInput(); !bytes.Equal(a, b) {
 		t.Errorf("two plain values in the same project files give two hash inputs:\n%s\n%s", a, b)
+	}
+	if a, b := secretPlan("a<b&c>d9", "", "sum1").HashInput(), secretPlan("x<y&z>w9", "", "sum1").HashInput(); !bytes.Equal(a, b) {
+		t.Errorf("two plain values with HTML characters give two hash inputs:\n%s\n%s", a, b)
 	}
 	if b := secretPlan("hunter2", "password hunter2 old\n", "sum2").HashInput(); bytes.Equal(a, b) {
 		t.Errorf("a new inventory file did not change the hash input:\n%s", a)

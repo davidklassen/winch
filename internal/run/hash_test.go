@@ -250,8 +250,9 @@ func TestHashChanges(t *testing.T) {
 }
 
 // hashSecretProject loads a project whose pipeline reads the secret pw, with
-// the recipe app, the other files extra, and the --set flags set.
-func hashSecretProject(t *testing.T, value, pipeline, recipe string, extra map[string]string, set []string) *project.Project {
+// the recipe app, the other files extra, and the --set flags set. It also
+// returns the filter that knows the secret.
+func hashSecretProject(t *testing.T, value, pipeline, recipe string, extra map[string]string, set []string) (*project.Project, *secret.Filter) {
 	t.Helper()
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
@@ -278,11 +279,12 @@ func hashSecretProject(t *testing.T, value, pipeline, recipe string, extra map[s
 		files["recipes/app/recipe.yaml"] = recipe
 	}
 	maps.Copy(files, extra)
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", set, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
+	filter := secret.NewFilter()
+	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", set, project.Keys{Identity: secret.Identity{Path: identity}, Filter: filter})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return p
+	return p, filter
 }
 
 const stage = "stages:\n  - name: base\n    hosts: all\n    steps:\n"
@@ -334,7 +336,8 @@ handlers:
 				h := fakehost.New()
 				h.SetFile("web1", "/etc/pw", "password "+value+" old\n")
 				h.SetFile("web1", "/etc/"+value+".key", "password swordfish old\n")
-				return run.MakePlan(context.Background(), hashSecretProject(t, value, tt.pipeline, tt.recipe, nil, nil), h.Connector(), run.Options{})
+				p, _ := hashSecretProject(t, value, tt.pipeline, tt.recipe, nil, nil)
+				return run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			}
 			for _, short := range []bool{false, true} {
 				old, new := "hunter2", "hunter3"
@@ -380,7 +383,8 @@ steps:
 	plan := func(recipe string) *run.Plan {
 		// The same key and ciphertext in both projects.
 		cryptotest.SetGlobalRandom(t, 1)
-		p := run.MakePlan(context.Background(), hashSecretProject(t, "hunter2", stage+"      - recipe: app\n", recipe, nil, nil), fakehost.New().Connector(), run.Options{})
+		proj, _ := hashSecretProject(t, "hunter2", stage+"      - recipe: app\n", recipe, nil, nil)
+		p := run.MakePlan(context.Background(), proj, fakehost.New().Connector(), run.Options{})
 		if len(p.Failed) > 0 {
 			t.Fatalf("the plan failed: %v", p.Failed)
 		}
@@ -406,7 +410,8 @@ func TestHashSet(t *testing.T) {
 `
 	plan := func(set string) *run.Plan {
 		cryptotest.SetGlobalRandom(t, 1)
-		p := run.MakePlan(context.Background(), hashSecretProject(t, "hunter2", stage+"      - recipe: app\n", recipe, nil, []string{set}), fakehost.New().Connector(), run.Options{})
+		proj, _ := hashSecretProject(t, "hunter2", stage+"      - recipe: app\n", recipe, nil, []string{set})
+		p := run.MakePlan(context.Background(), proj, fakehost.New().Connector(), run.Options{})
 		if len(p.Failed) > 0 {
 			t.Fatalf("the plan failed: %v", p.Failed)
 		}

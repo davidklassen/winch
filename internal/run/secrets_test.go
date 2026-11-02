@@ -499,7 +499,8 @@ func TestSecretThenRecord(t *testing.T) {
 			}
 			h := fakehost.New()
 			h.FailCommand("web1", "echo done")
-			if ok, got := applyAll(t, hashSecretProject(t, "hunter2", stage+tt.step, "", nil, nil), h); ok {
+			p, _ := hashSecretProject(t, "hunter2", stage+tt.step, "", nil, nil)
+			if ok, got := applyAll(t, p, h); ok {
 				t.Fatalf("apply passed:\n%s", got)
 			}
 			recs := h.ThenOf("web1")
@@ -514,7 +515,8 @@ func TestSecretThenRecord(t *testing.T) {
 			h.Fix("web1 echo done")
 			tt.ok(h)
 			moved := stage + "      - file:\n          path: /etc/other\n          content: \"o\\n\"\n" + tt.step
-			if ok, got := applyAll(t, hashSecretProject(t, "hunter2", moved, "", nil, nil), h); !ok {
+			p, _ = hashSecretProject(t, "hunter2", moved, "", nil, nil)
+			if ok, got := applyAll(t, p, h); !ok {
 				t.Fatalf("apply failed:\n%s", got)
 			}
 			if got := ran(h); got != 2 {
@@ -528,7 +530,7 @@ func TestSecretThenRecord(t *testing.T) {
 			h = fakehost.New()
 			tt.ok(h)
 			h.SetThen("web1", tt.legacy)
-			p := hashSecretProject(t, "hunter2", stage+tt.step, "", nil, nil)
+			p, _ = hashSecretProject(t, "hunter2", stage+tt.step, "", nil, nil)
 			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
 			if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
@@ -572,12 +574,12 @@ func TestSecretNameMessages(t *testing.T) {
 		}, "        owner → (secret); user (secret) does not exist yet\n\n1 host: 1 to change, 0 unchanged, 0 unknown\nplan "},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			p := hashSecretProject(t, "hunter2", steps(tt.steps), "", nil, nil)
+			p, filter := hashSecretProject(t, "hunter2", steps(tt.steps), "", nil, nil)
 			h := fakehost.New()
 			tt.host(h)
 			plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
-			plan.Write(color.NewWriter(&out, p.Filter().Parts, false), color.NewWriter(&errOut, p.Filter().Parts, false))
+			plan.Write(color.NewWriter(&out, filter.Parts, false), color.NewWriter(&errOut, filter.Parts, false))
 			if all := out.String() + errOut.String(); !strings.Contains(all, tt.want) || strings.Contains(all, "ter2") {
 				t.Errorf("output = %q, want %q and no ter2", all, tt.want)
 			}
@@ -626,12 +628,12 @@ func TestSecretHostText(t *testing.T) {
 			}, true, "the rollback timer ended first; the rollback failed: restore /etc/hostname: no space left on device", "r2"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			p := hashSecretProject(t, "hunter2", steps(tt.steps), "", nil, nil)
+			p, filter := hashSecretProject(t, "hunter2", steps(tt.steps), "", nil, nil)
 			h := fakehost.New()
 			tt.host(h)
 			plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
-			w, ew := color.NewWriter(&out, p.Filter().Parts, false), color.NewWriter(&errOut, p.Filter().Parts, false)
+			w, ew := color.NewWriter(&out, filter.Parts, false), color.NewWriter(&errOut, filter.Parts, false)
 			plan.Write(w, ew)
 			if tt.apply {
 				run.Apply(t.Context(), plan, h.Connector(), run.Text(w, ew))
@@ -685,7 +687,7 @@ func TestSecretStepMask(t *testing.T) {
 			"        validate check ab; (secret)\n", "line-two"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			p := hashSecretProject(t, tt.value, steps(tt.steps), "", nil, nil)
+			p, _ := hashSecretProject(t, tt.value, steps(tt.steps), "", nil, nil)
 			h := fakehost.New()
 			tt.host(h)
 			var out, errOut bytes.Buffer
@@ -703,5 +705,23 @@ func TestSecretStepMask(t *testing.T) {
 				t.Errorf("apply output = %q, want no %q", all, tt.not)
 			}
 		})
+	}
+}
+
+// spec: Variables/Secrets in output (text filter)
+func TestSecretBranchValue(t *testing.T) {
+	p, filter := hashSecretProject(t, "hunter2", steps(`      - dir:
+          path: !expr 'vars.pw == "hunter2" ? "/srv/data" : "/srv/x"'
+      - file:
+          path: /srv/data/plain.txt
+          content: "a\n"
+`), "", nil, nil)
+	h := fakehost.New()
+	h.RemoveDir("web1", "/srv/data")
+	plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(color.NewWriter(&out, filter.Parts, false), color.NewWriter(&errOut, filter.Parts, false))
+	if all := out.String() + errOut.String(); !strings.Contains(all, "    + dir /srv/(secret)\n") || !strings.Contains(all, "    + file /srv/data/plain.txt\n") {
+		t.Errorf("output = %q, want the masked branch value and the plain path of the second step", all)
 	}
 }

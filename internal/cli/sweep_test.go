@@ -44,7 +44,7 @@ var sweepForms = []string{
 // form of sweepForms that its output holds. A fix that removes a leak removes
 // its line here.
 var sweepLeaks = []string{
-	// exec evaluates no step, so the filter knows no value built from a
+	// exec evaluates no step, so no step mask covers a value built from a
 	// secret.
 	"exec: " + strings.TrimRight(sweepBase64[8:], "="),
 }

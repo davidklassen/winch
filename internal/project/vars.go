@@ -461,15 +461,6 @@ func (e *Env) masked(err error, f func(*Env) error) error {
 	return maskError(err, alt)
 }
 
-// learn adds the secret parts of an evaluation to the filter.
-func (e *Env) learn(parts []string) {
-	for _, p := range parts {
-		if p != "" {
-			e.filter.Add(p)
-		}
-	}
-}
-
 func (e *Env) templateData() map[string]any {
 	d := map[string]any{
 		"vars":  e.vars[e.n],
@@ -928,10 +919,6 @@ func (p *Project) evalValue(e *Env, v *Var) ([3]any, bool, error) {
 		case isSecret:
 			vals[n] = force(vals[0], vals[n], n)
 		}
-	}
-	if isSecret {
-		_, parts := secret.MaskValue(vals[0], vals[1], vals[2])
-		e.learn(parts)
 	}
 	return vals, isSecret, nil
 }
