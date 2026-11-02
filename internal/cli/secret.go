@@ -259,6 +259,12 @@ func secretRekey(ctx context.Context, env Env, f *flags, args []string) int {
 	}
 	n, files, err := project.Rekey(ctx, env.Dir, identity)
 	if err != nil {
+		if re, ok := errors.AsType[*project.RekeyError](err); ok && len(re.Rewrote) > 0 {
+			fmt.Fprintf(env.stdout, "rewrote %d of %s:\n", len(re.Rewrote), count(re.Files, "file"))
+			for _, file := range re.Rewrote {
+				fmt.Fprintf(env.stdout, "  %s\n", file)
+			}
+		}
 		env.fail(err)
 		return exitInvalid
 	}
