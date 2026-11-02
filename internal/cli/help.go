@@ -194,7 +194,7 @@ fmt shows the error, exits with code 3, and changes no file.`,
 	},
 	{
 		name:    "plan",
-		summary: "show the changes and change nothing",
+		summary: "show the changes that apply would make",
 		examples: []example{
 			{"show the changes of the pipeline site", "winch plan site"},
 			{"use the inventory production", "winch plan site --inventory production"},
@@ -234,7 +234,7 @@ assert.`,
 	},
 	{
 		name:    "apply",
-		summary: "show the changes, ask, then make them",
+		summary: "make the changes after you approve the plan",
 		examples: []example{
 			{"plan the pipeline site, ask, and make the changes", "winch apply site"},
 			{"apply on the test inventory without the question", "winch apply site --inventory test --yes"},

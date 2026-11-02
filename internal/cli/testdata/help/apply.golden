@@ -1,4 +1,4 @@
-winch apply: show the changes, ask, then make them
+winch apply: make the changes after you approve the plan
 
 Examples:
   # plan the pipeline site, ask, and make the changes
