@@ -190,7 +190,7 @@ func (in *install) run(osName, arch string, env ...string) (string, error) {
 	return string(out), err
 }
 
-// spec: docs/design/release.md Install/Install script
+// spec: dev/design/release.md Install/Install script
 func TestInstall(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -282,7 +282,7 @@ func TestInstall(t *testing.T) {
 	}
 }
 
-// spec: docs/design/release.md Install/Install script
+// spec: dev/design/release.md Install/Install script
 func TestInstallReplaces(t *testing.T) {
 	t.Parallel()
 	in := newInstall(t, sumTools(t))
@@ -303,7 +303,7 @@ func TestInstallReplaces(t *testing.T) {
 	}
 }
 
-// spec: docs/design/release.md Install/Install script
+// spec: dev/design/release.md Install/Install script
 func TestInstallChecksumTools(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -337,7 +337,7 @@ func TestInstallChecksumTools(t *testing.T) {
 	}
 }
 
-// spec: docs/design/release.md Install/Install script
+// spec: dev/design/release.md Install/Install script
 func TestInstallKeepsOldOnError(t *testing.T) {
 	t.Parallel()
 	in := newInstall(t, sumTools(t))
@@ -359,7 +359,7 @@ func TestInstallKeepsOldOnError(t *testing.T) {
 	}
 }
 
-// spec: docs/design/release.md Install/Install script
+// spec: dev/design/release.md Install/Install script
 func TestInstallWinchFails(t *testing.T) {
 	t.Parallel()
 	in := newInstall(t, sumTools(t))
@@ -374,7 +374,7 @@ func TestInstallWinchFails(t *testing.T) {
 	}
 }
 
-// spec: docs/design/release.md Install/Install script
+// spec: dev/design/release.md Install/Install script
 func TestInstallCut(t *testing.T) {
 	t.Parallel()
 	script, err := os.ReadFile("install.sh")

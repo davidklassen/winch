@@ -55,7 +55,7 @@ func readArchive(t *testing.T, name string) []byte {
 	return data
 }
 
-// spec: docs/design/release.md Platforms; Assets
+// spec: dev/design/release.md Platforms; Assets
 func TestArchives(t *testing.T) {
 	sums, err := os.ReadFile("../dist/checksums.txt")
 	if err != nil {
@@ -111,7 +111,7 @@ func checkBuild(t *testing.T, name, platform string, winch []byte) {
 	}
 }
 
-// spec: docs/design/release.md Install/Install script
+// spec: dev/design/release.md Install/Install script
 func TestInstallBuild(t *testing.T) {
 	dist, err := filepath.Abs("../dist")
 	if err != nil {
@@ -136,7 +136,7 @@ func TestInstallBuild(t *testing.T) {
 	}
 }
 
-// spec: docs/design/release.md Platforms
+// spec: dev/design/release.md Platforms
 func TestHelperBytes(t *testing.T) {
 	if n := len(helperbin.Binaries()); n != 2 {
 		t.Fatalf("the test binary holds %d helpers, want 2", n)
@@ -152,7 +152,7 @@ func TestHelperBytes(t *testing.T) {
 	}
 }
 
-// spec: docs/design/release.md Platforms
+// spec: dev/design/release.md Platforms
 func TestHelperReproducible(t *testing.T) {
 	head, err := exec.Command("git", "rev-parse", "HEAD").Output()
 	if err != nil {
