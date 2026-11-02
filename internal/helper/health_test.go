@@ -92,8 +92,8 @@ func TestHealth(t *testing.T) {
 		})
 	})
 
-	// A run gets only the time left, so a command that hangs on a later run
-	// ends at the timeout, not one timeout after that run starts. The stopped
+	// A run ends when the gate time ends, so a command that hangs on a later
+	// run ends at the timeout, not one timeout after that run starts. The stopped
 	// run has no result, so the error shows the run before it. In a synctest
 	// bubble the clock stops while a command runs, so these cases take real
 	// time.
