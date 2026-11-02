@@ -1092,6 +1092,8 @@ func TestSecretDecrypt(t *testing.T) {
 		{"a missing variable", "", "vars.nope", "vars.nope is not in winch.yaml"},
 		{"a missing host", "", "inventories.test.hosts.web9.vars.pw", "host web9 is not in inventories/test.yaml"},
 		{"a bad path", "", "pw", `winch secret decrypt: "pw" is not a path to a variable value`},
+		{"a missing key with dots", "", `vars.users["alice.b"]`, `vars.users["alice.b"] is not in winch.yaml; did you mean "alice"?`},
+		{"a bracket without its end", "", `vars.users["alice`, `winch secret decrypt: "vars.users[\"alice" is not a path to a variable value; put a key with dots in brackets`},
 		{"empty stdin", "\n", "", "winch secret decrypt: stdin holds no !secret value"},
 		{"two paths", "", "vars.pw vars.x", "winch secret decrypt: takes one path at most"},
 		{"a list item", "", "vars.list.0", "cannot read vars.list.0: vars.list is a list; a path cannot name a list item"},
@@ -1129,7 +1131,8 @@ func TestSecretDecryptPaths(t *testing.T) {
 	pw := encrypt(t, dir, "hunter2")
 	files := map[string]string{
 		"winch.yaml": "name: acme\nrecipients:\n  - " + id.Recipient().String() + "\n" +
-			"hosts:\n  db1.acme.com:\n    vars:\n      pw: " + pw + "\ngroups:\n  all:\n    vars:\n      pw: " + pw + "\n",
+			"hosts:\n  db1.acme.com:\n    vars:\n      pw: " + pw + "\ngroups:\n  all:\n    vars:\n      pw: " + pw + "\n" +
+			"vars:\n  dkim_keys:\n    acme.com: " + pw + "\n",
 		"recipes/mail/recipe.yaml": "vars:\n  mail_pw: " + pw + "\nsteps: []\n",
 		"pipelines/site.yaml":      "stages: [",
 	}
@@ -1144,7 +1147,7 @@ func TestSecretDecryptPaths(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(dir, "inventories")); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"hosts.db1.acme.com.vars.pw", "groups.all.vars.pw", "recipes.mail.vars.mail_pw"} {
+	for _, path := range []string{"hosts.db1.acme.com.vars.pw", "groups.all.vars.pw", "recipes.mail.vars.mail_pw", `vars.dkim_keys["acme.com"]`} {
 		r := winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "decrypt", path)
 		if r.code != exitOK || r.out != "hunter2" || r.err != "" {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", path, r.code, r.out, r.err)

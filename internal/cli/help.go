@@ -40,7 +40,8 @@ a default in the recipe mail. groups.all.vars.x and hosts.web1.vars.x
 are in the inventory at the top of winch.yaml, and
 inventories.prod.groups.all.vars.x is in the inventory prod. A path can
 go on into a map variable, such as vars.users.alice, but not into a
-list.`
+list. A key with dots or "[" stands in brackets and double quotes,
+such as vars.dkim_keys["acme.com"].`
 	pathRules = `The command replaces the value at the path, or adds a missing path
 with the maps it needs. The inventory, the recipe, the host, and the
 group must exist; the group all always exists. Something in the project
@@ -429,6 +430,7 @@ password.`,
 		examples: []example{
 			{"type a password and write it as the default of a variable", "winch secret encrypt vars.db_password"},
 			{"write the content of a file as the default of a variable", "winch secret encrypt vars.dkim_key < dkim.key"},
+			{"write a key into a map variable keyed by domain", `winch secret encrypt 'vars.dkim_keys["acme.com"]' < acme.com.key`},
 			{"print the output of a command as a !secret value", "openssl rand -hex 16 | winch secret encrypt"},
 		},
 		usage: []string{"winch secret encrypt [<path>]"},
