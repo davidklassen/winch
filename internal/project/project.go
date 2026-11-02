@@ -719,7 +719,7 @@ type stageFile struct {
 func (*stageFile) Noun() string { return "a stage" }
 
 type healthFile struct {
-	Command string `yaml:"command,required" line:"must exit 0" doc:"Must exit 0. winch runs it on the host once per second until it exits 0, then keeps running it for stable seconds. A failed run starts the wait again."`
+	Command string `yaml:"command,required" line:"must exit 0" doc:"Must exit 0. winch runs it on the host once per second until it exits 0, then keeps running it for stable seconds. A failed run starts the wait again. An exit of 126 or 127, when sh cannot find or run the command, fails the gate at once."`
 	Stable  int    `yaml:"stable" default:"0" line:"seconds the command keeps passing" doc:"Seconds the command keeps passing. It is less than timeout."`
 	Timeout *int   `yaml:"timeout" default:"60" line:"seconds the gate has to pass" doc:"Seconds the gate has to pass. Then the host fails, and the error shows the end of the last output."`
 }

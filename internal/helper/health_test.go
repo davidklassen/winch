@@ -31,6 +31,7 @@ func counter(t *testing.T, check string) (string, func() int) {
 // spec: Running a pipeline/Health gates
 func TestHealth(t *testing.T) {
 	const interval = 50 * time.Millisecond
+	dir := t.TempDir()
 	tests := []struct {
 		name    string
 		check   string
@@ -49,6 +50,10 @@ func TestHealth(t *testing.T) {
 			wantErr: "did not pass within 0.3s: exit status 1: run 6", runs: 6, took: 300 * time.Millisecond},
 		{name: "passing without the stable time fails at the timeout", check: "[ $n -ge 4 ]", stable: time.Second, timeout: 400 * time.Millisecond,
 			wantErr: "passed, but not for 1s within 0.4s", runs: 8, took: 400 * time.Millisecond},
+		{name: "a command that sh cannot find fails at once", check: "winch-no-such-command", timeout: time.Second,
+			wantErr: "exit status 127: run 1\nsh: ", runs: 1, took: 0},
+		{name: "a command that sh cannot run fails at once", check: dir, timeout: time.Second,
+			wantErr: "exit status 126: run 1\nsh: ", runs: 1, took: 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -60,7 +65,7 @@ func TestHealth(t *testing.T) {
 				switch {
 				case tt.wantErr == "" && err != nil:
 					t.Errorf("error %v", err)
-				case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
+				case tt.wantErr != "" && (err == nil || !strings.HasPrefix(err.Error(), tt.wantErr)):
 					t.Errorf("error %v, want %q", err, tt.wantErr)
 				}
 				if n := runs(); n != tt.runs {

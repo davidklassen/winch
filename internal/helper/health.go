@@ -3,7 +3,9 @@ package helper
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -31,7 +33,8 @@ func runHealth(ctx context.Context, params json.RawMessage, checks records) erro
 // health runs the command of a gate until it exits 0, and then until it has
 // passed for h.Stable. A failed run starts the wait again. Runs start
 // interval apart, and each run ends when the gate time ends. The gate fails
-// when it does not pass within h.Timeout.
+// when it does not pass within h.Timeout, and at once when sh cannot run the
+// command.
 func health(ctx context.Context, h protocol.Health, interval, killDelay time.Duration) error {
 	deadline := time.Now().Add(h.Timeout)
 	gate, cancel := context.WithDeadline(ctx, deadline)
@@ -47,6 +50,11 @@ func health(ctx context.Context, h protocol.Health, interval, killDelay time.Dur
 		// The end of the gate stopped this run, so it has no result.
 		if err != nil && gate.Err() != nil {
 			break
+		}
+		// sh exits 126 or 127 when it cannot run the command, and a later run
+		// will not change that.
+		if exit, ok := errors.AsType[*exec.ExitError](err); ok && (exit.ExitCode() == 126 || exit.ExitCode() == 127) {
+			return errors.New(strings.TrimPrefix(err.Error(), module.FirstLine(h.Command)+": "))
 		}
 		switch {
 		case err != nil:
