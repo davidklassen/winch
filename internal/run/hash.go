@@ -8,6 +8,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
+	"github.com/davidklassen/winch/internal/secret"
 )
 
 type hashRun struct {
@@ -40,7 +41,8 @@ type hashStep struct {
 	Address string `json:"address"`
 	Module  string `json:"module,omitempty"`
 	// A step that reads a secret has the Args and Then of the first
-	// placeholder variant, and its Result as filtered JSON text.
+	// placeholder variant, and its Result as JSON text with its secret
+	// parts masked.
 	Args   any      `json:"args,omitempty"`
 	Then   string   `json:"then,omitempty"`
 	Notify []string `json:"notify,omitempty"`
@@ -55,7 +57,7 @@ type hashStep struct {
 
 // hashResult is a check result with the old content as its SHA-256. A step
 // that reads a secret has no old content: it can hold an earlier value of the
-// secret, which the filter does not know.
+// secret, which the step's parts do not hold.
 type hashResult struct {
 	module.Result
 	Old string `json:"old,omitempty"`
@@ -128,7 +130,7 @@ func (plan *Plan) stepHash(p Planned) hashStep {
 		h.Result = r
 		if p.Step.Secret {
 			b, _ := json.Marshal(r)
-			h.Result = plan.filter.Text(string(b))
+			h.Result = secret.Hide(string(b), p.Step.Parts)
 		}
 	}
 	return h

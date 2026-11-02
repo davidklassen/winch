@@ -304,15 +304,18 @@ func TestSecretArgNullWithPlaceholders(t *testing.T) {
 	}
 }
 
-// spec: Variables/Secrets in output (two evaluations, text filter)
-func TestSecretFilterLearns(t *testing.T) {
-	_, keys, err := evalSecret(t, "  - file:\n      path: /a\n      content: !expr 'upper(vars.pw) + \"\\n\" + vars.line'\n", nil)
+// spec: Variables/Secrets in output (three evaluations, text filter)
+func TestSecretFilterValues(t *testing.T) {
+	steps, keys, err := evalSecret(t, "  - file:\n      path: /a\n      content: !expr 'upper(vars.pw) + \"\\n\" + vars.line'\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	in := "hunter2 HUNTER2 user:hunter2 $6$aaa$alicehash winch-yaml-token plain-bob"
-	if got, want := keys.Filter.Text(in), "(secret) (secret) user:(secret) (secret) (secret) plain-bob"; got != want {
+	if got, want := keys.Filter.Text(in), "(secret) HUNTER2 user:(secret) (secret) (secret) plain-bob"; got != want {
 		t.Errorf("filter: %q, want %q", got, want)
+	}
+	if got, want := steps[0].HostText(in), "(secret) (secret) user:(secret) $6$aaa$alicehash winch-yaml-token plain-bob"; got != want {
+		t.Errorf("step mask: %q, want %q", got, want)
 	}
 }
 
@@ -1567,7 +1570,7 @@ func TestScanProjectLinkedDir(t *testing.T) {
 }
 
 // spec: Variables/Secrets in output (three evaluations, text filter)
-func TestSecretFilterLearnsNames(t *testing.T) {
+func TestSecretStepMaskNames(t *testing.T) {
 	const name = `!expr 'trimPrefix(vars.pw, "hun")'`
 	for _, tt := range []struct{ name, steps, in string }{
 		{"file owner", "  - file:\n      path: /a\n      content: x\n      owner: " + name + "\n", "user ter2"},
@@ -1578,15 +1581,18 @@ func TestSecretFilterLearnsNames(t *testing.T) {
 		{"cmd dir", "  - cmd:\n      command: make\n      user: " + name + "\n      dir: !expr '\"/srv/\" + trimPrefix(vars.pw, \"hun\")'\n", "user ter2, dir /srv/ter2"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			_, keys, err := evalSecret(t, tt.steps, nil)
+			steps, keys, err := evalSecret(t, tt.steps, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			// The values that do not come from the secret stay.
 			in := tt.in + ", /a app make root"
 			want := strings.NewReplacer("ter2", secret.Mark, "TER2", secret.Mark).Replace(in)
-			if got := keys.Filter.Text(in); got != want {
-				t.Errorf("filter: %q, want %q", got, want)
+			if got := steps[0].HostText(in); got != want {
+				t.Errorf("step mask: %q, want %q", got, want)
+			}
+			if got := keys.Filter.Text(in); got != in {
+				t.Errorf("filter: %q, want %q", got, in)
 			}
 		})
 	}
