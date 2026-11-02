@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"iter"
+	"maps"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -67,12 +71,40 @@ func (f *Filter) Parts(parts []string) []string {
 	s := strings.Join(parts, "")
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	marked := make([]bool, len(s))
+	marked := match(s, maps.Keys(f.values))
 	set := func(from, to int) {
 		for i := from; i < to; i++ {
 			marked[i] = true
 		}
 	}
+	for _, p := range patterns {
+		for _, m := range p.find(s) {
+			set(m[0], m[1])
+		}
+	}
+	keyBlocks(s, set)
+	return split(s, marked, parts)
+}
+
+// Hide returns s with each of parts, also in its Go-quoted form, as Mark,
+// like Filter.Text. It skips no part for its length.
+func Hide(s string, parts []string) string {
+	if len(parts) == 0 {
+		return s
+	}
+	values := slices.Clone(parts)
+	for _, p := range parts {
+		if q := strconv.Quote(p); q[1:len(q)-1] != p {
+			values = append(values, q[1:len(q)-1])
+		}
+	}
+	return split(s, match(s, slices.Values(values)), []string{s})[0]
+}
+
+// match marks the bytes of s that a value matches. A match inside a Mark of
+// s does not count.
+func match(s string, values iter.Seq[string]) []bool {
+	marked := make([]bool, len(s))
 	var marks [][2]int
 	for i := 0; ; {
 		j := strings.Index(s[i:], Mark)
@@ -90,24 +122,29 @@ func (f *Filter) Parts(parts []string) []string {
 		}
 		return false
 	}
-	for v := range f.values {
+	for v := range values {
+		if v == "" {
+			continue
+		}
 		for i := 0; ; {
 			j := strings.Index(s[i:], v)
 			if j < 0 {
 				break
 			}
 			if from, to := i+j, i+j+len(v); !inMark(from, to) {
-				set(from, to)
+				for k := from; k < to; k++ {
+					marked[k] = true
+				}
 			}
 			i += j + 1
 		}
 	}
-	for _, p := range patterns {
-		for _, m := range p.find(s) {
-			set(m[0], m[1])
-		}
-	}
-	keyBlocks(s, set)
+	return marked
+}
+
+// split returns s, as parts make it, with each run of marked bytes as one
+// Mark. A newline stays.
+func split(s string, marked []bool, parts []string) []string {
 	out := make([]string, len(parts))
 	i := 0
 	for k, p := range parts {

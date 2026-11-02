@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,8 +131,7 @@ func TestSecretsFailedStep(t *testing.T) {
 	if run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal("apply did not fail")
 	}
-	// The label masks the path; the error text of the host passes only the
-	// filter of the CLI.
+	// The label and the error text of the host mask the path.
 	golden.Assert(t, filepath.Join("testdata", "secrets", "apply-fails.golden"), applyOutput(&out, &errOut))
 }
 
@@ -167,7 +167,7 @@ func TestSecretAnswer(t *testing.T) {
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
-	if !strings.Contains(out.String(), "    ~ debconf app/token\n        answer (secret)\n") {
+	if !strings.Contains(out.String(), "    ~ debconf app/token\n        answer → \"(secret)\"\n") {
 		t.Errorf("plan:\n%s%s", out.String(), errOut.String())
 	}
 	for _, s := range []string{"old-token", "new-token"} {
@@ -176,7 +176,7 @@ func TestSecretAnswer(t *testing.T) {
 		}
 	}
 	applied := applyJSON(t, plan, h)
-	if !strings.Contains(applied, `"changes":["answer (secret)"]`) || strings.Contains(applied, "old-token") || strings.Contains(applied, "new-token") {
+	if !strings.Contains(applied, `"changes":["answer → \"(secret)\""]`) || strings.Contains(applied, "old-token") || strings.Contains(applied, "new-token") {
 		t.Errorf("applied events:\n%s", applied)
 	}
 }
@@ -569,7 +569,7 @@ func TestSecretNameMessages(t *testing.T) {
 			"this step creates group (secret), which an earlier step needs: s#1 user app; move this step before it\n"},
 		{"a change line from the host", "      - dir:\n          path: /a\n          owner: " + name + "\n", func(h *fakehost.Hosts) {
 			h.SetResult("web1", "/a", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner root → ter2; user ter2 does not exist yet"}})
-		}, "        owner root → (secret); user (secret) does not exist yet\n\n1 host: 1 to change, 0 unchanged, 0 unknown\nplan "},
+		}, "        owner → (secret); user (secret) does not exist yet\n\n1 host: 1 to change, 0 unchanged, 0 unknown\nplan "},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := hashSecretProject(t, "hunter2", steps(tt.steps), "", nil, nil)
@@ -580,6 +580,64 @@ func TestSecretNameMessages(t *testing.T) {
 			plan.Write(color.NewWriter(&out, p.Filter().Parts, false), color.NewWriter(&errOut, p.Filter().Parts, false))
 			if all := out.String() + errOut.String(); !strings.Contains(all, tt.want) || strings.Contains(all, "ter2") {
 				t.Errorf("output = %q, want %q and no ter2", all, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Variables/Secrets in output
+func TestSecretHostText(t *testing.T) {
+	// The parts are ter2, er2, and the short part r2.
+	const part4, part3, part2 = `!expr 'trimPrefix(vars.pw, "hun")'`, `!expr 'trimPrefix(vars.pw, "hunt")'`, `!expr 'trimPrefix(vars.pw, "hunte")'`
+	dir := func(owner string) string { return "      - dir:\n          path: /a\n          owner: " + owner + "\n" }
+	change := func(lines ...string) func(h *fakehost.Hosts) {
+		return func(h *fakehost.Hosts) {
+			h.SetResult("web1", "/a", module.Result{Status: module.Change, Action: module.Modify, Changes: lines})
+		}
+	}
+	for _, tt := range []struct {
+		name, steps string
+		host        func(h *fakehost.Hosts)
+		apply       bool
+		want, not   string
+	}{
+		{"a plain new value keeps the old value", dir(part4), change("mode 0755 → 0700"), false, "        mode 0755 → 0700\n", "ter2"},
+		{"a field of two words", "      - hostname:\n          name: !expr '\"h-\" + trimPrefix(vars.pw, \"hun\")'\n",
+			func(h *fakehost.Hosts) {
+				h.SetResult("web1", "h-ter2", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"static name old → h-ter2"}})
+			}, false, "        static name → h-(secret)\n", "ter2"},
+		{"a quoted old value", dir(part4), change(`comment "old one" → "ter2"`), false, "        comment → \"(secret)\"\n", "old one"},
+		{"a part of 3 characters", dir(part3), change("owner root → er2; user er2 does not exist yet"), false,
+			"        owner → (secret); user (secret) does not exist yet\n", "er2"},
+		{"a short part", dir(part2), change("mode 0755 → 0700"), false, "    ~ dir /a\n        (secret)\n", "0755"},
+		{"a link from the host", dir(part3), func(h *fakehost.Hosts) {
+			h.SetResult("web1", "/a", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"mode 0755 → 0700"}, Link: "/srv/er2"})
+		}, false, "    ~ dir /a (link to /srv/(secret))\n", "er2"},
+		{"no link", dir(part2), change("mode 0755 → 0700"), false, "    ~ dir /a\n", "link to"},
+		{"a diff with a short part", "      - file:\n          path: /a\n          content: \"a\\n\"\n          owner: " + part2 + "\n",
+			func(h *fakehost.Hosts) { h.SetFile("web1", "/a", "xr2\n") }, false, "        (secret)\n", "xr2"},
+		{"a check error with a short part", "      - file:\n          path: !expr '\"/srv/\" + trimPrefix(vars.pw, \"hunte\")'\n          content: a\n",
+			func(h *fakehost.Hosts) { h.FailCheck("web1 /srv/r2") }, false, "web1: s: file /srv/(secret): (secret)\n", "permission denied"},
+		{"a failed rollback with a short part", "      - hostname:\n          name: !expr '\"h-\" + trimPrefix(vars.pw, \"hunte\")'\n",
+			func(h *fakehost.Hosts) {
+				h.SetTimer(-time.Second)
+				h.FailRollback(errors.New("restore /etc/hostname: no space left on device"))
+				h.SetResult("web1", "h-r2", module.Result{Status: module.Change, Action: module.Modify, Guard: true})
+			}, true, "the rollback timer ended first; the rollback failed: restore /etc/hostname: no space left on device", "r2"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := hashSecretProject(t, "hunter2", steps(tt.steps), "", nil, nil)
+			h := fakehost.New()
+			tt.host(h)
+			plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+			var out, errOut bytes.Buffer
+			w, ew := color.NewWriter(&out, p.Filter().Parts, false), color.NewWriter(&errOut, p.Filter().Parts, false)
+			plan.Write(w, ew)
+			if tt.apply {
+				run.Apply(t.Context(), plan, h.Connector(), run.Text(w, ew))
+			}
+			if all := out.String() + errOut.String(); !strings.Contains(all, tt.want) || strings.Contains(all, tt.not) {
+				t.Errorf("output = %q, want %q and no %q", all, tt.want, tt.not)
 			}
 		})
 	}

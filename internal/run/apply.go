@@ -524,6 +524,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, h *project.
 		tev.Step, tev.Module, tev.Then, tev.ThenPending = "", "", secret.PrintableLines(p.Step.Shown().Then), pending
 		a.progress.Busy(a.host, ev.scope()+": "+failLabel+": then")
 		if err := a.conn.Command(context.WithoutCancel(ctx), p.Step.Then, *t); err != nil {
+			err = maskError(err, p.Step.HostText)
 			tev.Status, tev.Error = "failed", err.Error()
 			a.rep.Step(tev)
 			return changed, fmt.Errorf("%s: failed: %s: then: %w", ev.scope(), failLabel, err)
@@ -667,8 +668,10 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 // checks the access. After a changed reboot step, it reboots the host.
 func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned, g protocol.Guard) (module.Result, error) {
 	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, p.Check, g)
+	err = maskError(err, p.Step.HostText)
+	// The access check error is text of winch around host errors.
 	if err == nil && res.Timer != 0 {
-		err = a.confirm(ctx, res.Timer)
+		err = maskError(a.confirm(ctx, res.Timer), func(s string) string { return secret.Hide(s, p.Step.Parts) })
 	}
 	if r, ok := p.Step.Args.(*module.Reboot); ok && err == nil && res.Status == module.Change {
 		ev.Note, err = a.reboot(ctx, r)
@@ -682,9 +685,9 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	if res.Status == module.Unknown {
 		res.Status, res.Action = module.Change, module.Modify
 	}
+	maskResult(p.Step, &res)
 	ev.Status, ev.Action = string(res.Status), string(res.Action)
 	ev.Link = secret.Printable(res.Link)
-	maskOldSecrets(p.Step, &res)
 	for _, c := range res.Changes {
 		ev.Changes = append(ev.Changes, secret.PrintableLines(c))
 	}

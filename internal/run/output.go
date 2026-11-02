@@ -393,7 +393,7 @@ func diffLines(st project.Step, res module.Result) []string {
 	}
 	_, isLine := st.Args.(*module.Line)
 	var lines []string
-	for _, line := range strings.SplitAfter(string(d), "\n") {
+	for _, line := range strings.SplitAfter(st.HostText(string(d)), "\n") {
 		// The line numbers of a line step's hunk are not those of the file.
 		if isLine && strings.HasPrefix(line, "@@") {
 			continue

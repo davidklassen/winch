@@ -280,3 +280,27 @@ func FuzzFilterParts(f *testing.F) {
 		}
 	})
 }
+
+// spec: Variables/Secrets in output
+func TestHide(t *testing.T) {
+	tests := []struct {
+		name  string
+		parts []string
+		in    string
+		want  string
+	}{
+		{"no parts", nil, "user qz", "user qz"},
+		{"a short part", []string{"qz"}, "group uqz (new)", "group u(secret) (new)"},
+		{"adjacent parts", []string{"ab", "cd"}, "x abcd y", "x (secret) y"},
+		{"inside a mark", []string{"secret"}, "a (secret) b", "a (secret) b"},
+		{"the quoted form", []string{"a\tb"}, `comment "x" → "a\tb"`, `comment "x" → "(secret)"`},
+		{"a line end stays", []string{"a\nb"}, "x a\nb y", "x (secret)\n(secret) y"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Hide(tt.in, tt.parts); got != tt.want {
+				t.Errorf("Hide(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

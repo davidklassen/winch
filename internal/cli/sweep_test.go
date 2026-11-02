@@ -42,30 +42,6 @@ var sweepForms = []string{
 // form of sweepForms that its output holds. A fix that removes a leak removes
 // its line here.
 var sweepLeaks = []string{
-	// Plan errors print a short part through the text filter only.
-	"two steps on one path: qz",
-	"two steps for one user: qz",
-	"two steps for one package: qz",
-	"two steps for one unit: qz",
-	"a removed tree: qz",
-	"two line steps that overlap: qz",
-	"a unit after its service: qz",
-	"a drop-in after its service: qz",
-	"an answer after its package: qz",
-	"two steps for one group: qz",
-	"two steps for one unpack directory: qz",
-	"two steps for the groups of one user: qz",
-	"a tree that a later step removes: qz",
-	"two line steps that overlap the other way: qz",
-	"a removal of an installed package: qz",
-	// Change lines and errors from the host hold a short part.
-	"a package install: qz",
-	"a user with its group: qz",
-	"a host name change: qz",
-	"a failed file: qz",
-	"a failed service: qz",
-	"a failed then: qz",
-	"a failed assert: qz",
 	// exec evaluates no step, so the filter knows no value built from a
 	// secret.
 	"exec: " + strings.TrimRight(sweepBase64[8:], "="),
@@ -194,15 +170,15 @@ func TestSecretSweep(t *testing.T) {
 			h.SetResult("web1", "^pass ", module.Result{Status: module.Change, Action: module.Modify, Old: new("pass old\n")})
 			h.SetResult("web1", "h-zqxj", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"name old → h-zqxj"}})
 		}, applyAll},
-		{"a package install", "install lib", `
+		{"a package install", `"changes":["(secret)","(secret)"]`, `
       - pkg:
           name: !expr '"lib" + vars.pw[6:]'
 `, nil, planAll},
-		{"a user with its group", "(new)", `
+		{"a user with its group", `"changes":["(secret)"]`, `
       - user:
           name: !expr '"u" + vars.pw[6:]'
 `, nil, planAll},
-		{"a host name change", "name old", `
+		{"a host name change", `"changes":["(secret)"]`, `
       - hostname:
           name: !expr '"h-" + vars.pw[6:]'
 `, func(h *fakehost.Hosts) {
@@ -360,7 +336,7 @@ func TestSecretSweep(t *testing.T) {
           path: /srv/a
           content: !expr 'string(int(vars.pw[6:]))'
 `, nil, planAll},
-		{"a failed file", "read-only file system", `
+		{"a failed file", `"error":"(secret)"`, `
       - file:
           path: !expr '"/srv/" + vars.pw[6:]'
           content: "a\n"
@@ -370,7 +346,7 @@ func TestSecretSweep(t *testing.T) {
           path: !expr '"/srv/" + vars.pw[2:6]'
           content: "a\n"
 `, func(h *fakehost.Hosts) { h.FailApply("web1 /srv/zqxj") }, applyAll},
-		{"a failed service", "systemctl: app-", `
+		{"a failed service", `"error":"(secret)"`, `
       - service:
           name: !expr '"app-" + vars.pw[6:]'
           running: true
@@ -385,7 +361,7 @@ func TestSecretSweep(t *testing.T) {
           content: "a\n"
         then: !expr '"notify " + vars.pw[6:]'
 `, func(h *fakehost.Hosts) { h.FailCommand("web1", "notify qz") }, applyAll},
-		{"a failed assert", "no ", `
+		{"a failed assert", `"error":"(secret)"`, `
       - file:
           path: /srv/a
           content: "a\n"
