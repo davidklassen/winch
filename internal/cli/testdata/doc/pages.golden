@@ -415,7 +415,8 @@ pipeline.stages.health.command: string, required
 
 Must exit 0. winch runs it on the host once per second until it exits 0,
 then keeps running it for stable seconds. A failed run starts the wait
-again.
+again. An exit of 126 or 127, when sh cannot find or run the command,
+fails the gate at once.
 ==> winch doc pipeline.stages.health.stable
 pipeline.stages.health.stable: integer, default 0
 
@@ -462,7 +463,8 @@ pipeline.health.command: string, required
 
 Must exit 0. winch runs it on the host once per second until it exits 0,
 then keeps running it for stable seconds. A failed run starts the wait
-again.
+again. An exit of 126 or 127, when sh cannot find or run the command,
+fails the gate at once.
 ==> winch doc pipeline.health.stable
 pipeline.health.stable: integer, default 0
 
