@@ -930,7 +930,8 @@ func (p *Project) evalValue(e *Env, v *Var) ([3]any, bool, error) {
 		}
 	}
 	if isSecret {
-		e.learn(secret.Parts(vals[0], vals[1], vals[2]))
+		_, parts := secret.MaskValue(vals[0], vals[1], vals[2])
+		e.learn(parts)
 	}
 	return vals, isSecret, nil
 }

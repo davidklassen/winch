@@ -150,9 +150,12 @@ type Step struct {
 	Then string
 	// ConfirmAccess is the confirm_access of a service step.
 	ConfirmAccess bool
-	// Shown is set after Eval when the output shows a part of the step as
-	// a secret.
-	Shown *Shown
+	// Lines are the lines of the content with their masks, in the masked
+	// copy of a step whose content reads a secret.
+	Lines []secret.Line
+	// Hidden is true in the masked copy when the output shows no part of
+	// the content.
+	Hidden bool
 	// Secret is true after Eval when the evaluation of the step reads a
 	// secret.
 	Secret bool
@@ -163,6 +166,9 @@ type Step struct {
 	HashThen string
 	// in is the recipe that holds the step, or nil in a stage.
 	in *Recipe
+	// masked is the copy of the step that the output shows, set after Eval
+	// when the evaluation reads a secret.
+	masked *Step
 	// actions is set on a handler step and on the step of winch run.
 	actions bool
 	// vars are the vars of a recipe step.
@@ -1491,8 +1497,9 @@ func (st Step) runs(e *Env) (bool, error) {
 }
 
 // Eval returns a module step for the host of e: none when when is false, one
-// per element with loop, else one. Each step that reads a secret gets Shown.
-// An error shows each part that comes from a secret as secret.Mark.
+// per element with loop, else one. Each step that reads a secret gets a
+// masked copy. An error shows each part that comes from a secret as
+// secret.Mark.
 func (st Step) Eval(e *Env) ([]Step, error) {
 	out, err := st.eval(e)
 	if err != nil {
@@ -1502,12 +1509,13 @@ func (st Step) Eval(e *Env) ([]Step, error) {
 		})
 	}
 	for _, s := range out {
-		if s.Shown == nil || s.Shown.Public == "" {
+		key := public(s)
+		if key == "" {
 			continue
 		}
 		pos := st.Pos
 		if st.args != nil {
-			if p := find(st.args.node, []string{s.Shown.Public}); p != nil {
+			if p := find(st.args.node, []string{key}); p != nil {
 				pos = p.Value.Pos
 			}
 		}
@@ -1516,17 +1524,56 @@ func (st Step) Eval(e *Env) ([]Step, error) {
 			return nil, yamlx.Errorf(pos, "%s", hookSecret)
 		case *module.Repo:
 			fix := ""
-			if s.Shown.Public == "url" {
+			if key == "url" {
 				fix = fmt.Sprintf("; for a user name and password, put them in /etc/apt/auth.conf.d/%s.conf with mode 0600", a.Name)
 			}
-			return nil, yamlx.Errorf(pos, "%s: a repo step cannot hold a secret: every user of the host can read %s%s", s.Shown.Public, a.SourcePath(), fix)
+			return nil, yamlx.Errorf(pos, "%s: a repo step cannot hold a secret: every user of the host can read %s%s", key, a.SourcePath(), fix)
 		}
 	}
 	return out, nil
 }
 
+// Shown returns the step as the output shows it: each part that comes from a
+// secret is secret.Mark.
+func (st Step) Shown() Step {
+	if st.masked != nil {
+		return *st.masked
+	}
+	return st
+}
+
+// public returns the argument of s that holds a secret and goes into a file
+// that every user of the host can read, or "": a repo source or a certbot
+// hook.
+func public(s Step) string {
+	switch a := s.Args.(type) {
+	case *module.Repo:
+		m := s.Shown().Args.(*module.Repo)
+		switch {
+		case m.URL != a.URL:
+			return "url"
+		case m.Suite != a.Suite:
+			return "suite"
+		case !slices.Equal(m.Components, a.Components):
+			return "components"
+		}
+	case *module.Certbot:
+		m := s.Shown().Args.(*module.Certbot)
+		for _, h := range []struct {
+			key         string
+			real, shown *string
+		}{{"pre_hook", a.PreHook, m.PreHook}, {"post_hook", a.PostHook, m.PostHook}, {"deploy_hook", a.DeployHook, m.DeployHook}} {
+			if h.real != nil && *h.real != *h.shown {
+				return h.key
+			}
+		}
+	}
+	return ""
+}
+
 // eval returns the steps for the variant of e. In the real variant of a
-// project with secrets, it also evaluates the placeholder variants for Shown.
+// project with secrets, it also evaluates the placeholder variants for the
+// masked copy.
 func (st Step) eval(e *Env) ([]Step, error) {
 	ok, err := st.runs(e)
 	if err != nil || !ok {
@@ -1573,7 +1620,7 @@ func (st Step) eval(e *Env) ([]Step, error) {
 			}
 			ie = e.with(items)
 		}
-		s, args, err := st.instance(ie)
+		s, args, err := st.instance(ie, yamlx.Decode)
 		if c, ok := err.(errContent); ok {
 			err = c.error
 		}
@@ -1583,9 +1630,11 @@ func (st Step) eval(e *Env) ([]Step, error) {
 		s.Then = then
 		if variants {
 			var hash any
-			s.Shown, s.Secret, hash = st.shown(ie, s, args, thens)
-			if s.Secret {
-				s.HashArgs, s.HashThen = hash, thens[1]
+			if s.masked, hash, err = st.shown(ie, s, args, thens); err != nil {
+				return nil, err
+			}
+			if s.masked != nil {
+				s.Secret, s.HashArgs, s.HashThen = true, hash, thens[1]
 			}
 		}
 		out = append(out, s)
@@ -1633,7 +1682,7 @@ type errContent struct{ error }
 // instance returns the step with its arguments and content for e, and the
 // computed arguments as a value, or nil. When only the content fails, the
 // step has its arguments.
-func (st Step) instance(e *Env) (Step, any, error) {
+func (st Step) instance(e *Env, decode func(*yamlx.Node, any) error) (Step, any, error) {
 	var args any
 	if st.args != nil {
 		n, err := st.args.eval(e, "")
@@ -1642,23 +1691,23 @@ func (st Step) instance(e *Env) (Step, any, error) {
 		}
 		args = yamlx.Value(n)
 		m, _ := st.newModule(st.Module)
-		if err := yamlx.Decode(n, m); err != nil {
+		if err := decode(n, m); err != nil {
 			return Step{}, args, err
 		}
 		st.Args = m
 		if f, ok := m.(*module.File); ok {
 			if st.tmpl, err = st.in.content(f, st.loop != nil); err != nil {
-				return Step{}, nil, err
+				return Step{}, args, err
 			}
 		}
 		if u, ok := m.(*module.Unit); ok {
 			if err := st.in.unitContent(u); err != nil {
-				return Step{}, nil, err
+				return Step{}, args, err
 			}
 		}
 		if k, ok := m.(*module.Repo); ok {
 			if _, err := st.in.key(k); err != nil {
-				return Step{}, nil, err
+				return Step{}, args, err
 			}
 		}
 	}
@@ -1676,73 +1725,36 @@ func (st Step) instance(e *Env) (Step, any, error) {
 	return st, args, nil
 }
 
-// shown returns how the output shows s, the step for the real variant of e,
-// or nil when no part of it comes from a secret. It also reports whether the
-// step reads a secret: a part comes from a secret, or a placeholder variant
-// fails, and it returns the HashArgs of s. real are the computed arguments
-// of s, and thens the commands of then in the three variants. The parts that
-// come from a secret go to the filter.
-func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool, any) {
+// shown returns the masked copy of s, the step for the real variant of e,
+// or nil when the step reads no secret: a part comes from a secret, or a
+// placeholder variant fails. It also returns the HashArgs of s. real are the
+// computed arguments of s, and thens the commands of then in the three
+// variants. The placeholder variants skip the checks of the module, which
+// can reject a placeholder. The parts that come from a secret go to the
+// filter.
+func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, any, error) {
 	mods := [3]module.Module{s.Args}
 	args := [3]any{real}
-	argsOK, contentOK := true, true
+	contentOK := true
 	for n := 1; n < 3; n++ {
 		ev := e.variant(n)
 		var failed bool
 		ev.failed = &failed
-		v, a, err := st.instance(ev)
-		args[n] = a
-		if _, ok := err.(errContent); ok || failed {
+		v, a, err := st.instance(ev, yamlx.DecodeUnchecked)
+		if err != nil || failed {
 			contentOK = false
 		}
-		if _, ok := err.(errContent); !ok && err != nil {
-			argsOK, contentOK = false, false
-			continue
-		}
-		mods[n] = v.Args
+		args[n], mods[n] = a, v.Args
 	}
 	if u, ok := s.Args.(*module.User); ok && u.AuthorizedKeys != nil {
 		u.SecretKeys = secretKeys(args)
 	}
-	sh := &Shown{Main: secret.Mark}
-	validate := s.ShownValidate()
-	if validate != "" {
-		sh.Validate = secret.Mark
-	}
-	unless := s.ShownUnless()
-	if unless != "" {
-		sh.Unless = secret.Mark
-	}
-	user, dir := s.ShownUser(), s.ShownDir()
-	if user != "" {
-		sh.User = secret.Mark
-	}
-	if dir != "" {
-		sh.Dir = secret.Mark
-	}
+	sh := s
+	var tree any
 	var parts []string
-	if argsOK {
-		sh.Main, _ = secret.MaskLines(mods[0].Main(), mods[1].Main(), mods[2].Main())
-		if validate != "" {
-			sh.Validate, _ = secret.MaskLines(validate, mods[1].(module.WithValidate).ValidateCommand(), mods[2].(module.WithValidate).ValidateCommand())
-		}
-		if unless != "" {
-			sh.Unless, _ = secret.MaskLines(unless, mods[1].(*module.Cmd).UnlessCommand(), mods[2].(*module.Cmd).UnlessCommand())
-		}
-		if user != "" {
-			sh.User, _ = secret.MaskLines(user, mods[1].(*module.Cmd).User, mods[2].(*module.Cmd).User)
-		}
-		if dir != "" {
-			sh.Dir, _ = secret.MaskLines(dir, mods[1].(*module.Cmd).Dir, mods[2].(*module.Cmd).Dir)
-		}
+	if real != nil {
+		tree, parts = secret.MaskValue(args[0], args[1], args[2])
 	}
-	// A variant that fails only its checks, such as a placeholder in a user
-	// name, still has its arguments. Their parts go to the filter, so a host
-	// message with a name from a secret shows (secret).
-	if args[1] != nil && args[2] != nil {
-		parts = secret.Parts(args[0], args[1], args[2])
-	}
-	sh.Names = shownNames(args)
 	var thenParts []string
 	sh.Then, thenParts = secret.MaskLines(thens[0], thens[1], thens[2])
 	parts = append(parts, thenParts...)
@@ -1765,65 +1777,25 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool, a
 			}
 		}
 	}
-	switch a := s.Args.(type) {
-	case *module.Repo:
-		sh.Public = publicRepo(a, mods, argsOK)
-	case *module.Certbot:
-		sh.Public = st.publicHook(e)
-	}
 	e.learn(parts)
-	reads := !argsOK || !contentOK || slices.ContainsFunc(parts, func(p string) bool { return p != "" })
+	if contentOK && !slices.ContainsFunc(parts, func(p string) bool { return p != "" }) {
+		return nil, nil, nil
+	}
+	if real != nil {
+		n, err := yamlx.FromValue(tree, st.Pos)
+		if err != nil {
+			return nil, nil, err
+		}
+		sh.Args, _ = st.newModule(st.Module)
+		// A field that cannot hold secret.Mark, such as a number, stays
+		// empty.
+		_ = yamlx.DecodeUnchecked(n, sh.Args)
+	}
 	hash := args[1]
 	if mods[1] != nil {
 		hash = mods[1]
 	}
-	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Unless == unless && sh.User == user && sh.Dir == dir && sh.Lines == nil && !sh.Hidden && sh.Public == "" && sh.Names == nil {
-		return nil, reads, hash
-	}
-	return sh, reads, hash
-}
-
-// shownNames maps each owner, group, and element of groups and add_groups in
-// the arguments real that comes from a secret to its shown form, or returns
-// nil.
-func shownNames(args [3]any) map[string]string {
-	var m [3]map[string]any
-	for n, a := range args {
-		m[n], _ = a.(map[string]any)
-	}
-	var out map[string]string
-	add := func(real, a, b any) {
-		r, _ := real.(string)
-		as, ok1 := a.(string)
-		bs, ok2 := b.(string)
-		shown := secret.Mark
-		if ok1 && ok2 {
-			shown, _ = secret.Mask(r, as, bs)
-		}
-		if r != "" && shown != r {
-			if out == nil {
-				out = map[string]string{}
-			}
-			out[r] = shown
-		}
-	}
-	for _, key := range []string{"owner", "group", "groups", "add_groups"} {
-		switch r := m[0][key].(type) {
-		case string:
-			add(r, m[1][key], m[2][key])
-		case []any:
-			al, _ := m[1][key].([]any)
-			bl, _ := m[2][key].([]any)
-			for i, g := range r {
-				var a, b any
-				if len(al) == len(r) && len(bl) == len(r) {
-					a, b = al[i], bl[i]
-				}
-				add(g, a, b)
-			}
-		}
-	}
-	return out
+	return &sh, hash, nil
 }
 
 // secretKeys marks the authorized_keys elements of the arguments real that
@@ -1841,50 +1813,6 @@ func secretKeys(args [3]any) []bool {
 		out = append(out, !same || k != lists[1][i] || k != lists[2][i])
 	}
 	return out
-}
-
-// publicRepo returns the argument of r, the repo of the real variant, that
-// holds a secret: one that differs in the variants mods. When a variant
-// fails, it returns "repo".
-func publicRepo(r *module.Repo, mods [3]module.Module, argsOK bool) string {
-	if !argsOK {
-		return "repo"
-	}
-	for _, m := range mods[1:] {
-		v := m.(*module.Repo)
-		switch {
-		case v.URL != r.URL:
-			return "url"
-		case v.Suite != r.Suite:
-			return "suite"
-		case !slices.Equal(v.Components, r.Components):
-			return "components"
-		}
-	}
-	return ""
-}
-
-// publicHook returns the hook of st, a certbot step, that holds a secret: one
-// that differs in the variants of e, or fails to evaluate in one. It
-// evaluates each hook on its own: a placeholder in another argument, such as
-// email, can fail that argument.
-func (st Step) publicHook(e *Env) string {
-	if st.args == nil {
-		return ""
-	}
-	for _, p := range st.args.node.Pairs {
-		if st.args.computed[p.Value] == nil || !strings.HasSuffix(p.Key, "_hook") {
-			continue
-		}
-		real, _ := st.args.evalNode(p.Value, e, p.Key)
-		for n := 1; n < 3; n++ {
-			v, err := st.args.evalNode(p.Value, e.variant(n), p.Key)
-			if err != nil || !reflect.DeepEqual(yamlx.Value(real), yamlx.Value(v)) {
-				return p.Key
-			}
-		}
-	}
-	return ""
 }
 
 // Writes are the paths that the steps for a host write, sorted. Trees are

@@ -409,7 +409,7 @@ func TestSecretCmdUser(t *testing.T) {
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
-	if want := "    ? cmd (secret)\n        user: (secret)\n        dir: (secret)\n"; !strings.Contains(out.String(), want) {
+	if want := "    ? cmd app migrate\n        user: (secret)\n        dir: /srv/(secret)\n"; !strings.Contains(out.String(), want) {
 		t.Errorf("the plan has no %q:\n%s%s", want, out.String(), errOut.String())
 	}
 	if strings.Contains(out.String()+errOut.String(), "deploy") {
@@ -430,12 +430,12 @@ func TestSecretCmdMissing(t *testing.T) {
 		host        func(h *fakehost.Hosts)
 		want        string
 	}{
-		{"a missing user", cmdUser, func(*fakehost.Hosts) {}, "web1: warning: user (secret) does not exist yet and no user step creates it\n"},
-		{"a missing dir", cmdDir, noDir, "web1: warning: dir (secret) does not exist yet and no dir step creates it\n"},
+		{"a missing user", cmdUser, func(*fakehost.Hosts) {}, "web1: warning: user u-(secret) does not exist yet and no user step creates it\n"},
+		{"a missing dir", cmdDir, noDir, "web1: warning: dir /srv/(secret) does not exist yet and no dir step creates it\n"},
 		{"a user that a later step creates", cmdUser + "      - user:\n          name: !expr '\"u-\" + vars.pw'\n", func(*fakehost.Hosts) {},
-			"this step creates user (secret), which an earlier step needs: s#1 cmd (secret); move this step before it\n"},
+			"this step creates user u-(secret), which an earlier step needs: s#1 cmd make install; move this step before it\n"},
 		{"a dir that a later step creates", cmdDir + "      - dir:\n          path: !expr '\"/srv/\" + trimPrefix(vars.pw, \"hun\")'\n          owner: !expr '\"u-\" + vars.pw'\n", noDir,
-			"this step creates dir (secret), which an earlier step needs: s#1 cmd (secret); move this step before it\n"},
+			"this step creates dir /srv/(secret), which an earlier step needs: s#1 cmd make install; move this step before it\n"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			identity, recipient := ageKey(t)
@@ -461,7 +461,7 @@ func TestSecretCmdMissing(t *testing.T) {
 			if !strings.HasSuffix(errOut.String(), tt.want) {
 				t.Errorf("stderr = %q, want the end %q", errOut.String(), tt.want)
 			}
-			if strings.Contains(out.String()+errOut.String(), "u-") || strings.Contains(out.String()+errOut.String(), "ter2") {
+			if strings.Contains(out.String()+errOut.String(), "ter2") {
 				t.Errorf("the plan shows a value from the secret:\n%s%s", out.String(), errOut.String())
 			}
 		})
@@ -487,8 +487,8 @@ func TestSecretThenRecord(t *testing.T) {
 		{name: "file", step: "      - file:\n          path: !tpl \"/etc/{{ .vars.pw }}.key\"\n          content: \"k\\n\"\n        then: echo done\n",
 			ok:     func(h *fakehost.Hosts) { h.SetFile("web1", "/etc/hunter2.key", "k\n") },
 			legacy: protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/etc/hunter2.key"}}},
-		// The service module rejects the placeholder in a unit name.
-		{name: "a failed placeholder variant", step: "      - service:\n          name: !tpl \"app-{{ .vars.pw }}\"\n          running: true\n        then: echo done\n",
+		// The placeholder in enabled is not true or false.
+		{name: "a failed placeholder variant", step: "      - service:\n          name: !tpl \"app-{{ .vars.pw }}\"\n          running: true\n          enabled: !expr 'vars.pw == \"hunter2\" || int(vars.pw) > 0'\n        then: echo done\n",
 			ok:     func(h *fakehost.Hosts) { h.SetResult("web1", "app-hunter2", module.Result{Status: module.OK}) },
 			legacy: protocol.Then{Pipeline: "site", Stage: "base", Module: "service", Mains: []string{"app-hunter2"}}},
 	}
@@ -546,7 +546,6 @@ func TestSecretThenRecord(t *testing.T) {
 
 // spec: Variables/Secrets in output
 func TestSecretNameMessages(t *testing.T) {
-	// The placeholder variants of the name fail the account name check.
 	const name = `!expr 'trimPrefix(vars.pw, "hun")'`
 	const later = "      - user:\n          name: " + name + "\n"
 	for _, tt := range []struct {
@@ -555,15 +554,19 @@ func TestSecretNameMessages(t *testing.T) {
 		want        string
 	}{
 		{"a file owner", "      - file:\n          path: /a\n          content: x\n          owner: " + name + "\n" + later, func(*fakehost.Hosts) {},
-			"this step creates user (secret), which an earlier step needs: s#1 file (secret); move this step before it\n"},
+			"this step creates user (secret), which an earlier step needs: s#1 file /a; move this step before it\n"},
 		{"a dir owner", "      - dir:\n          path: /a\n          owner: " + name + "\n" + later, func(h *fakehost.Hosts) { h.RemoveDir("web1", "/a") },
-			"this step creates user (secret), which an earlier step needs: s#1 dir (secret); move this step before it\n"},
+			"this step creates user (secret), which an earlier step needs: s#1 dir /a; move this step before it\n"},
 		{"a download owner", "      - download:\n          url: https://example.com/a\n          sha256: \"" + strings.Repeat("a", 64) + "\"\n          path: /a\n          owner: " + name + "\n" + later, func(*fakehost.Hosts) {},
-			"this step creates user (secret), which an earlier step needs: s#1 download (secret); move this step before it\n"},
+			"this step creates user (secret), which an earlier step needs: s#1 download /a; move this step before it\n"},
 		{"a group of a user", "      - user:\n          name: app\n          groups: [" + name + "]\n      - group:\n          name: " + name + "\n", func(*fakehost.Hosts) {},
-			"this step creates group (secret), which an earlier step needs: s#1 user (secret); move this step before it\n"},
+			"this step creates group (secret), which an earlier step needs: s#1 user app; move this step before it\n"},
 		{"a short name", "      - file:\n          path: /a\n          content: x\n          owner: !expr 'trimPrefix(vars.pw, \"hunte\")'\n      - user:\n          name: !expr 'trimPrefix(vars.pw, \"hunte\")'\n", func(*fakehost.Hosts) {},
-			"this step creates user (secret), which an earlier step needs: s#1 file (secret); move this step before it\n"},
+			"this step creates user (secret), which an earlier step needs: s#1 file /a; move this step before it\n"},
+		{"a short cmd user", "      - cmd:\n          command: make\n          user: !expr 'trimPrefix(vars.pw, \"hunte\")'\n      - user:\n          name: !expr 'trimPrefix(vars.pw, \"hunte\")'\n", func(*fakehost.Hosts) {},
+			"this step creates user (secret), which an earlier step needs: s#1 cmd make; move this step before it\n"},
+		{"a short group in groups", "      - user:\n          name: app\n          groups: [wheel, !expr 'trimPrefix(vars.pw, \"hunte\")']\n      - group:\n          name: !expr 'trimPrefix(vars.pw, \"hunte\")'\n", func(*fakehost.Hosts) {},
+			"this step creates group (secret), which an earlier step needs: s#1 user app; move this step before it\n"},
 		{"a change line from the host", "      - dir:\n          path: /a\n          owner: " + name + "\n", func(h *fakehost.Hosts) {
 			h.SetResult("web1", "/a", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner root → ter2; user ter2 does not exist yet"}})
 		}, "        owner root → (secret); user (secret) does not exist yet\n\n1 host: 1 to change, 0 unchanged, 0 unknown\nplan "},

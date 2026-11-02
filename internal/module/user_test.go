@@ -116,6 +116,7 @@ func TestUserValidate(t *testing.T) {
 		{"no groups and add_groups", "name: a\ngroups: []\nadd_groups: []\n", `t.yaml:3:13: a user step has at most one of groups and add_groups`},
 		{"password", "name: a\npassword: $y$j9T$abc$def\n", ""},
 		{"locked password", "name: a\npassword: '!$6$abc$def'\n", ""},
+		{"password not a crypt hash", "name: a\npassword: hunter2\n", `t.yaml:2:11: password is not a crypt hash, such as one from mkpasswd -m yescrypt, or "!" or "*"`},
 		{"comment", "name: a\ncomment: Alice Smith,,,\n", ""},
 		{"comment with a colon", "name: a\ncomment: \"a:b\"\n", `t.yaml:2:10: comment: must not have ":"`},
 		{"comment with a newline", "name: a\ncomment: \"a\\nb\"\n", `t.yaml:2:10: comment: has a control character`},

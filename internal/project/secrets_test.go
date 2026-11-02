@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -145,14 +144,14 @@ func evalSecret(t *testing.T, steps string, files map[string]string) ([]Step, Ke
 }
 
 func shownLines(st Step) string {
-	if st.Shown == nil {
+	if st.masked == nil {
 		return "no shown"
 	}
-	if st.Shown.Hidden {
+	if st.Shown().Hidden {
 		return "hidden"
 	}
 	var b strings.Builder
-	for _, l := range st.Shown.Lines {
+	for _, l := range st.Shown().Lines {
 		b.WriteString(l.Show)
 	}
 	return b.String()
@@ -215,6 +214,8 @@ func TestEvalSecrets(t *testing.T) {
 			data: "x", lines: "", main: "/a", then: "echo (secret) | chpasswd"},
 		{name: "a loop over secrets", step: "  - file:\n      path: /a\n      content: !tpl \"{{ .item }}\\n\"\n    loop: !expr 'values(vars.users)'\n",
 			data: "$6$aaa$alicehash\n", lines: "(secret)\n", main: "/a"},
+		{name: "content beside an owner that the placeholders fail", step: "  - file:\n      path: /a\n      owner: !expr vars.pw\n      content: !tpl \"k={{ .vars.pw }}\\nplain\\n\"\n",
+			data: "k=hunter2\nplain\n", lines: "k=(secret)\nplain\n", main: "/a"},
 		{name: "no secret", step: "  - file:\n      path: /a\n      content: !tpl \"{{ .vars.short }}\\n\"\n",
 			data: "x\n", lines: "no shown", main: "/a"},
 	}
@@ -232,10 +233,10 @@ func TestEvalSecrets(t *testing.T) {
 			if got := shownLines(st); got != tt.lines {
 				t.Errorf("shown lines = %q, want %q", got, tt.lines)
 			}
-			if got := st.ShownMain(); got != tt.main {
+			if got := st.Shown().Args.Main(); got != tt.main {
 				t.Errorf("shown main = %q, want %q", got, tt.main)
 			}
-			if got := st.ShownThen(); got != tt.then {
+			if got := st.Shown().Then; got != tt.then {
 				t.Errorf("shown then = %q, want %q", got, tt.then)
 			}
 		})
@@ -259,9 +260,9 @@ func TestEvalSecretHashArgs(t *testing.T) {
 	if got := steps[0].HashThen; got != "echo "+ph {
 		t.Errorf("hash then = %q", got)
 	}
-	// The service module rejects the placeholder in a unit name.
-	if got, want := steps[1].HashArgs, map[string]any{"name": "app-" + ph, "enabled": true}; !reflect.DeepEqual(got, want) {
-		t.Errorf("hash args = %#v, want %#v", got, want)
+	// The placeholder variant skips the unit name check.
+	if s, ok := steps[1].HashArgs.(*module.Service); !ok || s.Name != "app-"+ph {
+		t.Errorf("hash args = %#v, want the service of the placeholder variant", steps[1].HashArgs)
 	}
 	if steps[2].Secret || steps[2].HashArgs != nil {
 		t.Errorf("a step without a secret has hash args %#v", steps[2].HashArgs)
@@ -284,7 +285,7 @@ func TestSecretContentFailsWithPlaceholders(t *testing.T) {
 	if got := shownLines(st); got != "hidden" {
 		t.Errorf("shown lines = %q, want hidden", got)
 	}
-	if got := st.ShownMain(); got != "/etc/x" {
+	if got := st.Shown().Args.Main(); got != "/etc/x" {
 		t.Errorf("shown main = %q", got)
 	}
 }
@@ -298,7 +299,7 @@ func TestSecretArgNullWithPlaceholders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := steps[0].ShownMain(); got != "/a" {
+	if got := steps[0].Shown().Args.Main(); got != "/a" {
 		t.Errorf("shown main = %q, want /a", got)
 	}
 }
@@ -355,6 +356,10 @@ func TestSecretErrors(t *testing.T) {
 			want:  `error calling index: map has no entry for key "(secret)"`},
 		{name: "a type error that shows the value", step: "  - file:\n      path: /a\n      content: x\n    when: !expr vars.pw\n",
 			want: `recipes/r/recipe.yaml:5:11: when: expected true or false, got the string "(secret)"`},
+		{name: "a plain field error beside a password from a secret", step: "  - user:\n      name: alice\n      password: !expr vars.users.alice\n      comment: \"a:b\"\n",
+			want: `recipes/r/recipe.yaml:5:16: comment: must not have ":"`},
+		{name: "a password from a secret that is not a crypt hash", step: "  - user:\n      name: alice\n      password: !expr vars.pw\n",
+			want: `recipes/r/recipe.yaml:4:17: password is not a crypt hash`},
 		{name: "an error that the placeholders do not have", step: "  - file:\n      path: /a\n      content: !expr 'vars.pw == \"hunter2\" ? string(int(vars.pw)) : \"ok\"'\n",
 			want: `recipes/r/recipe.yaml:4:16: (secret)`},
 	}
@@ -1013,7 +1018,7 @@ func TestSecretArgumentFailsWithPlaceholders(t *testing.T) {
 	if got := steps[0].Args.Main(); got != "/etc/found" {
 		t.Errorf("path = %q", got)
 	}
-	if got := steps[0].ShownMain(); got != "(secret)" {
+	if got := steps[0].Shown().Args.Main(); got != "(secret)" {
 		t.Errorf("shown main = %q, want (secret)", got)
 	}
 }
@@ -1346,9 +1351,9 @@ func TestSecretCommandOfSeveralLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct{ name, got, want string }{
-		{"command", steps[0].ShownMain(), "curl -H t:(secret)\nrm -rf /srv/x\nnotify (secret)"},
-		{"then", steps[0].ShownThen(), "a (secret)\nrm -rf /srv/y\nb (secret)"},
-		{"validate", steps[1].ShownValidate(), "c (secret)\nrm -rf /srv/z\nd (secret)"},
+		{"command", steps[0].Shown().Args.Main(), "curl -H t:(secret)\nrm -rf /srv/x\nnotify (secret)"},
+		{"then", steps[0].Shown().Then, "a (secret)\nrm -rf /srv/y\nb (secret)"},
+		{"validate", steps[1].Shown().Args.(*module.File).ValidateCommand(), "c (secret)\nrm -rf /srv/z\nd (secret)"},
 	} {
 		if c.got != c.want {
 			t.Errorf("shown %s = %q, want %q", c.name, c.got, c.want)
@@ -1370,8 +1375,39 @@ func TestSecretValidateFailsWithPlaceholders(t *testing.T) {
 	if got := steps[0].Args.(*module.File).ValidateCommand(); got != "check h" {
 		t.Errorf("validate = %q", got)
 	}
-	if got := steps[0].ShownValidate(); got != "(secret)" {
+	if got := steps[0].Shown().Args.(*module.File).ValidateCommand(); got != "(secret)" {
 		t.Errorf("shown validate = %q, want (secret)", got)
+	}
+}
+
+// spec: Variables/Secrets in output (three evaluations); Modules/user
+func TestSecretPassword(t *testing.T) {
+	steps, _, err := evalSecret(t, "  - user:\n      name: alice\n      password: !expr vars.users.alice\n      comment: Alice\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := steps[0].Shown().Args.(*module.User)
+	if u.Password != "(secret)" || u.Comment != "Alice" {
+		t.Errorf("shown password %q, comment %q; want (secret), Alice", u.Password, u.Comment)
+	}
+}
+
+// spec: Variables/Secrets in output (three evaluations)
+func TestSecretPlainFieldBesideFailedCheck(t *testing.T) {
+	// The placeholder is not a valid user name.
+	steps, _, err := evalSecret(t, "  - cmd:\n      command: make\n      user: !expr vars.pw\n      dir: /srv/app\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := steps[0]
+	for _, c := range []struct{ name, got, want string }{
+		{"command", st.Shown().Args.Main(), "make"},
+		{"user", st.Shown().Args.(*module.Cmd).User, "(secret)"},
+		{"dir", st.Shown().Args.(*module.Cmd).Dir, "/srv/app"},
+	} {
+		if c.got != c.want {
+			t.Errorf("shown %s = %q, want %q", c.name, c.got, c.want)
+		}
 	}
 }
 
@@ -1422,6 +1458,7 @@ func TestEvalRepoSecret(t *testing.T) {
 		{"a secret of a host from match", repo(`!expr '"https://apt.example.com/" + match("web1")[0].vars.pw'`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
 		{"a loop over secrets", repo(`!tpl "https://apt.example.com/{{ .item }}"`, "trixie", "[main]") + "    loop: !expr values(vars.users)\n", "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
 		{"suite", repo(plain, "!expr vars.pw", "[main]"), "recipes/r/recipe.yaml:5:14: suite: " + msg},
+		{"a suite that fails with a placeholder", repo(plain, `!expr 'vars.pw == "hunter2" ? "trixie" : string(int(vars.pw))'`, "[main]"), "recipes/r/recipe.yaml:5:14: suite: " + msg},
 		{"components", repo(plain, "trixie", "!expr '[vars.pw]'"), "recipes/r/recipe.yaml:6:19: components: " + msg},
 		{"a plain field of a map with a secret", repo(`!tpl "https://apt.example.com/{{ .vars.users.bob }}"`, "trixie", "[main]"), ""},
 		{"a plain url in a loop over secrets", repo(plain, "trixie", "[main]") + "    loop: !expr values(vars.users)\n", ""},

@@ -376,12 +376,6 @@ root root 600" ] && [ "$(cat /root/.ssh/authorized_keys)" = "` + k1 + `" ]`,
 			After: `[ "$(id -nG wtalice)" = "wtalice wtgrp" ] && [ "$(getent passwd wtalice | cut -d: -f5)" = "Alice Smith" ] && [ "$(getent shadow wtalice | cut -d: -f2)" = '` + hash2 + `' ]`,
 		},
 		{
-			Name:    "a password that is not a crypt hash",
-			Setup:   `useradd -m -U wtalice`,
-			Args:    &module.User{Name: "wtalice", Password: "hunter2"},
-			WantErr: "password is not a crypt hash, such as one from mkpasswd -m yescrypt, or \"!\" or \"*\"",
-		},
-		{
 			Name:  "change the password",
 			Setup: `useradd -m -U -p '` + hash1 + `' wtalice`,
 			Args:  &module.User{Name: "wtalice", Password: hash2},
