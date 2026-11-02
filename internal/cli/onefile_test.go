@@ -112,8 +112,8 @@ func TestOneFileSecretGenerate(t *testing.T) {
 	}
 	cfg := strings.Replace(oneFile, "name: demo\n", "name: demo\nrecipients:\n  - "+id.Recipient().String()+"\n", 1)
 	cfg = strings.Replace(cfg, "--port {{ .vars.app_port }}", "--port {{ .vars.app_port }} --password {{ .vars.pw }}", 1)
-	r := winch(t, vmtest.WriteProject(t, map[string]string{"winch.yaml": cfg}), fakehost.New(), false, "", "secret", "generate", "vars.pw", "--inventory", "prod")
-	if r.code != exitOK || r.out != "wrote vars.pw into the vars of the group all in inventories.prod of winch.yaml\n" {
+	r := winch(t, vmtest.WriteProject(t, map[string]string{"winch.yaml": cfg}), fakehost.New(), false, "", "secret", "generate", "inventories.prod.groups.all.vars.pw")
+	if r.code != exitOK || r.out != "added inventories.prod.groups.all.vars.pw in winch.yaml\n" {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 }
@@ -163,13 +163,13 @@ func TestTopLevelSecretGenerate(t *testing.T) {
 	}
 	cfg := "name: simple\nrecipients:\n  - " + id.Recipient().String() + "\nhosts:\n  web1:\nsteps:\n  - file:\n      path: /etc/pw\n      content: !tpl \"{{ .vars.pw }}\\n\"\n"
 	dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": cfg})
-	r := winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw")
-	if r.code != exitOK || r.out != "wrote vars.pw into the vars of the group all in winch.yaml\n" {
+	r := winch(t, dir, fakehost.New(), false, "", "secret", "generate", "groups.all.vars.pw")
+	if r.code != exitOK || r.out != "added groups.all.vars.pw in winch.yaml\n" {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
-	r = winch(t, dir, fakehost.New(), false, "", "secret", "generate", "vars.pw", "--host", "web1")
-	if r.code != exitOK || r.out != "wrote vars.pw into the vars of host web1 in winch.yaml\n" {
-		t.Errorf("--host: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	r = winch(t, dir, fakehost.New(), false, "", "secret", "generate", "hosts.web1.vars.pw")
+	if r.code != exitOK || r.out != "added hosts.web1.vars.pw in winch.yaml\n" {
+		t.Errorf("host: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 	if got := readFile(t, filepath.Join(dir, "winch.yaml")); !strings.Contains(got, "\nhosts:\n  web1:\n    vars:\n      pw: !secret ") || !strings.Contains(got, "\ngroups:\n  all:\n    vars:\n      pw: !secret ") {
 		t.Errorf("winch.yaml:\n%s", got)

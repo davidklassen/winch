@@ -29,6 +29,23 @@ const docIntro = `winch is a server configuration tool. It describes the desired
 of your servers in declarative YAML and provides commands to manage
 that state.`
 
+// pathHelp and pathRules describe the path of secret generate and secret
+// encrypt.
+const (
+	pathHelp = `A path names a place in the project, with keys joined by ".".
+vars.x is the default of x in winch.yaml, and recipes.mail.vars.mail_x
+a default in the recipe mail. groups.all.vars.x and hosts.web1.vars.x
+are in the inventory at the top of winch.yaml, and
+inventories.prod.groups.all.vars.x is in the inventory prod. A path can
+go on into a map variable, such as vars.users.alice, but not into a
+list.`
+	pathRules = `The command replaces the value at the path, or adds a missing path
+with the maps it needs. The inventory, the recipe, the host, and the
+group must exist; the group all always exists. Something in the project
+must read the variable, and a variable has one default. The file keeps
+its comments and layout.`
+)
+
 // subcommands returns the commands one word below c, in help order, each
 // with its last word.
 func subcommands(c command) ([]command, []string) {
@@ -340,9 +357,9 @@ and winch connects to them in parallel.`,
 		summary: "manage secrets and the age key",
 		examples: []example{
 			{"make your age key and add it to the recipients", "winch secret init"},
-			{"write a random password into the inventory", "winch secret generate vars.monit_password"},
-			{"encrypt the content of a file", "winch secret encrypt < dkim.key"},
-			{"encrypt the output of a command", "openssl rand -hex 16 | winch secret encrypt"},
+			{"write a random password as the default of a variable", "winch secret generate vars.monit_password"},
+			{"write the content of a file as the default of a variable", "winch secret encrypt vars.dkim_key < dkim.key"},
+			{"print the output of a command as a !secret value", "openssl rand -hex 16 | winch secret encrypt"},
 			{"encrypt all secrets again after a change of the recipients", "winch secret rekey"},
 		},
 		usage: []string{"winch secret <command>"},
@@ -379,43 +396,40 @@ runs winch secret rekey.`,
 	},
 	{
 		name:    "secret generate",
-		summary: "write a random password as a secret",
+		summary: "make a random password as a secret",
 		examples: []example{
-			{"write a password into the vars of the group all", "winch secret generate vars.monit_password"},
-			{"write a password into the vars of one host", "winch secret generate vars.db_password --host db1.acme.com"},
-			{"write a password into the inventory production", "winch secret generate vars.db_password --inventory production"},
+			{"write a password as the default of a variable in winch.yaml", "winch secret generate vars.monit_password"},
+			{"write a password into the vars of one host", "winch secret generate hosts.db1.acme.com.vars.db_password"},
+			{"write a password into the inventory production", "winch secret generate inventories.production.groups.all.vars.db_password"},
+			{"print a password as a !secret value", "winch secret generate"},
 		},
-		usage: []string{"winch secret generate vars.<name> [flags]"},
+		usage: []string{"winch secret generate [<path>]"},
 		description: []string{
-			`Generate makes a random password of 32 letters and digits, encrypts it
-for the recipients in winch.yaml, and writes it as a !secret value into
-the inventory.`,
-			`It writes into the vars of the group all, or of the host of --host. The
-file keeps its comments and layout.`,
-			`Something in the project must read the variable. The variable must not
-be in those vars yet, also not as null.`,
-		},
-		flags: []flagDoc{
-			{name: "--inventory", value: "<name>", def: "inventory in winch.yaml", text: "inventory to write"},
-			{name: "--host", value: "<name>", def: "the group all", text: "host whose vars get the value"},
+			`Generate makes a random password of 32 letters and digits and encrypts
+it for the recipients in winch.yaml. With a path, it writes the !secret
+value at the path; without one, it prints it. It never prints the
+password.`,
+			pathHelp,
+			pathRules,
 		},
 		see: []string{"winch doc secrets"},
 	},
 	{
 		name:    "secret encrypt",
-		summary: "encrypt a value from stdin",
+		summary: "encrypt a value from stdin as a secret",
 		examples: []example{
-			{"encrypt the content of a file", "winch secret encrypt < dkim.key"},
-			{"encrypt the output of a command", "openssl rand -hex 16 | winch secret encrypt"},
+			{"write the content of a file as the default of a variable", "winch secret encrypt vars.dkim_key < dkim.key"},
+			{"print the output of a command as a !secret value", "openssl rand -hex 16 | winch secret encrypt"},
 		},
-		usage: []string{"winch secret encrypt"},
+		usage: []string{"winch secret encrypt [<path>]"},
 		description: []string{
-			`Encrypt reads a value from stdin, encrypts it for the recipients in
-winch.yaml, and prints it as a !secret value for a variable.`,
+			`Encrypt reads a value from stdin and encrypts it for the recipients in
+winch.yaml. With a path, it writes the !secret value at the path;
+without one, it prints it.`,
 			`A value of one line loses its trailing newline. A value of more lines
 stays as it is.`,
-			`A !secret stands only in a variable value: in inventory vars, and in
-the defaults of winch.yaml and of recipes.`,
+			pathHelp,
+			pathRules,
 		},
 		see: []string{"winch doc secrets"},
 	},

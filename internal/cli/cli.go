@@ -109,7 +109,6 @@ type flags struct {
 	check    *string
 	exitCode bool
 	json     bool
-	host     string
 	command  string
 }
 
@@ -216,8 +215,6 @@ func setFlagValue(f *flags, name, v string) error {
 		f.users = append(f.users, v)
 	case "--batch":
 		f.batch = true
-	case "--host":
-		return notEmpty(&f.host, name, v)
 	default:
 		return fmt.Errorf("no flag %s", name)
 	}

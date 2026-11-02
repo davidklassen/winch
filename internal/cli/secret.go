@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/secret"
@@ -64,53 +63,63 @@ func secretInit(ctx context.Context, env Env, f *flags, args []string) int {
 }
 
 func secretGenerate(ctx context.Context, env Env, f *flags, args []string) int {
-	name, ok := "", false
-	if len(args) == 1 {
-		name, ok = strings.CutPrefix(args[0], "vars.")
-	}
-	if !ok || name == "" {
-		env.fail(usage("needs one variable: vars.<name>"))
-		return exitInvalid
-	}
-	file, err := project.WriteSecret(env.Dir, f.inventory, f.host, name, secret.Password())
-	if err != nil {
-		env.fail(err)
-		return exitInvalid
-	}
-	where := "the group all"
-	if f.host != "" {
-		where = "host " + f.host
-	}
-	fmt.Fprintf(env.stdout, "wrote vars.%s into the vars of %s in %s\n", name, where, file)
-	return exitOK
+	return writeSecret(env, args, func() (string, error) { return secret.Password(), nil })
 }
 
 func secretEncrypt(ctx context.Context, env Env, f *flags, args []string) int {
-	if len(args) != 0 {
-		env.fail(usage("takes no arguments"))
+	return writeSecret(env, args, func() (string, error) {
+		in, err := io.ReadAll(env.In)
+		if err != nil {
+			return "", usage("read stdin: %v", err)
+		}
+		value, err := secret.OneLine(string(in))
+		if err != nil {
+			return "", usage("%v", err)
+		}
+		return value, nil
+	})
+}
+
+// writeSecret encrypts the value of plain and writes it at the path in args,
+// or prints it without a path.
+func writeSecret(env Env, args []string, plain func() (string, error)) int {
+	if len(args) > 1 {
+		env.fail(usage("takes one path at most"))
 		return exitInvalid
 	}
-	recs, err := project.Recipients(env.Dir)
+	var write func(string) (string, error)
+	if len(args) == 1 {
+		edit, err := project.SecretAt(env.Dir, args[0])
+		if err != nil {
+			env.fail(err)
+			return exitInvalid
+		}
+		write = edit.Write
+	} else {
+		recs, err := project.Recipients(env.Dir)
+		if err != nil {
+			env.fail(err)
+			return exitInvalid
+		}
+		write = func(value string) (string, error) {
+			text, err := secret.Encrypt(value, recs)
+			if err != nil {
+				return "", usage("encrypt: %v", err)
+			}
+			return "!secret " + text, nil
+		}
+	}
+	value, err := plain()
 	if err != nil {
 		env.fail(err)
 		return exitInvalid
 	}
-	in, err := io.ReadAll(env.In)
+	line, err := write(value)
 	if err != nil {
-		env.fail(usage("read stdin: %v", err))
+		env.fail(err)
 		return exitInvalid
 	}
-	value, err := secret.OneLine(string(in))
-	if err != nil {
-		env.fail(usage("%v", err))
-		return exitInvalid
-	}
-	text, err := secret.Encrypt(value, recs)
-	if err != nil {
-		env.fail(usage("encrypt: %v", err))
-		return exitInvalid
-	}
-	fmt.Fprintf(env.stdout, "!secret %s\n", text)
+	fmt.Fprintln(env.stdout, line)
 	return exitOK
 }
 

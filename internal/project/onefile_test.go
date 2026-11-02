@@ -132,20 +132,19 @@ func readTestKey(t *testing.T) []byte {
 }
 
 // spec: Variables/Secrets (winch secret generate); Project layout
-func TestWriteSecretInWinchYAML(t *testing.T) {
+func TestSecretAtInWinchYAML(t *testing.T) {
 	k := newKey(t)
 	cfg := "name: acme\ninventory: prod\nrecipients:\n  - " + k.id.Recipient().String() + "\n" +
 		"inventories:\n  prod:\n    hosts:\n      web1:\n"
 	dir := writeProject(t, map[string]string{"winch.yaml": cfg, "inventories/test.yaml": "", "pipelines/site.yaml": readsPipeline("pw", "token")})
-	file, err := WriteSecret(dir, "", "", "pw", "hunter2")
-	if err != nil || file != "inventories.prod of winch.yaml" {
-		t.Fatalf("WriteSecret = %q, %v", file, err)
+	if line, err := writeSecret(dir, "inventories.prod.groups.all.vars.pw"); err != nil || line != "added inventories.prod.groups.all.vars.pw in winch.yaml" {
+		t.Fatalf("write = %q, %v", line, err)
 	}
-	if _, err := WriteSecret(dir, "", "web1", "token", "s3cret"); err != nil {
-		t.Fatalf("WriteSecret --host: %v", err)
+	if _, err := writeSecret(dir, "inventories.prod.hosts.web1.vars.token"); err != nil {
+		t.Fatalf("write to a host: %v", err)
 	}
-	if _, err := WriteSecret(dir, "", "web9", "token", "s3cret"); err == nil || err.Error() != `host web9 is not in inventories.prod of winch.yaml` {
-		t.Errorf("WriteSecret for an unknown host: %v", err)
+	if _, err := writeSecret(dir, "inventories.prod.hosts.web9.vars.token"); err == nil || err.Error() != `host web9 is not in inventories.prod of winch.yaml` {
+		t.Errorf("write to an unknown host: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "winch.yaml"))
 	if err != nil {
@@ -160,7 +159,7 @@ func TestWriteSecretInWinchYAML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := p.Inventory.Hosts[0].Vars["token"].(*Sealed).Plain; got != "s3cret" {
+	if got := p.Inventory.Hosts[0].Vars["token"].(*Sealed).Plain; got != "hunter2" {
 		t.Errorf("token = %q", got)
 	}
 }

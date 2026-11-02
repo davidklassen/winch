@@ -23,6 +23,8 @@ type Var struct {
 	Name string
 	Pos  yamlx.Pos
 	node *yamlx.Node
+	// recipe is the recipe of the default, or empty for winch.yaml.
+	recipe string
 	// computed is the value when it holds tagged values.
 	computed *value
 }
@@ -58,7 +60,7 @@ func (l *loader) declare(n *yamlx.Node, recipe string) []error {
 		}
 		errs = append(errs, l.seal(p.Value, "")...)
 		l.warnNumbers(p.Key, p.Value)
-		v := &Var{Name: p.Key, Pos: p.KeyPos, node: p.Value}
+		v := &Var{Name: p.Key, Pos: p.KeyPos, node: p.Value, recipe: recipe}
 		l.vars[p.Key] = v
 		l.decls = append(l.decls, v)
 	}

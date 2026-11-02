@@ -2,7 +2,6 @@ package project
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -804,87 +803,242 @@ func varLines(n *yamlx.Node, kind string, lines []string) map[int]bool {
 	return out
 }
 
-// WriteSecret encrypts plain for the recipients, and writes it as the value
-// of the variable name into the vars of the group all in the inventory, or of
-// host when host is not empty. inventory is the name of --inventory, or
-// empty. It keeps the comments and the layout of the file, and returns the
-// name of the inventory.
-func WriteSecret(dir, inventory, host, name, plain string) (string, error) {
+const pathForms = "use vars.<name>, recipes.<recipe>.vars.<name>, [inventories.<inventory>.]groups.<group>.vars.<name>, or [inventories.<inventory>.]hosts.<host>.vars.<name>"
+
+// parseSecretPath splits path at its dots into the prefix that names an
+// inventory or a recipe, if any, and the keys in that part, from vars, hosts,
+// or groups on. The name of an inventory, a recipe, a host, or a group can
+// hold dots: it ends at the next key of the path form.
+func parseSecretPath(path string) (prefix, keys []string, err error) {
+	bad := yamlx.Errorf(yamlx.Pos{}, "%q is not a path to a variable value; %s", path, pathForms)
+	segs := strings.Split(path, ".")
+	if slices.Contains(segs, "") {
+		return nil, nil, bad
+	}
+	index := func(from int, keys ...string) int {
+		for i := from; i < len(segs); i++ {
+			if slices.Contains(keys, segs[i]) {
+				return i
+			}
+		}
+		return -1
+	}
+	entry := 0
+	switch segs[0] {
+	case "vars":
+		keys = segs
+	case "recipes":
+		i := index(2, "vars")
+		if i < 0 {
+			return nil, nil, bad
+		}
+		prefix, keys = []string{"recipes", strings.Join(segs[1:i], ".")}, segs[i:]
+	case "hosts", "groups":
+	case "inventories":
+		if entry = index(2, "hosts", "groups"); entry < 0 {
+			return nil, nil, bad
+		}
+		prefix = []string{"inventories", strings.Join(segs[1:entry], ".")}
+	default:
+		return nil, nil, bad
+	}
+	if keys == nil {
+		i := index(entry+2, "vars")
+		if i < 0 {
+			return nil, nil, bad
+		}
+		keys = slices.Concat([]string{segs[entry], strings.Join(segs[entry+1:i], ".")}, segs[i:])
+	}
+	if len(keys) < varsAt(keys)+2 {
+		return nil, nil, bad
+	}
+	return prefix, keys, nil
+}
+
+// varsAt returns the index of the key vars in keys, the keys of a path in its
+// part.
+func varsAt(keys []string) int {
+	if keys[0] == "vars" {
+		return 0
+	}
+	return 2
+}
+
+// SecretEdit writes a !secret value at a path in the project. The file keeps
+// its comments and its layout.
+type SecretEdit struct {
+	at string
+	// file is relative to the project, and real the file after links.
+	file, real string
+	data       string
+	root       *yamlx.Node
+	// keys is the path in the file. replace is true when the path exists.
+	keys    []string
+	replace bool
+	recs    []age.Recipient
+}
+
+// SecretAt checks the path at and returns the edit that writes a secret
+// there. It reads only the parts of the project that the checks need: an
+// error in another place does not stop it.
+func SecretAt(dir, at string) (*SecretEdit, error) {
+	prefix, keys, err := parseSecretPath(at)
+	if err != nil {
+		return nil, err
+	}
 	cfg, err := loadConfig(dir)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	recs, err := recipients(cfg)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	// A layout error can hide the inventory to write into.
+	// A layout error can hide the part to write into.
 	if _, err := readLayout(dir, cfg); err != nil {
-		return "", err
+		return nil, err
 	}
-	// The reads of the parts that load are enough: a broken template in
-	// another recipe does not block a new secret. The load errors show only
-	// when the variable is not found, as they may hide its read.
+	// The load errors show only when the variable is not found, as they may
+	// hide its read.
 	l, lErr := newLoader(dir, cfg)
 	_, plErr := l.otherPipelines("")
+	name := keys[varsAt(keys)+1]
 	if read := l.readNames(); !read[name] {
-		return "", errors.Join(fmt.Errorf("nothing reads vars.%s%s", name, yamlx.Suggest(name, slices.Sorted(maps.Keys(read)))), lErr, plErr)
+		return nil, errors.Join(fmt.Errorf("nothing reads vars.%s%s", name, yamlx.Suggest(name, slices.Sorted(maps.Keys(read)))), lErr, plErr)
 	}
-	inventory = cmp.Or(inventory, cfg.Inventory, l.layout.only())
-	if inventory == "" {
-		return "", l.noInventory()
-	}
-	inv, err := l.layout.inventory(inventory)
-	if err != nil {
-		return "", err
-	}
-	// A key in winch.yaml is the map at prefix.
-	file, label := inv.file, inv.label("inventories")
-	var prefix []string
-	if inv.node != nil {
-		if !inv.top {
-			prefix = []string{"inventories", inv.name}
+	e := &SecretEdit{at: at, file: cfg.file, recs: recs}
+	label := cfg.file
+	var pt part
+	switch {
+	case len(prefix) == 0 && keys[0] != "vars":
+		if !slices.ContainsFunc(l.layout.inventories, func(inv part) bool { return inv.top }) {
+			if len(l.layout.inventories) == 0 {
+				return nil, l.noInventory()
+			}
+			return nil, fmt.Errorf("%s has no hosts or groups at the top; start the path with inventories.<name>: %s", cfg.file, strings.Join(partNames(l.layout.inventories), ", "))
 		}
+	case len(prefix) > 0 && prefix[0] == "recipes":
+		i := slices.IndexFunc(l.layout.recipes, func(r part) bool { return r.name == prefix[1] })
+		if i < 0 {
+			return nil, yamlx.Errorf(yamlx.Pos{}, "unknown recipe %q%s", prefix[1], suggestOrList(prefix[1], partNames(l.layout.recipes)))
+		}
+		pt = l.layout.recipes[i]
+		if !strings.HasPrefix(name, pt.name+"_") {
+			return nil, fmt.Errorf("cannot write %s: a variable of recipe %s starts with %s_", at, pt.name, pt.name)
+		}
+	case len(prefix) > 0:
+		if pt, err = l.layout.inventory(prefix[1]); err != nil {
+			return nil, err
+		}
+		if pt.top {
+			return nil, yamlx.Errorf(yamlx.Pos{}, "inventory %q: the hosts at the top of %s are the only inventory; leave out the inventory name", prefix[1], cfg.file)
+		}
+		label = pt.label("inventories")
 	}
-	path, err := filepath.EvalSymlinks(projectPath(dir, file))
+	// inFile is the part of prefix that is a key in the file.
+	inFile := prefix
+	if pt.name != "" && pt.node == nil {
+		inFile, e.file, label = nil, pt.file, pt.file
+	}
+	e.keys = slices.Concat(inFile, keys)
+	vars := len(inFile) + varsAt(keys)
+	e.real, err = filepath.EvalSymlinks(projectPath(dir, e.file))
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", notFound(file)
+		return nil, notFound(e.file)
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(e.real)
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", file, err)
+		return nil, fmt.Errorf("read %s: %w", e.file, err)
 	}
-	n, err := yamlx.Parse(file, data)
-	if err != nil {
-		return "", err
+	if e.root, err = yamlx.Parse(e.file, data); err != nil {
+		return nil, err
 	}
-	keys := slices.Concat(prefix, []string{"groups", "all", "vars", name})
-	where := "the group all"
-	if host != "" {
-		keys = slices.Concat(prefix, []string{"hosts", host, "vars", name})
-		where = "host " + host
-		if find(n, keys[:len(prefix)+2]) == nil {
-			return "", fmt.Errorf("host %s is not in %s", host, label)
+	e.data = string(data)
+	if kind := keys[0]; kind != "vars" && find(e.root, e.keys[:vars]) == nil && (kind == "hosts" || keys[1] != "all") {
+		return nil, fmt.Errorf("%s %s is not in %s", strings.TrimSuffix(kind, "s"), keys[1], label)
+	}
+	if v, ok := l.vars[name]; ok && keys[0] == "vars" {
+		if q := find(e.root, e.keys[:vars+2]); q == nil || q.KeyPos != v.Pos {
+			there := keys
+			if v.recipe != "" {
+				there = slices.Concat([]string{"recipes", v.recipe}, keys)
+			}
+			return nil, fmt.Errorf("vars.%s has a default at %s; write the secret there: %s", name, v.Pos, strings.Join(there, "."))
 		}
 	}
-	if find(n, keys) != nil {
-		return "", fmt.Errorf("vars.%s is already in the vars of %s in %s", name, where, label)
+	// above names a key of the path in the output: the keys in the file
+	// follow the part of prefix that names the file.
+	above := prefix[:len(prefix)-len(inFile)]
+	n := e.root
+	for i, key := range e.keys {
+		if n.Kind == yamlx.List {
+			return nil, fmt.Errorf("cannot write %s: %s is a list; a path cannot name a list item", at, strings.Join(slices.Concat(above, e.keys[:i]), "."))
+		}
+		if n.Kind != yamlx.Map && n.Kind != yamlx.Null {
+			return nil, fmt.Errorf("cannot write %s: %s is not a map", at, strings.Join(slices.Concat(above, e.keys[:i]), "."))
+		}
+		q := find(n, []string{key})
+		if q == nil {
+			break
+		}
+		n = q.Value
 	}
-	text, err := secret.Encrypt(plain, recs)
+	e.replace = find(e.root, e.keys) != nil
+	if _, err := e.text("S"); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// Write encrypts plain for the recipients, writes it at the path, and
+// returns the line for the output.
+func (e *SecretEdit) Write(plain string) (string, error) {
+	text, err := secret.Encrypt(plain, e.recs)
 	if err != nil {
 		return "", err
 	}
-	out := insert(string(data), n, keys, "!secret "+text)
-	// insert assumes block maps; a check of the result catches every other
-	// layout.
-	after, err := yamlx.Parse(file, []byte(out))
-	if err != nil || !reflect.DeepEqual(yamlx.Value(after), withValue(yamlx.Value(n), keys, text)) {
-		return "", fmt.Errorf("cannot write vars.%s into %s: winch writes only into block maps, not into flow maps such as {a: 1}; rewrite the map as a block map, or add the value of winch secret encrypt by hand", name, label)
+	out, err := e.text(text)
+	if err != nil {
+		return "", err
 	}
-	return label, replaceFile(path, []byte(out))
+	if err := replaceFile(e.real, []byte(out)); err != nil {
+		return "", err
+	}
+	verb := "added"
+	if e.replace {
+		verb = "replaced"
+	}
+	return fmt.Sprintf("%s %s in %s", verb, e.at, e.file), nil
+}
+
+// text returns the file with the secret text at the path.
+func (e *SecretEdit) text(text string) (string, error) {
+	var out string
+	if e.replace {
+		out = replace(e.data, e.root, e.keys, "!secret "+text)
+	} else {
+		out = insert(e.data, e.root, e.keys, "!secret "+text)
+	}
+	// insert and replace assume block maps; a check of the result catches
+	// every other layout.
+	after, err := yamlx.Parse(e.file, []byte(out))
+	if err == nil && reflect.DeepEqual(yamlx.Value(after), withValue(yamlx.Value(e.root), e.keys, text)) {
+		return out, nil
+	}
+	for n, i := e.root, 0; n.Kind == yamlx.Map && i < len(e.keys); i++ {
+		if len(n.Pairs) > 0 && strings.HasPrefix(e.data[offset(e.data, n.Pos):], "{") {
+			return "", fmt.Errorf("cannot write %s into %s: winch writes only into block maps, not into flow maps such as {a: 1}; rewrite the map as a block map, or add the value of winch secret encrypt by hand", e.at, e.file)
+		}
+		q := find(n, e.keys[i:i+1])
+		if q == nil {
+			break
+		}
+		n = q.Value
+	}
+	return "", fmt.Errorf("cannot write %s into %s: winch cannot keep the rest of the file the same; add the value of winch secret encrypt by hand", e.at, e.file)
 }
 
 // find returns the pair at the path of keys in n, or nil.
@@ -955,6 +1109,88 @@ func insert(text string, root *yamlx.Node, keys []string, leaf string) string {
 		return b.String()
 	}
 	return text
+}
+
+// replace returns text, whose tree is root, with leaf as the value of the
+// pair at keys. The old value can span lines. A comment after it on the line
+// of the key stays.
+func replace(text string, root *yamlx.Node, keys []string, leaf string) string {
+	p := find(root, keys)
+	lines := strings.SplitAfter(text, "\n")
+	l := p.KeyPos.Line - 1
+	line := strings.TrimRight(lines[l], "\r\n")
+	indent := p.KeyPos.Col - 1
+	at := offset(line, yamlx.Pos{Line: 1, Col: p.Value.Pos.Col})
+	// In a block scalar, a line that starts with # is text.
+	block := p.Value.Pos.Line == p.KeyPos.Line && at < len(line) && (line[at] == '|' || line[at] == '>')
+	end := l + 1
+	for i := l + 1; i < len(lines); i++ {
+		s := strings.TrimRight(lines[i], "\r\n")
+		rest := strings.TrimLeft(s, " ")
+		if rest == "" || !block && strings.HasPrefix(rest, "#") {
+			continue
+		}
+		// A block list can start at the indent of its key.
+		in := len(s) - len(rest)
+		if in < indent || in == indent && (p.Value.Kind != yamlx.List || !strings.HasPrefix(rest, "-")) {
+			break
+		}
+		end = i + 1
+	}
+	var head, tail string
+	if p.Value.Pos.Line == p.KeyPos.Line {
+		head, tail = line[:at], comment(line[at:])
+	} else {
+		// The line holds only the key and a comment.
+		tail = comment(line[offset(line, yamlx.Pos{Line: 1, Col: p.KeyPos.Col}):])
+		head = strings.TrimRight(line[:len(line)-len(tail)], " ")
+	}
+	if !strings.HasSuffix(head, " ") {
+		head += " "
+	}
+	lines[l] = head + leaf + tail + "\n"
+	return strings.Join(lines[:l+1], "") + strings.Join(lines[end:], "")
+}
+
+// quoteEnd returns the offset after the quoted scalar that starts at at in s,
+// or -1 when it does not end in s.
+func quoteEnd(s string, at int) int {
+	q := s[at]
+	for i := at + 1; i < len(s); i++ {
+		switch {
+		case q == '"' && s[i] == '\\':
+			i++
+		case q == '\'' && s[i] == q && i+1 < len(s) && s[i+1] == q:
+			i++
+		case s[i] == q:
+			return i + 1
+		}
+	}
+	return -1
+}
+
+// comment returns the comment after the value at the start of s, with the
+// spaces before it. It returns "" when s has no comment, or when the value
+// goes on after s.
+func comment(s string) string {
+	i := 0
+	// Skip the tag and the anchor.
+	for i < len(s) && (s[i] == '!' || s[i] == '&') {
+		j := strings.IndexByte(s[i:], ' ')
+		if j < 0 {
+			return ""
+		}
+		i += j + strings.IndexFunc(s[i+j:], func(r rune) bool { return r != ' ' })
+	}
+	if i < len(s) && (s[i] == '"' || s[i] == '\'') {
+		if i = quoteEnd(s, i); i < 0 {
+			return ""
+		}
+	}
+	if j := strings.Index(s[i:], " #"); j >= 0 {
+		return s[i+j:]
+	}
+	return ""
 }
 
 // blockEnd returns the index of the line after the block map whose first key
