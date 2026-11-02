@@ -379,6 +379,43 @@ func TestSecretCommands(t *testing.T) {
 	}
 }
 
+// spec: Variables/Secrets in output (a failed placeholder variant); Modules/cmd
+func TestSecretCmdUser(t *testing.T) {
+	identity, recipient := ageKey(t)
+	text, err := secret.Encrypt("app-deploy", []age.Recipient{recipient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      account: !secret " + text + "\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - cmd:
+          command: app migrate
+          user: !expr 'trimPrefix(vars.account, "app-")'
+          dir: !expr '"/srv/" + trimPrefix(vars.account, "app-")'
+`,
+	})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	h.SetUser("web1", "deploy")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if want := "    ? cmd (secret)\n        user: (secret)\n        dir: (secret)\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("the plan has no %q:\n%s%s", want, out.String(), errOut.String())
+	}
+	if strings.Contains(out.String()+errOut.String(), "deploy") {
+		t.Errorf("the plan shows the secret:\n%s%s", out.String(), errOut.String())
+	}
+}
+
 // spec: Steps (the record of a then); Variables/Secrets in output
 func TestSecretThenRecord(t *testing.T) {
 	sum := func(s string) string {

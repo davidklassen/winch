@@ -10,7 +10,9 @@ web2
     * assert systemctl is-active nginx
   build
     + cmd make install
+        user: www-data
+        dir: /srv/app
 
 3 hosts: 1 to change, 1 unchanged, 1 unknown
-plan 7255160dbbb4c76e
+plan c090b8dbf74b5f7b
 stderr:

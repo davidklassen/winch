@@ -328,6 +328,8 @@ type Shown struct {
 	Then     string
 	Validate string
 	Unless   string
+	User     string
+	Dir      string
 	// Lines are the lines of the content with their masks, or nil when the
 	// content holds no secret.
 	Lines []secret.Line
@@ -373,6 +375,28 @@ func (st Step) ShownUnless() string {
 	}
 	if c, ok := st.Args.(*module.Cmd); ok {
 		return c.UnlessCommand()
+	}
+	return ""
+}
+
+// ShownUser is the user of a cmd as the output shows it.
+func (st Step) ShownUser() string {
+	if st.Shown != nil {
+		return st.Shown.User
+	}
+	if c, ok := st.Args.(*module.Cmd); ok {
+		return c.User
+	}
+	return ""
+}
+
+// ShownDir is the dir of a cmd as the output shows it.
+func (st Step) ShownDir() string {
+	if st.Shown != nil {
+		return st.Shown.Dir
+	}
+	if c, ok := st.Args.(*module.Cmd); ok {
+		return c.Dir
 	}
 	return ""
 }
