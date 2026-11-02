@@ -2,6 +2,7 @@ package module
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -225,16 +226,17 @@ type ExecResult struct {
 	Signal int `json:"signal,omitempty"`
 }
 
-// Exec runs a command of winch exec through sh -c.
-func Exec(ctx context.Context, command string) (ExecResult, error) {
-	return execLimit(ctx, command, commandLimit, KillDelay)
+// Exec runs a command of winch exec through sh -c, with the time limit
+// limit. A zero limit is the limit of every host command.
+func Exec(ctx context.Context, command string, limit time.Duration) (ExecResult, error) {
+	return execLimit(ctx, command, cmp.Or(limit, commandLimit), KillDelay)
 }
 
-// execLimit is Exec with the time limit limit. Exit codes and signals are
+// execLimit is Exec with the kill delay killDelay. Exit codes and signals are
 // results; the time limit is an error.
 func execLimit(ctx context.Context, command string, limit, killDelay time.Duration) (ExecResult, error) {
 	out := &tailBuffer{max: 1 << 20}
-	err := shell(ctx, "-c", command, "/", nil, nil, limit, "", killDelay, out)
+	err := shell(ctx, "-c", command, "/", nil, nil, limit, "--timeout", killDelay, out)
 	tail := out.tail()
 	if err != nil && !errors.As(err, new(*exec.ExitError)) {
 		return ExecResult{}, failure(command, err, string(tail))

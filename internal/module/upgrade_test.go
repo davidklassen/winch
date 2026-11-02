@@ -151,7 +151,7 @@ func TestExecInterrupt(t *testing.T) {
 func TestExecTimeLimitSendsSIGTERM(t *testing.T) {
 	t.Parallel()
 	_, err := execLimit(t.Context(), "trap 'echo term; exit 1' TERM; sleep 30 & wait", time.Second, time.Second)
-	if err == nil || !strings.HasSuffix(err.Error(), "stopped after 1s: term") {
+	if err == nil || !strings.HasSuffix(err.Error(), "stopped after 1s; set --timeout for a longer limit: term") {
 		t.Errorf("error = %v, want SIGTERM at the time limit", err)
 	}
 }
@@ -160,7 +160,7 @@ func TestExecTimeLimitSendsSIGTERM(t *testing.T) {
 func TestExecTimeLimit(t *testing.T) {
 	t.Parallel()
 	_, err := execLimit(t.Context(), "echo started; sleep 30", time.Second, time.Second)
-	if err == nil || !strings.HasSuffix(err.Error(), "stopped after 1s: started") {
+	if err == nil || !strings.HasSuffix(err.Error(), "stopped after 1s; set --timeout for a longer limit: started") {
 		t.Errorf("error = %v, want the time limit with the output", err)
 	}
 }

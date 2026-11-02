@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
@@ -234,7 +235,7 @@ exit 1`))
 		if d := time.Since(start); d > 5*time.Second {
 			t.Errorf("the new session took %v", d)
 		}
-		if _, err := s.Exec(t.Context(), "true"); err != nil {
+		if _, err := s.Exec(t.Context(), protocol.Exec{Command: "true"}); err != nil {
 			t.Fatalf("exec in the new session: %v", err)
 		}
 		if out := vm.MustRun(t, "grep -c '\"pid\":"+ids[0]+"}' /var/lib/winch/lock || true"); out != "0\n" {

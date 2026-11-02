@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
@@ -1332,10 +1333,10 @@ func TestSSHDChecksWithoutRunDir(t *testing.T) {
 	s := vm.Session(t)
 	// The state after a stop of ssh.service on a host with ssh.socket. A new
 	// login would make /run/sshd again, so the test uses the session alone.
-	if res, err := s.Exec(t.Context(), "mv /run/sshd /run/sshd.off"); err != nil || res.ExitCode != 0 {
+	if res, err := s.Exec(t.Context(), protocol.Exec{Command: "mv /run/sshd /run/sshd.off"}); err != nil || res.ExitCode != 0 {
 		t.Fatalf("move /run/sshd: %+v, %v", res, err)
 	}
-	t.Cleanup(func() { s.Exec(context.Background(), "mv /run/sshd.off /run/sshd") }) //nolint:errcheck // the VM can be gone
+	t.Cleanup(func() { s.Exec(context.Background(), protocol.Exec{Command: "mv /run/sshd.off /run/sshd"}) }) //nolint:errcheck // the VM can be gone
 	ctx := t.Context()
 	got, err := s.Check(ctx, "user", &module.User{Name: "wtalice", AuthorizedKeys: keys(fakeKey('1', "one"))}, &module.State{})
 	if err != nil || got.Status != module.Change {
@@ -1349,17 +1350,17 @@ func TestSSHDChecksWithoutRunDir(t *testing.T) {
 	if want := "purge of /etc/ssh would remove files that sshd needs: "; err == nil || !strings.HasPrefix(err.Error(), want) {
 		t.Errorf("check of a purge of /etc/ssh: %v, want an error that starts with %q", err, want)
 	}
-	if res, err := s.Exec(ctx, "echo 'NoSuchOption yes' > /etc/ssh/sshd_config.d/wt.conf"); err != nil || res.ExitCode != 0 {
+	if res, err := s.Exec(ctx, protocol.Exec{Command: "echo 'NoSuchOption yes' > /etc/ssh/sshd_config.d/wt.conf"}); err != nil || res.ExitCode != 0 {
 		t.Fatalf("write a bad sshd drop-in: %+v, %v", res, err)
 	}
 	_, err = s.Check(ctx, "user", &module.User{Name: "wtalice", AuthorizedKeys: keys(fakeKey('1', "one"))}, &module.State{})
 	if want := "sshd -T without /run/sshd: "; err == nil || !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), "NoSuchOption") {
 		t.Errorf("check of user keys with a bad sshd config: %v, want an error that starts with %q and names the option", err, want)
 	}
-	if res, err := s.Exec(ctx, "rm /etc/ssh/sshd_config.d/wt.conf"); err != nil || res.ExitCode != 0 {
+	if res, err := s.Exec(ctx, protocol.Exec{Command: "rm /etc/ssh/sshd_config.d/wt.conf"}); err != nil || res.ExitCode != 0 {
 		t.Fatalf("remove the bad sshd drop-in: %+v, %v", res, err)
 	}
-	if res, err := s.Exec(ctx, "[ ! -e /run/sshd ]"); err != nil || res.ExitCode != 0 {
+	if res, err := s.Exec(ctx, protocol.Exec{Command: "[ ! -e /run/sshd ]"}); err != nil || res.ExitCode != 0 {
 		t.Errorf("the checks made /run/sshd: %+v, %v", res, err)
 	}
 }

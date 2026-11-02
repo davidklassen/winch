@@ -156,9 +156,10 @@ type Command struct {
 }
 
 // Exec is the params of exec, which runs a command of winch exec. Its result
-// is a module.ExecResult.
+// is a module.ExecResult. A zero Timeout is the limit of every host command.
 type Exec struct {
-	Command string `json:"command"`
+	Command string        `json:"command"`
+	Timeout time.Duration `json:"timeout,omitempty"`
 }
 
 // Check is a record of a pending health gate or assert: the place of its

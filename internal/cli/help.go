@@ -338,6 +338,8 @@ the same output and exit code share one block. A command that exits
 non-zero adds "exit status N" to its block. winch exits with code 1
 when the command fails on a host.`,
 			"With --json, each host gives one exec event with output and exit_code.",
+			`The command stops after 600 seconds, or after --timeout. Each host
+then sends SIGTERM to the command, and SIGKILL 10 seconds later.`,
 			`Ctrl-C stops the commands. Each host sends SIGINT to the command, and
 SIGKILL when it still runs after 10 seconds.`,
 			`With a terminal, ssh can ask questions, and winch connects to the
@@ -348,6 +350,7 @@ and winch connects to them in parallel.`,
 			inventoryFlag,
 			userFlag,
 			batchFlag,
+			{name: "--timeout", value: "<seconds>", def: "600", text: "time limit of the command"},
 			{name: "--json", text: "one exec event per host on stdout"},
 		},
 		see: []string{"winch doc inventory", "winch doc remote"},

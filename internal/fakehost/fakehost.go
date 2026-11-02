@@ -1118,8 +1118,9 @@ func (h *Hosts) SetExec(host string, res module.ExecResult) {
 	h.execs[host] = res
 }
 
-// Exec records the command in Log and returns the result that SetExec set.
-func (c *Conn) Exec(ctx context.Context, command string) (module.ExecResult, error) {
+// Exec records the command in Log, with its timeout when it has one, and
+// returns the result that SetExec set.
+func (c *Conn) Exec(ctx context.Context, e protocol.Exec) (module.ExecResult, error) {
 	if err := c.dead(); err != nil {
 		return module.ExecResult{}, err
 	}
@@ -1131,7 +1132,11 @@ func (c *Conn) Exec(ctx context.Context, command string) (module.ExecResult, err
 	}
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
-	c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "exec "+command)
+	entry := "exec " + e.Command
+	if e.Timeout != 0 {
+		entry += " (timeout " + module.Seconds(e.Timeout) + ")"
+	}
+	c.hosts.Log[c.host] = append(c.hosts.Log[c.host], entry)
 	if c.hosts.failExec[c.host] {
 		return module.ExecResult{}, errors.New("the session ended without an error message")
 	}
