@@ -122,6 +122,7 @@ out of the project directory.
 
 ```
 make test               # unit tests
+make test PKG=./internal/helper RUN=TestHealth   # one package and test
 make test-integration   # integration tests in QEMU VMs
 ```
 

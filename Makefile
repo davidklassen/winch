@@ -7,6 +7,7 @@ MEM ?= 1G
 DISK ?= 8G
 FORWARD ?=
 RUN ?=
+PKG ?= ./...
 VERBOSE ?=
 TIMEOUT ?= $(if $(value RUN),10m,30m)
 CACHE := $(HOME)/.cache/winch
@@ -33,7 +34,7 @@ lint: helpers
 	golangci-lint run ./...
 
 test: helpers
-	go test -race ./...
+	go test -race $(if $(value RUN),-run '$(value RUN)') $(PKG)
 
 test-integration: build vm-image
 	$(VMENV) go test $(if $(VERBOSE),-v) -count=1 -parallel $(PARALLEL) -timeout $(TIMEOUT) $(if $(value RUN),-run '$(value RUN)') ./test/...
