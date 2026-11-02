@@ -442,7 +442,8 @@ func (l *loader) noInventory() error {
 // loadInventories loads the inventory flag, the default from winch.yaml, or
 // the only inventory.
 // Without any of them, it loads every inventory when all is true. It returns the
-// inventories that loaded.
+// inventories that loaded. When all is false, an inventory without hosts is an
+// error; winch validate passes a new project that has no hosts yet.
 func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setValue) ([]*Inventory, error) {
 	if name := cmp.Or(flag, cfg.Inventory, l.layout.only()); name != "" {
 		p, err := l.layout.inventory(name)
@@ -455,6 +456,13 @@ func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setVa
 		inv, err := l.loadInventory(p, set)
 		if err != nil {
 			return nil, err
+		}
+		if !all && len(inv.Hosts) == 0 {
+			pos := cmp.Or(inv.HostsPos, p.pos, yamlx.Pos{File: p.file, Line: 1, Col: 1})
+			if p.top {
+				return nil, yamlx.Errorf(pos, "the project has no hosts")
+			}
+			return nil, yamlx.Errorf(pos, "inventory %s has no hosts", name)
 		}
 		return []*Inventory{inv}, nil
 	}

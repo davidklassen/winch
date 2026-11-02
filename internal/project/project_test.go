@@ -168,6 +168,19 @@ func TestLoad(t *testing.T) {
 		{name: "same-address", files: map[string]string{"inventories/test.yaml": "hosts:\n  web1:\n    address: 192.0.2.1\n  web2:\n    address: 192.0.2.1\n  web3: {}\n  web4:\n    address: web3\n  web5:\n    address: 192.0.2.5\n  web6:\n    address: MAIL.acme.com\n  web7:\n    address: mail.acme.com\n"}},
 		{name: "host-named-all", files: map[string]string{"inventories/test.yaml": "hosts:\n  all: {}\n"}},
 		{name: "empty-inventory", files: map[string]string{"inventories/test.yaml": "hosts: {}\n"}},
+		{name: "empty-inventory-on-all", files: map[string]string{
+			"inventories/test.yaml": "groups:\n  web:\n    hosts: []\n",
+			"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
+		}},
+		{name: "empty-inventory-key", files: map[string]string{
+			"winch.yaml":            "name: acme\ninventory: prod\ninventories:\n  prod:\n    hosts: {}\n",
+			"inventories/test.yaml": "",
+		}},
+		{name: "empty-inventory-flag", files: map[string]string{"inventories/prod.yaml": "hosts: {}\n"}, inventory: "prod"},
+		{name: "empty-inventory-top", files: map[string]string{
+			"winch.yaml":            "name: acme\nhosts: {}\n",
+			"inventories/test.yaml": "",
+		}},
 		{name: "host-name-number", files: map[string]string{"inventories/test.yaml": "hosts:\n  1234: {}\n  1.5: {}\n  web2: {}\n"}},
 		{name: "group-member-number", files: map[string]string{"inventories/test.yaml": "hosts:\n  \"1234\": {}\n  web2: {}\ngroups:\n  db:\n    hosts: [1234, 0x1F, 1.5]\n"}},
 		{name: "host-name-quoted", files: map[string]string{"inventories/test.yaml": "hosts:\n  \"1234\": {}\n  web2: {}\ngroups:\n  db:\n    hosts: [\"1234\"]\n"}},
@@ -194,9 +207,9 @@ func TestLoad(t *testing.T) {
 			"winch.yml":  "name: acme\nhosts:\n  web1: {}\n",
 		}},
 		{name: "inventory-key-and-yml", files: map[string]string{
-			"winch.yaml":            "name: acme\ninventory: test\ninventories:\n  test:\n    hosts: {}\n",
+			"winch.yaml":            "name: acme\ninventory: test\ninventories:\n  test:\n    hosts:\n      web2: {}\n",
 			"inventories/test.yaml": "",
-			"inventories/test.yml":  "hosts: {}\n",
+			"inventories/test.yml":  "hosts:\n  web2: {}\n",
 		}},
 		{name: "duplicate-stage", files: map[string]string{"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: all\n    steps: []\n  - name: a\n    hosts: all\n    steps: []\n"}},
 		{name: "pipeline-without-stages", files: map[string]string{"pipelines/site.yaml": "stages: []\n"}},
@@ -344,6 +357,10 @@ func TestValidate(t *testing.T) {
 			"pipelines/site.yaml":     "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: pkg\n  - name: b\n    hosts: web2\n    steps:\n      - recipe: pkg\n",
 			"recipes/pkg/recipe.yaml": "steps:\n  - pkg:\n      name: curl\n",
 			"inventories/test.yaml":   "",
+		}},
+		{name: "empty-inventory", files: map[string]string{
+			"inventories/test.yaml": "hosts: {}\n",
+			"pipelines/site.yaml":   "stages:\n  - {name: a, hosts: all, steps: []}\n",
 		}},
 		{name: "no-inventories", files: map[string]string{
 			"winch.yaml":            "name: acme\n",

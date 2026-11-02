@@ -15,9 +15,10 @@ import (
 
 type Inventory struct {
 	// File names the inventory in messages.
-	File   string
-	Hosts  []Host  `yaml:"hosts" type:"map" line:"keyed by host name" doc:"Keyed by host name. Without address, the name is the SSH host name. A host name that YAML reads as a number, such as 1234, needs quotes. A host and a group cannot have the same name."`
-	Groups []Group `yaml:"groups" type:"map" line:"keyed by group name" doc:"Keyed by group name. The group all contains every host. A host value beats a group value, and a group value beats a value of all."`
+	File     string
+	Hosts    []Host `yaml:"hosts" type:"map" line:"keyed by host name" doc:"Keyed by host name. Without address, the name is the SSH host name. A host name that YAML reads as a number, such as 1234, needs quotes. A host and a group cannot have the same name."`
+	HostsPos yamlx.Pos
+	Groups   []Group `yaml:"groups" type:"map" line:"keyed by group name" doc:"Keyed by group name. The group all contains every host. A host value beats a group value, and a group value beats a value of all."`
 }
 
 type Host struct {
