@@ -1,4 +1,4 @@
-winch plan: show the changes and change nothing
+winch plan: show the changes that apply would make
 
 Examples:
   # show the changes of the pipeline site

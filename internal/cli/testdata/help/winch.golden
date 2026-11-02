@@ -16,8 +16,8 @@ Usage:
 Commands:
   validate  check the project without contacting a host
   fmt       format the project files
-  plan      show the changes and change nothing
-  apply     show the changes, ask, then make them
+  plan      show the changes that apply would make
+  apply     make the changes after you approve the plan
   run       plan and apply one module step
   exec      run a shell command on hosts
   secret    manage secrets and the age key
