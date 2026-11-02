@@ -102,11 +102,8 @@ func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
 		var err error
 		data, err = os.ReadFile(id.Path)
 		if errors.Is(err, fs.ErrNotExist) {
-			if target, lerr := os.Readlink(id.Path); lerr == nil {
-				if !filepath.IsAbs(target) {
-					target = filepath.Join(filepath.Dir(id.Path), target)
-				}
-				return nil, fmt.Errorf("the age key %s links to %s, which does not exist", id.Path, target)
+			if err := danglingLink(id.Path); err != nil {
+				return nil, err
 			}
 			return nil, fmt.Errorf("no age key at %s\n%s", id.Path, noKeyHelp)
 		}
@@ -146,13 +143,46 @@ func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
 	return ids, nil
 }
 
+// danglingLink returns an error when the first part of path that exists is
+// a symbolic link to a missing target. The target can be on a volume that is
+// not mounted.
+func danglingLink(path string) error {
+	p := path
+	for {
+		_, err := os.Lstat(p)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrNotExist) || filepath.Dir(p) == p {
+			return nil
+		}
+		p = filepath.Dir(p)
+	}
+	target, err := os.Readlink(p)
+	if err != nil {
+		return nil
+	}
+	if _, err := os.Stat(p); !errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(p), target)
+	}
+	if p == path {
+		return fmt.Errorf("the age key %s links to %s, which does not exist", path, target)
+	}
+	return fmt.Errorf("the age key %s is in %s, which links to %s, which does not exist", path, p, target)
+}
+
 // Init returns the public key of the identity. When the source is a file and
 // no file is there, it makes a new key and returns it in made; WriteKey
-// writes it. A dangling link is not a missing file: its target can be on a
-// volume that is not mounted.
+// writes it.
 func (id Identity) Init(ctx context.Context) (key string, made *age.X25519Identity, err error) {
 	if id.Cmd == "" && id.Path != "" {
 		if _, err := os.Lstat(id.Path); errors.Is(err, fs.ErrNotExist) {
+			if err := danglingLink(id.Path); err != nil {
+				return "", nil, err
+			}
 			made, err := age.GenerateX25519Identity()
 			if err != nil {
 				return "", nil, fmt.Errorf("make the age key: %w", err)

@@ -325,6 +325,38 @@ func TestAgeKeyDanglingLink(t *testing.T) {
 	}
 }
 
+// spec: Variables/Secrets (age key, winch secret init)
+func TestAgeKeyDanglingDirLink(t *testing.T) {
+	_, id := newIdentity(t)
+	dir := secretProject(t, id)
+	setPassword(t, dir, encrypt(t, dir, "hunter2\n"))
+	tmp := t.TempDir()
+	link, target := filepath.Join(tmp, "winch"), filepath.Join(tmp, "volume", "winch")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(link, "age.key")
+	msg := "the age key " + key + " is in " + link + ", which links to " + target + ", which does not exist\n"
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"plan", "site"}, msg},
+		{[]string{"secret", "init"}, "winch secret init: " + msg},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			r := winchWith(t, dir, "", key, "", fakehost.New(), false, "", tt.args...)
+			if r.code != exitInvalid || r.err != tt.want {
+				t.Errorf("exit %d, stderr %q; want %q", r.code, r.err, tt.want)
+			}
+			if _, err := os.Lstat(filepath.Dir(target)); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("winch made the target: %v", err)
+			}
+		})
+	}
+}
+
 // spec: Variables/Secrets (no key)
 func TestUnknownHome(t *testing.T) {
 	_, id := newIdentity(t)

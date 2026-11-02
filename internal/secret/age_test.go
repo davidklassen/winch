@@ -127,6 +127,16 @@ func TestIdentityRead(t *testing.T) {
 	if err := os.Symlink("volume/age.key", relLink); err != nil {
 		t.Fatal(err)
 	}
+	relDir := filepath.Join(dir, "vol")
+	if err := os.Symlink("unmounted", relDir); err != nil {
+		t.Fatal(err)
+	}
+	deep := filepath.Join(relDir, "winch", "age.key")
+	liveDir := filepath.Join(dir, "live")
+	if err := os.Symlink(t.TempDir(), liveDir); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(liveDir, "age.key")
 	tests := []struct {
 		name    string
 		id      Identity
@@ -137,6 +147,8 @@ func TestIdentityRead(t *testing.T) {
 		{"a directory", Identity{Path: dir}, "read the age key " + dir + ": is a directory"},
 		{"missing file", Identity{Path: missing}, "no age key at " + missing + "\nset WINCH_AGE_KEY"},
 		{"link with a relative missing target", Identity{Path: relLink}, "the age key " + relLink + " links to " + filepath.Join(dir, "volume", "age.key") + ", which does not exist"},
+		{"key under a directory link with a relative missing target", Identity{Path: deep}, "the age key " + deep + " is in " + relDir + ", which links to " + filepath.Join(dir, "unmounted") + ", which does not exist"},
+		{"missing key under a directory link to a directory", Identity{Path: live}, "no age key at " + live + "\nset WINCH_AGE_KEY"},
 		{"no path", Identity{}, "no age key: the home directory is not known; set WINCH_AGE_KEY or WINCH_AGE_IDENTITY_CMD"},
 		{"command", Identity{Cmd: "cat age.key", Dir: dir}, ""},
 		{"failing command", Identity{Cmd: "echo locked >&2; exit 3"}, "WINCH_AGE_IDENTITY_CMD exited with status 3: echo locked >&2; exit 3: locked"},
