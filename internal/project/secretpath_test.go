@@ -128,6 +128,9 @@ func TestSecretAt(t *testing.T) {
 			"groups.all.vars.pw", "winch.yaml",
 			"hosts:\n  web1:\ngroups:\n  all:\n    vars:\n      pw: !secret S\n",
 			"added groups.all.vars.pw in winch.yaml"},
+		{"a host with brackets", top("hosts:\n  web[1]:\n    address: 192.0.2.1\n"),
+			"hosts.web[1].vars.pw", "winch.yaml",
+			"hosts:\n  web[1]:\n    address: 192.0.2.1\n    vars:\n      pw: !secret S\n", ""},
 		{"a host at the top", top("hosts:\n  db1.acme.com:\n"),
 			"hosts.db1.acme.com.vars.pw", "winch.yaml",
 			"hosts:\n  db1.acme.com:\n    vars:\n      pw: !secret S\n", ""},
@@ -176,6 +179,17 @@ func TestSecretAt(t *testing.T) {
 			"vars.users.alice", "winch.yaml",
 			"vars:\n  users:\n    bob: x\n    alice: !secret S\n",
 			"added vars.users.alice in winch.yaml"},
+		{"a key with dots", top("vars:\n  users:\n    acme.com: old # k\n    bob: x\n"),
+			`vars.users["acme.com"]`, "winch.yaml",
+			"vars:\n  users:\n    acme.com: !secret S # k\n    bob: x\n",
+			`replaced vars.users["acme.com"] in winch.yaml`},
+		{"a missing key with dots", top("vars:\n  users:\n    bob: x\n"),
+			`vars.users["acme.com"]`, "winch.yaml",
+			"vars:\n  users:\n    bob: x\n    acme.com: !secret S\n",
+			`added vars.users["acme.com"] in winch.yaml`},
+		{"keys with dots in a row", top("hosts:\n  db1.acme.com:\n"),
+			`hosts.db1.acme.com.vars.users["a.b"]["c.d"].e`, "winch.yaml",
+			"hosts:\n  db1.acme.com:\n    vars:\n      users:\n        a.b:\n          c.d:\n            e: !secret S\n", ""},
 		{"a key of a map variable without a value", top("vars:\n  users:\n"),
 			"vars.users.alice", "winch.yaml",
 			"vars:\n  users:\n    alice: !secret S\n", ""},
@@ -265,7 +279,7 @@ func TestSecretAt(t *testing.T) {
 func TestSecretAtErrors(t *testing.T) {
 	k := newKey(t)
 	head := "name: acme\nrecipients:\n  - " + k.id.Recipient().String() + "\n"
-	inv := "hosts:\n  web1:\n    vars:\n      pw: x\ngroups:\n  all:\n    vars:\n      token: x\n  web:\n    hosts: [web1]\n"
+	inv := "hosts:\n  web1:\n    vars:\n      pw: x\ngroups:\n  all:\n    vars:\n      token: x\n      users:\n        a.b: [x]\n  web:\n    hosts: [web1]\n"
 	tests := []struct {
 		name string
 		// cfg follows head in winch.yaml.
@@ -290,6 +304,10 @@ func TestSecretAtErrors(t *testing.T) {
 		{"a recipe default without the prefix", "", "steps: []\n", "recipes.mail.vars.pw", "cannot write recipes.mail.vars.pw: a variable of recipe mail starts with mail_"},
 		{"a second default through a map", "", "vars:\n  mail_pw:\n    a: x\nsteps: []\n", "vars.mail_pw.b", "vars.mail_pw has a default at recipes/mail/recipe.yaml:2:3; write the secret there: recipes.mail.vars.mail_pw.b"},
 		{"an alias of the value", "vars:\n  pw: &p old\n  other: *p\n", "", "vars.pw", "cannot write vars.pw into winch.yaml: winch cannot keep the rest of the file the same; add the value of winch secret encrypt by hand"},
+		{"a list item below a host and a key with dots", "hosts:\n  db1.acme.com:\n    vars:\n      users:\n        a.b: [x]\n", "", `hosts.db1.acme.com.vars.users["a.b"].c`, `cannot write hosts.db1.acme.com.vars.users["a.b"].c: hosts.db1.acme.com.vars.users["a.b"] is a list; a path cannot name a list item`},
+		{"a list item in an inventory file below a key with dots", "", "", `inventories.test.groups.all.vars.users["a.b"].c`, `cannot write inventories.test.groups.all.vars.users["a.b"].c: inventories.test.groups.all.vars.users["a.b"] is a list`},
+		{"a second default below a key with dots", "", "vars:\n  mail_pw:\n    a.b: x\nsteps: []\n", `vars.mail_pw["a.b"]`, `vars.mail_pw has a default at recipes/mail/recipe.yaml:2:3; write the secret there: 'recipes.mail.vars.mail_pw["a.b"]'`},
+		{"a list item below a key with dots", "vars:\n  users:\n    a.b: [x]\n", "", `vars.users["a.b"].c`, `cannot write vars.users["a.b"].c: vars.users["a.b"] is a list; a path cannot name a list item`},
 		{"no recipients", "", "", "vars.pw", "winch.yaml has no recipients; run winch secret init"},
 	}
 	for _, tt := range tests {
@@ -345,10 +363,28 @@ func TestSecretAtBadPath(t *testing.T) {
 		"winch.yaml":          "name: acme\ninventory: test\nrecipients:\n  - " + k.id.Recipient().String() + "\n",
 		"pipelines/site.yaml": readsPipeline("pw"),
 	})
-	for _, path := range []string{"", "pw", "vars", "vars.", "vars..pw", "x.pw", "recipes.mail.pw", "recipes.vars.pw", "hosts.web1", "groups.all.pw", "inventories.test.vars.pw", "inventories.test.hosts.web1.pw"} {
+	for _, path := range []string{"", "pw", "vars", "vars.", "vars..pw", "x.pw", "recipes.mail.pw", "recipes.vars.pw", "hosts.web1", "groups.all.pw", "inventories.test.vars.pw", "inventories.test.hosts.web1.pw",
+		`hosts.web1.vars["pw"]`, `vars.pw.["a"]`, `vars["pw"]`,
+		`hosts["web1"].vars.pw`, `recipes.mail.vars["mail_pw"]`} {
 		_, err := SecretAt(dir, path)
 		want := fmt.Sprintf(`%q is not a path to a variable value; use vars.<name>, recipes.<recipe>.vars.<name>, [inventories.<inventory>.]groups.<group>.vars.<name>, or [inventories.<inventory>.]hosts.<host>.vars.<name>`, path)
 		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("path %q: err %v; want %q", path, err, want)
+		}
+	}
+}
+
+// spec: Variables/Secrets (winch secret generate, paths)
+func TestSecretAtBadBracketPath(t *testing.T) {
+	k := newKey(t)
+	dir := writeProject(t, map[string]string{
+		"winch.yaml":          "name: acme\ninventory: test\nrecipients:\n  - " + k.id.Recipient().String() + "\n",
+		"pipelines/site.yaml": readsPipeline("pw"),
+	})
+	for _, path := range []string{"vars.pw[acme.com]", `vars.pw["a`, `vars.pw["a"`, `vars.pw["a"]b`, `vars.pw.x[a]`, `vars.pw['a']`, "vars.pw[`a`]", `vars.pw[""]`, `vars.pw["a"].`} {
+		_, err := SecretAt(dir, path)
+		want := fmt.Sprintf(`%q is not a path to a variable value; put a key with dots in brackets and double quotes, and the path in single quotes: 'vars.m["a.b"]'`, path)
+		if err == nil || err.Error() != want {
 			t.Errorf("path %q: err %v; want %q", path, err, want)
 		}
 	}

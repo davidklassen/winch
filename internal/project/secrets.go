@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -829,15 +830,89 @@ func varLines(n *yamlx.Node, kind string, lines []string) map[int]bool {
 
 const pathForms = "use vars.<name>, recipes.<recipe>.vars.<name>, [inventories.<inventory>.]groups.<group>.vars.<name>, or [inventories.<inventory>.]hosts.<host>.vars.<name>"
 
-// parseSecretPath splits path at its dots into the prefix that names an
-// inventory or a recipe, if any, and the keys in that part, from vars, hosts,
-// or groups on. The name of an inventory, a recipe, a host, or a group can
-// hold dots: it ends at the next key of the path form.
+// bracketKeys returns the keys of tail, which starts with a key in brackets
+// and double quotes, as in ["acme.com"].b. Such a key can hold dots.
+func bracketKeys(tail string) ([]string, bool) {
+	var keys []string
+	for tail != "" {
+		rest, ok := strings.CutPrefix(tail, "[")
+		if !ok {
+			return nil, false
+		}
+		q, err := strconv.QuotedPrefix(rest)
+		if err != nil || q[0] != '"' {
+			return nil, false
+		}
+		key, _ := strconv.Unquote(q)
+		if rest, ok = strings.CutPrefix(rest[len(q):], "]"); !ok || key == "" {
+			return nil, false
+		}
+		keys = append(keys, key)
+		for strings.HasPrefix(rest, ".") {
+			i := strings.IndexAny(rest[1:], ".[")
+			if i < 0 {
+				i = len(rest) - 1
+			}
+			if i == 0 {
+				return nil, false
+			}
+			keys, rest = append(keys, rest[1:1+i]), rest[1+i:]
+		}
+		tail = rest
+	}
+	return keys, true
+}
+
+// showPath joins keys with dots. A key at from or later that holds a dot or a
+// bracket shows in brackets and double quotes.
+func showPath(keys []string, from int) string {
+	var b strings.Builder
+	for i, key := range keys {
+		switch {
+		case i >= from && strings.ContainsAny(key, ".["):
+			b.WriteString("[" + strconv.Quote(key) + "]")
+		case i > 0:
+			b.WriteString("." + key)
+		default:
+			b.WriteString(key)
+		}
+	}
+	return b.String()
+}
+
+// parseSecretPath splits path into the prefix that names an inventory or a
+// recipe, if any, and the keys in that part, from vars, hosts, or groups on.
+// A key below the variable name can stand in brackets and double quotes. A
+// name above it can hold a bracket: the keys in brackets start at the first
+// bracket after a full variable path.
 func parseSecretPath(path string) (prefix, keys []string, err error) {
-	bad := yamlx.Errorf(yamlx.Pos{}, "%q is not a path to a variable value; %s", path, pathForms)
+	for i := 0; ; i++ {
+		j := strings.IndexByte(path[i:], '[')
+		if j < 0 {
+			prefix, keys, ok := plainPath(path)
+			if ok && !slices.ContainsFunc(keys[varsAt(keys)+1:], func(k string) bool { return strings.Contains(k, "[") }) {
+				return prefix, keys, nil
+			}
+			break
+		}
+		i += j
+		if prefix, keys, ok := plainPath(path[:i]); ok {
+			if below, ok := bracketKeys(path[i:]); ok {
+				return prefix, slices.Concat(keys, below), nil
+			}
+			return nil, nil, yamlx.Errorf(yamlx.Pos{}, `%q is not a path to a variable value; put a key with dots in brackets and double quotes, and the path in single quotes: 'vars.m["a.b"]'`, path)
+		}
+	}
+	return nil, nil, yamlx.Errorf(yamlx.Pos{}, "%q is not a path to a variable value; %s", path, pathForms)
+}
+
+// plainPath splits path at its dots into the prefix and the keys of
+// parseSecretPath. The name of an inventory, a recipe, a host, or a group can
+// hold dots: it ends at the next key of the path form.
+func plainPath(path string) (prefix, keys []string, ok bool) {
 	segs := strings.Split(path, ".")
 	if slices.Contains(segs, "") {
-		return nil, nil, bad
+		return nil, nil, false
 	}
 	index := func(from int, keys ...string) int {
 		for i := from; i < len(segs); i++ {
@@ -854,29 +929,29 @@ func parseSecretPath(path string) (prefix, keys []string, err error) {
 	case "recipes":
 		i := index(2, "vars")
 		if i < 0 {
-			return nil, nil, bad
+			return nil, nil, false
 		}
 		prefix, keys = []string{"recipes", strings.Join(segs[1:i], ".")}, segs[i:]
 	case "hosts", "groups":
 	case "inventories":
 		if entry = index(2, "hosts", "groups"); entry < 0 {
-			return nil, nil, bad
+			return nil, nil, false
 		}
 		prefix = []string{"inventories", strings.Join(segs[1:entry], ".")}
 	default:
-		return nil, nil, bad
+		return nil, nil, false
 	}
 	if keys == nil {
 		i := index(entry+2, "vars")
 		if i < 0 {
-			return nil, nil, bad
+			return nil, nil, false
 		}
 		keys = slices.Concat([]string{segs[entry], strings.Join(segs[entry+1:i], ".")}, segs[i:])
 	}
 	if len(keys) < varsAt(keys)+2 {
-		return nil, nil, bad
+		return nil, nil, false
 	}
-	return prefix, keys, nil
+	return prefix, keys, true
 }
 
 // varsAt returns the index of the key vars in keys, the keys of a path in its
@@ -940,7 +1015,11 @@ func SecretAt(dir, at string) (*SecretEdit, error) {
 			if v.recipe != "" {
 				there = slices.Concat([]string{"recipes", v.recipe}, keys)
 			}
-			return nil, fmt.Errorf("vars.%s has a default at %s; write the secret there: %s", name, v.Pos, strings.Join(there, "."))
+			shown := showPath(there, len(there)-len(keys)+2)
+			if strings.Contains(shown, "[") {
+				shown = "'" + shown + "'"
+			}
+			return nil, fmt.Errorf("vars.%s has a default at %s; write the secret there: %s", name, v.Pos, shown)
 		}
 	}
 	if err := pl.walk("cannot write " + at); err != nil {
@@ -972,11 +1051,12 @@ type place struct {
 func (pl place) walk(what string) error {
 	n := pl.root
 	for i, key := range pl.keys {
+		shown := showPath(slices.Concat(pl.above, pl.keys[:i]), len(pl.above)+pl.vars+2)
 		if n.Kind == yamlx.List {
-			return fmt.Errorf("%s: %s is a list; a path cannot name a list item", what, strings.Join(slices.Concat(pl.above, pl.keys[:i]), "."))
+			return fmt.Errorf("%s: %s is a list; a path cannot name a list item", what, shown)
 		}
 		if n.Kind != yamlx.Map && n.Kind != yamlx.Null {
-			return fmt.Errorf("%s: %s is not a map", what, strings.Join(slices.Concat(pl.above, pl.keys[:i]), "."))
+			return fmt.Errorf("%s: %s is not a map", what, shown)
 		}
 		q := find(n, []string{key})
 		if q == nil {
