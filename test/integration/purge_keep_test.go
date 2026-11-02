@@ -87,13 +87,13 @@ func TestPurgeUnpack(t *testing.T) {
       - dir:
           path: /opt/app
           purge: true
-      - dir:
-          path: /opt/app/bin
-          purge: true
       - download:
           url: ` + url + `
           sha256: ` + sha(tgz) + `
           unpack: /opt/app
+      - dir:
+          path: /opt/app/bin
+          purge: true
 `,
 	})
 	for run := 1; run <= 2; run++ {

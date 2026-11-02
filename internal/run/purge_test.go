@@ -94,16 +94,16 @@ func TestPurgeKeepUnpack(t *testing.T) {
       - dir:
           path: /opt/app
           purge: true
+      - download:
+          url: https://example.com/app.tgz
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+          unpack: /opt/app
       - dir:
           path: /opt/app/bin
           purge: true
       - dir:
           path: /opt/app2
           purge: true
-      - download:
-          url: https://example.com/app.tgz
-          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
-          unpack: /opt/app
 `,
 	})
 	h := fakehost.New()

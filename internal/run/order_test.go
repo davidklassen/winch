@@ -703,6 +703,29 @@ handlers:
           path: /opt/a
           absent: true
 `), "", "s: dir /opt/a: this step removes /opt/a/done, which s#1 cmd make writes; the two steps undo each other on every run"},
+		{"a file in an unpack dir before the download", steps(`      - file:
+          path: /opt/app/config.yml
+          content: ""
+      - download:
+          url: https://example.com/app.tar.gz
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          unpack: /opt/app
+`), "", "s: download /opt/app: this step removes /opt/app/config.yml, which s#1 file /opt/app/config.yml writes; the two steps undo each other on every run"},
+		{"a file in an unpack dir after the download", steps(`      - download:
+          url: https://example.com/app.tar.gz
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          unpack: /opt/app
+      - file:
+          path: /opt/app/config.yml
+          content: ""
+`), "", ""},
+		{"a dir on an unpack dir before the download", steps(`      - dir:
+          path: /opt/app
+      - download:
+          url: https://example.com/app.tar.gz
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          unpack: /opt/app
+`), "", ""},
 		{"a stopped service before the unit step of its unit", steps(`      - recipe: web
 `), `steps:
   - service:
