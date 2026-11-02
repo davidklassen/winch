@@ -92,17 +92,42 @@ func TestHealth(t *testing.T) {
 		})
 	})
 
-	// A run gets only the time left, so a command that hangs on a later run
-	// ends at the timeout, not one timeout after that run starts. In a synctest
-	// bubble the clock stops while a command runs, so this case takes real time.
-	t.Run("a command that hangs ends at the timeout", func(t *testing.T) {
-		cmd, _ := counter(t, "[ $n -ge 2 ] && sleep 30; exit 1")
+	// A run ends when the gate time ends, so a command that hangs on a later
+	// run ends at the timeout, not one timeout after that run starts. The stopped
+	// run has no result, so the error shows the run before it. In a synctest
+	// bubble the clock stops while a command runs, so these cases take real
+	// time.
+	hangs := []struct {
+		name, check string
+		stable      time.Duration
+		wantErr     string
+	}{
+		{"a command that hangs on a later run shows the run before it", "[ $n -ge 2 ] && sleep 30; exit 1", 0, "did not pass within 2s: exit status 1: run 1"},
+		{"a command that never ends did not finish", "sleep 30", 0, "did not pass within 2s: the command did not finish"},
+		{"a run that hangs in the stable time keeps the pass", "[ $n -ge 2 ] && sleep 30; true", 1500 * time.Millisecond, "passed, but not for 1.5s within 2s"},
+	}
+	for _, tt := range hangs {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, _ := counter(t, tt.check)
+			start := time.Now()
+			err := health(context.Background(), protocol.Health{Command: cmd, Stable: tt.stable, Timeout: 2 * time.Second}, time.Second, 100*time.Millisecond)
+			if err == nil || err.Error() != tt.wantErr {
+				t.Errorf("error %v, want %q", err, tt.wantErr)
+			}
+			if took, most := time.Since(start), 2600*time.Millisecond; took > most {
+				t.Errorf("the gate took %s, want at most %s", took, most)
+			}
+		})
+	}
+	t.Run("a cancel ends a run", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(200*time.Millisecond, cancel)
 		start := time.Now()
-		err := health(context.Background(), protocol.Health{Command: cmd, Timeout: 2 * time.Second}, time.Second, 100*time.Millisecond)
-		if want := "did not pass within 2s"; err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("error %v, want %q", err, want)
+		err := health(ctx, protocol.Health{Command: "sleep 30", Timeout: 2 * time.Second}, time.Second, 100*time.Millisecond)
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("error %v, want %v", err, context.Canceled)
 		}
-		if took, most := time.Since(start), 2600*time.Millisecond; took > most {
+		if took, most := time.Since(start), time.Second; took > most {
 			t.Errorf("the gate took %s, want at most %s", took, most)
 		}
 	})
