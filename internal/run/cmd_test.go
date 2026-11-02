@@ -42,6 +42,7 @@ var cmdFiles = map[string]string{
       - cmd:
           command: make install
           creates: /usr/local/bin/app
+          user: www-data
           dir: /srv/app
 `,
 }
@@ -49,6 +50,7 @@ var cmdFiles = map[string]string{
 // spec: Running a pipeline/Plan; Modules/cmd; Modules/assert; CLI/Output
 func TestPlanCmd(t *testing.T) {
 	h := fakehost.New()
+	h.SetUser("web2", "www-data")
 	plan := run.MakePlan(context.Background(), loadFiles(t, cmdFiles), h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -61,6 +63,7 @@ func TestPlanCmd(t *testing.T) {
 // spec: Modules/cmd; Modules/assert; Running a pipeline/Apply; Modules/reboot
 func TestApplyCmd(t *testing.T) {
 	h := fakehost.New()
+	h.SetUser("web2", "www-data")
 	plan := run.MakePlan(context.Background(), loadFiles(t, cmdFiles), h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))

@@ -334,6 +334,12 @@ func writeStep(t *color.Text, indent string, p Planned) {
 	if res.Validates {
 		fmt.Fprintf(t, "%s    validate:%s\n", indent, command(st.ShownValidate(), indent+"      "))
 	}
+	if u := st.ShownUser(); u != "" {
+		fmt.Fprintf(t, "%s    user:%s\n", indent, command(u, indent+"      "))
+	}
+	if d := st.ShownDir(); d != "" {
+		fmt.Fprintf(t, "%s    dir:%s\n", indent, command(d, indent+"      "))
+	}
 	if u := st.ShownUnless(); u != "" {
 		fmt.Fprintf(t, "%s    unless:%s\n", indent, command(u, indent+"      "))
 	}

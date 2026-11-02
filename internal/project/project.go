@@ -1705,6 +1705,13 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool, a
 	if unless != "" {
 		sh.Unless = secret.Mark
 	}
+	user, dir := s.ShownUser(), s.ShownDir()
+	if user != "" {
+		sh.User = secret.Mark
+	}
+	if dir != "" {
+		sh.Dir = secret.Mark
+	}
 	var parts []string
 	if argsOK {
 		sh.Main, _ = secret.MaskLines(mods[0].Main(), mods[1].Main(), mods[2].Main())
@@ -1713,6 +1720,12 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool, a
 		}
 		if unless != "" {
 			sh.Unless, _ = secret.MaskLines(unless, mods[1].(*module.Cmd).UnlessCommand(), mods[2].(*module.Cmd).UnlessCommand())
+		}
+		if user != "" {
+			sh.User, _ = secret.MaskLines(user, mods[1].(*module.Cmd).User, mods[2].(*module.Cmd).User)
+		}
+		if dir != "" {
+			sh.Dir, _ = secret.MaskLines(dir, mods[1].(*module.Cmd).Dir, mods[2].(*module.Cmd).Dir)
 		}
 		parts = secret.Parts(args[0], args[1], args[2])
 	}
@@ -1750,7 +1763,7 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Shown, bool, a
 	if mods[1] != nil {
 		hash = mods[1]
 	}
-	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Unless == unless && sh.Lines == nil && !sh.Hidden && sh.Public == "" {
+	if sh.Main == s.Args.Main() && sh.Then == s.Then && sh.Validate == validate && sh.Unless == unless && sh.User == user && sh.Dir == dir && sh.Lines == nil && !sh.Hidden && sh.Public == "" {
 		return nil, reads, hash
 	}
 	return sh, reads, hash
