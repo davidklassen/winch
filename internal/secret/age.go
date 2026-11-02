@@ -102,6 +102,12 @@ func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
 		var err error
 		data, err = os.ReadFile(id.Path)
 		if errors.Is(err, fs.ErrNotExist) {
+			if target, lerr := os.Readlink(id.Path); lerr == nil {
+				if !filepath.IsAbs(target) {
+					target = filepath.Join(filepath.Dir(id.Path), target)
+				}
+				return nil, fmt.Errorf("the age key %s links to %s, which does not exist", id.Path, target)
+			}
 			return nil, fmt.Errorf("no age key at %s\n%s", id.Path, noKeyHelp)
 		}
 		if err != nil {
@@ -142,10 +148,11 @@ func (id Identity) Read(ctx context.Context) ([]age.Identity, error) {
 
 // Init returns the public key of the identity. When the source is a file and
 // no file is there, it makes a new key and returns it in made; WriteKey
-// writes it.
+// writes it. A dangling link is not a missing file: its target can be on a
+// volume that is not mounted.
 func (id Identity) Init(ctx context.Context) (key string, made *age.X25519Identity, err error) {
 	if id.Cmd == "" && id.Path != "" {
-		if _, err := os.Stat(id.Path); errors.Is(err, fs.ErrNotExist) {
+		if _, err := os.Lstat(id.Path); errors.Is(err, fs.ErrNotExist) {
 			made, err := age.GenerateX25519Identity()
 			if err != nil {
 				return "", nil, fmt.Errorf("make the age key: %w", err)
