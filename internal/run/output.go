@@ -177,7 +177,11 @@ func (p *Plan) Notes() []Note {
 				}
 				for _, m := range step.Result.Missing {
 					kind, _, _ := strings.Cut(m, " ")
-					add(host.Host.Name, fmt.Sprintf("%s does not exist yet and no %s step creates it", m, kind), true)
+					shown := step.Step.ShownDir()
+					if kind == "user" {
+						shown = step.Step.ShownUser()
+					}
+					add(host.Host.Name, fmt.Sprintf("%s %s does not exist yet and no %s step creates it", kind, shown, kind), true)
 				}
 				for _, t := range step.Result.MissingTools {
 					add(host.Host.Name, fmt.Sprintf("%s is missing; install the package %s in an earlier pkg step", t.Name, t.Package), true)
