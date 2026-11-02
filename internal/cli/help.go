@@ -29,6 +29,8 @@ const docIntro = `winch is a server configuration tool. It describes the desired
 of your servers in declarative YAML and provides commands to manage
 that state.`
 
+const userGuide = "User guide: https://winchstack.app/docs/"
+
 // pathHelp describes the path of the secret commands, and pathRules the
 // write of secret generate and secret encrypt.
 const (
@@ -110,6 +112,9 @@ func writeHelp(out io.Writer, c command) {
 	}
 	if len(c.see) > 0 {
 		fmt.Fprintf(out, "\nSee: %s\n", strings.Join(c.see, ", "))
+	}
+	if c.name == "" {
+		fmt.Fprintf(out, "\n%s\n", userGuide)
 	}
 }
 
