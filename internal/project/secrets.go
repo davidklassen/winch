@@ -527,7 +527,8 @@ func HasSecrets(dir string) (bool, error) {
 
 // Rekey encrypts every secret in winch.yaml, the inventories, and the recipes
 // again for the recipients in winch.yaml. It writes no file when a secret
-// fails. It returns the number of secrets and the files it rewrote.
+// fails. It returns the number of secrets and the files it rewrote. A failed
+// write is a *RekeyError.
 func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, []string, error) {
 	cfg, err := loadConfig(dir)
 	if err != nil {
@@ -637,12 +638,24 @@ func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, []st
 	var rewritten []string
 	for _, r := range out {
 		if err := replaceFile(r.path, r.data); err != nil {
-			return 0, nil, err
+			return 0, nil, &RekeyError{Rewrote: rewritten, Files: len(out), Err: fmt.Errorf("write %s: %w", r.name, err)}
 		}
 		rewritten = append(rewritten, r.name)
 	}
 	return count, rewritten, nil
 }
+
+// A RekeyError is a write that failed after Rekey rewrote the files in
+// Rewrote, of Files in all.
+type RekeyError struct {
+	Rewrote []string
+	Files   int
+	Err     error
+}
+
+func (e *RekeyError) Error() string { return e.Err.Error() }
+
+func (e *RekeyError) Unwrap() error { return e.Err }
 
 // replaceFile writes data to path through a new file in the same directory,
 // with the mode of path.

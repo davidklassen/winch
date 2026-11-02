@@ -416,6 +416,42 @@ func TestSecretRekeyInventory(t *testing.T) {
 	}
 }
 
+// spec: Variables/Secrets (winch secret rekey)
+func TestSecretRekeyWriteError(t *testing.T) {
+	for _, tc := range []struct {
+		readOnly, out, err string
+	}{
+		{"recipes/r", "rewrote 1 of 2 files:\n  inventories/test.yaml\n", "write recipes/r/recipe.yaml: "},
+		{"inventories", "", "write inventories/test.yaml: "},
+	} {
+		t.Run(tc.readOnly, func(t *testing.T) {
+			identity, id := newIdentity(t)
+			dir := secretProject(t, id)
+			setPassword(t, dir, encrypt(t, dir, "hunter2"))
+			recipe := filepath.Join(dir, "recipes", "r")
+			if err := os.MkdirAll(recipe, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(recipe, "recipe.yaml"), []byte("vars:\n  key: "+encrypt(t, dir, "r-key")+"\nsteps: []\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			readOnly := filepath.Join(dir, tc.readOnly)
+			if err := os.Chmod(readOnly, 0o555); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Chmod(readOnly, 0o755); err != nil {
+					t.Error(err)
+				}
+			})
+			r := winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "rekey")
+			if r.code != exitInvalid || r.out != tc.out || !strings.Contains(r.err, tc.err) || !strings.Contains(r.err, "permission denied") {
+				t.Errorf("rekey: exit %d, stdout %q, stderr %q; want stdout %q and stderr with %q", r.code, r.out, r.err, tc.out, tc.err)
+			}
+		})
+	}
+}
+
 // spec: Variables/Secrets in output (the load warning)
 func TestLoadWarning(t *testing.T) {
 	token := fakeSecret(t, "ghp.txt")
