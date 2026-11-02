@@ -195,7 +195,7 @@ func (p *Plan) Notes() []Note {
 			continue
 		}
 		for _, t := range p.goneThens[h.Name] {
-			add(h.Name, secret.Hide(fmt.Sprintf("a pending then of %s %s matches no step and will not run", t.Module, strings.Join(t.Mains, ", ")), p.parts[h.Name]), false)
+			add(h.Name, goneThenNote(t)+" and will not run", false)
 		}
 		for _, c := range p.gone[h.Name] {
 			add(h.Name, goneNote(c)+" and will not run", false)
@@ -225,16 +225,30 @@ func goneNote(c protocol.Check) string {
 	if c.Step == 0 {
 		return "a pending health gate of stage " + c.Stage + " matches no gate"
 	}
-	var place string
-	switch {
-	case c.Handler != "":
-		place = "handler " + cmp.Or(c.Recipe, c.Stage) + "." + c.Handler
-	case c.Recipe != "":
-		place = "recipe " + c.Recipe
-	default:
-		place = "stage " + c.Stage
+	return fmt.Sprintf("a pending assert of %s step %d matches no assert", place(c.Recipe, c.Stage, c.Handler), c.Step)
+}
+
+// goneThenNote names the module and the scope of then record t that no step
+// matches. A main argument can hold a secret: a record of winch 0.1.0 holds
+// the plain argument.
+func goneThenNote(t protocol.Then) string {
+	noun := "a " + t.Module + " step"
+	if m, ok := module.New(t.Module); ok {
+		noun = m.(interface{ Noun() string }).Noun()
 	}
-	return fmt.Sprintf("a pending assert of %s step %d matches no assert", place, c.Step)
+	return fmt.Sprintf("a pending then of %s in %s matches no step", noun, place(t.Recipe, t.Stage, t.Handler))
+}
+
+// place names the recipe, stage, or handler of a record.
+func place(recipe, stage, handler string) string {
+	switch {
+	case handler != "":
+		return "handler " + cmp.Or(recipe, stage) + "." + handler
+	case recipe != "":
+		return "recipe " + recipe
+	default:
+		return "stage " + stage
+	}
 }
 
 var markStyles = map[string]color.Style{"+": color.Green, "-": color.Red, "~": color.Yellow, "!": color.Cyan, "*": color.Cyan}

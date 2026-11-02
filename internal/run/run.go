@@ -138,9 +138,6 @@ type Plan struct {
 	gone map[string][]protocol.Check
 	// goneThens are the then records of each host that match no step.
 	goneThens map[string][]protocol.Then
-	// parts are the secret parts of the checked steps of each host. A then
-	// record of winch 0.1.0 can hold a part.
-	parts map[string][]string
 	// refreshed are the hosts whose package index a step refreshed in the
 	// plan.
 	refreshed map[string]bool
@@ -497,11 +494,9 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	}
 	plan.gone = map[string][]protocol.Check{}
 	plan.goneThens = map[string][]protocol.Then{}
-	plan.parts = map[string][]string{}
 	plan.refreshed = map[string]bool{}
 	for name, hr := range runs {
 		plan.refreshed[name] = hr.refreshed
-		plan.parts[name] = hr.parts
 		if hr.pending != nil {
 			plan.Pending[name] = *hr.pending
 			if !p.Pipeline.AdHoc {

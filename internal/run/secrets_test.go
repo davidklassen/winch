@@ -673,7 +673,13 @@ func TestSecretStepMask(t *testing.T) {
 			func(h *fakehost.Hosts) {
 				h.SetFile("web1", "/srv/f-ter2", "a\n")
 				h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "s", Module: "file", Mains: []string{"/srv/f-ter2"}})
-			}, "a pending then of file /srv/f-(secret) matches no step", "ter2"},
+			}, "a pending then of a file step in stage s matches no step", "ter2"},
+		// A record of winch 0.1.0 holds the plain main argument of a step
+		// that is gone, so no part of a checked step covers it.
+		{"a gone then record of a deleted step", "hunter2", "      - pkg:\n          name: !expr '\"lib\" + vars.pw[0:3]'\n",
+			func(h *fakehost.Hosts) {
+				h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "s", Module: "file", Mains: []string{"/srv/hunter2"}})
+			}, "web1: note: a pending then of a file step in stage s matches no step and will not run\n", "hunter2"},
 		{"a base64 part", "hunter2", dir, change("key dGVyMg"), "        key (secret)\n", "dGVyMg"},
 		{"a JSON-escaped part", "hunt<er2", strings.ReplaceAll(validate, "vars.pw", `trimPrefix(vars.pw, "hu")`), change(`body {"a":"` + jsonPart + `"}`),
 			`        body {"a":"(secret)"}` + "\n", jsonPart},
