@@ -222,6 +222,7 @@ func TestHelp(t *testing.T) {
 		{"secret-init", []string{"secret", "init", "--help"}},
 		{"secret-generate", []string{"secret", "generate", "--help"}},
 		{"secret-encrypt", []string{"secret", "encrypt", "--help"}},
+		{"secret-decrypt", []string{"secret", "decrypt", "-h"}},
 		{"secret-rekey", []string{"secret", "rekey", "-h"}},
 		{"doc", []string{"doc", "--help"}},
 		{"version", []string{"version", "--help"}},

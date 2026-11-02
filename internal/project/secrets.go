@@ -891,13 +891,9 @@ func varsAt(keys []string) int {
 // SecretEdit writes a !secret value at a path in the project. The file keeps
 // its comments and its layout.
 type SecretEdit struct {
+	place
 	at string
-	// file is relative to the project, and real the file after links.
-	file, real string
-	data       string
-	root       *yamlx.Node
-	// keys is the path in the file. replace is true when the path exists.
-	keys    []string
+	// replace is true when the path exists.
 	replace bool
 	recs    []age.Recipient
 }
@@ -930,62 +926,16 @@ func SecretAt(dir, at string) (*SecretEdit, error) {
 	if read := l.readNames(); !read[name] {
 		return nil, errors.Join(fmt.Errorf("nothing reads vars.%s%s", name, yamlx.Suggest(name, slices.Sorted(maps.Keys(read)))), lErr, plErr)
 	}
-	e := &SecretEdit{at: at, file: cfg.file, recs: recs}
-	label := cfg.file
-	var pt part
-	switch {
-	case len(prefix) == 0 && keys[0] != "vars":
-		if !slices.ContainsFunc(l.layout.inventories, func(inv part) bool { return inv.top }) {
-			if len(l.layout.inventories) == 0 {
-				return nil, l.noInventory()
-			}
-			return nil, fmt.Errorf("%s has no hosts or groups at the top; start the path with inventories.<name>: %s", cfg.file, strings.Join(partNames(l.layout.inventories), ", "))
-		}
-	case len(prefix) > 0 && prefix[0] == "recipes":
-		i := slices.IndexFunc(l.layout.recipes, func(r part) bool { return r.name == prefix[1] })
-		if i < 0 {
-			return nil, yamlx.Errorf(yamlx.Pos{}, "unknown recipe %q%s", prefix[1], suggestOrList(prefix[1], partNames(l.layout.recipes)))
-		}
-		pt = l.layout.recipes[i]
-		if !strings.HasPrefix(name, pt.name+"_") {
-			return nil, fmt.Errorf("cannot write %s: a variable of recipe %s starts with %s_", at, pt.name, pt.name)
-		}
-	case len(prefix) > 0:
-		if pt, err = l.layout.inventory(prefix[1]); err != nil {
-			return nil, err
-		}
-		if pt.top {
-			return nil, yamlx.Errorf(yamlx.Pos{}, "inventory %q: the hosts at the top of %s are the only inventory; leave out the inventory name", prefix[1], cfg.file)
-		}
-		label = pt.label("inventories")
-	}
-	// inFile is the part of prefix that is a key in the file.
-	inFile := prefix
-	if pt.name != "" && pt.node == nil {
-		inFile, e.file, label = nil, pt.file, pt.file
-	}
-	e.keys = slices.Concat(inFile, keys)
-	vars := len(inFile) + varsAt(keys)
-	e.real, err = filepath.EvalSymlinks(projectPath(dir, e.file))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, notFound(e.file)
-	}
+	pl, err := l.locate(prefix, keys)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(e.real)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", e.file, err)
+	if len(prefix) > 0 && prefix[0] == "recipes" && !strings.HasPrefix(name, prefix[1]+"_") {
+		return nil, fmt.Errorf("cannot write %s: a variable of recipe %s starts with %s_", at, prefix[1], prefix[1])
 	}
-	if e.root, err = yamlx.Parse(e.file, data); err != nil {
-		return nil, err
-	}
-	e.data = string(data)
-	if kind := keys[0]; kind != "vars" && find(e.root, e.keys[:vars]) == nil && (kind == "hosts" || keys[1] != "all") {
-		return nil, fmt.Errorf("%s %s is not in %s", strings.TrimSuffix(kind, "s"), keys[1], label)
-	}
+	e := &SecretEdit{place: pl, at: at, recs: recs}
 	if v, ok := l.vars[name]; ok && keys[0] == "vars" {
-		if q := find(e.root, e.keys[:vars+2]); q == nil || q.KeyPos != v.Pos {
+		if q := find(e.root, e.keys[:e.vars+2]); q == nil || q.KeyPos != v.Pos {
 			there := keys
 			if v.recipe != "" {
 				there = slices.Concat([]string{"recipes", v.recipe}, keys)
@@ -993,16 +943,40 @@ func SecretAt(dir, at string) (*SecretEdit, error) {
 			return nil, fmt.Errorf("vars.%s has a default at %s; write the secret there: %s", name, v.Pos, strings.Join(there, "."))
 		}
 	}
-	// above names a key of the path in the output: the keys in the file
-	// follow the part of prefix that names the file.
-	above := prefix[:len(prefix)-len(inFile)]
-	n := e.root
-	for i, key := range e.keys {
+	if err := pl.walk("cannot write " + at); err != nil {
+		return nil, err
+	}
+	e.replace = find(e.root, e.keys) != nil
+	if _, err := e.text("S"); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// place is the file that a path names, and the keys of the path in it.
+type place struct {
+	// file is relative to the project, real the file after links, and label
+	// names the part in messages.
+	file, real, label string
+	data              string
+	root              *yamlx.Node
+	// keys is the path in the file, with vars at the index vars. above is
+	// the part of the path before keys: the inventory or the recipe of a
+	// file.
+	keys, above []string
+	vars        int
+}
+
+// walk checks that each key of the path names a map or nothing. what starts
+// the error.
+func (pl place) walk(what string) error {
+	n := pl.root
+	for i, key := range pl.keys {
 		if n.Kind == yamlx.List {
-			return nil, fmt.Errorf("cannot write %s: %s is a list; a path cannot name a list item", at, strings.Join(slices.Concat(above, e.keys[:i]), "."))
+			return fmt.Errorf("%s: %s is a list; a path cannot name a list item", what, strings.Join(slices.Concat(pl.above, pl.keys[:i]), "."))
 		}
 		if n.Kind != yamlx.Map && n.Kind != yamlx.Null {
-			return nil, fmt.Errorf("cannot write %s: %s is not a map", at, strings.Join(slices.Concat(above, e.keys[:i]), "."))
+			return fmt.Errorf("%s: %s is not a map", what, strings.Join(slices.Concat(pl.above, pl.keys[:i]), "."))
 		}
 		q := find(n, []string{key})
 		if q == nil {
@@ -1010,11 +984,131 @@ func SecretAt(dir, at string) (*SecretEdit, error) {
 		}
 		n = q.Value
 	}
-	e.replace = find(e.root, e.keys) != nil
-	if _, err := e.text("S"); err != nil {
-		return nil, err
+	return nil
+}
+
+// locate reads the file of the path of prefix and keys. The inventory or the
+// recipe, and the host or the group, must exist.
+func (l *loader) locate(prefix, keys []string) (place, error) {
+	pl := place{file: l.file, label: l.file}
+	var pt part
+	switch {
+	case len(prefix) == 0 && keys[0] != "vars":
+		if !slices.ContainsFunc(l.layout.inventories, func(inv part) bool { return inv.top }) {
+			if len(l.layout.inventories) == 0 {
+				return place{}, l.noInventory()
+			}
+			return place{}, fmt.Errorf("%s has no hosts or groups at the top; start the path with inventories.<name>: %s", l.file, strings.Join(partNames(l.layout.inventories), ", "))
+		}
+	case len(prefix) > 0 && prefix[0] == "recipes":
+		i := slices.IndexFunc(l.layout.recipes, func(r part) bool { return r.name == prefix[1] })
+		if i < 0 {
+			return place{}, yamlx.Errorf(yamlx.Pos{}, "unknown recipe %q%s", prefix[1], suggestOrList(prefix[1], partNames(l.layout.recipes)))
+		}
+		pt = l.layout.recipes[i]
+	case len(prefix) > 0:
+		var err error
+		if pt, err = l.layout.inventory(prefix[1]); err != nil {
+			return place{}, err
+		}
+		if pt.top {
+			return place{}, yamlx.Errorf(yamlx.Pos{}, "inventory %q: the hosts at the top of %s are the only inventory; leave out the inventory name", prefix[1], l.file)
+		}
+		pl.label = pt.label("inventories")
 	}
-	return e, nil
+	// inFile is the part of prefix that is a key in the file.
+	inFile := prefix
+	if pt.name != "" && pt.node == nil {
+		inFile, pl.file, pl.label = nil, pt.file, pt.file
+	}
+	pl.keys = slices.Concat(inFile, keys)
+	pl.above = prefix[:len(prefix)-len(inFile)]
+	var err error
+	pl.real, err = filepath.EvalSymlinks(projectPath(l.dir, pl.file))
+	if errors.Is(err, fs.ErrNotExist) {
+		return place{}, notFound(pl.file)
+	}
+	if err != nil {
+		return place{}, err
+	}
+	data, err := os.ReadFile(pl.real)
+	if err != nil {
+		return place{}, fmt.Errorf("read %s: %w", pl.file, err)
+	}
+	if pl.root, err = yamlx.Parse(pl.file, data); err != nil {
+		return place{}, err
+	}
+	pl.data = string(data)
+	pl.vars = len(inFile) + varsAt(keys)
+	if kind := keys[0]; kind != "vars" && find(pl.root, pl.keys[:pl.vars]) == nil && (kind == "hosts" || keys[1] != "all") {
+		return place{}, fmt.Errorf("%s %s is not in %s", strings.TrimSuffix(kind, "s"), keys[1], pl.label)
+	}
+	return pl, nil
+}
+
+// Decrypt returns the plaintext of the !secret at the path at, or of text
+// when at is empty, with the age key of identity. It reads only the parts of
+// the project that the path names.
+func Decrypt(ctx context.Context, dir, at, text string, identity secret.Identity) (string, error) {
+	cfg, err := loadConfig(dir)
+	if err != nil {
+		return "", err
+	}
+	var pos yamlx.Pos
+	if at != "" {
+		if text, pos, err = secretText(dir, cfg, at); err != nil {
+			return "", err
+		}
+	}
+	ids, err := identity.Read(ctx)
+	if err != nil {
+		return "", err
+	}
+	k := &keyring{identity: identity, ids: ids, recipients: cfg.Recipients}
+	plain, _, err := k.decrypt(text, pos)
+	return plain, err
+}
+
+// secretText returns the text of the !secret at the path at, and its
+// position.
+func secretText(dir string, cfg *Config, at string) (string, yamlx.Pos, error) {
+	prefix, keys, err := parseSecretPath(at)
+	if err != nil {
+		return "", yamlx.Pos{}, err
+	}
+	ly, err := readLayout(dir, cfg)
+	if err != nil {
+		return "", yamlx.Pos{}, err
+	}
+	l := &loader{dir: dir, file: cfg.file, layout: ly}
+	pl, err := l.locate(prefix, keys)
+	if err != nil {
+		return "", yamlx.Pos{}, err
+	}
+	if err := pl.walk("cannot read " + at); err != nil {
+		return "", yamlx.Pos{}, err
+	}
+	q := find(pl.root, pl.keys)
+	if q == nil {
+		hint := ""
+		if up := find(pl.root, pl.keys[:len(pl.keys)-1]); up != nil && up.Value.Kind == yamlx.Map {
+			var names []string
+			for _, p := range up.Value.Pairs {
+				names = append(names, p.Key)
+			}
+			hint = yamlx.Suggest(pl.keys[len(pl.keys)-1], names)
+		}
+		return "", yamlx.Pos{}, fmt.Errorf("%s is not in %s%s", at, pl.label, hint)
+	}
+	n := q.Value
+	if n.Tag == "!secret" {
+		text, _ := n.Value.(string)
+		return text, n.Pos, nil
+	}
+	if n.Kind == yamlx.Map {
+		return "", yamlx.Pos{}, fmt.Errorf("%s in %s is a map, not a !secret; name a key in it", at, pl.label)
+	}
+	return "", yamlx.Pos{}, fmt.Errorf("%s in %s is not a !secret", at, pl.label)
 }
 
 // Write encrypts plain for the recipients, writes it at the path, and

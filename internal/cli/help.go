@@ -29,8 +29,8 @@ const docIntro = `winch is a server configuration tool. It describes the desired
 of your servers in declarative YAML and provides commands to manage
 that state.`
 
-// pathHelp and pathRules describe the path of secret generate and secret
-// encrypt.
+// pathHelp describes the path of the secret commands, and pathRules the
+// write of secret generate and secret encrypt.
 const (
 	pathHelp = `A path names a place in the project, with keys joined by ".".
 vars.x is the default of x in winch.yaml, and recipes.mail.vars.mail_x
@@ -363,6 +363,7 @@ and winch connects to them in parallel.`,
 			{"write a random password as the default of a variable", "winch secret generate vars.monit_password"},
 			{"write the content of a file as the default of a variable", "winch secret encrypt vars.dkim_key < dkim.key"},
 			{"print the output of a command as a !secret value", "openssl rand -hex 16 | winch secret encrypt"},
+			{"print the plaintext of a secret", "winch secret decrypt vars.monit_password"},
 			{"encrypt all secrets again after a change of the recipients", "winch secret rekey"},
 		},
 		usage: []string{"winch secret <command>"},
@@ -433,6 +434,29 @@ without one, it prints it.`,
 stays as it is.`,
 			pathHelp,
 			pathRules,
+		},
+		see: []string{"winch doc secrets"},
+	},
+	{
+		name:    "secret decrypt",
+		summary: "print the plaintext of a secret",
+		examples: []example{
+			{"print the plaintext of the default of a variable", "winch secret decrypt vars.monit_password"},
+			{"print the plaintext of a secret in the vars of one host", "winch secret decrypt hosts.db1.acme.com.vars.db_password"},
+			{"print the plaintext of a !secret value", "echo '!secret YWdl...' | winch secret decrypt"},
+		},
+		usage: []string{"winch secret decrypt [<path>]"},
+		description: []string{
+			`Decrypt prints the plaintext of the !secret at the path, or of a
+!secret value on stdin, with or without the tag. It prints nothing
+else, also no newline after the plaintext. It is the only command whose
+output holds a secret.`,
+			pathHelp,
+			`A path to a map or to a value that is not a !secret is an error.`,
+			`winch reads the age key from the stdout of the command in
+WINCH_AGE_IDENTITY_CMD, which runs through sh -c. Without it, winch
+reads the file that WINCH_AGE_KEY names, or else
+~/.config/winch/age.key. Both variables set is an error.`,
 		},
 		see: []string{"winch doc secrets"},
 	},
