@@ -74,6 +74,13 @@ func TestExec(t *testing.T) {
 			t.Errorf("exit %d, events %q, outputs %q", r.Code, types, outputs)
 		}
 	})
+
+	t.Run("--timeout stops the command at its limit", func(t *testing.T) {
+		r := lab.Winch(t, dir, "exec", "exec-a", "--timeout", "1", "--", "echo started; sleep 30")
+		if r.Code != 1 || r.Stdout != "" || !strings.Contains(r.Stderr, "stopped after 1s; set --timeout for a longer limit: started") {
+			t.Errorf("exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+	})
 }
 
 // spec: CLI (winch exec); Modules (time limit)

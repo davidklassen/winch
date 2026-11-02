@@ -124,11 +124,12 @@ How commands run:
   umask and limits of the user do not apply.
 
 The time limit:
-  A command stops after 10 minutes, or after the timeout of a cmd step
-  in seconds. The helper sends SIGTERM to the command and its child
-  processes, and SIGKILL 10 seconds later to those that still run. The
-  step fails, and the error shows the last 10 lines of output. apt-get
-  in pkg, repo, and upgrade has no time limit.
+  A command stops after 10 minutes, after the timeout of a cmd step in
+  seconds, or after the --timeout of winch exec. The helper sends
+  SIGTERM to the command and its child processes, and SIGKILL 10 seconds
+  later to those that still run. The step fails, and the error shows the
+  last 10 lines of output. apt-get in pkg, repo, and upgrade has no time
+  limit.
 
   When the session ends, the helper lets the running command finish
   within its limit, and then exits. A package install is not cut off in

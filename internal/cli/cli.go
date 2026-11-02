@@ -12,12 +12,15 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/davidklassen/winch/internal/color"
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
@@ -110,6 +113,7 @@ type flags struct {
 	exitCode bool
 	json     bool
 	command  string
+	timeout  string
 }
 
 // Main runs the command in args. All output passes through env.Filter.
@@ -215,6 +219,8 @@ func setFlagValue(f *flags, name, v string) error {
 		f.users = append(f.users, v)
 	case "--batch":
 		f.batch = true
+	case "--timeout":
+		return notEmpty(&f.timeout, name, v)
 	default:
 		return fmt.Errorf("no flag %s", name)
 	}
@@ -508,12 +514,25 @@ func execCommand(ctx context.Context, env Env, f *flags, args []string) int {
 		o.fail(usage("needs one host pattern before --"))
 		return o.end(exitInvalid, summary{})
 	}
+	var timeout time.Duration
+	if f.timeout != "" {
+		n, err := strconv.Atoi(f.timeout)
+		if err != nil {
+			o.fail(usage("--timeout: %s is not whole seconds", f.timeout))
+			return o.end(exitInvalid, summary{})
+		}
+		if err := module.CheckSeconds("--timeout", n); err != nil {
+			o.fail(usage("%s", err))
+			return o.end(exitInvalid, summary{})
+		}
+		timeout = time.Duration(n) * time.Second
+	}
 	p, ok := o.loadCommand(ctx, f, project.Command{Name: "exec", Pattern: args[0]}, "winch exec needs the age key to hide the secrets of the project in its output")
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
 	connect, opts := o.sessions(f)
-	results := run.Exec(ctx, p.Name, p.Pipeline.Stages[0].Targets, f.command, connect, opts)
+	results := run.Exec(ctx, p.Name, p.Pipeline.Stages[0].Targets, protocol.Exec{Command: f.command, Timeout: timeout}, connect, opts)
 	if o.ev != nil {
 		o.ev.Exec(results)
 	} else {

@@ -543,6 +543,16 @@ func TestExecStopsOnEOF(t *testing.T) {
 	}
 }
 
+// spec: CLI (winch exec)
+func TestExecTimeout(t *testing.T) {
+	c := start(t, t.TempDir(), "")
+	c.call(t, "hello", hello("r1"))
+	r := c.call(t, "exec", protocol.Exec{Command: "echo started; sleep 30", Timeout: time.Second})
+	if !strings.HasSuffix(r.Error, "stopped after 1s; set --timeout for a longer limit: started") {
+		t.Errorf("error = %q, want the limit of 1s", r.Error)
+	}
+}
+
 // spec: Modules (time limit)
 func TestCommandFinishesAfterEOF(t *testing.T) {
 	c := start(t, t.TempDir(), "")

@@ -310,6 +310,9 @@ func TestExecArgs(t *testing.T) {
 		{"two patterns", []string{"web1", "web2", "--", "uptime"}, "winch exec: needs one host pattern before --"},
 		{"--yes", []string{"all", "--yes", "--", "uptime"}, "winch exec: unknown flag --yes"},
 		{"no host", []string{"none", "--", "uptime"}, `winch exec: the host pattern "none" matches no host in inventories/test.yaml`},
+		{"--timeout 0", []string{"all", "--timeout", "0", "--", "uptime"}, "winch exec: --timeout: 0 is below 1 second"},
+		{"--timeout 1.5", []string{"all", "--timeout=1.5", "--", "uptime"}, "winch exec: --timeout: 1.5 is not whole seconds"},
+		{"an empty --timeout", []string{"all", "--timeout=", "--", "uptime"}, "winch exec: --timeout is empty"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			h := fakehost.New()
@@ -323,6 +326,11 @@ func TestExecArgs(t *testing.T) {
 	r := winch(t, dir, h, true, "", "exec", "--batch", "web1", "--", "ls", "-la", "--json")
 	if r.code != exitOK || !slices.Equal(h.Log["web1"], []string{"exec ls -la --json"}) || !slices.Equal(h.Batch, []bool{true}) {
 		t.Errorf("exit %d, log %q, batch %v, stderr %q", r.code, h.Log["web1"], h.Batch, r.err)
+	}
+	h = fakehost.New()
+	r = winch(t, dir, h, false, "", "exec", "web1", "--timeout", "3600", "--", "pg_dump", "app")
+	if r.code != exitOK || !slices.Equal(h.Log["web1"], []string{"exec pg_dump app (timeout 3600s)"}) {
+		t.Errorf("exit %d, log %q, stderr %q", r.code, h.Log["web1"], r.err)
 	}
 }
 

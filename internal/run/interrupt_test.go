@@ -11,6 +11,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -137,7 +138,7 @@ func TestExecInterruptedDuringConnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	h.OnConnect = func(string) { cancel() }
-	results := run.Exec(ctx, p.Name, p.Pipeline.Stages[0].Targets, "uptime", h.Connector(), run.Options{Serial: true})
+	results := run.Exec(ctx, p.Name, p.Pipeline.Stages[0].Targets, protocol.Exec{Command: "uptime"}, h.Connector(), run.Options{Serial: true})
 	for _, r := range results {
 		if r.Ran || !errors.Is(r.Err, run.ErrInterrupted) {
 			t.Errorf("%s: ran %v, error %v, want interrupted", r.Host, r.Ran, r.Err)
@@ -160,7 +161,7 @@ func TestExecFailsAfterInterrupt(t *testing.T) {
 		}
 	}
 	h.FailExec("web1")
-	results := run.Exec(ctx, p.Name, p.Pipeline.Stages[0].Targets, "uptime", h.Connector(), run.Options{Serial: true})
+	results := run.Exec(ctx, p.Name, p.Pipeline.Stages[0].Targets, protocol.Exec{Command: "uptime"}, h.Connector(), run.Options{Serial: true})
 	if r := results[0]; r.Ran || !errors.Is(r.Err, run.ErrInterrupted) {
 		t.Errorf("%s: ran %v, error %v, want interrupted", r.Host, r.Ran, r.Err)
 	}

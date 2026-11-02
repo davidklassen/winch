@@ -699,5 +699,5 @@ func execCommand(ctx context.Context, params json.RawMessage) (module.ExecResult
 	if err := json.Unmarshal(params, &e); err != nil {
 		return module.ExecResult{}, fmt.Errorf("decode exec: %w", err)
 	}
-	return module.Exec(ctx, e.Command)
+	return module.Exec(ctx, e.Command, e.Timeout)
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/davidklassen/winch/internal/color"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/secret"
 )
 
@@ -23,17 +24,17 @@ type ExecResult struct {
 	Err error
 }
 
-// Exec runs command on the hosts at the same time. With opts.Serial, the
+// Exec runs the command of e on the hosts at the same time. With opts.Serial, the
 // sessions start one at a time. Each session closes after its command. When
 // ctx ends, the commands stop.
-func Exec(ctx context.Context, proj string, hosts []project.Host, command string, connect Connect, opts Options) []ExecResult {
+func Exec(ctx context.Context, proj string, hosts []project.Host, e protocol.Exec, connect Connect, opts Options) []ExecResult {
 	results := make([]ExecResult, len(hosts))
 	open := func(h project.Host) (Conn, error) { return connect.Open(context.WithoutCancel(ctx), proj, h, nil) }
 	errs := rollout(ctx, "exec", hosts, 0, nil, opts, open, func(i int, c Conn) error {
 		if ctx.Err() != nil {
 			return errors.Join(ErrInterrupted, c.Close())
 		}
-		res, err := c.Exec(ctx, command)
+		res, err := c.Exec(ctx, e)
 		// The command can fail to start when the interrupt comes first.
 		if err != nil && ctx.Err() != nil {
 			err = ErrInterrupted

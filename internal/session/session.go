@@ -829,9 +829,9 @@ func (s *Session) Health(ctx context.Context, h protocol.Health) error {
 
 // Exec runs a command of winch exec as root on the host. When ctx ends, it
 // closes the input of the helper, and the helper stops the command.
-func (s *Session) Exec(ctx context.Context, command string) (module.ExecResult, error) {
+func (s *Session) Exec(ctx context.Context, e protocol.Exec) (module.ExecResult, error) {
 	var res module.ExecResult
-	if err := s.send("exec", protocol.Exec{Command: command}); err != nil {
+	if err := s.send("exec", e); err != nil {
 		return res, err
 	}
 	defer context.AfterFunc(ctx, func() { s.stdin.Close() })()

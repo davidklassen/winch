@@ -27,6 +27,9 @@ when the command fails on a host.
 
 With --json, each host gives one exec event with output and exit_code.
 
+The command stops after 600 seconds, or after --timeout. Each host
+then sends SIGTERM to the command, and SIGKILL 10 seconds later.
+
 Ctrl-C stops the commands. Each host sends SIGINT to the command, and
 SIGKILL when it still runs after 10 seconds.
 
@@ -41,6 +44,8 @@ Flags:
                               repeatable
                               default: from the inventory
   --batch                     no questions from ssh
+  --timeout <seconds>         time limit of the command
+                              default: 600
   --json                      one exec event per host on stdout
 
 See: winch doc inventory, winch doc remote
