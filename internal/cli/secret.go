@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/secret"
@@ -120,6 +121,53 @@ func writeSecret(env Env, args []string, plain func() (string, error)) int {
 		return exitInvalid
 	}
 	fmt.Fprintln(env.stdout, line)
+	return exitOK
+}
+
+func secretDecrypt(ctx context.Context, env Env, f *flags, args []string) int {
+	if len(args) > 1 {
+		env.fail(usage("takes one path at most"))
+		return exitInvalid
+	}
+	identity, err := env.identity()
+	if err != nil {
+		env.fail(err)
+		return exitInvalid
+	}
+	var at, text string
+	if len(args) == 1 {
+		at = args[0]
+	} else {
+		if env.Terminal {
+			env.fail(usage("give a path, or a !secret value on stdin"))
+			return exitInvalid
+		}
+		in, err := io.ReadAll(env.In)
+		if err != nil {
+			env.fail(usage("read stdin: %v", err))
+			return exitInvalid
+		}
+		fields := strings.Fields(string(in))
+		if len(fields) > 0 && fields[0] == "!secret" {
+			fields = fields[1:]
+		}
+		switch len(fields) {
+		case 0:
+			env.fail(usage("stdin holds no !secret value"))
+			return exitInvalid
+		case 1:
+			text = fields[0]
+		default:
+			env.fail(usage("stdin holds more than one value; give one !secret value"))
+			return exitInvalid
+		}
+	}
+	plain, err := project.Decrypt(ctx, env.Dir, at, text, identity)
+	if err != nil {
+		env.fail(err)
+		return exitInvalid
+	}
+	fmt.Fprint(env.plainOut, plain)
 	return exitOK
 }
 

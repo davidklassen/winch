@@ -1657,8 +1657,8 @@ kernel in /boot is newer than the running kernel.
 ==> winch doc secrets
 secrets: encrypted values in the project
 
-A secret is a value that the project keeps encrypted and winch never
-prints.
+A secret is a value that the project keeps encrypted. Only winch secret
+decrypt prints it.
 
 Format:
   A secret is encrypted with age for the recipients in winch.yaml. The
@@ -1677,11 +1677,17 @@ Commands:
                                     write it at the path, or print it
     winch secret encrypt [<path>]   encrypt a value from stdin: write it
                                     at the path, or print it
+    winch secret decrypt [<path>]   print the plaintext of the secret at
+                                    the path, or of a secret on stdin
     winch secret rekey              encrypt all secrets for the current
                                     recipients
 
   winch secret generate and winch secret encrypt need the recipients,
   but no age key. generate never prints the password.
+
+  winch secret decrypt needs the age key. It prints the plaintext and
+  nothing else. It reads a !secret value on stdin, with or without the
+  tag. A path to a map or to a value that is not a !secret is an error.
 
 Paths:
   A path names a place in the project, with keys joined by ".". It works
@@ -1699,18 +1705,19 @@ Paths:
 
     - The path ends at a variable value or below it in a map. A path
       cannot name a list item.
-    - The command replaces the value at the path, and the output says
-      replaced vars.x in winch.yaml. It adds a missing path with the
-      maps it needs, and the output says added vars.x in winch.yaml.
+    - generate and encrypt replace the value at the path, and the output
+      says replaced vars.x in winch.yaml. They add a missing path with
+      the maps it needs, and the output says added vars.x in winch.yaml.
     - The inventory, the recipe, the host, and the group must exist. The
       group all always exists.
-    - Something in the project must read the variable. A path that gives
-      a variable a second default is an error.
-    - The command does not load the whole project, so errors in other
-      places do not stop it.
-    - The file keeps its comments and layout. A flow map on the path,
-      such as {a: 1}, is an error. The command writes through a symbolic
-      link to its target.
+    - For generate and encrypt, something in the project must read the
+      variable. A path that gives a variable a second default is an
+      error.
+    - The commands do not load the whole project, so errors in other
+      places do not stop them.
+    - generate and encrypt keep the comments and layout of the file. A
+      flow map on the path, such as {a: 1}, is an error. They write
+      through a symbolic link to the target.
 
 The age key:
   winch secret init makes a key at ~/.config/winch/age.key, or at the

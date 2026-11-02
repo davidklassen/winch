@@ -834,3 +834,102 @@ func TestLoadWarningFix(t *testing.T) {
 		t.Errorf("validate: exit %d, stderr %q; want %q", r.code, r.err, want)
 	}
 }
+
+// spec: Variables/Secrets (winch secret decrypt); CLI
+func TestSecretDecrypt(t *testing.T) {
+	identity, id := newIdentity(t)
+	dir := secretProject(t, id)
+	pw := encrypt(t, dir, "hunter2")
+	token := fakeSecret(t, "ghp.txt")
+	setPassword(t, dir, pw)
+	cfg := "name: acme\ninventory: test\nrecipients:\n  - " + id.Recipient().String() + "\n" +
+		"vars:\n  token: " + encrypt(t, dir, token) + "\n  lines: " + encrypt(t, dir, "a\nb\n") +
+		"\n  plain: hello\n  list:\n    - " + pw + "\n  users:\n    alice: " + pw + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "winch.yaml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct{ name, stdin, path, want string }{
+		{"inventory path", "", "inventories.test.hosts.web1.vars.pw", "hunter2"},
+		{"map key", "", "vars.users.alice", "hunter2"},
+		{"a token", "", "vars.token", token},
+		{"more lines", "", "vars.lines", "a\nb\n"},
+		{"stdin with the tag", pw + "\n", "", "hunter2"},
+		{"stdin without the tag", strings.TrimPrefix(pw, "!secret "), "", "hunter2"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			args := []string{"secret", "decrypt"}
+			if tt.path != "" {
+				args = append(args, tt.path)
+			}
+			r := winchWith(t, dir, "", identity, "", fakehost.New(), false, tt.stdin, args...)
+			if r.code != exitOK || r.out != tt.want || r.err != "" {
+				t.Errorf("exit %d, stdout %q, stderr %q; want %q", r.code, r.out, r.err, tt.want)
+			}
+		})
+	}
+	for _, tt := range []struct{ name, stdin, path, want string }{
+		{"a map", "", "vars.users", "vars.users in winch.yaml is a map, not a !secret; name a key in it"},
+		{"a plain value", "", "vars.plain", "vars.plain in winch.yaml is not a !secret"},
+		{"a missing key", "", "vars.users.alicee", `vars.users.alicee is not in winch.yaml; did you mean "alice"?`},
+		{"a missing variable", "", "vars.nope", "vars.nope is not in winch.yaml"},
+		{"a missing host", "", "inventories.test.hosts.web9.vars.pw", "host web9 is not in inventories/test.yaml"},
+		{"a bad path", "", "pw", `winch secret decrypt: "pw" is not a path to a variable value`},
+		{"empty stdin", "\n", "", "winch secret decrypt: stdin holds no !secret value"},
+		{"two paths", "", "vars.pw vars.x", "winch secret decrypt: takes one path at most"},
+		{"a list item", "", "vars.list.0", "cannot read vars.list.0: vars.list is a list; a path cannot name a list item"},
+		{"below a plain value", "", "vars.plain.x", "cannot read vars.plain.x: vars.plain is not a map"},
+		{"two values on stdin", pw + "\n" + pw + "\n", "", "winch secret decrypt: stdin holds more than one value; give one !secret value"},
+		{"a broken value on stdin", "!secret notbase64", "", "!secret: "},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			args := append([]string{"secret", "decrypt"}, strings.Fields(tt.path)...)
+			r := winchWith(t, dir, "", identity, "", fakehost.New(), false, tt.stdin, args...)
+			if r.code != exitInvalid || r.out != "" || !strings.Contains(r.err, tt.want) {
+				t.Errorf("exit %d, stdout %q, stderr %q; want %q", r.code, r.out, r.err, tt.want)
+			}
+		})
+	}
+	r := winchWith(t, dir, t.TempDir(), "", "", fakehost.New(), false, "", "secret", "decrypt", "vars.token")
+	if r.code != exitInvalid || r.out != "" || !strings.Contains(r.err, "winch secret init") {
+		t.Errorf("no age key: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	other, _ := newIdentity(t)
+	r = winchWith(t, dir, "", other, "", fakehost.New(), false, "", "secret", "decrypt", "vars.token")
+	if r.code != exitInvalid || r.out != "" || !strings.Contains(r.err, "winch.yaml:6:10: the age key "+other+" is not in recipients") {
+		t.Errorf("another age key: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	r = winchWith(t, dir, "", identity, "", fakehost.New(), true, "", "secret", "decrypt")
+	if r.code != exitInvalid || r.out != "" || !strings.Contains(r.err, "winch secret decrypt: give a path, or a !secret value on stdin") {
+		t.Errorf("a terminal on stdin: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+}
+
+// spec: Variables/Secrets (winch secret decrypt, paths)
+func TestSecretDecryptPaths(t *testing.T) {
+	identity, id := newIdentity(t)
+	dir := secretProject(t, id)
+	pw := encrypt(t, dir, "hunter2")
+	files := map[string]string{
+		"winch.yaml": "name: acme\nrecipients:\n  - " + id.Recipient().String() + "\n" +
+			"hosts:\n  db1.acme.com:\n    vars:\n      pw: " + pw + "\ngroups:\n  all:\n    vars:\n      pw: " + pw + "\n",
+		"recipes/mail/recipe.yaml": "vars:\n  mail_pw: " + pw + "\nsteps: []\n",
+		"pipelines/site.yaml":      "stages: [",
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "recipes", "mail"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(dir, "inventories")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"hosts.db1.acme.com.vars.pw", "groups.all.vars.pw", "recipes.mail.vars.mail_pw"} {
+		r := winchWith(t, dir, "", identity, "", fakehost.New(), false, "", "secret", "decrypt", path)
+		if r.code != exitOK || r.out != "hunter2" || r.err != "" {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q", path, r.code, r.out, r.err)
+		}
+	}
+}

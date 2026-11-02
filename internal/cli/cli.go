@@ -79,6 +79,8 @@ type Env struct {
 	// stdout and stderr are Out and Err through Filter. Main sets them and
 	// clears Out and Err.
 	stdout, stderr *color.Writer
+	// plainOut is Out without Filter. Only secret decrypt gets it.
+	plainOut io.Writer
 	// name is the name of the command, such as plan or secret init.
 	name string
 }
@@ -95,6 +97,7 @@ var runs = map[string]func(ctx context.Context, env Env, f *flags, args []string
 	"secret init":     secretInit,
 	"secret generate": secretGenerate,
 	"secret encrypt":  secretEncrypt,
+	"secret decrypt":  secretDecrypt,
 	"secret rekey":    secretRekey,
 	"doc":             docCommand,
 	"version":         version,
@@ -120,6 +123,7 @@ type flags struct {
 func Main(ctx context.Context, args []string, env Env) int {
 	env.stdout = color.NewWriter(env.Out, env.Filter.Parts, env.ColorOut)
 	env.stderr = color.NewWriter(env.Err, env.Filter.Parts, env.ColorErr)
+	out := env.Out
 	env.Out, env.Err = nil, nil
 	if len(args) == 0 {
 		writeHelp(env.stderr, mainCommand)
@@ -154,6 +158,9 @@ func Main(ctx context.Context, args []string, env Env) int {
 		return exitInvalid
 	}
 	env.name = name
+	if name == "secret decrypt" {
+		env.plainOut = out
+	}
 	var f flags
 	flagArgs := args[1:]
 	// The words after -- of exec are the command, also those that start
