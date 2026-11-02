@@ -9,7 +9,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 
@@ -114,6 +117,189 @@ func TestSecretEncrypt(t *testing.T) {
 	if r.code != exitInvalid || !strings.Contains(r.err, "winch secret encrypt: takes one path at most") {
 		t.Errorf("two paths: exit %d, stderr %q", r.code, r.err)
 	}
+}
+
+// spec: Variables/Secrets (winch secret encrypt); CLI/Prompts
+func TestSecretEncryptPrompt(t *testing.T) {
+	_, id := newIdentity(t)
+	dir := secretProject(t, id)
+	path := filepath.Join(dir, "inventories", "test.yaml")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := winch(t, dir, fakehost.New(), true, "hunter2\nhunter3\n", "secret", "encrypt", "inventories.test.hosts.web1.vars.pw")
+	if r.code != exitInvalid || r.out != "" || r.err != "Secret for inventories.test.hosts.web1.vars.pw: \nConfirm secret: \nwinch secret encrypt: the two values differ\n" {
+		t.Errorf("different values: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	if after, _ := os.ReadFile(path); string(after) != string(before) {
+		t.Errorf("a failed encrypt changed the inventory:\n%s", after)
+	}
+	r = winch(t, dir, fakehost.New(), true, "\n\n", "secret", "encrypt")
+	if r.code != exitInvalid || !strings.Contains(r.err, "the value is empty") {
+		t.Errorf("empty value: exit %d, stderr %q", r.code, r.err)
+	}
+	r = winch(t, dir, fakehost.New(), true, "hunter2\r\nhunter2\r\n", "secret", "encrypt")
+	if r.code != exitOK || r.err != "Secret: \nConfirm secret: \n" {
+		t.Fatalf("equal values: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	got, err := secret.Decrypt(strings.TrimPrefix(strings.TrimSuffix(r.out, "\n"), "!secret "), []age.Identity{id})
+	if err != nil || got != "hunter2" {
+		t.Errorf("secret = %q, %v; want hunter2", got, err)
+	}
+	r = winch(t, dir, fakehost.New(), false, "hunter2\n", "secret", "encrypt")
+	if r.code != exitOK || r.err != "" {
+		t.Errorf("pipe: exit %d, stderr %q; want no prompt", r.code, r.err)
+	}
+}
+
+// spec: Variables/Secrets (winch secret encrypt); CLI/Prompts
+func TestSecretEncryptNoEcho(t *testing.T) {
+	_, id := newIdentity(t)
+	controller, terminal := vmtest.OpenPTY(t)
+	p := startPrompt(t, secretProject(t, id), terminal)
+	for range 2 {
+		p.waitPrompt(t)
+		if _, err := controller.WriteString("hunter2\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if c := p.exit(t); c != exitOK || !strings.HasPrefix(p.out.String(), "!secret ") {
+		t.Fatalf("exit %d, stdout %q, stderr %q", c, p.out.String(), p.errOut.String())
+	}
+	// After the prompts, the terminal echoes again.
+	if echo := readEcho(t, controller); strings.Contains(echo, "hunter2") {
+		t.Errorf("the terminal echoed the value: %q", echo)
+	}
+}
+
+// spec: Variables/Secrets (winch secret encrypt); CLI/Prompts
+func TestSecretEncryptInterrupt(t *testing.T) {
+	_, id := newIdentity(t)
+	dir := secretProject(t, id)
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGQUIT} {
+		t.Run(sig.String(), func(t *testing.T) {
+			controller, terminal := vmtest.OpenPTY(t)
+			p := startPrompt(t, dir, terminal)
+			p.waitPrompt(t)
+			if err := syscall.Kill(os.Getpid(), sig); err != nil {
+				t.Fatal(err)
+			}
+			if c := p.exit(t); c != exitInvalid || p.out.String() != "" || !strings.HasSuffix(p.errOut.String(), "winch secret encrypt: interrupted; nothing was written\n") {
+				t.Fatalf("exit %d, stdout %q, stderr %q", c, p.out.String(), p.errOut.String())
+			}
+			readEcho(t, controller)
+		})
+	}
+}
+
+// spec: Variables/Secrets (winch secret encrypt); CLI/Prompts
+func TestSecretEncryptTerminalWithoutStderr(t *testing.T) {
+	_, id := newIdentity(t)
+	_, terminal := vmtest.OpenPTY(t)
+	var out, errOut strings.Builder
+	code := Main(context.Background(), []string{"secret", "encrypt"}, Env{
+		Dir: secretProject(t, id), In: terminal, Out: &out, Err: &errOut, Filter: secret.NewFilter(),
+	})
+	want := "winch secret encrypt: stdin is a terminal, but stderr is not, so winch cannot ask for the secret; pipe the value, or run with stderr on the terminal\n"
+	if code != exitInvalid || out.String() != "" || errOut.String() != want {
+		t.Errorf("exit %d, stdout %q, stderr %q; want %q", code, out.String(), errOut.String(), want)
+	}
+}
+
+// prompt is a run of winch secret encrypt on a terminal.
+type prompt struct {
+	out    strings.Builder
+	errOut *promptWriter
+	code   chan int
+}
+
+func startPrompt(t *testing.T, dir string, terminal *os.File) *prompt {
+	t.Helper()
+	p := &prompt{errOut: &promptWriter{prompt: make(chan struct{}, 2)}, code: make(chan int, 1)}
+	go func() {
+		p.code <- Main(context.Background(), []string{"secret", "encrypt"}, Env{
+			Dir: dir, In: terminal, Out: &p.out, Err: p.errOut, Terminal: true, Filter: secret.NewFilter(),
+		})
+	}()
+	return p
+}
+
+func (p *prompt) waitPrompt(t *testing.T) {
+	t.Helper()
+	select {
+	case <-p.errOut.prompt:
+	case c := <-p.code:
+		t.Fatalf("exit %d before the prompt, stderr %q", c, p.errOut.String())
+	case <-time.After(10 * time.Second):
+		t.Fatalf("no prompt, stderr %q", p.errOut.String())
+	}
+}
+
+func (p *prompt) exit(t *testing.T) int {
+	t.Helper()
+	select {
+	case c := <-p.code:
+		return c
+	case <-time.After(10 * time.Second):
+		t.Fatalf("winch does not end, stderr %q", p.errOut.String())
+		return 0
+	}
+}
+
+// readEcho writes the line end to the terminal and returns what the terminal
+// echoed up to the echo of end.
+func readEcho(t *testing.T, controller *os.File) string {
+	t.Helper()
+	if _, err := controller.WriteString("end\n"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	var echo []byte
+	go func() {
+		buf := make([]byte, 64)
+		for !strings.Contains(string(echo), "end\r\n") {
+			n, err := controller.Read(buf)
+			if err != nil {
+				done <- err
+				return
+			}
+			echo = append(echo, buf[:n]...)
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the terminal does not echo")
+	}
+	return string(echo)
+}
+
+// promptWriter sends on prompt each time winch asks for the value.
+type promptWriter struct {
+	mu     sync.Mutex
+	b      strings.Builder
+	prompt chan struct{}
+}
+
+func (w *promptWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.b.Write(p)
+	if strings.HasSuffix(string(p), ": ") {
+		w.prompt <- struct{}{}
+	}
+	return len(p), nil
+}
+
+func (w *promptWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.String()
 }
 
 // spec: Variables/Secrets (winch secret encrypt, paths); CLI

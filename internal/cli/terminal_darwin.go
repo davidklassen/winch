@@ -6,7 +6,10 @@ import (
 	"unsafe"
 )
 
-const ioctlGetTermios = syscall.TIOCGETA
+const (
+	ioctlGetTermios = syscall.TIOCGETA
+	ioctlSetTermios = syscall.TIOCSETA
+)
 
 func discardInput(f *os.File) error {
 	what := int32(1) // FREAD of <sys/fcntl.h>

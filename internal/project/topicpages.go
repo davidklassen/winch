@@ -529,11 +529,12 @@ var secretsTopic = doc.Topic{
 		doc.Table([][]string{
 			{"winch secret init", "make an age key, add it to recipients"},
 			{"winch secret generate [<path>]", "make a random password as a secret: write it at the path, or print it"},
-			{"winch secret encrypt [<path>]", "encrypt a value from stdin: write it at the path, or print it"},
+			{"winch secret encrypt [<path>]", "encrypt a value from stdin or a prompt: write it at the path, or print it"},
 			{"winch secret decrypt [<path>]", "print the plaintext of the secret at the path, or of a secret on stdin"},
 			{"winch secret rekey", "encrypt all secrets for the current recipients"},
 		}),
 		doc.Paragraph(`winch secret generate and winch secret encrypt need the recipients, but no age key. generate never prints the password.`),
+		doc.Paragraph(`winch secret encrypt reads a pipe on stdin. At a terminal, it asks for one line twice and does not show what you type. When the two values differ, it writes nothing.`),
 		doc.Paragraph(`winch secret decrypt needs the age key. It prints the plaintext and nothing else. It reads a !secret value on stdin, with or without the tag. A path to a map or to a value that is not a !secret is an error.`),
 		doc.Heading("Paths"),
 		doc.Paragraph(`A path names a place in the project, with keys joined by ".". It works the same for an inventory or a recipe in its own file and as a key in winch.yaml.`),

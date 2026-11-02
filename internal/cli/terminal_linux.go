@@ -5,7 +5,10 @@ import (
 	"syscall"
 )
 
-const ioctlGetTermios = syscall.TCGETS
+const (
+	ioctlGetTermios = syscall.TCGETS
+	ioctlSetTermios = syscall.TCSETS
+)
 
 // tcflsh is TCFLSH of the Linux ioctls; package syscall has it only on arm64.
 const tcflsh = 0x540b

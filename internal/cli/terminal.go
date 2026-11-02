@@ -14,6 +14,21 @@ func IsTerminal(f *os.File) bool {
 	return errno == 0
 }
 
+func echoOff(f *os.File) (func(), error) {
+	var old syscall.Termios
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), ioctlGetTermios, uintptr(unsafe.Pointer(&old))); errno != 0 {
+		return nil, errno
+	}
+	t := old
+	t.Lflag &^= syscall.ECHO
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), ioctlSetTermios, uintptr(unsafe.Pointer(&t))); errno != 0 {
+		return nil, errno
+	}
+	return func() {
+		_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), ioctlSetTermios, uintptr(unsafe.Pointer(&old)))
+	}, nil
+}
+
 // UseColor reports whether a stream gets color: it is a terminal,
 // NO_COLOR is empty, and TERM is not dumb.
 func UseColor(terminal bool, getenv func(string) string) bool {
