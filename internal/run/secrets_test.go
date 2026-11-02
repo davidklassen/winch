@@ -642,3 +642,66 @@ func TestSecretHostText(t *testing.T) {
 		})
 	}
 }
+
+// spec: Variables/Secrets in output
+func TestSecretStepMask(t *testing.T) {
+	// The output has no text filter, so only the step mask hides the parts.
+	const part = `!expr 'trimPrefix(vars.pw, "hun")'`
+	dir := "      - dir:\n          path: /a\n          owner: " + part + "\n"
+	change := func(line string) func(h *fakehost.Hosts) {
+		return func(h *fakehost.Hosts) {
+			h.SetResult("web1", "/a", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{line}})
+		}
+	}
+	validate := "      - file:\n          path: /a\n          content: \"a\\n\"\n          validate: !expr '\"check \" + vars.pw'\n"
+	// jsonPart is the part nt<er2 as JSON escapes it.
+	const jsonPart = "nt" + `\` + "u003cer2"
+	for _, tt := range []struct {
+		name, value, steps string
+		host               func(h *fakehost.Hosts)
+		want, not          string
+	}{
+		{"a note", "hunter2", "      - pkg:\n          name: !expr '\"lib\" + trimPrefix(vars.pw, \"hun\")'\n",
+			func(h *fakehost.Hosts) { h.SetNote("web1", "libter2", "apt does not know libter2", false) },
+			"web1: note: apt does not know lib(secret)\n", "ter2"},
+		{"a warning", "hunter2", "      - pkg:\n          name: !expr '\"lib\" + trimPrefix(vars.pw, \"hun\")'\n",
+			func(h *fakehost.Hosts) { h.SetNote("web1", "libter2", "libter2 is held", true) },
+			"web1: warning: lib(secret) is held\n", "ter2"},
+		{"a gone then record", "hunter2", "      - file:\n          path: !expr '\"/srv/f-\" + trimPrefix(vars.pw, \"hun\")'\n          content: \"a\\n\"\n",
+			func(h *fakehost.Hosts) {
+				h.SetFile("web1", "/srv/f-ter2", "a\n")
+				h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "s", Module: "file", Mains: []string{"/srv/f-ter2"}})
+			}, "a pending then of file /srv/f-(secret) matches no step", "ter2"},
+		{"a base64 part", "hunter2", dir, change("key dGVyMg"), "        key (secret)\n", "dGVyMg"},
+		{"a JSON-escaped part", "hunt<er2", strings.ReplaceAll(validate, "vars.pw", `trimPrefix(vars.pw, "hu")`), change(`body {"a":"` + jsonPart + `"}`),
+			`        body {"a":"(secret)"}` + "\n", jsonPart},
+		{"a URL-encoded part", "hunt<er2", strings.ReplaceAll(validate, "vars.pw", `trimPrefix(vars.pw, "hu")`), change("url https://example.com/?q=nt%3Cer2"),
+			"        url https://example.com/?q=(secret)\n", "nt%3Cer2"},
+		{"a line of a multi-line part", "line-one\nline-two", validate, change("validate check line-one"),
+			"        validate check (secret)\n", "line-one"},
+		{"a line of plain project text", "[Peer]\nline-two", validate + "      - file:\n          path: /b\n          content: |\n            [Peer]\n",
+			change("validate check [Peer]; line-two"), "        validate check [Peer]; (secret)\n", "line-two"},
+		{"a short line", "ab\nline-two", validate, change("validate check ab; line-two"),
+			"        validate check ab; (secret)\n", "line-two"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := hashSecretProject(t, tt.value, steps(tt.steps), "", nil, nil)
+			h := fakehost.New()
+			tt.host(h)
+			var out, errOut bytes.Buffer
+			w, ew := plain(&out), plain(&errOut)
+			plan := run.MakePlan(t.Context(), p, h.ConnectorFor(false, func(n run.Note) { run.WriteNote(ew, n) }), run.Options{})
+			plan.Write(w, ew)
+			if all := out.String() + errOut.String(); !strings.Contains(all, tt.want) || strings.Contains(all, tt.not) {
+				t.Errorf("output = %q, want %q and no %q", all, tt.want, tt.not)
+			}
+			// A note during apply passes the mask too.
+			out.Reset()
+			errOut.Reset()
+			run.Apply(t.Context(), plan, h.ConnectorFor(false, func(n run.Note) { run.WriteNote(ew, n) }), run.Text(w, ew))
+			if all := out.String() + errOut.String(); strings.Contains(all, tt.not) {
+				t.Errorf("apply output = %q, want no %q", all, tt.not)
+			}
+		})
+	}
+}

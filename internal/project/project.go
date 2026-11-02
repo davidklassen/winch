@@ -161,7 +161,8 @@ type Step struct {
 	// secret.
 	Secret bool
 	// Parts are the parts of the arguments, then, and content that come
-	// from a secret, after Eval.
+	// from a secret, and the lines of a multi-line part that count on their
+	// own, after Eval.
 	Parts []string
 	// HashArgs and HashThen are the arguments and the command of then in
 	// the first placeholder variant of a step that reads a secret. HashArgs
@@ -1801,7 +1802,11 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, any, err
 	if contentOK && len(parts) == 0 {
 		return nil, nil, nil
 	}
-	sh.Parts = parts
+	var lines []string
+	for _, p := range parts {
+		lines = append(lines, e.filter.Lines(p)...)
+	}
+	sh.Parts = append(parts, lines...)
 	if real != nil {
 		n, err := yamlx.FromValue(tree, st.Pos)
 		if err != nil {

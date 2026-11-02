@@ -30,32 +30,62 @@ func NewFilter() *Filter {
 	return &Filter{values: map[string]bool{}, plain: map[string]bool{}}
 }
 
-// Add adds a secret value: the value and each of its lines, without the
-// white space around them, in plain and JSON-escaped form, and as the output
-// prints it, also JSON-escaped. It adds the base64 and URL-encoded forms of
-// both the trimmed and the exact text. It skips text shorter than 4
-// characters, and true and false. It skips a line of a multi-line value that
-// is a line of plain project text.
+// Add adds a secret value and each of its Lines in the forms that the output
+// can show. It skips a value shorter than 4 characters without the white
+// space around it, and true and false.
 func (f *Filter) Add(value string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	multi := strings.Contains(strings.TrimSpace(value), "\n")
-	for _, exact := range append([]string{value}, strings.Split(value, "\n")...) {
-		v := strings.TrimSpace(exact)
-		if utf8.RuneCountInString(v) < 4 || v == "true" || v == "false" || multi && f.plain[v] {
-			continue
-		}
-		for _, s := range []string{v, Printable(v), PrintableLines(v)} {
-			f.values[s] = true
-			j, _ := json.Marshal(s)
-			f.values[string(j[1:len(j)-1])] = true
-		}
-		for _, s := range []string{v, exact} {
-			f.values[base64.RawStdEncoding.EncodeToString([]byte(s))] = true
-			f.values[url.QueryEscape(s)] = true
-			f.values[url.PathEscape(s)] = true
+	for _, exact := range append([]string{value}, f.lines(value)...) {
+		if counts(strings.TrimSpace(exact)) {
+			for _, s := range forms(exact) {
+				f.values[s] = true
+			}
 		}
 	}
+}
+
+// Lines returns the lines of a multi-line value that count on their own:
+// each line that Add does not skip and that is not a line of plain project
+// text.
+func (f *Filter) Lines(value string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lines(value)
+}
+
+func (f *Filter) lines(value string) []string {
+	if !strings.Contains(strings.TrimSpace(value), "\n") {
+		return nil
+	}
+	var lines []string
+	for _, l := range strings.Split(value, "\n") {
+		if v := strings.TrimSpace(l); counts(v) && !f.plain[v] {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+func counts(v string) bool {
+	return utf8.RuneCountInString(v) >= 4 && v != "true" && v != "false"
+}
+
+// forms returns the forms of exact that the output can show: without the
+// white space around it, in plain and JSON-escaped form, and as the output
+// prints it, also JSON-escaped; and the base64 and URL-encoded forms of both
+// the trimmed and the exact text.
+func forms(exact string) []string {
+	v := strings.TrimSpace(exact)
+	var out []string
+	for _, s := range []string{v, Printable(v), PrintableLines(v)} {
+		j, _ := json.Marshal(s)
+		out = append(out, s, string(j[1:len(j)-1]))
+	}
+	for _, s := range []string{v, exact} {
+		out = append(out, base64.RawStdEncoding.EncodeToString([]byte(s)), url.QueryEscape(s), url.PathEscape(s))
+	}
+	return out
 }
 
 // Text returns s with each match replaced by Mark. Overlapping and adjacent
@@ -86,14 +116,17 @@ func (f *Filter) Parts(parts []string) []string {
 	return split(s, marked, parts)
 }
 
-// Hide returns s with each of parts, also in its Go-quoted form, as Mark,
-// like Filter.Text. It skips no part for its length.
+// Hide returns s with each of parts as Mark, like Filter.Text: in the forms
+// that Filter.Add knows, and in its Go-quoted form. It skips no part for its
+// length.
 func Hide(s string, parts []string) string {
 	if len(parts) == 0 {
 		return s
 	}
-	values := slices.Clone(parts)
+	var values []string
 	for _, p := range parts {
+		values = append(values, p)
+		values = append(values, forms(p)...)
 		if q := strconv.Quote(p); q[1:len(q)-1] != p {
 			values = append(values, q[1:len(q)-1])
 		}

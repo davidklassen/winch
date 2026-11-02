@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -295,11 +296,38 @@ func TestHide(t *testing.T) {
 		{"inside a mark", []string{"secret"}, "a (secret) b", "a (secret) b"},
 		{"the quoted form", []string{"a\tb"}, `comment "x" → "a\tb"`, `comment "x" → "(secret)"`},
 		{"a line end stays", []string{"a\nb"}, "x a\nb y", "x (secret)\n(secret) y"},
+		{"the JSON form", []string{"a<b"}, `{"c":"a` + `\` + `u003cb"}`, `{"c":"(secret)"}`},
+		{"the base64 form", []string{"zqxj"}, "key enF4ag", "key (secret)"},
+		{"the URL form", []string{"a b/c"}, "get /?q=a+b%2Fc and /a%20b%2Fc", "get /?q=(secret) and /(secret)"},
+		{"white space around a part", []string{" zqxj\n"}, "user zqxj", "user (secret)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := Hide(tt.in, tt.parts); got != tt.want {
 				t.Errorf("Hide(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFilterLines(t *testing.T) {
+	f := NewFilter()
+	f.Plain([]byte("  [Peer]\n"))
+	tests := []struct {
+		name, value string
+		want        []string
+	}{
+		{"one line", "zqxjqz", nil},
+		{"one line and a line end", "zqxjqz\n", nil},
+		{"two lines", "line-one\n  line-two\n", []string{"line-one", "  line-two"}},
+		{"a short line", "ab\nline-two", []string{"line-two"}},
+		{"true and false", "true\nfalse\nline-two", []string{"line-two"}},
+		{"a line of plain project text", "[Peer]\nline-two", []string{"line-two"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := f.Lines(tt.value); !slices.Equal(got, tt.want) {
+				t.Errorf("Lines(%q) = %q, want %q", tt.value, got, tt.want)
 			}
 		})
 	}

@@ -195,7 +195,7 @@ func (p *Plan) Notes() []Note {
 			continue
 		}
 		for _, t := range p.goneThens[h.Name] {
-			add(h.Name, fmt.Sprintf("a pending then of %s %s matches no step and will not run", t.Module, strings.Join(t.Mains, ", ")), false)
+			add(h.Name, secret.Hide(fmt.Sprintf("a pending then of %s %s matches no step and will not run", t.Module, strings.Join(t.Mains, ", ")), p.parts[h.Name]), false)
 		}
 		for _, c := range p.gone[h.Name] {
 			add(h.Name, goneNote(c)+" and will not run", false)

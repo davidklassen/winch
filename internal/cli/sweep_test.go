@@ -13,6 +13,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/vmtest"
 )
@@ -36,6 +37,7 @@ var sweepForms = []string{
 	sweepSecret[:5],
 	sweepSecret[2:6],
 	sweepSecret[6:],
+	base64.RawStdEncoding.EncodeToString([]byte(sweepSecret[2:6])),
 }
 
 // sweepLeaks are the known leaks of TestSecretSweep: the case, and the first
@@ -386,6 +388,37 @@ func TestSecretSweep(t *testing.T) {
           key_content: |
 ` + key + `
 `, nil, planAll},
+		{"a note from the host", "web1: note: apt does not know lib(secret)", `
+      - pkg:
+          name: !expr '"lib" + vars.pw[2:6]'
+`, func(h *fakehost.Hosts) { h.SetNote("web1", "libzqxj", "apt does not know libzqxj", false) }, planAll},
+		{"a warning from the host with a short part", "web1: warning: (secret)", `
+      - pkg:
+          name: !expr '"lib" + vars.pw[6:]'
+`, func(h *fakehost.Hosts) { h.SetNote("web1", "libqz", "libqz is held", true) }, planAll},
+		{"a gone then record", "matches no step", `
+      - file:
+          path: !expr '"/srv/f-" + vars.pw[2:6]'
+          content: "a\n"
+`, func(h *fakehost.Hosts) {
+			h.SetFile("web1", "/srv/f-zqxj", "a\n")
+			h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/srv/f-zqxj"}})
+		}, planAll},
+		{"an encoded part", "key (secret)", `
+      - dir:
+          path: /srv/e
+          owner: !expr '"o" + vars.pw[2:6]'
+`, func(h *fakehost.Hosts) {
+			h.SetResult("web1", "/srv/e", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"key " + base64.RawStdEncoding.EncodeToString([]byte(sweepSecret[2:6]))}})
+		}, planAll},
+		{"a line of a multi-line part", "validate check (secret)", `
+      - file:
+          path: /srv/m
+          content: "a\n"
+          validate: !expr '"check " + replace(vars.pw, "j", "\n")'
+`, func(h *fakehost.Hosts) {
+			h.SetResult("web1", "/srv/m", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"validate check " + sweepSecret[:5]}})
+		}, planAll},
 		{"exec", "(secret)", `
       - file:
           path: /srv/auth

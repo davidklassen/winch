@@ -4,6 +4,7 @@ package session
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -87,6 +88,9 @@ type Session struct {
 	dest       protocol.Destination
 	prompted   bool
 	newHostKey bool
+	// mask is nil, or masks the notes, warnings, and progress lines of the
+	// helper.
+	mask func(string) string
 
 	waitOnce sync.Once
 	waitErr  error
@@ -597,13 +601,17 @@ func (s *Session) receive(result any) error {
 		if resp.Note == "" && resp.Warning == "" && resp.Progress == "" {
 			break
 		}
+		text := cmp.Or(resp.Note, resp.Warning, resp.Progress)
+		if s.mask != nil {
+			text = s.mask(text)
+		}
 		switch {
 		case resp.Note != "":
-			s.cfg.Note(resp.Note, false)
+			s.cfg.Note(text, false)
 		case resp.Warning != "":
-			s.cfg.Note(resp.Warning, true)
+			s.cfg.Note(text, true)
 		default:
-			fmt.Fprintf(s.progress, "%s: %s\n", s.host, secret.Printable(resp.Progress))
+			fmt.Fprintf(s.progress, "%s: %s\n", s.host, secret.Printable(text))
 		}
 	}
 	if resp.NeedContent {
@@ -632,6 +640,10 @@ func (s *Session) Facts(ctx context.Context) (facts.Facts, error) {
 	err := s.call("facts", nil, &f)
 	return f, err
 }
+
+// Mask sets the mask of the notes, warnings, and progress lines that the
+// helper sends from now on. A nil mask masks nothing.
+func (s *Session) Mask(mask func(string) string) { s.mask = mask }
 
 // Check checks a step and updates st. It sends only the hash of the content.
 func (s *Session) Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
