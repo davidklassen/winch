@@ -194,11 +194,15 @@ func (p *Plan) Notes() []Note {
 		if p.Failed[h.Name] != nil {
 			continue
 		}
+		for _, n := range p.goneHandlers[h.Name] {
+			recipe, pipeline, stage, handler := project.ParseRecord(n)
+			add(h.Name, "a pending "+p.place(recipe, pipeline, stage, handler)+" matches no handler and will not run", false)
+		}
 		for _, t := range p.goneThens[h.Name] {
-			add(h.Name, goneThenNote(t)+" and will not run", false)
+			add(h.Name, goneThenNote(t, p.place(t.Recipe, t.Pipeline, t.Stage, t.Handler))+" and will not run", false)
 		}
 		for _, c := range p.gone[h.Name] {
-			add(h.Name, goneNote(c)+" and will not run", false)
+			add(h.Name, goneNote(c, p.place(c.Recipe, c.Pipeline, c.Stage, c.Handler))+" and will not run", false)
 		}
 	}
 	return notes
@@ -219,36 +223,42 @@ func WriteNote(out *color.Writer, n Note) {
 	fmt.Fprintf(out, "%s: %s: %s\n", n.Host, kind, secret.Printable(n.Text))
 }
 
-// goneNote names the gate or assert of record c that the project no longer
-// has.
-func goneNote(c protocol.Check) string {
+// goneNote names the gate or assert of record c at place that the project no
+// longer has.
+func goneNote(c protocol.Check, place string) string {
 	if c.Step == 0 {
-		return "a pending health gate of stage " + c.Stage + " matches no gate"
+		return "a pending health gate of " + place + " matches no gate"
 	}
-	return fmt.Sprintf("a pending assert of %s step %d matches no assert", place(c.Recipe, c.Stage, c.Handler), c.Step)
+	return fmt.Sprintf("a pending assert of %s step %d matches no assert", place, c.Step)
 }
 
 // goneThenNote names the module and the scope of then record t that no step
 // matches. A main argument can hold a secret: a record of winch 0.1.0 holds
 // the plain argument.
-func goneThenNote(t protocol.Then) string {
+func goneThenNote(t protocol.Then, place string) string {
 	noun := "a " + t.Module + " step"
 	if m, ok := module.New(t.Module); ok {
 		noun = m.(interface{ Noun() string }).Noun()
 	}
-	return fmt.Sprintf("a pending then of %s in %s matches no step", noun, place(t.Recipe, t.Stage, t.Handler))
+	return fmt.Sprintf("a pending then of %s in %s matches no step", noun, place)
 }
 
-// place names the recipe, stage, or handler of a record.
-func place(recipe, stage, handler string) string {
+// place names the recipe, stage, or handler of a record, with the pipeline of
+// a stage when it is not the pipeline of the plan.
+func (p *Plan) place(recipe, pipeline, stage, handler string) string {
+	var s string
 	switch {
 	case handler != "":
-		return "handler " + cmp.Or(recipe, stage) + "." + handler
+		s = "handler " + cmp.Or(recipe, stage) + "." + handler
 	case recipe != "":
-		return "recipe " + recipe
+		s = "recipe " + recipe
 	default:
-		return "stage " + stage
+		s = "stage " + stage
 	}
+	if recipe == "" && pipeline != p.pipeline {
+		s += " of pipeline " + pipeline
+	}
+	return s
 }
 
 var markStyles = map[string]color.Style{"+": color.Green, "-": color.Red, "~": color.Yellow, "!": color.Cyan, "*": color.Cyan}

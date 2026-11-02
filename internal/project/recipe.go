@@ -81,6 +81,16 @@ func (h *Handler) Record() string {
 	return h.FullName()
 }
 
+// ParseRecord returns the recipe, or the pipeline and the stage, and the
+// handler of a record that Record returns.
+func ParseRecord(record string) (recipe, pipeline, stage, handler string) {
+	if f := strings.Split(record, "\t"); len(f) == 3 {
+		return "", f[0], f[1], f[2]
+	}
+	recipe, handler, _ = strings.Cut(record, ".")
+	return recipe, "", "", handler
+}
+
 // Require is one requirement of a recipe: an expression on facts.
 type Require struct {
 	Text    string

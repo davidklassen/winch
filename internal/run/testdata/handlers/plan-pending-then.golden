@@ -7,10 +7,12 @@ web1
     ! then: newaliases
 
 2 hosts: 1 to change, 1 unchanged, 0 unknown
-plan c2c0a27930388881
+plan c382d96e0042a23a
 stderr:
 web2: note: a pending then of a file step in recipe nginx matches no step and will not run
 web2: note: a pending then of a file step in stage web matches no step and will not run
 web2: note: a pending then of a file step in handler site.restart matches no step and will not run
 web2: note: a pending then of a dir step in recipe site matches no step and will not run
 web2: note: a pending then of a file step in stage apps matches no step and will not run
+web2: note: a pending then of a file step in recipe apps matches no step and will not run
+web2: note: a pending then of a file step in stage apps of pipeline deploy matches no step and will not run

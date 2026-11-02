@@ -539,21 +539,22 @@ func TestPendingThen(t *testing.T) {
 	h.SetFile("web2", "/etc/motd", "hi\n")
 	h.SetThen("web1", protocol.Then{Recipe: "site", Module: "file", Mains: []string{"/var/www/about.html"}}, protocol.Then{Pipeline: "site", Stage: "apps", Module: "file", Mains: []string{"/etc/motd"}})
 	// No step matches these records: a step without then, another stage, a
-	// handler that the recipe does not have, another module, and another main
-	// argument.
+	// handler that the recipe does not have, another module, another main
+	// argument, a recipe that the project does not have, and a pipeline that
+	// the project does not have.
 	gone := []protocol.Then{
 		{Recipe: "nginx", Module: "file", Mains: []string{"/etc/nginx/a.conf"}},
 		{Pipeline: "site", Stage: "web", Module: "file", Mains: []string{"/etc/motd"}},
 		{Recipe: "site", Handler: "restart", Module: "file", Mains: []string{"/etc/motd"}},
 		{Recipe: "site", Module: "dir", Mains: []string{"/var/www/about.html"}},
 		{Pipeline: "site", Stage: "apps", Module: "file", Mains: []string{"/etc/issue"}},
-	}
-	// The plan does not check these scopes on web2: a recipe that the project
-	// does not have, a recipe whose when is false, and another pipeline.
-	kept := []protocol.Then{
 		{Recipe: "apps", Module: "file", Mains: []string{"/etc/motd"}},
-		{Recipe: "app", Module: "file", Mains: []string{"/etc/app.conf"}},
 		{Pipeline: "deploy", Stage: "apps", Module: "file", Mains: []string{"/etc/motd"}},
+	}
+	// The plan does not check this scope on web2: a recipe whose when is
+	// false.
+	kept := []protocol.Then{
+		{Recipe: "app", Module: "file", Mains: []string{"/etc/app.conf"}},
 	}
 	h.SetThen("web2", slices.Concat(gone, kept)...)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
@@ -905,7 +906,9 @@ var stageHandlerFiles = map[string]string{
 // spec: Pipelines; Handlers; Running a pipeline/Health gates; Running a
 // pipeline/Lockout protection
 func TestStageHandlers(t *testing.T) {
-	p := loadFiles(t, stageHandlerFiles)
+	files := maps.Clone(stageHandlerFiles)
+	files["pipelines/deploy.yaml"] = "stages:\n  - name: web\n    hosts: all\n    steps: []\n    handlers:\n      reload:\n        - cmd:\n            command: deploy-reload\n"
+	p := loadFiles(t, files)
 	h := fakehost.New()
 	// A record of a stage of another pipeline stays.
 	h.SetPending("web1", "deploy\tweb\treload")
@@ -1192,6 +1195,14 @@ func TestGoneRecordWithoutChange(t *testing.T) {
 		{"handler assert", pend(protocol.Check{Recipe: "app", Handler: "check", Step: 1}), "a pending assert of handler app.check step 1 matches no assert"},
 		{"stage handler assert", pend(protocol.Check{Pipeline: "site", Stage: "base", Handler: "check", Step: 1}), "a pending assert of handler base.check step 1 matches no assert"},
 		{"unprintable stage", pend(protocol.Check{Pipeline: "site", Stage: "x\x1b[2J"}), "a pending health gate of stage x?[2J matches no gate"},
+		{"renamed handler", func(h *fakehost.Hosts) { h.SetPending("web1", "app.reload") }, "a pending handler app.reload matches no handler"},
+		{"handler of a renamed recipe", func(h *fakehost.Hosts) { h.SetPending("web1", "old.reload") }, "a pending handler old.reload matches no handler"},
+		{"renamed stage handler", func(h *fakehost.Hosts) { h.SetPending("web1", "site\tbase\treload") }, "a pending handler base.reload matches no handler"},
+		{"handler of a renamed stage", func(h *fakehost.Hosts) { h.SetPending("web1", "site\told\treload") }, "a pending handler old.reload matches no handler"},
+		{"then of a renamed recipe", func(h *fakehost.Hosts) {
+			h.SetThen("web1", protocol.Then{Recipe: "old", Module: "file", Mains: []string{"/etc/old.conf"}})
+		}, "a pending then of a file step in recipe old matches no step"},
+		{"assert of a renamed recipe", pend(protocol.Check{Recipe: "old", Step: 1}), "a pending assert of recipe old step 1 matches no assert"},
 	} {
 		for _, other := range []bool{false, true} {
 			name := tc.name + " alone"
@@ -1231,8 +1242,8 @@ func TestGoneRecordWithoutChange(t *testing.T) {
 					t.Errorf("apply ran the steps of web1: /etc/motd = %q", c)
 				}
 				h.SetFile("web1", "/etc/motd", "hi\n")
-				if len(h.ThenOf("web1")) != 0 || len(h.ChecksOf("web1")) != 0 {
-					t.Errorf("records stay: %v %v", h.ThenOf("web1"), h.ChecksOf("web1"))
+				if len(h.ThenOf("web1")) != 0 || len(h.ChecksOf("web1")) != 0 || len(h.PendingOf("web1")) != 0 {
+					t.Errorf("records stay: %v %v %q", h.ThenOf("web1"), h.ChecksOf("web1"), h.PendingOf("web1"))
 				}
 				if len(h.Log["web1"]) != 0 {
 					t.Errorf("web1 ran %q, want nothing", h.Log["web1"])
@@ -1246,6 +1257,112 @@ func TestGoneRecordWithoutChange(t *testing.T) {
 			})
 		}
 	}
+}
+
+// spec: Handlers; Steps; Running a pipeline/Apply
+func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
+	files := maps.Clone(handlerFiles)
+	files["pipelines/mail.yaml"] = "stages:\n  - name: mx\n    hosts: all\n    steps:\n      - recipe: mail\n    handlers:\n      flush:\n        - cmd:\n            command: postqueue -f\n"
+	files["recipes/mail/recipe.yaml"] = "steps:\n  - assert:\n      command: \"true\"\n      message: no\nhandlers:\n  reload:\n    - cmd:\n        command: postfix reload\n"
+	// The stage apps with the recipe app is left out, and the recipe mail
+	// runs only in another pipeline.
+	stays := records{
+		handlers: []string{"app.restart", "mail.reload", "mail\tmx\tflush"},
+		thens: []protocol.Then{
+			{Recipe: "app", Module: "file", Mains: []string{"/etc/app.old"}},
+			{Recipe: "mail", Module: "file", Mains: []string{"/etc/mail.old"}},
+			{Recipe: "mail", Handler: "reload", Module: "cmd", Mains: []string{"x"}},
+			{Pipeline: "mail", Stage: "mx", Module: "file", Mains: []string{"/etc/mx.old"}},
+		},
+		checks: []protocol.Check{{Recipe: "mail", Step: 1}},
+	}
+	// These name a handler, a stage, or a pipeline that the project does not
+	// have.
+	known := records{
+		handlers: []string{"mail.gone", "mail\tmx\tgone", "mail\told\tflush"},
+		thens:    []protocol.Then{{Recipe: "mail", Handler: "gone", Module: "cmd", Mains: []string{"x"}}},
+		checks:   []protocol.Check{{Pipeline: "mail", Stage: "old", Step: 1}},
+	}
+	knownNotes := "web1: note: a pending handler mail.gone matches no handler and will not run\n" +
+		"web1: note: a pending handler mx.gone of pipeline mail matches no handler and will not run\n" +
+		"web1: note: a pending handler old.flush of pipeline mail matches no handler and will not run\n" +
+		"web1: note: a pending then of a cmd step in handler mail.gone matches no step and will not run\n" +
+		"web1: note: a pending assert of stage old of pipeline mail step 1 matches no assert and will not run\n"
+	// These name a recipe or a pipeline that no pipeline has.
+	unknown := records{
+		handlers: []string{"old.reload", "old\tweb\treload"},
+		thens:    []protocol.Then{{Recipe: "old", Module: "file", Mains: []string{"/etc/old"}}},
+		checks:   []protocol.Check{{Recipe: "old", Step: 1}, {Pipeline: "old", Stage: "web"}},
+	}
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		lost  bool
+	}{
+		{name: "all pipelines"},
+		// A host pattern that this inventory does not have still lets the
+		// pipeline load.
+		{name: "a pipeline with an unknown host", files: map[string]string{"pipelines/lab.yaml": "stages:\n  - name: lab\n    hosts: nosuch\n    steps:\n      - recipe: nginx\n"}},
+		// Without all the pipelines, winch cannot tell that a recipe or a
+		// pipeline is gone.
+		{name: "a pipeline that does not load", files: map[string]string{"pipelines/broken.yaml": "steps:\n  - recipe: nosuch\n"}, lost: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			all := maps.Clone(files)
+			maps.Copy(all, tc.files)
+			p := loadFiles(t, all)
+			if err := p.Select(project.Selection{Stages: "web"}); err != nil {
+				t.Fatal(err)
+			}
+			h := fakehost.New()
+			present(h, "web1", "web2")
+			h.SetPending("web1", slices.Concat(stays.handlers, known.handlers, unknown.handlers)...)
+			h.SetThen("web1", slices.Concat(stays.thens, known.thens, unknown.thens)...)
+			for _, c := range slices.Concat(stays.checks, known.checks, unknown.checks) {
+				h.Pend("web1", c)
+			}
+			want, kept := knownNotes, stays
+			if tc.lost {
+				kept = records{slices.Concat(stays.handlers, unknown.handlers), slices.Concat(stays.thens, unknown.thens), slices.Concat(stays.checks, unknown.checks)}
+			} else {
+				want = "web1: note: a pending handler mail.gone matches no handler and will not run\n" +
+					"web1: note: a pending handler mx.gone of pipeline mail matches no handler and will not run\n" +
+					"web1: note: a pending handler old.flush of pipeline mail matches no handler and will not run\n" +
+					"web1: note: a pending handler old.reload matches no handler and will not run\n" +
+					"web1: note: a pending handler web.reload of pipeline old matches no handler and will not run\n" +
+					"web1: note: a pending then of a cmd step in handler mail.gone matches no step and will not run\n" +
+					"web1: note: a pending then of a file step in recipe old matches no step and will not run\n" +
+					"web1: note: a pending assert of stage old of pipeline mail step 1 matches no assert and will not run\n" +
+					"web1: note: a pending assert of recipe old step 1 matches no assert and will not run\n" +
+					"web1: note: a pending health gate of stage web of pipeline old matches no gate and will not run\n"
+			}
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+			var out, errOut bytes.Buffer
+			plan.WriteNotes(plain(&errOut))
+			if errOut.String() != want {
+				t.Errorf("notes:\n%s\nwant:\n%s", errOut.String(), want)
+			}
+			if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+				t.Fatal(errOut.String())
+			}
+			if got := h.PendingOf("web1"); !slices.Equal(got, kept.handlers) {
+				t.Errorf("pending handlers after apply = %q, want %q", got, kept.handlers)
+			}
+			if got := h.ThenOf("web1"); !reflect.DeepEqual(got, kept.thens) {
+				t.Errorf("then records after apply = %v, want %v", got, kept.thens)
+			}
+			if got := h.ChecksOf("web1"); !reflect.DeepEqual(got, kept.checks) {
+				t.Errorf("assert records after apply = %v, want %v", got, kept.checks)
+			}
+		})
+	}
+}
+
+// records are pending records of a host.
+type records struct {
+	handlers []string
+	thens    []protocol.Then
+	checks   []protocol.Check
 }
 
 // spec: Steps; Running a pipeline/Failures

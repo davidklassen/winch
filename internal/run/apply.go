@@ -176,6 +176,12 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 				return nil, err
 			}
 		}
+		for _, gone := range plan.goneHandlers[h.Name] {
+			if err := c.Handled(context.WithoutCancel(ctx), gone); err != nil {
+				c.Close() //nolint:errcheck // the host fails already
+				return nil, err
+			}
+		}
 		return c, nil
 	}
 	var remove []project.Host
