@@ -91,7 +91,7 @@ func writePlanned(e *Events, host string, stage *project.Stage, steps []Planned)
 					if hs.PendingThen {
 						tev := stepEvent(host, stage, hs)
 						tev.Handler, tev.Status = ev.Handler, "change"
-						tev.Then, tev.ThenPending = secret.PrintableLines(hs.Step.ShownThen()), true
+						tev.Then, tev.ThenPending = secret.PrintableLines(hs.Step.Shown().Then), true
 						e.Write("planned", tev)
 					}
 				}
@@ -105,13 +105,16 @@ func writePlanned(e *Events, host string, stage *project.Stage, steps []Planned)
 				ev.Changes = append(ev.Changes, secret.PrintableLines(c))
 			}
 			ev.Diff = diffLines(p.Step, p.Result)
-			if p.Result.Validates {
-				ev.Validate = secret.PrintableLines(p.Step.ShownValidate())
+			shown := p.Step.Shown().Args
+			if v, ok := shown.(module.WithValidate); ok && p.Result.Validates {
+				ev.Validate = secret.PrintableLines(v.ValidateCommand())
 			}
-			ev.Unless = secret.PrintableLines(p.Step.ShownUnless())
+			if c, ok := shown.(*module.Cmd); ok {
+				ev.Unless = secret.PrintableLines(c.UnlessCommand())
+			}
 		}
 		if p.ThenRuns {
-			ev.Then, ev.ThenPending = secret.PrintableLines(p.Step.ShownThen()), p.PendingThen
+			ev.Then, ev.ThenPending = secret.PrintableLines(p.Step.Shown().Then), p.PendingThen
 		}
 		e.Write("planned", ev)
 	}

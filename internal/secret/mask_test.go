@@ -49,22 +49,26 @@ func TestMask(t *testing.T) {
 }
 
 // spec: Variables/Secrets in output (secret variables, two evaluations)
-func TestParts(t *testing.T) {
+func TestMaskValue(t *testing.T) {
 	a, b := Placeholder(1), Placeholder(2)
 	real := map[string]any{"alice": "$6$aaa$hash", "port": 8080, "on": true, "list": []any{"one-x", "two"}, "text": "a\nkey-line\nb"}
 	alt := func(p string) any {
 		return map[string]any{"alice": p, "port": p, "on": true, "list": []any{"one-" + p, "two"}, "text": "a\n" + p + "\nb"}
 	}
-	got := Parts(real, alt(a), alt(b))
-	want := []string{"$6$aaa$hash", "x", "8080", "key-line"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Parts = %q, want %q", got, want)
+	shown, parts := MaskValue(real, alt(a), alt(b))
+	if want := []string{"$6$aaa$hash", "x", "8080", "key-line"}; !reflect.DeepEqual(parts, want) {
+		t.Errorf("parts = %q, want %q", parts, want)
 	}
-	if got := Parts(real, real, real); got != nil {
-		t.Errorf("Parts of equal values = %q", got)
+	want := map[string]any{"alice": Mark, "port": Mark, "on": true, "list": []any{"one-" + Mark, "two"}, "text": "a\n" + Mark + "\nb"}
+	if !reflect.DeepEqual(shown, want) {
+		t.Errorf("shown = %#v, want %#v", shown, want)
 	}
-	if got := Parts([]any{"secret-1", "secret-2"}, []any{a}, []any{b}); !reflect.DeepEqual(got, []string{"secret-1", "secret-2"}) {
-		t.Errorf("Parts of lists of other lengths = %q", got)
+	if shown, parts := MaskValue(real, real, real); parts != nil || !reflect.DeepEqual(shown, real) {
+		t.Errorf("MaskValue of equal values = %#v, %q", shown, parts)
+	}
+	shown, parts = MaskValue([]any{"secret-1", "secret-2"}, []any{a}, []any{b})
+	if !reflect.DeepEqual(parts, []string{"secret-1", "secret-2"}) || !reflect.DeepEqual(shown, []any{Mark, Mark}) {
+		t.Errorf("MaskValue of lists of other lengths = %#v, %q", shown, parts)
 	}
 }
 

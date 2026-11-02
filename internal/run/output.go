@@ -88,7 +88,7 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 							writeStep(b, indent+"    ", hs)
 						}
 						if hs.PendingThen {
-							markLine(b, indent+"    ", "!", " then:"+command(hs.Step.ShownThen(), indent+"        ")+"\n")
+							markLine(b, indent+"    ", "!", " then:"+command(hs.Step.Shown().Then, indent+"        ")+"\n")
 						}
 					}
 					continue
@@ -98,9 +98,9 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 				}
 				switch {
 				case p.PendingThen:
-					markLine(b, indent, "!", " then:"+command(p.Step.ShownThen(), indent+"    ")+"\n")
+					markLine(b, indent, "!", " then:"+command(p.Step.Shown().Then, indent+"    ")+"\n")
 				case p.ThenRuns:
-					fmt.Fprintf(b, "%s    then:%s\n", indent, command(p.Step.ShownThen(), indent+"      "))
+					fmt.Fprintf(b, "%s    then:%s\n", indent, command(p.Step.Shown().Then, indent+"      "))
 				}
 			}
 			if h := sp.Stage.Health; h != nil && hp.changes() {
@@ -172,14 +172,15 @@ func (p *Plan) Notes() []Note {
 					continue
 				}
 				if len(step.Result.MissingUnitFiles) > 0 {
-					s := module.Service{Name: step.Step.ShownMain()}
+					s := module.Service{Name: step.Step.Shown().Args.Main()}
 					add(host.Host.Name, s.Unit()+" does not exist", false)
 				}
 				for _, m := range step.Result.Missing {
 					kind, _, _ := strings.Cut(m, " ")
-					shown := step.Step.ShownDir()
+					c := step.Step.Shown().Args.(*module.Cmd)
+					shown := c.Dir
 					if kind == "user" {
-						shown = step.Step.ShownUser()
+						shown = c.User
 					}
 					add(host.Host.Name, fmt.Sprintf("%s %s does not exist yet and no %s step creates it", kind, shown, kind), true)
 				}
@@ -322,7 +323,8 @@ func writeStep(t *color.Text, indent string, p Planned) {
 		mark = "*"
 	}
 	main := ""
-	if m := st.ShownMain(); m != "" {
+	shown := st.Shown()
+	if m := shown.Args.Main(); m != "" {
 		main = command(m, indent+"    ")
 	}
 	markLine(t, indent, mark, " "+secret.Printable(stepHead(st))+main+linkNote(res.Link)+"\n")
@@ -335,16 +337,20 @@ func writeStep(t *color.Text, indent string, p Planned) {
 		t.Add(diffStyle(l), l)
 		t.Add(color.Plain, "\n")
 	}
-	if res.Validates {
-		fmt.Fprintf(t, "%s    validate:%s\n", indent, command(st.ShownValidate(), indent+"      "))
+	if v, ok := shown.Args.(module.WithValidate); ok && res.Validates {
+		fmt.Fprintf(t, "%s    validate:%s\n", indent, command(v.ValidateCommand(), indent+"      "))
 	}
-	if u := st.ShownUser(); u != "" {
-		fmt.Fprintf(t, "%s    user:%s\n", indent, command(u, indent+"      "))
+	c, ok := shown.Args.(*module.Cmd)
+	if !ok {
+		return
 	}
-	if d := st.ShownDir(); d != "" {
-		fmt.Fprintf(t, "%s    dir:%s\n", indent, command(d, indent+"      "))
+	if c.User != "" {
+		fmt.Fprintf(t, "%s    user:%s\n", indent, command(c.User, indent+"      "))
 	}
-	if u := st.ShownUnless(); u != "" {
+	if c.Dir != "" {
+		fmt.Fprintf(t, "%s    dir:%s\n", indent, command(c.Dir, indent+"      "))
+	}
+	if u := c.UnlessCommand(); u != "" {
 		fmt.Fprintf(t, "%s    unless:%s\n", indent, command(u, indent+"      "))
 	}
 }
@@ -372,17 +378,16 @@ func diffLines(st project.Step, res module.Result) []string {
 	if res.OldReason != "" {
 		reason = res.OldReason
 	}
-	hidden := st.Shown != nil && st.Shown.Hidden
-	masked := st.Shown != nil && st.Shown.Lines != nil
+	shown := st.Shown()
 	var d []byte
 	switch {
 	// The reason can come from the secret.
-	case hidden || reason != "" && masked:
+	case shown.Hidden || reason != "" && shown.Lines != nil:
 		return []string{secret.Mark}
 	case reason != "":
 		return []string{"content (" + reason + ")"}
-	case masked:
-		d = secret.Diff([]byte(*res.Old), st.Shown.Lines)
+	case shown.Lines != nil:
+		d = secret.Diff([]byte(*res.Old), shown.Lines)
 	default:
 		d = diff.Diff([]byte(*res.Old), text)
 	}

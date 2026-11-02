@@ -685,6 +685,29 @@ type need struct {
 	step, shown string
 }
 
+// needsOf returns the users, groups, and directories that the module m needs.
+func needsOf(m module.Module) []string {
+	switch m := m.(type) {
+	case *module.Cmd:
+		return []string{"user " + m.User, "dir " + m.Dir}
+	case *module.File:
+		return []string{"user " + string(m.Owner), "group " + string(m.Group)}
+	case *module.Dir:
+		return []string{"user " + string(m.Owner), "group " + string(m.Group)}
+	case *module.Download:
+		return []string{"user " + string(m.Owner), "group " + string(m.Group)}
+	case *module.User:
+		out := []string{"group " + string(m.Group)}
+		if groups := cmp.Or(m.Groups, m.AddGroups); groups != nil {
+			for _, g := range *groups {
+				out = append(out, "group "+g)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // order fails a step that creates a user, a group, or a directory that an
 // earlier step that runs needs: as its owner, group, one of its groups, or the
 // user or directory of a cmd. That earlier step fails in apply. Otherwise it
@@ -693,7 +716,7 @@ func (hr *hostRun) order(st project.Step, res module.Result, where string) error
 	if res.Status == module.OK {
 		return nil
 	}
-	var needs, created []string
+	var created []string
 	for n := range hr.needs {
 		if d, ok := strings.CutPrefix(n, "dir "); ok && slices.Contains(res.Changes, module.ParentChange(d)) {
 			created = append(created, n)
@@ -701,27 +724,11 @@ func (hr *hostRun) order(st project.Step, res module.Result, where string) error
 	}
 	slices.Sort(created)
 	switch m := st.Args.(type) {
-	case *module.Cmd:
-		needs = []string{"user " + m.User}
-		if !hr.dirs[m.Dir] {
-			needs = append(needs, "dir "+m.Dir)
-		}
-	case *module.File:
-		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
 	case *module.Dir:
-		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
 		if res.Action == module.Create {
 			created = append(created, "dir "+m.Path)
 		}
-	case *module.Download:
-		needs = []string{"user " + string(m.Owner), "group " + string(m.Group)}
 	case *module.User:
-		needs = []string{"group " + string(m.Group)}
-		if groups := cmp.Or(m.Groups, m.AddGroups); groups != nil {
-			for _, g := range *groups {
-				needs = append(needs, "group "+g)
-			}
-		}
 		if res.Action == module.Create {
 			created = append(created, "user "+m.Name)
 		}
@@ -740,21 +747,14 @@ func (hr *hostRun) order(st project.Step, res module.Result, where string) error
 		}
 		hr.created[c] = true
 	}
-	for _, n := range needs {
-		_, name, _ := strings.Cut(n, " ")
-		if _, err := strconv.ParseUint(name, 10, 32); name == "" || err == nil {
+	needs, shown := needsOf(st.Args), needsOf(st.Shown().Args)
+	for i, n := range needs {
+		kind, name, _ := strings.Cut(n, " ")
+		if _, err := strconv.ParseUint(name, 10, 32); name == "" || err == nil || kind == "dir" && hr.dirs[name] {
 			continue
 		}
 		if _, ok := hr.needs[n]; !ok {
-			kind, _, _ := strings.Cut(n, " ")
-			shown := kind + " " + st.ShownName(name)
-			if _, ok := st.Args.(*module.Cmd); ok {
-				shown = "dir " + st.ShownDir()
-				if kind == "user" {
-					shown = "user " + st.ShownUser()
-				}
-			}
-			hr.needs[n] = need{step: hr.step, shown: shown}
+			hr.needs[n] = need{step: hr.step, shown: shown[i]}
 		}
 	}
 	// Directories that exist after the step, which dropCreatedParents does
@@ -1546,7 +1546,7 @@ func goneChecks(pl *project.Pipeline, records []protocol.Check) []protocol.Check
 // several lines.
 func label(st project.Step) string {
 	l := stepHead(st)
-	if m := st.ShownMain(); m != "" {
+	if m := st.Shown().Args.Main(); m != "" {
 		l += " " + m
 	}
 	return secret.PrintableLines(l)

@@ -521,7 +521,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, h *project.
 			continue
 		}
 		tev := ev
-		tev.Step, tev.Module, tev.Then, tev.ThenPending = "", "", secret.PrintableLines(p.Step.ShownThen()), pending
+		tev.Step, tev.Module, tev.Then, tev.ThenPending = "", "", secret.PrintableLines(p.Step.Shown().Then), pending
 		a.progress.Busy(a.host, ev.scope()+": "+failLabel+": then")
 		if err := a.conn.Command(context.WithoutCancel(ctx), p.Step.Then, *t); err != nil {
 			tev.Status, tev.Error = "failed", err.Error()
@@ -688,11 +688,12 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	for _, c := range res.Changes {
 		ev.Changes = append(ev.Changes, secret.PrintableLines(c))
 	}
-	if res.Validates {
-		ev.Validate = secret.PrintableLines(p.Step.ShownValidate())
+	shown := p.Step.Shown().Args
+	if v, ok := shown.(module.WithValidate); ok && res.Validates {
+		ev.Validate = secret.PrintableLines(v.ValidateCommand())
 	}
-	if res.Status == module.Change {
-		ev.Unless = secret.PrintableLines(p.Step.ShownUnless())
+	if c, ok := shown.(*module.Cmd); ok && res.Status == module.Change {
+		ev.Unless = secret.PrintableLines(c.UnlessCommand())
 	}
 	a.rep.Step(ev)
 	if res.Status == module.Change {

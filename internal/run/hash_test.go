@@ -397,26 +397,22 @@ steps:
 
 // spec: Running a pipeline/Plan ("the --set values")
 func TestHashSet(t *testing.T) {
-	// The placeholder variant names a template that does not exist, so the
-	// step enters the hash without its arguments.
+	// The value of v enters the hash only through the --set values.
 	recipe := `steps:
   - file:
       path: /etc/app.conf
-      template: !tpl "{{ .vars.pw }}.tmpl"
-      validate: !tpl "test {{ .vars.v }}"
+      content: !expr vars.pw
+    when: !expr 'vars.v != ""'
 `
 	plan := func(set string) *run.Plan {
 		cryptotest.SetGlobalRandom(t, 1)
-		p := run.MakePlan(context.Background(), hashSecretProject(t, "hunter2", stage+"      - recipe: app\n", recipe, map[string]string{"recipes/app/templates/hunter2.tmpl": "x\n"}, []string{set}), fakehost.New().Connector(), run.Options{})
+		p := run.MakePlan(context.Background(), hashSecretProject(t, "hunter2", stage+"      - recipe: app\n", recipe, nil, []string{set}), fakehost.New().Connector(), run.Options{})
 		if len(p.Failed) > 0 {
 			t.Fatalf("the plan failed: %v", p.Failed)
 		}
 		return p
 	}
 	a := plan("vars.v=a")
-	if in := string(a.HashInput()); strings.Contains(in, "test a") {
-		t.Fatalf("the step entered with its arguments:\n%s", in)
-	}
 	if b := plan("vars.v=a"); a.Hash() != b.Hash() {
 		t.Fatalf("two plans of the same project: %s and %s", a.Hash(), b.Hash())
 	}

@@ -64,11 +64,12 @@ func (*User) Noun() string { return "a user step" }
 // and the passwords "!" and "*" that lock the account.
 var hashRe = regexp.MustCompile(`^(!?\$[0-9a-z]+\$[./0-9A-Za-z$=,+-]+|!|\*)$`)
 
-// checkHash fails for a password that is not a crypt hash. Check, not
-// Validate, runs it: a password from a secret is a placeholder in Validate.
+// checkHash runs last in Validate. A password from a secret is a placeholder
+// in the evaluations that mask an error, and the placeholder fails checkHash.
+// An earlier error then shows in the same way in all evaluations.
 func checkHash(pw string) error {
-	if !hashRe.MatchString(pw) {
-		return errors.New(`password is not a crypt hash, such as one from mkpasswd -m yescrypt, or "!" or "*"`)
+	if pw != "" && !hashRe.MatchString(pw) {
+		return &yamlx.FieldError{At: "password", Msg: `password is not a crypt hash, such as one from mkpasswd -m yescrypt, or "!" or "*"`}
 	}
 	return nil
 }
@@ -132,7 +133,7 @@ func (u *User) Validate() error {
 		return &yamlx.FieldError{Field: "comment", Msg: `must not have ":"`}
 	}
 	if u.AuthorizedKeys == nil {
-		return nil
+		return checkHash(u.Password)
 	}
 	if u.System && u.Home == "" {
 		return &yamlx.FieldError{Field: "authorized_keys", Msg: "a system user without home has no home for its keys; set home"}
@@ -157,7 +158,7 @@ func (u *User) Validate() error {
 		}
 		seen[string(key.blob)] = i
 	}
-	return nil
+	return checkHash(u.Password)
 }
 
 func (u *User) Check(ctx context.Context, st *State, _ Say) (Result, error) {
@@ -168,11 +169,6 @@ func (u *User) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	cur, exists := a.user(u.Name)
 	if u.Absent {
 		return u.checkAbsent(a, cur, exists, st)
-	}
-	if u.Password != "" {
-		if err := checkHash(u.Password); err != nil {
-			return Result{}, err
-		}
 	}
 	if u.UID != "" && (!exists || cur.uid != u.uid()) {
 		if other, ok := a.userByID(u.uid()); ok && other.name != u.Name {

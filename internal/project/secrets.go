@@ -19,7 +19,6 @@ import (
 
 	"filippo.io/age"
 
-	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/secret"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
@@ -321,98 +320,6 @@ func maskError(err error, alt [2]error) error {
 		return &yamlx.Error{Pos: ye.Pos, Msg: shown}
 	}
 	return errors.New(shown)
-}
-
-// Shown is how the output shows a step whose evaluation reads a secret.
-type Shown struct {
-	Main     string
-	Then     string
-	Validate string
-	Unless   string
-	User     string
-	Dir      string
-	// Names maps an owner or group name that comes from a secret to its
-	// shown form.
-	Names map[string]string
-	// Lines are the lines of the content with their masks, or nil when the
-	// content holds no secret.
-	Lines []secret.Line
-	// Hidden is true when the output shows no part of the content.
-	Hidden bool
-	// Public is the argument that holds a secret and goes into a file that
-	// every user of the host can read, or "": a repo source or a certbot
-	// renewal file.
-	Public string
-}
-
-// ShownMain is the main argument as the output shows it.
-func (st Step) ShownMain() string {
-	if st.Shown != nil {
-		return st.Shown.Main
-	}
-	return st.Args.Main()
-}
-
-// ShownThen is the command of then as the output shows it.
-func (st Step) ShownThen() string {
-	if st.Shown != nil {
-		return st.Shown.Then
-	}
-	return st.Then
-}
-
-// ShownValidate is the validate command as the output shows it.
-func (st Step) ShownValidate() string {
-	if st.Shown != nil {
-		return st.Shown.Validate
-	}
-	if v, ok := st.Args.(module.WithValidate); ok {
-		return v.ValidateCommand()
-	}
-	return ""
-}
-
-// ShownUnless is the unless command of a cmd as the output shows it.
-func (st Step) ShownUnless() string {
-	if st.Shown != nil {
-		return st.Shown.Unless
-	}
-	if c, ok := st.Args.(*module.Cmd); ok {
-		return c.UnlessCommand()
-	}
-	return ""
-}
-
-// ShownUser is the user of a cmd as the output shows it.
-func (st Step) ShownUser() string {
-	if st.Shown != nil {
-		return st.Shown.User
-	}
-	if c, ok := st.Args.(*module.Cmd); ok {
-		return c.User
-	}
-	return ""
-}
-
-// ShownDir is the dir of a cmd as the output shows it.
-func (st Step) ShownDir() string {
-	if st.Shown != nil {
-		return st.Shown.Dir
-	}
-	if c, ok := st.Args.(*module.Cmd); ok {
-		return c.Dir
-	}
-	return ""
-}
-
-// ShownName is an owner or group name of the step as the output shows it.
-func (st Step) ShownName(name string) string {
-	if st.Shown != nil {
-		if s, ok := st.Shown.Names[name]; ok {
-			return s
-		}
-	}
-	return name
 }
 
 // Recipients returns the recipients in the project file.

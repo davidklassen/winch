@@ -65,70 +65,77 @@ func common(real, a, b string) (pre, suf string) {
 	return real[:n], real[len(real)-m:]
 }
 
-// Parts returns the parts of the value real that differ from a or b, the
-// same value with placeholders: the masked part of each string, line by line,
-// and the text of every other leaf that differs. Map keys are not parts.
-func Parts(real, a, b any) []string {
-	var out []string
-	parts(real, a, b, &out)
-	return out
+// MaskValue returns the value real with each part that differs from a or b,
+// the same value with placeholders, as Mark: the masked part of each string,
+// line by line, and every other leaf that differs. It also returns these
+// parts of real. Map keys are not parts.
+func MaskValue(real, a, b any) (shown any, parts []string) {
+	shown = maskValue(real, a, b, &parts)
+	return shown, parts
 }
 
-func parts(real, a, b any, out *[]string) {
+func maskValue(real, a, b any, parts *[]string) any {
 	switch r := real.(type) {
 	case map[string]any:
 		am, ok1 := a.(map[string]any)
 		bm, ok2 := b.(map[string]any)
 		if !ok1 || !ok2 {
-			leaves(r, out)
-			return
+			return leaves(r, parts)
 		}
+		m := make(map[string]any, len(r))
 		for _, k := range slices.Sorted(maps.Keys(r)) {
-			parts(r[k], am[k], bm[k], out)
+			m[k] = maskValue(r[k], am[k], bm[k], parts)
 		}
+		return m
 	case []any:
 		al, ok1 := a.([]any)
 		bl, ok2 := b.([]any)
 		if !ok1 || !ok2 || len(al) != len(r) || len(bl) != len(r) {
-			leaves(r, out)
-			return
+			return leaves(r, parts)
 		}
+		l := make([]any, len(r))
 		for i := range r {
-			parts(r[i], al[i], bl[i], out)
+			l[i] = maskValue(r[i], al[i], bl[i], parts)
 		}
+		return l
 	case string:
 		as, ok1 := a.(string)
 		bs, ok2 := b.(string)
 		if !ok1 || !ok2 {
-			leaves(r, out)
-			return
+			return leaves(r, parts)
 		}
-		_, p := MaskLines(r, as, bs)
-		*out = append(*out, p...)
-	default:
-		if !reflect.DeepEqual(r, a) || !reflect.DeepEqual(r, b) {
-			leaves(r, out)
-		}
+		shown, p := MaskLines(r, as, bs)
+		*parts = append(*parts, p...)
+		return shown
 	}
+	if !reflect.DeepEqual(real, a) || !reflect.DeepEqual(real, b) {
+		return leaves(real, parts)
+	}
+	return real
 }
 
-// leaves adds the text of each leaf of v.
-func leaves(v any, out *[]string) {
+// leaves returns v with each leaf as Mark, and adds the text of each leaf.
+func leaves(v any, parts *[]string) any {
 	switch v := v.(type) {
 	case map[string]any:
+		m := make(map[string]any, len(v))
 		for _, k := range slices.Sorted(maps.Keys(v)) {
-			leaves(v[k], out)
+			m[k] = leaves(v[k], parts)
 		}
+		return m
 	case []any:
-		for _, x := range v {
-			leaves(x, out)
+		l := make([]any, len(v))
+		for i, x := range v {
+			l[i] = leaves(x, parts)
 		}
+		return l
 	case nil:
-	default:
-		if s := fmt.Sprint(v); s != "" {
-			*out = append(*out, s)
-		}
+		return nil
 	}
+	if s := fmt.Sprint(v); s != "" {
+		*parts = append(*parts, s)
+	}
+	return Mark
 }
 
 // Line is a line of new content: its text for the host, and its text for the

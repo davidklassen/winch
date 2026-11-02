@@ -36,6 +36,13 @@ func DecodeLazy(n *Node, v any) error {
 	return errors.Join(d.errs...)
 }
 
+// DecodeUnchecked is Decode without the Validate calls.
+func DecodeUnchecked(n *Node, v any) error {
+	d := decoder{unchecked: true}
+	d.value(n, reflect.ValueOf(v).Elem(), "")
+	return errors.Join(d.errs...)
+}
+
 var (
 	nodeType     = reflect.TypeFor[*Node]()
 	posType      = reflect.TypeFor[Pos]()
@@ -49,9 +56,10 @@ var (
 )
 
 type decoder struct {
-	errs     []error
-	lazy     bool
-	deferred int
+	errs      []error
+	lazy      bool
+	unchecked bool
+	deferred  int
 }
 
 func (d *decoder) errorf(pos Pos, name, format string, args ...any) {
@@ -253,7 +261,7 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 			d.errorf(n.Pos, "", "%s %s", needs, f.Name)
 		}
 	}
-	if len(d.errs) > before || d.deferred > deferred {
+	if len(d.errs) > before || d.deferred > deferred || d.unchecked {
 		return
 	}
 	val, ok := v.Addr().Interface().(interface{ Validate() error })
