@@ -1034,3 +1034,64 @@ cp /usr/bin/bash /root/debs/winch-shell/usr/bin/winch-sh && dpkg-deb -b /root/de
 		t.Errorf("plan other: exit %d", r.Code)
 	}
 }
+
+const dueRollbackPipeline = `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/winch-due.conf
+          content: !tpl "{{ .vars.conf }}\n"
+        notify: reload
+    handlers:
+      reload:
+        - service:
+            name: winch-due
+            reloaded: true
+          confirm_access: true
+`
+
+// spec: Running a pipeline/Lockout protection (a timer whose process is gone
+// does not run on its own: the plan shows its rollback as the first change of
+// the host, and apply runs it first)
+func TestLockoutDueRollback(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "due-rollback")
+	vm.MustRun(t, `printf '[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/sleep 10\n' > /etc/systemd/system/winch-due.service && echo old > /etc/winch-due.conf && systemctl daemon-reload && systemctl start winch-due`)
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\nvars:\n  conf: old\n",
+		"inventories/test.yaml": "hosts:\n  due-rollback: {}\n",
+		"pipelines/site.yaml":   dueRollbackPipeline,
+	})
+	const job = "/var/lib/winch/rollback/timer.json"
+
+	// The helper and its timer die while the guarded reload runs.
+	w := startWinch(t, dir, "apply", "site", "--yes", "--set", "vars.conf=new")
+	vm.MustRun(t, "timeout 60 sh -c 'until [ -e "+job+" ]; do sleep 0.1; done' && pkill -KILL -f '^/var/lib/winch/bin/'")
+	<-w.done
+	if w.err == nil {
+		t.Fatal("apply succeeded after the helper died")
+	}
+	// The job is past its deadline and its grace time.
+	vm.MustRun(t, "sleep 95")
+
+	r := lab.Winch(t, dir, "plan", "site")
+	want := "due-rollback\n  ! rollback of an earlier run\n      put back /etc/winch-due.conf\n      service winch-due: reload\n  base\n"
+	if r.Code != 0 || !strings.HasPrefix(r.Stdout, want) {
+		t.Fatalf("plan: exit %d, want it to start with:\n%s\ngot:\n%s%s", r.Code, want, r.Stdout, r.Stderr)
+	}
+	if got := vm.MustRun(t, "cat /etc/winch-due.conf; ls "+job); got != "new\n"+job+"\n" {
+		t.Errorf("after the plan: %q, want the new file and the job", got)
+	}
+
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 0 || !strings.HasPrefix(r.Stdout, "due-rollback\n  ! rollback of an earlier run\n") || !strings.Contains(r.Stdout, "\ndue-rollback: ! rollback of an earlier run\n") {
+		t.Fatalf("apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	if got := vm.MustRun(t, "cat /etc/winch-due.conf; ls /var/lib/winch/rollback"); got != "old\ndemo\n" {
+		t.Errorf("after the apply: %q, want the old file and no job", got)
+	}
+	if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("plan after the apply: exit %d\n%s", r.Code, r.Stdout)
+	}
+}

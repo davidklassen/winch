@@ -37,6 +37,11 @@ func (p *Plan) Counts() (change, unchanged, unknown, failed int) {
 // "unknown" for each host whose plan has only unknown steps.
 func (p *Plan) hostKinds() map[string]string {
 	kinds := map[string]string{}
+	for name := range p.Pending {
+		if p.rollsBack(name) {
+			kinds[name] = "change"
+		}
+	}
 	for _, sp := range p.Stages {
 		for _, hp := range sp.Hosts {
 			switch {
@@ -55,6 +60,18 @@ func (p *Plan) hostKinds() map[string]string {
 func (p *Plan) Write(out, errOut *color.Writer) {
 	p.WriteNotes(errOut)
 	bodies := map[string]*color.Text{}
+	for name, pending := range p.Pending {
+		if !p.rollsBack(name) {
+			continue
+		}
+		b := &color.Text{}
+		markLine(b, "  ", "!", " "+rollbackLabel+"\n")
+		for _, l := range pending.Rollback {
+			first, rest, _ := strings.Cut(l, "\n")
+			fmt.Fprintf(b, "      %s%s\n", secret.Printable(first), lines(rest, "          "))
+		}
+		bodies[name] = b
+	}
 	kinds := p.hostKinds()
 	for _, sp := range p.Stages {
 		for _, hp := range sp.Hosts {

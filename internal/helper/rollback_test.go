@@ -448,32 +448,81 @@ func TestLockedHelloKeepsTheStores(t *testing.T) {
 	}
 }
 
-// spec: Running a pipeline/Lockout protection (a timer that no process runs
-// any more: its job runs at the next hello)
-func TestHelloRunsADeadTimer(t *testing.T) {
+// spec: Running a pipeline/Lockout protection (a timer whose process is gone
+// does not run on its own: the plan shows its rollback, and apply runs it
+// first)
+func TestDeadTimer(t *testing.T) {
 	for _, name := range []string{"timer.json", "timer.json.fired"} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			p := filepath.Join(t.TempDir(), "f")
+			p, q := filepath.Join(t.TempDir(), "f"), filepath.Join(t.TempDir(), "g")
 			write(t, p, "old\n")
-			saved, err := module.Save(module.Touch{Path: p, Tree: true}, filepath.Join(t.TempDir(), "1.tar"))
+			write(t, q, "new\n")
+			store := filepath.Join(dir, "rollback", "acme", "recipe-ssh")
+			mkdir(t, store)
+			saved, err := module.Save(module.Touch{Path: p, Tree: true}, filepath.Join(store, "1.tar"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			write(t, p, "new\n")
-			data, _ := json.Marshal(job{Deadline: time.Now().Add(-time.Minute), Restore: []module.Saved{saved}, Downloads: filepath.Join(dir, "downloads", "acme")})
-			write(t, filepath.Join(dir, "rollback", name), string(data))
+			data, _ := json.Marshal(job{Version: jobVersion, Deadline: time.Now().Add(-time.Minute), Restore: []module.Saved{saved},
+				Undo: []undo{{Module: "file", Args: fileArgs(q, "undone\n")}}, Downloads: filepath.Join(dir, "downloads", "acme")})
+			jobPath := filepath.Join(dir, "rollback", name)
+			write(t, jobPath, string(data))
+			h := hello("r1")
+			h.Project = "acme"
+
+			// The session of a plan shows the rollback and changes nothing.
 			c := start(t, dir, "")
-			if r := c.call(t, "hello", hello("r1")); r.Error != "" {
+			if r := c.call(t, "hello", h); r.Error != "" {
 				t.Fatalf("hello: %s", r.Error)
 			}
-			if content(t, p) != "old\n" {
-				t.Errorf("content %q: the dead timer's files are not back", content(t, p))
+			r := c.call(t, "pending", nil)
+			var pending protocol.Pending
+			if err := json.Unmarshal(r.Result, &pending); r.Error != "" || err != nil {
+				t.Fatalf("pending: %s %v", r.Error, err)
+			}
+			if want := []string{"put back " + p, "file " + q}; !slices.Equal(pending.Rollback, want) {
+				t.Errorf("pending rollback %q, want %q", pending.Rollback, want)
+			}
+			c.w.Close()
+			if err := <-c.done; err != nil {
+				t.Fatal(err)
+			}
+			if content(t, p) != "new\n" || content(t, q) != "new\n" {
+				t.Errorf("after the plan's session: f %q, g %q; want both new", content(t, p), content(t, q))
+			}
+			if _, err := os.Lstat(jobPath); err != nil {
+				t.Errorf("the job is gone after the plan's session: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(store, "1.tar")); err != nil {
+				t.Errorf("the store is gone after the plan's session: %v", err)
+			}
+
+			// Apply runs it first.
+			h.Run = "r2"
+			c = start(t, dir, "")
+			if r := c.call(t, "hello", h); r.Error != "" {
+				t.Fatalf("hello: %s", r.Error)
+			}
+			if r := c.call(t, "due", nil); r.Error != "" {
+				t.Fatalf("due: %s", r.Error)
+			}
+			if content(t, p) != "old\n" || content(t, q) != "undone\n" {
+				t.Errorf("after the rollback: f %q, g %q; want old and undone", content(t, p), content(t, q))
 			}
 			for _, f := range []string{"timer.json", "timer.json.fired"} {
 				if _, err := os.Lstat(filepath.Join(dir, "rollback", f)); !os.IsNotExist(err) {
 					t.Errorf("%s stays: %v", f, err)
 				}
+			}
+			if _, err := os.Lstat(store); !os.IsNotExist(err) {
+				t.Errorf("the store of the earlier run stays after its rollback: %v", err)
+			}
+			r = c.call(t, "pending", nil)
+			pending = protocol.Pending{}
+			if err := json.Unmarshal(r.Result, &pending); r.Error != "" || err != nil || pending.Rollback != nil {
+				t.Errorf("pending after the rollback: %+v, %s %v", pending, r.Error, err)
 			}
 		})
 	}
@@ -1050,10 +1099,51 @@ func TestRollbackOfASwitchOfTheSSHUnits(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (a dead timer whose rollback
+// changes nothing does not stay due)
+func TestDeadTimerWithoutChanges(t *testing.T) {
+	dir := t.TempDir()
+	q := filepath.Join(t.TempDir(), "g")
+	write(t, q, "undone\n")
+	write(t, filepath.Join(dir, "rollback", "acme", "recipe-ssh", "index"), "version 1\n")
+	data, _ := json.Marshal(job{Version: jobVersion, Deadline: time.Now().Add(-time.Minute),
+		Undo: []undo{{Module: "file", Args: fileArgs(q, "undone\n")}}, Downloads: filepath.Join(dir, "downloads", "acme")})
+	write(t, filepath.Join(dir, "rollback", "timer.json"), string(data))
+	h := hello("r1")
+	h.Project = "acme"
+	c := start(t, dir, "")
+	if r := c.call(t, "hello", h); r.Error != "" {
+		t.Fatalf("hello: %s", r.Error)
+	}
+	r := c.call(t, "pending", nil)
+	var pending protocol.Pending
+	if err := json.Unmarshal(r.Result, &pending); r.Error != "" || err != nil || pending.Rollback != nil {
+		t.Fatalf("pending: %+v, %s %v", pending, r.Error, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "rollback", "timer.json")); !os.IsNotExist(err) {
+		t.Errorf("the job stays: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "rollback", "acme", "recipe-ssh")); !os.IsNotExist(err) {
+		t.Errorf("the store of the earlier run stays: %v", err)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a damaged job of a dead timer
+// cannot run: the session fails and names it)
+func TestDamagedDeadTimer(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rollback", "timer.json")
+	write(t, p, "{")
+	c := start(t, dir, "")
+	if r := c.call(t, "hello", hello("r1")); !strings.HasPrefix(r.Error, "the rollback timer of an earlier run ended without its process: read the rollback timer "+p) {
+		t.Errorf("hello: %q", r.Error)
+	}
+}
+
 // spec: State on the host (winch reads every older version of a file in
 // rollback/<project>/: the timer job of a helper with one undo step and no
 // version)
-func TestHelloRunsADeadTimerOfVersion1(t *testing.T) {
+func TestDeadTimerOfVersion1(t *testing.T) {
 	dir := t.TempDir()
 	p, q := filepath.Join(t.TempDir(), "f"), filepath.Join(t.TempDir(), "g")
 	write(t, p, "old\n")
@@ -1073,6 +1163,9 @@ func TestHelloRunsADeadTimerOfVersion1(t *testing.T) {
 	c := start(t, dir, "")
 	if r := c.call(t, "hello", hello("r1")); r.Error != "" {
 		t.Fatalf("hello: %s", r.Error)
+	}
+	if r := c.call(t, "due", nil); r.Error != "" {
+		t.Fatalf("due: %s", r.Error)
 	}
 	if content(t, p) != "old\n" || content(t, q) != "undone\n" {
 		t.Errorf("after the dead timer: f %q, g %q; want old and undone", content(t, p), content(t, q))

@@ -52,6 +52,8 @@ type Conn interface {
 	Confirm(ctx context.Context) error
 	// Rollback ends the rollback timer at once: the old files come back.
 	Rollback(ctx context.Context) error
+	// Due runs the rollback of an earlier run whose timer process is gone.
+	Due(ctx context.Context) error
 	// Reboot reboots the host and connects again within wait.
 	Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error)
 	// Handled removes the record of a handler that succeeded.
@@ -413,9 +415,20 @@ func (p *Plan) take(host string) Conn {
 	return c
 }
 
+// rollsBack reports whether apply runs the rollback of an earlier run on
+// host.
+func (p *Plan) rollsBack(host string) bool {
+	return p.Pending[host].Rollback != nil
+}
+
 // changed returns the hosts with changes in the plan.
 func (p *Plan) changed() map[string]bool {
 	hosts := map[string]bool{}
+	for name := range p.Pending {
+		if p.rollsBack(name) {
+			hosts[name] = true
+		}
+	}
 	for _, sp := range p.Stages {
 		for _, hp := range sp.Hosts {
 			if hp.changes() {

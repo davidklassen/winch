@@ -99,9 +99,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 				result = w
 			}
 			if err == nil {
-				err = rb.idle(ctx)
+				err = rb.idle()
 			}
-			if err == nil && !resumed(req.Params) {
+			if err == nil && !resumed(req.Params) && len(rb.due) == 0 {
 				err = rb.clear(handlers)
 			}
 			if err != nil && lock != nil {
@@ -113,7 +113,18 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "facts":
 			result, err = readFacts()
 		case req.Method == "pending":
-			result, err = readPending(handlers, thens, checks)
+			var p protocol.Pending
+			p, err = readPending(handlers, thens, checks)
+			if err == nil {
+				p.Rollback, err = rb.dueChanges(ctx)
+			}
+			// A due job that changes nothing would stay due with no plan line.
+			if err == nil && p.Rollback == nil && len(rb.due) > 0 {
+				err = rb.runDue(ctx, handlers)
+			}
+			result = p
+		case req.Method == "due":
+			err = rb.runDue(ctx, handlers)
 		case req.Method == "handled":
 			err = handled(req.Params, handlers)
 		case req.Method == "pend":

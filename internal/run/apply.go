@@ -100,6 +100,8 @@ type text struct{ out, errOut *color.Writer }
 func (t text) Step(ev StepEvent) {
 	var line color.Text
 	switch {
+	case ev.Address == rollbackEvent(ev.Host, nil).Address && ev.Status == "change":
+		markLine(&line, ev.Host+": ", "!", " "+rollbackLabel+"\n")
 	case ev.Health != "" && ev.Status == "ok":
 		markLine(&line, ev.Host+": "+ev.Stage+": ", "*", " health:"+command(ev.Health, "    ")+"\n")
 	case ev.Status != "change":
@@ -241,7 +243,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 			hps, hosts = append(hps, hp), append(hosts, hp.Host)
 			if runs[name] == nil {
-				runs[name] = &hostApply{host: name, rep: rep, progress: plan.opts.progress(), state: module.State{Refreshed: plan.refreshed[name]}, notified: map[string]bool{}, notifiedAt: map[string]int{}, started: map[string]int{}, thens: slices.Clone(plan.Pending[name].Then)}
+				runs[name] = &hostApply{host: name, rep: rep, progress: plan.opts.progress(), state: module.State{Refreshed: plan.refreshed[name]}, notified: map[string]bool{}, notifiedAt: map[string]int{}, started: map[string]int{}, thens: slices.Clone(plan.Pending[name].Then), rollback: plan.Pending[name].Rollback}
 				for _, n := range plan.Pending[name].Handlers {
 					runs[name].notified[n] = true
 				}
@@ -274,8 +276,11 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			ge := rollout(ctx, stage.Name, gh, stage.Parallelism, plan.Failed, plan.opts, open, func(j int, _ Conn) error {
 				i := group[j]
 				a := runs[hosts[i].Name]
-				var err error
-				changed[i], err = a.apply(ctx, stage, hps[i])
+				due, err := a.due(ctx)
+				if err == nil {
+					changed[i], err = a.apply(ctx, stage, hps[i])
+				}
+				changed[i] = changed[i] || due
 				final := last[hosts[i].Name] == si
 				if err == nil && final && (changed[i] || o.Changed[hosts[i].Name]) {
 					a.progress.Busy(a.host, "access check")
@@ -379,6 +384,8 @@ type hostApply struct {
 	gate *protocol.Check
 	// conn is the session with the host, open across its stages.
 	conn Conn
+	// rollback is the plan of the rollback of an earlier run, until it runs.
+	rollback []string
 }
 
 // close closes the session with the host, if one is open.
@@ -389,6 +396,39 @@ func (a *hostApply) close() error {
 	err := a.conn.Close()
 	a.conn = nil
 	return err
+}
+
+const rollbackLabel = "rollback of an earlier run"
+
+// rollbackEvent returns the event of the rollback of an earlier run on host,
+// with its plan lines.
+func rollbackEvent(host string, lines []string) StepEvent {
+	ev := StepEvent{Host: host, Address: host + ":rollback", Step: rollbackLabel, Status: "change"}
+	for _, l := range lines {
+		ev.Changes = append(ev.Changes, secret.PrintableLines(l))
+	}
+	return ev
+}
+
+// due runs the rollback of an earlier run that the plan showed, before the
+// first step of the host. It reports whether it ran.
+func (a *hostApply) due(ctx context.Context) (bool, error) {
+	if a.rollback == nil {
+		return false, nil
+	}
+	if ctx.Err() != nil {
+		return false, ErrInterrupted
+	}
+	ev := rollbackEvent(a.host, a.rollback)
+	a.rollback = nil
+	a.progress.Busy(a.host, rollbackLabel)
+	if err := a.conn.Due(context.WithoutCancel(ctx)); err != nil {
+		ev.Status, ev.Error = "failed", err.Error()
+		a.rep.Step(ev)
+		return false, fmt.Errorf("failed: %s: %w", rollbackLabel, err)
+	}
+	a.rep.Step(ev)
+	return true, nil
 }
 
 // apply runs the steps and the handlers of a stage on one host, then its

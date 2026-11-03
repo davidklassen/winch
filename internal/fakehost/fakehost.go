@@ -93,7 +93,9 @@ type Hosts struct {
 	timer time.Duration
 	// rollbackErr is the error of every rollback.
 	rollbackErr error
-	boots       map[string]protocol.Boot
+	// due holds the plan of the rollback of an earlier run, by host.
+	due   map[string][]string
+	boots map[string]protocol.Boot
 	// dests holds the destinations that SetDestination set.
 	dests map[string]protocol.Destination
 	// jumps holds the jump hosts that SetJump set.
@@ -141,6 +143,7 @@ func New() *Hosts {
 		dests:        map[string]protocol.Destination{},
 		jumps:        map[string]string{},
 		kills:        map[string]int{},
+		due:          map[string][]string{},
 	}
 }
 
@@ -178,6 +181,14 @@ func (h *Hosts) FailRollback(err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.rollbackErr = err
+}
+
+// SetDue gives host the rollback of an earlier run whose timer process is
+// gone, with its plan lines.
+func (h *Hosts) SetDue(host string, lines ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.due[host] = lines
 }
 
 // SetBoot sets what a reboot of host reports.
@@ -983,6 +994,17 @@ func (c *Conn) Rollback(ctx context.Context) error {
 	return c.hosts.rollbackErr
 }
 
+func (c *Conn) Due(ctx context.Context) error {
+	if err := c.dead(); err != nil {
+		return err
+	}
+	c.log("due")
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	delete(c.hosts.due, c.host)
+	return c.hosts.rollbackErr
+}
+
 // Reboot boots the kernel of SetBoot. The host still needs a reboot when that
 // is not the newest one, or when packages ask for one.
 func (c *Conn) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error) {
@@ -1020,7 +1042,10 @@ func (c *Conn) Pending(ctx context.Context) (protocol.Pending, error) {
 	if err := c.dead(); err != nil {
 		return protocol.Pending{}, err
 	}
-	return protocol.Pending{Handlers: c.hosts.PendingOf(c.host), Then: c.hosts.ThenOf(c.host), Checks: c.hosts.ChecksOf(c.host)}, nil
+	c.hosts.mu.Lock()
+	due := slices.Clone(c.hosts.due[c.host])
+	c.hosts.mu.Unlock()
+	return protocol.Pending{Handlers: c.hosts.PendingOf(c.host), Then: c.hosts.ThenOf(c.host), Checks: c.hosts.ChecksOf(c.host), Rollback: due}, nil
 }
 
 func (c *Conn) Pend(ctx context.Context, check protocol.Check) error {

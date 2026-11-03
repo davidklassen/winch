@@ -978,3 +978,148 @@ handlers:
 		})
 	}
 }
+
+// spec: Running a pipeline/Lockout protection (a timer whose process is gone
+// does not run on its own: the plan shows its rollback as the first change of
+// the host, and apply runs it first)
+func TestDueRollback(t *testing.T) {
+	h := fakehost.New()
+	h.SetDue("web1", "put back /etc/nftables.conf", "service nftables: reload")
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: hi\n",
+	})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	want := `web1
+  ! rollback of an earlier run
+      put back /etc/nftables.conf
+      service nftables: reload
+  base
+    + file /etc/motd
+`
+	if !strings.HasPrefix(out.String(), want) || !strings.Contains(out.String(), "1 host: 1 to change, 0 unchanged, 0 unknown\n") {
+		t.Errorf("plan:\n%s\nwant it to start with:\n%s", out.String(), want)
+	}
+	if slices.Contains(h.Log["web1"], "due") {
+		t.Errorf("the plan ran the rollback: log %q", h.Log["web1"])
+	}
+	out.Reset()
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	if !o.OK() {
+		t.Fatalf("apply failed: %v", o.Failed)
+	}
+	if log := h.Log["web1"]; len(log) == 0 || log[0] != "due" {
+		t.Errorf("log %q, want the rollback first", log)
+	}
+	if !strings.HasPrefix(out.String(), "web1: ! rollback of an earlier run\nweb1: base: + file /etc/motd\n") {
+		t.Errorf("apply:\n%s", out.String())
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the rollback of an earlier
+// run is a change of the host)
+func TestDueRollbackOnly(t *testing.T) {
+	h := fakehost.New()
+	h.SetDue("web1", "put back /etc/nftables.conf")
+	h.SetFile("web1", "/etc/motd", "hi")
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: hi\n",
+	})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	if change, _, _, _ := plan.Counts(); change != 1 {
+		t.Errorf("hosts to change: %d, want 1", change)
+	}
+	var out, errOut bytes.Buffer
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	if !o.OK() || !o.Changed["web1"] {
+		t.Fatalf("apply: failed %v, changed %v", o.Failed, o.Changed)
+	}
+	if want := []string{"due", "access"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a failed rollback of an
+// earlier run fails the host before its steps)
+func TestDueRollbackFails(t *testing.T) {
+	h := fakehost.New()
+	h.SetDue("web1", "put back /etc/nftables.conf")
+	h.FailRollback(errors.New("put back /etc/nftables.conf: no space left on device"))
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: hi\n",
+	})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	if o.OK() {
+		t.Fatal("apply succeeded")
+	}
+	if want := "web1: failed: rollback of an earlier run: put back /etc/nftables.conf: no space left on device\n"; errOut.String() != want {
+		t.Errorf("errors %q, want %q", errOut.String(), want)
+	}
+	if want := []string{"due"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (apply runs the rollback of an
+// earlier run once, before the first stage of the host)
+func TestDueRollbackRunsOnce(t *testing.T) {
+	h := fakehost.New()
+	h.SetDue("web1", "put back /etc/nftables.conf")
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: hi\n  - name: web\n    hosts: all\n    steps:\n      - file:\n          path: /etc/issue\n          content: hi\n",
+	})
+	_, o := applyWeb1(t, p, h)
+	if !o.OK() {
+		t.Fatalf("apply failed: %v", o.Failed)
+	}
+	n := 0
+	for _, e := range h.Log["web1"] {
+		if e == "due" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("log %q, want one rollback", h.Log["web1"])
+	}
+}
+
+// spec: Running a pipeline/Lockout protection; JSON output (the rollback of
+// an earlier run is a planned event of the host)
+func TestDueRollbackJSON(t *testing.T) {
+	h := fakehost.New()
+	h.SetDue("web1", "put back /etc/nftables.conf")
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: hi\n",
+	})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out bytes.Buffer
+	plan.WriteJSON(run.NewEvents(plain(&out), func() time.Time { return time.Time{} }))
+	want := `{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:rollback","stage":"","step":"rollback of an earlier run","status":"change","changes":["put back /etc/nftables.conf"]}`
+	if first, _, _ := strings.Cut(out.String(), "\n"); first != want {
+		t.Errorf("first event:\n%s\nwant:\n%s", first, want)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a host that fails in the plan
+// does not run the rollback of an earlier run)
+func TestDueRollbackFailedHost(t *testing.T) {
+	h := fakehost.New()
+	h.SetDue("web1", "put back /etc/nftables.conf")
+	h.FailCheck("web1")
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: hi\n",
+	})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if strings.Contains(out.String(), "rollback") || !strings.Contains(out.String(), "1 host: 0 to change, 0 unchanged, 0 unknown, 1 failed\n") {
+		t.Errorf("plan:\n%s", out.String())
+	}
+	run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	if slices.Contains(h.Log["web1"], "due") {
+		t.Errorf("apply ran the rollback of a failed host: log %q", h.Log["web1"])
+	}
+}
