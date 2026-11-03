@@ -21,7 +21,7 @@ const (
 func TestStockModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "stock")
-	vm.MustRun(t, "apt-get update -q >/dev/null")
+	vm.MustRun(t, "apt-get update -q >/dev/null && "+fragileDeb)
 	reset := "rm -rf /tmp/w && mkdir /tmp/w\n" + installStock + "\napt-mark unhold winch-stock >/dev/null" + "\nprintf 'stock\\n' > " + stockConf + " && chown root:root " + stockConf + " && chmod 644 " + stockConf
 	stockArgs := &module.File{Path: stockConf, Stock: true}
 	vmtest.RunCases(t, vm, "file", reset, []vmtest.Case{
@@ -51,6 +51,13 @@ func TestStockModule(t *testing.T) {
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"content of winch-stock 1"}},
 			Unchanged: `grep -q edited ` + stockConf + ` && ! ls /var/cache/apt/archives/winch-stock_*.deb 2>/dev/null`,
 			After:     `[ "$(cat ` + stockConf + `)" = stock ] && ! ls /var/cache/apt/archives/winch-stock_*.deb 2>/dev/null`,
+		},
+		{
+			Name:      "a fetch after a dpkg -i leaves apt's cache as it is",
+			Setup:     "rm -f /var/cache/apt/archives/winch-stock_*.deb && echo edited >> " + stockConf + " && " + staleCache,
+			Args:      stockArgs,
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"content of winch-stock 1"}},
+			Unchanged: sameCache,
 		},
 		{
 			Name:      "stock creates a missing file",

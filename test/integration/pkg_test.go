@@ -17,6 +17,14 @@ const fragileDeb = `mkdir -p /root/fragile/DEBIAN && printf 'Package: winch-frag
 // half configured.
 const halfConfigure = "! dpkg -i /root/winch-fragile.deb >/dev/null 2>&1 && dpkg-query -W -f='${db:Status-Abbrev}' winch-fragile | grep -q '^iF'"
 
+// staleCache installs winch-fragile with dpkg, so apt's binary cache is
+// older than the dpkg status, and saves the list of apt's files. sameCache
+// checks that list.
+const (
+	staleCache = "touch /etc/winch-fragile.ok && dpkg -i /root/winch-fragile.deb >/dev/null && " + aptFiles + " > /root/apt-files"
+	sameCache  = aptFiles + " | cmp - /root/apt-files"
+)
+
 // spec: Modules/pkg
 func TestPkgModule(t *testing.T) {
 	t.Parallel()
@@ -179,6 +187,29 @@ func TestPkgModule(t *testing.T) {
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install figlet"}},
 			WantState: module.State{IndexFresh: true},
 			After:     same,
+		},
+		{
+			Name:      "an install check after a dpkg -i leaves apt's cache as it is",
+			State:     module.State{IndexFresh: true},
+			Setup:     staleCache,
+			Args:      &module.Pkg{Name: []string{"hello"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"install hello"}},
+			WantState: module.State{IndexFresh: true},
+			Unchanged: sameCache,
+		},
+		{
+			Name:      "a removal check after a dpkg -i leaves apt's cache as it is",
+			Setup:     staleCache,
+			Args:      &module.Pkg{Name: []string{"winch-fragile"}, Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove winch-fragile"}},
+			Unchanged: sameCache,
+		},
+		{
+			Name:      "an ok check after a dpkg -i leaves apt's cache as it is",
+			Setup:     staleCache,
+			Args:      &module.Pkg{Name: []string{"winch-fragile"}},
+			Want:      module.Result{Status: module.OK},
+			Unchanged: sameCache,
 		},
 		{
 			Name:      "a package that came in as a dependency is marked as manually installed",
