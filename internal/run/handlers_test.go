@@ -1049,7 +1049,7 @@ func TestStageHandlerStep(t *testing.T) {
 }
 
 // spec: Handlers (a pending handler of a stage that --stages leaves out
-// stays recorded and does not show in the plan)
+// stays recorded, and the plan shows a note for it)
 func TestStageHandlerOfASkippedStage(t *testing.T) {
 	p := loadFiles(t, stageHandlerVarFiles)
 	if err := p.Select(project.Selection{Stages: "db"}); err != nil {
@@ -1063,6 +1063,9 @@ func TestStageHandlerOfASkippedStage(t *testing.T) {
 	if strings.Contains(out.String(), "handler") {
 		t.Errorf("plan shows the handler of a skipped stage:\n%s", out.String())
 	}
+	if want := "web1: note: a pending handler web.reload waits until its stage runs on this host\n"; errOut.String() != want {
+		t.Errorf("plan notes %q, want %q", errOut.String(), want)
+	}
 	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
@@ -1071,6 +1074,24 @@ func TestStageHandlerOfASkippedStage(t *testing.T) {
 	}
 	if want := []string{"access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+	}
+}
+
+// spec: Handlers
+func TestPendingHandlerOfAFailedHost(t *testing.T) {
+	p := loadFiles(t, handlerFiles)
+	h := fakehost.New()
+	present(h, "web1", "web2")
+	h.SetPending("web1", "app.restart")
+	h.FailCheck("web1")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	if plan.Failed["web1"] == nil {
+		t.Fatal("web1 did not fail")
+	}
+	var errOut bytes.Buffer
+	plan.WriteNotes(plain(&errOut))
+	if errOut.Len() != 0 {
+		t.Errorf("notes %q, want none for a failed host", errOut.String())
 	}
 }
 
@@ -1302,6 +1323,9 @@ func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 		"web1: note: a pending handler old.flush of pipeline mail matches no handler and will not run\n" +
 		"web1: note: a pending then of a cmd step in handler mail.gone matches no step and will not run\n" +
 		"web1: note: a pending assert of stage old of pipeline mail step 1 matches no assert and will not run\n"
+	stayNotes := "web1: note: a pending handler app.restart waits until its recipe runs on this host\n" +
+		"web1: note: a pending handler mail.reload waits until its recipe runs on this host\n" +
+		"web1: note: a pending handler mx.flush of pipeline mail waits until its stage runs on this host\n"
 	// These name a recipe or a pipeline that no pipeline has.
 	unknown := records{
 		handlers: []string{"old.reload", "old\tweb\treload"},
@@ -1335,9 +1359,11 @@ func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 			for _, c := range slices.Concat(stays.checks, known.checks, unknown.checks) {
 				h.Pend("web1", c)
 			}
-			want, kept := knownNotes, stays
+			want, kept := knownNotes+stayNotes, stays
 			if tc.lost {
 				kept = records{slices.Concat(stays.handlers, unknown.handlers), slices.Concat(stays.thens, unknown.thens), slices.Concat(stays.checks, unknown.checks)}
+				want += "web1: note: a pending handler old.reload waits until its recipe runs on this host\n" +
+					"web1: note: a pending handler web.reload of pipeline old waits until its stage runs on this host\n"
 			} else {
 				want = "web1: note: a pending handler mail.gone matches no handler and will not run\n" +
 					"web1: note: a pending handler mx.gone of pipeline mail matches no handler and will not run\n" +
@@ -1348,7 +1374,8 @@ func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 					"web1: note: a pending then of a file step in recipe old matches no step and will not run\n" +
 					"web1: note: a pending assert of stage old of pipeline mail step 1 matches no assert and will not run\n" +
 					"web1: note: a pending assert of recipe old step 1 matches no assert and will not run\n" +
-					"web1: note: a pending health gate of stage web of pipeline old matches no gate and will not run\n"
+					"web1: note: a pending health gate of stage web of pipeline old matches no gate and will not run\n" +
+					stayNotes
 			}
 			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
