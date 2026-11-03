@@ -314,7 +314,7 @@ func TestSecretFilterValues(t *testing.T) {
 	if got, want := keys.Filter.Text(in), "(secret) HUNTER2 user:(secret) (secret) (secret) plain-bob"; got != want {
 		t.Errorf("filter: %q, want %q", got, want)
 	}
-	if got, want := steps[0].HostText(in), "(secret) (secret) user:(secret) $6$aaa$alicehash winch-yaml-token plain-bob"; got != want {
+	if got, want := steps[0].HostText(in, steps[0].Parts), "(secret) (secret) user:(secret) $6$aaa$alicehash winch-yaml-token plain-bob"; got != want {
 		t.Errorf("step mask: %q, want %q", got, want)
 	}
 }
@@ -1588,7 +1588,7 @@ func TestSecretStepMaskNames(t *testing.T) {
 			// The values that do not come from the secret stay.
 			in := tt.in + ", /a app make root"
 			want := strings.NewReplacer("ter2", secret.Mark, "TER2", secret.Mark).Replace(in)
-			if got := steps[0].HostText(in); got != want {
+			if got := steps[0].HostText(in, steps[0].Parts); got != want {
 				t.Errorf("step mask: %q, want %q", got, want)
 			}
 			if got := keys.Filter.Text(in); got != in {
