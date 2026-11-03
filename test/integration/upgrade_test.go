@@ -182,6 +182,47 @@ func TestUpgradeModule(t *testing.T) {
 	})
 }
 
+// oldVersion replaces winch-signed in the file: source of oldSigned with
+// version v.
+func oldVersion(v string) string {
+	return `set -e
+cd /srv/old
+rm -f winch-signed_*.deb
+sed -i 's/^Version: .*/Version: ` + v + `/' winch-signed/DEBIAN/control
+dpkg-deb -b winch-signed winch-signed_` + v + `_all.deb >/dev/null
+{ dpkg-deb -f winch-signed_` + v + `_all.deb; echo "Filename: ./winch-signed_` + v + `_all.deb"; echo "Size: $(stat -c %s winch-signed_` + v + `_all.deb)"; echo "SHA256: $(sha256sum winch-signed_` + v + `_all.deb | cut -d' ' -f1)"; } > Packages`
+}
+
+// spec: Modules/upgrade; Remote execution/State on the host
+func TestUpgradeFileSource(t *testing.T) {
+	t.Parallel()
+	vm := upgradeVM(t, "upgrade-file")
+	vm.MustRun(t, oldSigned+" && DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-signed=0 >/dev/null")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  upgrade-file: {}\n",
+	})
+	upgrade := func() vmtest.Result {
+		return lab.Winch(t, dir, "run", "upgrade-file", "upgrade", "mode=safe")
+	}
+	if r := upgrade(); r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Fatalf("first run: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, oldVersion("2"))
+	if r := upgrade(); r.Code != 5 || !strings.Contains(r.Stdout, "upgrade winch-signed 0 → 2") {
+		t.Fatalf("run after version 2: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, oldVersion("3")+" && "+downSource)
+	if r := upgrade(); r.Code == 0 || !strings.Contains(r.Stderr, "Failed to fetch http://127.0.0.1:9/winch-down") {
+		t.Fatalf("run with a source that apt cannot fetch: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, "rm /etc/apt/sources.list.d/winch-down.sources")
+	if r := upgrade(); r.Code != 5 || !strings.Contains(r.Stdout, "upgrade winch-signed 0 → 3") {
+		t.Fatalf("run after the failed refresh: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, "ls /var/lib/winch/apt/lists/_srv_old_* >/dev/null && [ -z \"$(find /var/lib/winch/apt/lists ! -type f ! -type d)\" ]")
+}
+
 // spec: CLI (winch run); CLI/Prompts; Modules/service and unit
 func TestRunCommand(t *testing.T) {
 	t.Parallel()
