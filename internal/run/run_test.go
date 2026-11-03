@@ -439,7 +439,7 @@ func TestPlanRecipes(t *testing.T) {
 		setup  func(h *fakehost.Hosts)
 		failed []string
 	}{
-		// web2 fails in stage tools on the template.
+		// web2 fails on the template of stage tools, before its first stage.
 		{name: "recipes", failed: []string{"web2"}},
 		{name: "recipes-require-fails", failed: []string{"web1"},
 			files: map[string]string{"recipes/tools/templates/tools.tmpl": "{{ .host.short }}\n"},

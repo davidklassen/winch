@@ -16,6 +16,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/davidklassen/winch/internal/color"
+	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/golden"
 	"github.com/davidklassen/winch/internal/module"
@@ -885,6 +886,145 @@ func TestSecretPublicFile(t *testing.T) {
 			}
 			if g, w := strings.Join(got, "\n"), strings.Join(want, "\n"); g != w {
 				t.Errorf("warnings:\n%s\nwant:\n%s", g, w)
+			}
+		})
+	}
+}
+
+// spec: Variables/Secrets in output (text filter)
+func TestSecretHostTextOutsideStep(t *testing.T) {
+	// The output has no text filter, so only the masks hide the part zqxj.
+	// The note comes during the check of stage a, before the check of stage
+	// b, whose step builds the part. The health gate and its warning come
+	// outside a step.
+	p, _ := hashSecretProject(t, "kwzqxjqz", `stages:
+  - name: a
+    hosts: all
+    health:
+      command: probe
+    steps:
+      - file:
+          path: /srv/plain
+          content: "a\n"
+  - name: b
+    hosts: all
+    steps:
+      - user:
+          name: !expr '"u" + vars.pw[2:6]'
+`, "", nil, nil)
+	h := fakehost.New()
+	h.SetNote("web1", "/srv/plain", "the user uzqxj reads /srv/plain", false)
+	h.FailCommandWith("web1", "probe", "user uzqxj is locked")
+	h.SetNote("web1", "probe", "probe runs as uzqxj", true)
+	var out, errOut bytes.Buffer
+	w, ew := plain(&out), plain(&errOut)
+	var shown []string
+	connect := h.ConnectorFor(false, func(n run.Note) {
+		shown = append(shown, n.Text)
+		run.WriteNote(ew, n)
+	})
+	plan := run.MakePlan(t.Context(), p, connect, run.Options{})
+	if len(shown) != 1 || len(plan.Stages) != 2 {
+		t.Fatalf("the note did not come during the plan of both stages: notes %q, stages %d", shown, len(plan.Stages))
+	}
+	plan.Write(w, ew)
+	run.Apply(t.Context(), plan, connect, run.Text(w, ew))
+	all := out.String() + errOut.String()
+	for _, want := range []string{"web1: note: the user u(secret) reads /srv/plain\n", "user u(secret) is locked", "web1: warning: probe runs as u(secret)\n"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the output has no %q:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "zqxj") {
+		t.Errorf("the output shows the part zqxj:\n%s", all)
+	}
+}
+
+// spec: Variables/Secrets in output (text filter)
+func TestSecretErrorsOutsideStep(t *testing.T) {
+	// The output has no text filter, so only the masks hide the part zqxj.
+	user := steps(`      - user:
+          name: !expr '"u" + vars.pw[2:6]'
+`)
+	// dir is a step without a change: every directory exists on the fake
+	// host.
+	dir := steps(`      - dir:
+          path: !expr '"/srv/d-" + vars.pw[2:6]'
+`)
+	failClose := func(h *fakehost.Hosts) { h.FailCloseWith("web1", "helper: no user uzqxj") }
+	for _, tt := range []struct {
+		name, pipeline string
+		// plan runs before the plan, and apply, when set, before apply. Apply
+		// runs once in text and once in JSON.
+		plan, apply func(h *fakehost.Hosts)
+		keep        bool
+		want        []string
+	}{
+		{"a reboot note", user + `      - reboot:
+          if_required: false
+`, func(h *fakehost.Hosts) {
+			h.SetBoot("web1", protocol.Boot{State: "degraded", Failed: []string{"app-uzqxj.service"}})
+		}, func(*fakehost.Hosts) {}, false, []string{"(rebooted with failed units: app-u(secret).service)", `"note":"rebooted with failed units: app-u(secret).service"`}},
+		{"a plan close error", user, failClose, nil, false, []string{"web1: helper: no user u(secret)"}},
+		{"an apply close error", user, func(*fakehost.Hosts) {}, failClose, false, []string{"web1: helper: no user u(secret)", `"error":"helper: no user u(secret)"`}},
+		{name: "an idle close error with keep", pipeline: dir, plan: failClose, keep: true, want: []string{"web1: helper: no user u(secret)"}},
+		{"a close error of a host that apply only clears", dir, func(h *fakehost.Hosts) {
+			h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "s", Module: "file", Mains: []string{"/srv/gone"}})
+		}, failClose, false, []string{"web1: helper: no user u(secret)"}},
+		{"a pending call error", user, func(h *fakehost.Hosts) {
+			h.FailPendingWith("web1", "restore /home/uzqxj/x: no space left on device")
+		}, nil, false, []string{"web1: restore /home/u(secret)/x: no space left on device"}},
+		{"a rollback line of an earlier run", user, func(h *fakehost.Hosts) {
+			h.SetDue("web1", "put back /home/uzqxj/.ssh/authorized_keys")
+		}, func(*fakehost.Hosts) {}, false, []string{"put back /home/u(secret)/.ssh/authorized_keys", `"changes":["put back /home/u(secret)/.ssh/authorized_keys"]`}},
+		{"a reboot error", user + `      - reboot:
+          if_required: false
+`, func(h *fakehost.Hosts) {
+			h.SetFacts("web1", facts.Facts{OS: facts.OS{ID: "debian", Version: "13", Codename: "trixie", Arch: "amd64"}})
+			h.SetBoot("web1", protocol.Boot{Packages: []string{"app-uzqxj"}})
+		}, func(*fakehost.Hosts) {}, false, []string{"/run/reboot-required lists the packages app-u(secret)"}},
+		{"a health warning before any step", `stages:
+  - name: gate
+    hosts: all
+    health:
+      command: probe
+    steps: []
+  - name: s
+    hosts: all
+    steps:
+      - dir:
+          path: !expr '"/srv/d-" + vars.pw[2:6]'
+`, func(h *fakehost.Hosts) {
+			h.Pend("web1", protocol.Check{Pipeline: "site", Stage: "gate"})
+			h.SetNote("web1", "probe", "probe runs as uzqxj", true)
+		}, func(*fakehost.Hosts) {}, false, []string{"web1: warning: probe runs as u(secret)\n"}},
+		{"a failed rollback of an earlier run", user, func(h *fakehost.Hosts) {
+			h.SetDue("web1", "~ user u(secret)")
+			h.FailRollback(errors.New("restore /home/uzqxj: no space left on device"))
+		}, func(*fakehost.Hosts) {}, false, []string{"restore /home/u(secret): no space left on device", `"error":"restore /home/u(secret): no space left on device"`}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p, _ := hashSecretProject(t, "kwzqxjqz", tt.pipeline, "", nil, nil)
+			h := fakehost.New()
+			tt.plan(h)
+			var out, errOut bytes.Buffer
+			w, ew := plain(&out), plain(&errOut)
+			connect := h.ConnectorFor(false, func(n run.Note) { run.WriteNote(ew, n) })
+			plan := run.MakePlan(t.Context(), p, connect, run.Options{Keep: tt.keep})
+			plan.Write(w, ew)
+			if tt.apply != nil {
+				tt.apply(h)
+				run.Apply(t.Context(), plan, connect, run.Text(w, ew))
+				run.Apply(t.Context(), plan, connect, run.NewEvents(w, func() time.Time { return time.Time{} }))
+			}
+			all := out.String() + errOut.String()
+			for _, want := range tt.want {
+				if !strings.Contains(all, want) {
+					t.Errorf("the output has no %q:\n%s", want, all)
+				}
+			}
+			if strings.Contains(all, "zqxj") {
+				t.Errorf("the output shows the part zqxj:\n%s", all)
 			}
 		})
 	}
