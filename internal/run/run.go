@@ -201,7 +201,14 @@ type Planned struct {
 	// Address is the scope, the number of the step in its list, and the loop
 	// index: nginx#3[0]. A slot has the full name of its handler.
 	Address string
+	// parts are the secret parts of the steps of the host. Text from the host
+	// of one step can hold a value that another step built from a secret.
+	parts []string
 }
+
+// hostText returns text from the host of the step with each secret part of
+// the steps of its host as secret.Mark.
+func (p Planned) hostText(s string) string { return p.Step.HostText(s, p.parts) }
 
 // Slot is a place where a handler runs when a step notified it, or when it is
 // pending on the host.
@@ -298,8 +305,8 @@ type hostRun struct {
 	// step names the step that the plan checks now in the messages of later
 	// steps: its address and label, as two steps can have one label.
 	step string
-	// parts are the secret parts of the checked steps. A plan error can name
-	// the value of an earlier step.
+	// parts are the secret parts of the checked steps, each once. Text from
+	// the host of one step can hold a value that another step built.
 	parts []string
 	// written returns the paths that the project writes on the host, for dir
 	// steps with purge. It is set at the first contact.
@@ -497,6 +504,11 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		}
 		plan.Stages = append(plan.Stages, sp)
 	}
+	for _, sp := range plan.Stages {
+		for _, hp := range sp.Hosts {
+			maskHost(hp.Steps, runs[hp.Host.Name].parts)
+		}
+	}
 	plan.gone = map[string][]protocol.Check{}
 	plan.goneThens = map[string][]protocol.Then{}
 	plan.goneHandlers = map[string][]string{}
@@ -618,6 +630,14 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 	if err != nil {
 		return nil, err
 	}
+	for _, p := range steps {
+		hr.addParts(p.Step.Parts)
+		if s := p.Handler; s != nil {
+			for _, hs := range s.Steps {
+				hr.addParts(hs.Step.Parts)
+			}
+		}
+	}
 	changed := false
 	for i, p := range steps {
 		if s := p.Handler; s != nil {
@@ -636,7 +656,6 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		if ctx.Err() != nil {
 			return nil, ErrInterrupted
 		}
-		hr.parts = append(hr.parts, p.Step.Parts...)
 		l := oneLine(label(p.Step))
 		where := scope(stage, p) + ": " + l
 		hr.step = p.Address + " " + l
@@ -655,11 +674,12 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		}
 		hr.newUnitFile(&steps[i].Step)
 		progress.Busy(h.Name, where)
-		conn.Mask(p.Step.HostText)
+		mask := func(s string) string { return p.Step.HostText(s, hr.parts) }
+		conn.Mask(mask)
 		steps[i].Result, err = conn.Check(context.WithoutCancel(ctx), p.Step.Module, steps[i].Step.Args, &hr.state)
 		conn.Mask(nil)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", where, maskError(err, p.Step.HostText))
+			return nil, fmt.Errorf("%s: %w", where, maskError(err, mask))
 		}
 		hr.refreshed = hr.refreshed || hr.state.Refreshed
 		hr.trackRemoved(p.Step.Args)
@@ -676,7 +696,6 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
 		hr.trackUnits(p.Step.Args, steps[i].Result, where)
-		maskResult(p.Step, &steps[i].Result)
 		steps[i].PendingAssert = p.Check != nil && hr.checks[*p.Check]
 		if steps[i].Result.Status != module.OK {
 			changed = true
@@ -1654,22 +1673,45 @@ func oneLine(label string) string {
 
 var marks = map[module.Action]string{module.Create: "+", module.Modify: "~", module.Remove: "-"}
 
-// maskResult masks the text from the host in the result of a step that reads
-// a secret. A change line whose new value holds a secret part loses its old
-// value, which can be an older secret.
-func maskResult(st project.Step, res *module.Result) {
-	if len(st.Parts) == 0 {
+// maskResult masks the text from the host in the result of a step with the
+// secret parts of the steps of its host. A change line whose new value holds a
+// secret part loses its old value, which can be an older secret.
+func maskResult(st project.Step, parts []string, res *module.Result) {
+	if len(parts) == 0 {
 		return
 	}
 	changes := make([]string, len(res.Changes))
 	for i, c := range res.Changes {
-		if head, after, ok := strings.Cut(c, " →"); ok && secret.Hide(after, st.Parts) != after {
+		if head, after, ok := strings.Cut(c, " →"); ok && secret.Hide(after, parts) != after {
 			c = withoutOld(head) + " →" + after
 		}
-		changes[i] = st.HostText(c)
+		changes[i] = st.HostText(c, parts)
 	}
 	res.Changes = changes
-	res.Link = st.HostText(res.Link)
+	res.Link = st.HostText(res.Link, parts)
+}
+
+// addParts adds the parts that hr does not have yet.
+func (hr *hostRun) addParts(parts []string) {
+	for _, p := range parts {
+		if !slices.Contains(hr.parts, p) {
+			hr.parts = append(hr.parts, p)
+		}
+	}
+}
+
+// maskHost gives each step of a host the secret parts of all checked steps of
+// the host, and masks its result: a step can come before the step that builds
+// a value from a secret.
+func maskHost(steps []Planned, parts []string) {
+	for i := range steps {
+		if s := steps[i].Handler; s != nil {
+			maskHost(s.Steps, parts)
+			continue
+		}
+		steps[i].parts = parts
+		maskResult(steps[i].Step, parts, &steps[i].Result)
+	}
 }
 
 // withoutOld returns the head of a change line, "<field> <old>", without

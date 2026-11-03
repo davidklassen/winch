@@ -731,3 +731,58 @@ func TestSecretBranchValue(t *testing.T) {
 		t.Errorf("output = %q, want the masked branch value and the plain path of the second step", all)
 	}
 }
+
+// spec: Variables/Secrets in output (text filter)
+func TestSecretPartsOfHost(t *testing.T) {
+	// The steps that read no secret are in the stage before the steps that
+	// build values from the secret. The dir step has a part of 2 characters,
+	// which hides only the host text of that step.
+	p, filter := hashSecretProject(t, "kwzqxjqz", `stages:
+  - name: a
+    hosts: all
+    steps:
+      - file:
+          path: /srv/plain
+          content: "a\n"
+          owner: root
+      - file:
+          path: /srv/conf
+          content: "token new\n"
+      - link:
+          path: /srv/current
+          target: /srv/app
+  - name: b
+    hosts: all
+    steps:
+      - user:
+          name: !expr '"u" + vars.pw[2:6]'
+      - dir:
+          path: /srv/d
+          owner: !expr 'vars.pw[6:]'
+`, "", nil, nil)
+	h := fakehost.New()
+	h.SetResult("web1", "/srv/plain", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner uzqxj → root", "mode 0644 → 0600"}})
+	h.SetFile("web1", "/srv/conf", "token uzqxj\n")
+	h.SetResult("web1", "/srv/current", module.Result{Status: module.Change, Action: module.Modify, Link: "/srv/uzqxj", Changes: []string{"target /srv/old → /srv/app"}})
+	plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	w, ew := color.NewWriter(&out, filter.Parts, false), color.NewWriter(&errOut, filter.Parts, false)
+	plan.Write(w, ew)
+	plan.WriteJSON(run.NewEvents(w, func() time.Time { return time.Time{} }))
+	all := out.String() + errOut.String()
+	for _, want := range []string{
+		"        owner u(secret) → root\n        mode 0644 → 0600\n",
+		"        -token u(secret)\n",
+		"(link to /srv/u(secret))\n        target /srv/old → /srv/app\n",
+		`"changes":["owner u(secret) → root","mode 0644 → 0600"]`,
+		`"-token u(secret)"`,
+		`"link":"/srv/u(secret)"`,
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the plan has no %q:\n%s", want, all)
+		}
+	}
+	if applied := applyJSON(t, plan, h); strings.Contains(all+applied, "zqxj") {
+		t.Errorf("the output shows the part zqxj:\n%s%s", all, applied)
+	}
+}

@@ -411,6 +411,20 @@ func TestSecretSweep(t *testing.T) {
 `, func(h *fakehost.Hosts) {
 			h.SetResult("web1", "/srv/e", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"key " + base64.RawStdEncoding.EncodeToString([]byte(sweepSecret[2:6]))}})
 		}, planAll},
+		{"a change line of a plain step", "owner u(secret) → root", `
+      - file:
+          path: /srv/plain
+          content: "a\n"
+          owner: root
+      - file:
+          path: /srv/conf
+          content: "token new\n"
+      - user:
+          name: !expr '"u" + vars.pw[2:6]'
+`, func(h *fakehost.Hosts) {
+			h.SetResult("web1", "/srv/plain", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner u" + sweepSecret[2:6] + " → root"}})
+			h.SetFile("web1", "/srv/conf", "token u"+sweepSecret[2:6]+"\n")
+		}, applyAll},
 		{"a line of a multi-line part", "validate check (secret)", `
       - file:
           path: /srv/m

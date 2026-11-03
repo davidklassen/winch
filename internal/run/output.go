@@ -356,7 +356,7 @@ func writeStep(t *color.Text, indent string, p Planned) {
 		first, rest, _ := strings.Cut(c, "\n")
 		fmt.Fprintf(t, "%s    %s%s\n", indent, secret.Printable(first), lines(rest, indent+"        "))
 	}
-	for _, l := range diffLines(st, res) {
+	for _, l := range diffLines(p) {
 		t.Add(color.Plain, indent+"    ")
 		t.Add(diffStyle(l), l)
 		t.Add(color.Plain, "\n")
@@ -393,7 +393,8 @@ func diffStyle(line string) color.Style {
 
 // diffLines returns the diff of the content of a step, as the output shows
 // it.
-func diffLines(st project.Step, res module.Result) []string {
+func diffLines(p Planned) []string {
+	st, res := p.Step, p.Result
 	t, ok := st.Args.(module.WithText)
 	if res.Old == nil && res.OldReason == "" || !ok {
 		return nil
@@ -417,7 +418,7 @@ func diffLines(st project.Step, res module.Result) []string {
 	}
 	_, isLine := st.Args.(*module.Line)
 	var lines []string
-	for _, line := range strings.SplitAfter(st.HostText(string(d)), "\n") {
+	for _, line := range strings.SplitAfter(p.hostText(string(d)), "\n") {
 		// The line numbers of a line step's hunk are not those of the file.
 		if isLine && strings.HasPrefix(line, "@@") {
 			continue

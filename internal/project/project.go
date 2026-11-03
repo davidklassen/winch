@@ -1548,10 +1548,11 @@ func (st Step) Shown() Step {
 	return st
 }
 
-// HostText returns text from the host with each secret part of the step as
-// secret.Mark. A part of 1 or 2 characters can match text that does not hold
-// it, so with such a part the text shows only secret.Mark.
-func (st Step) HostText(s string) string {
+// HostText returns text from the host of the step with each of the secret
+// parts of its host as secret.Mark. A part of 1 or 2 characters can match text
+// that does not hold it, so with such a part of its own the step shows only
+// secret.Mark.
+func (st Step) HostText(s string, host []string) string {
 	if s == "" {
 		return s
 	}
@@ -1560,7 +1561,7 @@ func (st Step) HostText(s string) string {
 			return secret.Mark
 		}
 	}
-	return secret.Hide(s, st.Parts)
+	return secret.Hide(s, host)
 }
 
 // public returns the argument of s that holds a secret and goes into a file
