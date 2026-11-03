@@ -335,6 +335,8 @@ func TestSecretErrors(t *testing.T) {
 			want: `recipes/r/recipe.yaml:5:11: when: expected true or false, got the string "(secret)"`},
 		{name: "a plain field error beside a password from a secret", step: "  - user:\n      name: alice\n      password: !expr vars.users.alice\n      comment: \"a:b\"\n",
 			want: `recipes/r/recipe.yaml:5:16: comment: must not have ":"`},
+		{name: "a plain field error beside a name from a secret", step: "  - user:\n      name: !expr vars.pw\n      comment: \"a:b\"\n",
+			want: `recipes/r/recipe.yaml:4:16: comment: must not have ":"`},
 		{name: "a password from a secret that is not a crypt hash", step: "  - user:\n      name: alice\n      password: !expr vars.pw\n",
 			want: `recipes/r/recipe.yaml:4:17: password is not a crypt hash`},
 		{name: "an error that the placeholders do not have", step: "  - file:\n      path: /a\n      content: !expr 'vars.pw == \"hunter2\" ? string(int(vars.pw)) : \"ok\"'\n",
@@ -804,7 +806,7 @@ func TestSecretAlias(t *testing.T) {
 	if got := string(steps[0].Args.(*module.File).Data); got != "hunter2 hunter2\n" {
 		t.Errorf("data = %q", got)
 	}
-	if got := shownLines(steps[0]); got != "(secret)\n" {
+	if got := shownLines(steps[0]); got != "(secret) (secret)\n" {
 		t.Errorf("shown = %q", got)
 	}
 }

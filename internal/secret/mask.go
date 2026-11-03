@@ -16,21 +16,65 @@ const Mark = "(secret)"
 
 // placeholders replace each secret in the variants 1 and 2. They share no
 // character, and their lengths differ, so no part of a secret is common to
-// all three results. They have no control character, which a path cannot
-// hold.
-var placeholders = [3]string{1: "~^^^^^^~", 2: "`|||||||`"}
+// all three results. As letters, they pass the checks of names, paths, and
+// base64. Their bytes differ in the top 6 bits, so their base64 forms start
+// with different characters.
+var placeholders = [3]string{1: "aaaaaaaa", 2: "zzzzzzzzzzzz"}
 
 // Placeholder returns the placeholder of the variant n, 1 or 2.
 func Placeholder(n int) string { return placeholders[n] }
 
-// Mask returns real with the part that differs from a or b replaced by Mark,
-// and that part of real. a and b are the results with placeholders.
-func Mask(real, a, b string) (shown, part string) {
+// Mask returns real with each part that differs from a or b replaced by Mark,
+// and these parts of real. a and b are the results with placeholders.
+func Mask(real, a, b string) (string, []string) {
+	pieces, parts := mask(real, a, b)
+	return strings.Join(pieces, Mark), parts
+}
+
+// mask returns the pieces of real that the output shows, with Mark between
+// two pieces, and the non-empty parts of real in place of the marks. The
+// pieces are the text between the placeholders in a and b. A placeholder
+// letter next to plain text can split a at another place than b. The pieces
+// then differ, and the whole text between the common prefix and suffix is
+// one part. So does a change of the placeholder, such as base64. A secret
+// can hold the text of a piece, so the parts are those of the first and of
+// the last place of each piece in real.
+func mask(real, a, b string) (pieces, parts []string) {
 	if real == a && real == b {
-		return real, ""
+		return []string{real}, nil
 	}
 	pre, suf := common(real, a, b)
-	return pre + Mark + suf, real[len(pre) : len(real)-len(suf)]
+	r := real[pre : len(real)-suf]
+	pa := strings.Split(a[pre:len(a)-suf], placeholders[1])
+	pb := strings.Split(b[pre:len(b)-suf], placeholders[2])
+	var found []string
+	from := 0
+	if len(pa) > 1 && slices.Equal(pa, pb) {
+		for _, p := range pa {
+			i := strings.Index(r[from:], p)
+			if p == "" || i < 0 {
+				continue
+			}
+			parts = append(parts, r[from:from+i])
+			found = append(found, p)
+			from += i + len(p)
+		}
+	}
+	parts = append(parts, r[from:])
+	last := make([]string, len(found)+1)
+	to := len(r)
+	for k, p := range slices.Backward(found) {
+		i := strings.LastIndex(r[:to], p)
+		last[k+1], to = r[i+len(p):to], i
+	}
+	last[0] = r[:to]
+	for _, p := range last {
+		if !slices.Contains(parts, p) {
+			parts = append(parts, p)
+		}
+	}
+	pieces = append(append([]string{real[:pre]}, found...), real[len(real)-suf:])
+	return pieces, slices.DeleteFunc(parts, func(p string) bool { return p == "" })
 }
 
 // MaskLines is Mask for text with lines, such as a command: it masks each
@@ -42,27 +86,24 @@ func MaskLines(real, a, b string) (shown string, parts []string) {
 		rl, al, bl = []string{real}, []string{a}, []string{b}
 	}
 	for i := range rl {
-		var part string
-		if rl[i], part = Mask(rl[i], al[i], bl[i]); part != "" {
-			parts = append(parts, part)
-		}
+		var p []string
+		rl[i], p = Mask(rl[i], al[i], bl[i])
+		parts = append(parts, p...)
 	}
 	return strings.Join(rl, "\n"), parts
 }
 
-// common returns the prefix and the suffix that real, a, and b share, without
-// overlap.
-func common(real, a, b string) (pre, suf string) {
-	n := 0
-	for n < len(real) && n < len(a) && n < len(b) && real[n] == a[n] && real[n] == b[n] {
-		n++
+// common returns the length of the prefix and of the suffix that real, a,
+// and b share, without overlap.
+func common(real, a, b string) (pre, suf int) {
+	for pre < len(real) && pre < len(a) && pre < len(b) && real[pre] == a[pre] && real[pre] == b[pre] {
+		pre++
 	}
-	m := 0
-	for m < len(real)-n && m < len(a)-n && m < len(b)-n &&
-		real[len(real)-1-m] == a[len(a)-1-m] && real[len(real)-1-m] == b[len(b)-1-m] {
-		m++
+	for suf < len(real)-pre && suf < len(a)-pre && suf < len(b)-pre &&
+		real[len(real)-1-suf] == a[len(a)-1-suf] && real[len(real)-1-suf] == b[len(b)-1-suf] {
+		suf++
 	}
-	return real[:n], real[len(real)-m:]
+	return pre, suf
 }
 
 // MaskValue returns the value real with each part that differs from a or b,
@@ -148,8 +189,9 @@ type Line struct {
 	// Block is true for a line of a secret that has another number of lines
 	// than its placeholders. An old line never fits it.
 	Block bool
-	// prefix and suffix are the parts of Text around the Mark.
-	prefix, suffix string
+	// pieces are the parts of Text between the marks of Show, and parts the
+	// parts of Text in their place.
+	pieces, parts []string
 }
 
 // Lines returns the lines of real, the content for the host, with each part
@@ -177,8 +219,8 @@ func Lines(real, a, b []byte) ([]Line, bool) {
 		case blockA[i] || blockB[i]:
 			out[i] = Line{Text: s, Show: withEnd(Mark, s), Secret: true, Block: true}
 		case ok:
-			pre, suf := common(s, ya[j], yb[j])
-			out[i] = Line{Text: s, Show: pre + Mark + suf, Secret: true, prefix: pre, suffix: suf}
+			pieces, parts := mask(s, ya[j], yb[j])
+			out[i] = Line{Text: s, Show: strings.Join(pieces, Mark), Secret: true, pieces: pieces, parts: parts}
 		}
 	}
 	return out, true
@@ -301,28 +343,42 @@ func Diff(old []byte, lines []Line) []byte {
 }
 
 // fit returns the old line masked like the first secret line that it fits:
-// it starts with the line's prefix and ends with its suffix.
+// it holds the pieces of the line in order, the first at its start and the
+// last at its end.
 func fit(old string, add, all []Line) (string, bool) {
 	for _, set := range [][]Line{add, all} {
 		for _, l := range set {
 			if !l.Secret || l.Block {
 				continue
 			}
-			if len(old) >= len(l.prefix)+len(l.suffix) && strings.HasPrefix(old, l.prefix) && strings.HasSuffix(old, l.suffix) {
-				return l.prefix + Mark + l.suffix, true
+			if fits(old, l.pieces) {
+				return l.Show, true
 			}
 		}
 	}
 	return "", false
 }
 
-// Part returns the part of the line that comes from a secret, or "".
-func (l Line) Part() string {
-	if !l.Secret {
-		return ""
+func fits(s string, pieces []string) bool {
+	first, last := pieces[0], pieces[len(pieces)-1]
+	if len(s) < len(first)+len(last) || !strings.HasPrefix(s, first) || !strings.HasSuffix(s, last) {
+		return false
 	}
+	s = s[len(first) : len(s)-len(last)]
+	for _, p := range pieces[1 : len(pieces)-1] {
+		i := strings.Index(s, p)
+		if i < 0 {
+			return false
+		}
+		s = s[i+len(p):]
+	}
+	return true
+}
+
+// Parts returns the parts of the line that come from a secret.
+func (l Line) Parts() []string {
 	if l.Block {
-		return strings.TrimSuffix(strings.SplitAfter(l.Text, "\n")[0], "\n")
+		return []string{strings.TrimSuffix(strings.SplitAfter(l.Text, "\n")[0], "\n")}
 	}
-	return l.Text[len(l.prefix) : len(l.Text)-len(l.suffix)]
+	return l.parts
 }
