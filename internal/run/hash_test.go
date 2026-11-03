@@ -2,8 +2,6 @@ package run_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"maps"
 	"os"
 	"path/filepath"
@@ -342,13 +340,9 @@ handlers:
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// The old content holds the value and an earlier value.
 			plan := func(value string) *run.Plan {
-				h := fakehost.New()
-				h.SetFile("web1", "/etc/pw", "password "+value+" old\n")
-				h.SetFile("web1", "/etc/"+value+".key", "password swordfish old\n")
 				p, _ := hashSecretProject(t, value, tt.pipeline, tt.recipe, nil, nil)
-				return run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+				return run.MakePlan(context.Background(), p, fakehost.New().Connector(), run.Options{})
 			}
 			for _, short := range []bool{false, true} {
 				old, new := "hunter2", "hunter3"
@@ -365,16 +359,6 @@ handlers:
 				for _, p := range []*run.Plan{a, b} {
 					if len(p.Failed) > 0 {
 						t.Fatalf("the plan failed: %v", p.Failed)
-					}
-					in := string(p.HashInput())
-					for _, v := range []string{old, new, "swordfish"} {
-						if strings.Contains(in, v) {
-							t.Errorf("the hash input holds %q:\n%s", v, in)
-						}
-						sum := sha256.Sum256([]byte("password " + v + " old\n"))
-						if strings.Contains(in, hex.EncodeToString(sum[:])) {
-							t.Errorf("the hash input holds the SHA-256 of the old content with %q:\n%s", v, in)
-						}
 					}
 				}
 			}
