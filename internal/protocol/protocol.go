@@ -184,6 +184,9 @@ type Pending struct {
 	Handlers []string `json:"handlers"`
 	Then     []Then   `json:"then"`
 	Checks   []Check  `json:"checks,omitempty"`
+	// Rollback is the plan of the rollback of an earlier run whose timer
+	// process is gone: the files that it puts back and what it runs.
+	Rollback []string `json:"rollback,omitempty"`
 }
 
 // Handled is the params of handled: the handler whose record the helper

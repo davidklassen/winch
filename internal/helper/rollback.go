@@ -95,6 +95,9 @@ type rollbacks struct {
 	// timer is closed when the timer process of this session ends. It is nil
 	// when no timer process of this session runs.
 	timer chan struct{}
+	// due are the jobs of earlier runs whose timer process is gone. They run
+	// only on the due request; until then, the stores stay.
+	due []string
 }
 
 type guarded struct {
@@ -175,8 +178,8 @@ func stageStore(stage string) string {
 
 // idle fails while a rollback timer runs or puts back files. A job that is
 // past its deadline by more than deadGrace has no process left, for example
-// after a power cycle: idle runs it.
-func (r *rollbacks) idle(ctx context.Context) error {
+// after a power cycle: idle adds it to the due jobs.
+func (r *rollbacks) idle() error {
 	for _, p := range []string{r.job(), r.job() + ".fired"} {
 		data, err := os.ReadFile(p)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -189,14 +192,75 @@ func (r *rollbacks) idle(ctx context.Context) error {
 		if j.Version > jobVersion {
 			return err
 		}
+		if err != nil {
+			return fmt.Errorf("the rollback timer of an earlier run ended without its process: %w", errors.Join(err, os.Remove(p)))
+		}
 		if time.Since(j.Deadline) < deadGrace {
 			return fmt.Errorf("a rollback timer of an earlier run runs until %s; run winch again after it ends", j.Deadline.UTC().Format(time.RFC3339))
 		}
-		if err := errors.Join(runJob(ctx, p), os.Remove(p)); err != nil {
-			return fmt.Errorf("the rollback timer of an earlier run ended without its process: %w", err)
-		}
+		r.due = append(r.due, p)
 	}
 	return nil
+}
+
+// dueChanges returns what the due jobs do, as plan lines: the paths that they
+// put back or remove, the commands of the restore, and the changes of their
+// undo steps.
+func (r *rollbacks) dueChanges(ctx context.Context) ([]string, error) {
+	var out []string
+	for _, p := range r.due {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("read the rollback timer: %w", err)
+		}
+		j, err := decodeJob(p, data)
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range j.Restore {
+			switch {
+			case s.Missing:
+				out = append(out, "remove "+s.Path)
+			case s.Dir != nil:
+				out = append(out, "put back the owner, group, and mode of "+s.Path)
+			default:
+				out = append(out, "put back "+s.Path)
+			}
+		}
+		after, err := module.AfterRestore(ctx, j.Restore)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, after...)
+		for _, u := range j.Undo {
+			m, res, err := checkUndo(ctx, u)
+			if err != nil {
+				return nil, err
+			}
+			if res.Status == module.OK {
+				continue
+			}
+			line := u.Module + " " + m.Main()
+			if len(res.Changes) > 0 {
+				line += ": " + strings.Join(res.Changes, ", ")
+			}
+			out = append(out, line)
+		}
+	}
+	return out, nil
+}
+
+// runDue runs the due jobs, then clears the stores of the project, as the
+// hello of a session without due jobs does.
+func (r *rollbacks) runDue(ctx context.Context, handlers records) error {
+	for i, p := range r.due {
+		if err := errors.Join(runJob(ctx, p), os.Remove(p)); err != nil {
+			r.due = r.due[i:]
+			return err
+		}
+	}
+	r.due = nil
+	return r.clear(handlers)
 }
 
 // deadGrace is the time after its deadline when a timer has surely put back
@@ -421,8 +485,12 @@ func (r *rollbacks) clear(handlers records) error {
 // handler with confirm_access that the run notified and that is still
 // pending: end puts back the store of the handler and drops its record. A
 // handler whose store does not come back stays pending. A timer that still
-// runs rolls back first.
+// runs rolls back first. While jobs are due, the stores and records are
+// those of the earlier run, and end changes nothing.
 func (r *rollbacks) end(ctx context.Context, handlers, thens records) error {
+	if len(r.due) > 0 {
+		return nil
+	}
 	errs := []error{rollbackStep(ctx, r, handlers, thens), r.putBackUntested(ctx)}
 	notified, err := r.notified().read()
 	if err != nil || len(notified) == 0 {
@@ -583,22 +651,29 @@ func runJob(ctx context.Context, path string) error {
 }
 
 func runUndo(ctx context.Context, u undo) error {
+	m, res, err := checkUndo(ctx, u)
+	if err == nil && res.Status != module.OK {
+		if err = m.Apply(ctx, module.Silent{}); err != nil {
+			err = fmt.Errorf("%s %s: %w", u.Module, m.Main(), err)
+		}
+	}
+	return err
+}
+
+func checkUndo(ctx context.Context, u undo) (module.Module, module.Result, error) {
 	m, ok := module.New(u.Module)
 	if !ok {
-		return fmt.Errorf("unknown module %q", u.Module)
+		return nil, module.Result{}, fmt.Errorf("unknown module %q", u.Module)
 	}
 	if err := json.Unmarshal(u.Args, m); err != nil {
-		return err
+		return nil, module.Result{}, err
 	}
 	// The timer has no session, so no login user: uid -1 is no user.
 	res, err := m.Check(ctx, &module.State{LoginUID: math.MaxUint32}, module.Silent{})
-	if err == nil && res.Status != module.OK {
-		err = m.Apply(ctx, module.Silent{})
-	}
 	if err != nil {
-		return fmt.Errorf("%s %s: %w", u.Module, m.Main(), err)
+		return nil, module.Result{}, fmt.Errorf("%s %s: %w", u.Module, m.Main(), err)
 	}
-	return nil
+	return m, res, nil
 }
 
 // restore puts back the saved paths. It first drops the unpack records of the

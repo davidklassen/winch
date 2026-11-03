@@ -58,6 +58,9 @@ func (p *Plan) WriteJSON(e *Events) {
 		if p.Failed[h.Name] != nil {
 			continue
 		}
+		if p.rollsBack(h.Name) {
+			e.Write("planned", rollbackEvent(h.Name, p.Pending[h.Name].Rollback))
+		}
 		for _, sp := range p.Stages {
 			for _, hp := range sp.Hosts {
 				if hp.Host.Name != h.Name {

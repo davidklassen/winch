@@ -721,6 +721,10 @@ func (s *Session) Rollback(ctx context.Context) error {
 	return s.call("rollback", nil, nil)
 }
 
+func (s *Session) Due(ctx context.Context) error {
+	return s.call("due", nil, nil)
+}
+
 // Reboot reboots the host, and connects again until the host has a new boot
 // ID, within wait. It then waits for the system to start, within the same
 // time.

@@ -280,29 +280,59 @@ func Restore(ctx context.Context, saved []Saved) error {
 			errs = append(errs, fmt.Errorf("put back %s: %w", s.Path, err))
 		}
 	}
-	var socket bool
-	if slices.ContainsFunc(saved, func(s Saved) bool { return SSHDConfig(s.Path) }) {
-		var err error
-		if socket, err = sshSocketUp(ctx); err != nil {
-			errs = append(errs, err)
-		}
+	l, err := afterRestore(ctx, saved)
+	if err != nil {
+		errs = append(errs, err)
 	}
-	if reloads(saved) || socket {
+	if l.reload {
 		if _, err := run(ctx, nil, "systemctl", "daemon-reload"); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	if socket {
+	if l.socket {
 		if err := restartSSHSocket(ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	if loadsFirewall(saved) {
+	if l.firewall {
 		if err := loadFirewall(ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// loads are the commands that a restore runs after it puts back the paths.
+type loads struct {
+	reload, socket, firewall bool
+}
+
+func afterRestore(ctx context.Context, saved []Saved) (loads, error) {
+	var l loads
+	var err error
+	if slices.ContainsFunc(saved, func(s Saved) bool { return SSHDConfig(s.Path) }) {
+		l.socket, err = sshSocketUp(ctx)
+	}
+	l.reload = reloads(saved) || l.socket
+	l.firewall = loadsFirewall(saved)
+	return l, err
+}
+
+// AfterRestore returns the commands that Restore runs after it puts back
+// saved, as plan lines.
+func AfterRestore(ctx context.Context, saved []Saved) ([]string, error) {
+	l, err := afterRestore(ctx, saved)
+	var out []string
+	if l.reload {
+		out = append(out, "daemon-reload")
+	}
+	if l.socket {
+		out = append(out, SSHSocketRestart)
+	}
+	if l.firewall {
+		out = append(out, "load the firewall rules")
+	}
+	return out, err
 }
 
 func restore(s Saved) error {
