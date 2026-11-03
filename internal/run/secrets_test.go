@@ -786,3 +786,91 @@ func TestSecretPartsOfHost(t *testing.T) {
 		t.Errorf("the output shows the part zqxj:\n%s%s", all, applied)
 	}
 }
+
+// spec: Variables/Secrets in output; Modules/line; Modules/user; Modules/debconf
+func TestSecretPublicFile(t *testing.T) {
+	const (
+		line    = "the file holds a secret and others can read it; write the secret to a file with mode 0600 in a file step"
+		comment = "the user comment holds a secret, and every user of the host can read /etc/passwd"
+		answer  = "debconf keeps the answer in /var/cache/debconf/config.dat, which every user of the host can read; only a password answer goes to a root-only file"
+	)
+	identity, recipient := ageKey(t)
+	var texts []string
+	for _, v := range []string{"hunter2", "$6$aaa$alicehash"} {
+		text, err := secret.Encrypt(v, []age.Recipient{recipient})
+		if err != nil {
+			t.Fatal(err)
+		}
+		texts = append(texts, text)
+	}
+	lineStep := func(l, match string) string {
+		return "      - line:\n          path: /etc/environment\n          line: " + l + "\n          match: " + match + "\n"
+	}
+	userStep := func(c string) string {
+		return "      - user:\n          name: !expr item.name\n          password: !expr item.hash\n          comment: " + c + "\n        loop: !expr vars.users\n"
+	}
+	debconfStep := func(typ, v string) string {
+		return "      - debconf:\n          package: app\n          question: app/token\n          type: " + typ + "\n          value: " + v + "\n"
+	}
+	secretLine := lineStep(`!tpl "TOKEN={{ .vars.token }}"`, "^TOKEN=")
+	for _, tt := range []struct {
+		name, steps string
+		// handlers are the handlers of the stage, with a step that notifies
+		// them.
+		handlers string
+		res      *module.Result
+		want     []string
+	}{
+		{name: "line change", steps: secretLine, res: &module.Result{Status: module.Change, Action: module.Modify, OthersRead: true}, want: []string{"5:9: " + line}},
+		{name: "line ok", steps: secretLine, res: &module.Result{Status: module.OK, OthersRead: true}, want: []string{"5:9: " + line}},
+		{name: "line into a file with mode 0600", steps: secretLine, res: &module.Result{Status: module.OK}},
+		{name: "plain line", steps: lineStep("TOKEN=x", "^TOKEN="), res: &module.Result{Status: module.OK, OthersRead: true}},
+		{name: "secret only in match", steps: lineStep("TOKEN=x", `!tpl "^TOKEN={{ .vars.token }}|^TOKEN="`), res: &module.Result{Status: module.OK, OthersRead: true}},
+		{name: "line in a loop", steps: lineStep(`!tpl "{{ .item }}={{ .vars.token }}"`, `!tpl "^{{ .item }}="`) + "        loop: [A, B]\n", res: &module.Result{Status: module.OK, OthersRead: true}, want: []string{"5:9: " + line}},
+		{name: "comment", steps: userStep(`!tpl "{{ .item.name }} {{ .vars.token }}"`), want: []string{"5:9: " + comment}},
+		{name: "plain field in a loop over secret fields", steps: userStep("!expr item.name")},
+		{name: "secret field in a comment", steps: userStep("!expr item.hash"), want: []string{"5:9: " + comment}},
+		{name: "string answer", steps: debconfStep("string", "!expr vars.token"), want: []string{"5:9: " + answer}},
+		{name: "computed string type", steps: debconfStep(`!expr '"string"'`, "!expr vars.token"), want: []string{"5:9: " + answer}},
+		{name: "password answer", steps: debconfStep("password", "!expr vars.token")},
+		{name: "computed password type", steps: debconfStep(`!expr '"password"'`, "!expr vars.token")},
+		{name: "plain answer", steps: debconfStep("string", "x")},
+		{name: "handler", steps: "      - file:\n          path: /etc/a\n          content: x\n        notify: h\n", handlers: "    handlers:\n      h:\n" + "        - debconf:\n            package: app\n            question: app/token\n            type: string\n            value: !expr vars.token\n", want: []string{"15:11: " + answer}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml": "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
+				"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\ngroups:\n  all:\n    vars:\n      token: !secret " + texts[0] +
+					"\n      users:\n        - name: alice\n          hash: !secret " + texts[1] + "\n",
+				"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.steps +
+					"      - file:\n          path: /etc/app/token\n          content: !tpl \"{{ .vars.token }}{{ range .vars.users }}{{ .hash }}{{ end }}\"\n          mode: \"0600\"\n" + tt.handlers,
+			})
+			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := fakehost.New()
+			if tt.res != nil {
+				for _, host := range []string{"web1", "web2"} {
+					for _, m := range []string{"^TOKEN=", "^A=", "^B="} {
+						h.SetResult(host, m, *tt.res)
+					}
+				}
+			}
+			plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+			if len(plan.Failed) > 0 {
+				t.Fatalf("plan failed: %v", plan.Failed)
+			}
+			var got, want []string
+			for _, w := range plan.Warnings {
+				got = append(got, w.Error())
+			}
+			for _, w := range tt.want {
+				want = append(want, "pipelines/site.yaml:"+w)
+			}
+			if g, w := strings.Join(got, "\n"), strings.Join(want, "\n"); g != w {
+				t.Errorf("warnings:\n%s\nwant:\n%s", g, w)
+			}
+		})
+	}
+}

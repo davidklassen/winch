@@ -557,7 +557,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		}
 	}
 	plan.suppressMissingUnitFiles()
-	plan.Warnings = plan.sshdWarnings()
+	plan.Warnings = append(plan.sshdWarnings(), plan.publicWarnings()...)
 	plan.hash = sumBytes(plan.HashInput())[:16]
 	return plan
 }

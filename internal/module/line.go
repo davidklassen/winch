@@ -100,13 +100,14 @@ func (l *Line) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	othersRead := fi.Mode().Perm()&0o004 != 0
 	if bytes.Equal(out, data) {
-		return Result{Status: OK}, nil
+		return Result{Status: OK, OthersRead: othersRead}, nil
 	}
 	if err := noFlags(dir, name, fi, l.Path); err != nil {
 		return Result{}, err
 	}
-	res := Result{Status: Change, Action: Modify, Validates: l.Validation != nil}
+	res := Result{Status: Change, Action: Modify, Validates: l.Validation != nil, OthersRead: othersRead}
 	if res.OldReason = notText([]byte(old)); res.OldReason == "" {
 		res.Old = &old
 	}

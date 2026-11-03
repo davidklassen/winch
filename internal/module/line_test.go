@@ -1,6 +1,10 @@
 package module
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // spec: Modules/line
 func TestLineValidate(t *testing.T) {
@@ -41,5 +45,37 @@ func TestLineSeveralMatches(t *testing.T) {
 	want := `/etc/a has 2 lines that match "^port ": lines 1, 3; make match find one line`
 	if err == nil || err.Error() != want {
 		t.Errorf("error = %v, want %q", err, want)
+	}
+}
+
+// spec: Modules/line; Variables/Secrets in output
+func TestLineOthersRead(t *testing.T) {
+	for _, tt := range []struct {
+		name, old string
+		mode      os.FileMode
+		want      bool
+	}{
+		{"0644", "a=1\n", 0o644, true},
+		{"0604", "a=1\n", 0o604, true},
+		{"0640", "a=1\n", 0o640, false},
+		{"0600", "a=1\n", 0o600, false},
+		{"0644 and no change", "a=2\n", 0o644, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "f")
+			if err := os.WriteFile(p, []byte(tt.old), tt.mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(p, tt.mode); err != nil {
+				t.Fatal(err)
+			}
+			res, err := (&Line{Path: p, Line: "a=2", Match: "^a="}).Check(t.Context(), nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.OthersRead != tt.want {
+				t.Errorf("OthersRead = %v, want %v", res.OthersRead, tt.want)
+			}
+		})
 	}
 }
