@@ -739,6 +739,7 @@ winch apply site --batch
 			{"then/<project>", "pending then commands"},
 			{"checks/<project>", "pending health gates and asserts"},
 			{"certbot-hooks/<project>", "pending certbot hooks"},
+			{"apt/", "the package index that the plan reads, and the archives that a session fetches"},
 			{"downloads/<project>", "checksum, owner, and group of each unpack"},
 			{"firewall.list", "the firewall table after its last load"},
 			{"rollback/<project>/", "old files for confirm_access, during a run"},

@@ -20,7 +20,13 @@ const (
 	dpkgInfo    = "/var/lib/dpkg/info"
 	ucfRegistry = "/var/lib/ucf/registry"
 	archives    = "/var/cache/apt/archives"
+	aptDir      = "/var/lib/winch/apt"
+	fetched     = "/var/lib/winch/" + FetchedDir
 )
+
+// FetchedDir is the directory in the state directory of the archives that
+// stock fetches in a session.
+const FetchedDir = "apt/fetched"
 
 // hostContent is the content of a file step that comes from the host: a
 // file for copy_from, or the package archive for stock.
@@ -170,13 +176,9 @@ func stockSource(ctx context.Context, p string) (*hostContent, error) {
 		return h, nil
 	}
 	name, _, _ := strings.Cut(pkg, ":")
-	deb := path.Join(archives, archiveName(name, version, arch))
-	if _, err := os.Stat(deb); errors.Is(err, fs.ErrNotExist) {
-		if err := download(ctx, pkg+"="+version, deb); err != nil {
-			return nil, fmt.Errorf("get the archive of %s %s: %w", name, version, err)
-		}
-	} else if err != nil {
-		return nil, err
+	deb, err := archive(ctx, pkg, version, archiveName(name, version, arch))
+	if err != nil {
+		return nil, fmt.Errorf("get the archive of %s %s: %w", name, version, err)
 	}
 	data, hdr, err := debEntry(ctx, deb, p)
 	if err != nil {
@@ -221,33 +223,37 @@ func debEntry(ctx context.Context, deb, p string) ([]byte, *tar.Header, error) {
 	return nil, nil, err
 }
 
-// download puts the archive of the package version spec, such as
-// nginx-common=1.26.3-3, into apt's cache as deb. apt-get download writes
-// to the final name as data arrives, so a killed download in the cache
-// would leave a partial archive at deb. apt-get clean warns about a
-// directory in the cache, so the directory of the download is next to it.
-func download(ctx context.Context, spec, deb string) error {
-	dir := path.Join(path.Dir(archives), "winch")
-	if err := os.RemoveAll(dir); err != nil {
-		return err
-	}
-	for _, d := range []string{archives, dir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			return err
+// archive returns the path of the archive file of version of pkg: in apt's
+// cache, or in the directory of the session. It fetches a missing archive
+// into the directory of the session, so the plan leaves apt's cache as it is.
+func archive(ctx context.Context, pkg, version, file string) (string, error) {
+	for _, dir := range []string{archives, fetched} {
+		deb := path.Join(dir, file)
+		_, err := os.Stat(deb)
+		if err == nil {
+			return deb, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
 		}
 	}
-	defer os.RemoveAll(dir)
+	deb := path.Join(fetched, file)
+	if err := os.MkdirAll(fetched, 0o700); err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, noResult(commandLimit))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "apt-get", "download", "-q", "-o", "APT::Sandbox::User=root", spec)
-	cmd.Dir = dir
+	cmd := exec.CommandContext(ctx, "apt-get", "download", "-q", "-o", "APT::Sandbox::User=root", pkg+"="+version)
+	cmd.Dir = fetched
 	cmd.Env = append(cmd.Environ(), aptEnv...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := wait(ctx, cmd, KillDelay); err != nil {
-		return failure("apt-get download", err, out.String())
+		// apt-get download writes to the final name as data arrives.
+		_ = os.Remove(deb)
+		return "", failure("apt-get download", err, out.String())
 	}
-	return os.Rename(path.Join(dir, path.Base(deb)), deb)
+	return deb, nil
 }
 
 // archiveName is the name of a package archive in apt's cache.

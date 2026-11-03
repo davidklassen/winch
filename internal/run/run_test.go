@@ -195,20 +195,24 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
 // spec: Modules/upgrade
 func TestUpgradeRefreshOncePerRun(t *testing.T) {
 	repo := "      - repo:\n          name: app\n          url: https://apt.example.com\n          suite: stable\n          components: main\n"
+	pkg := "      - pkg:\n          name: curl\n"
 	tests := []struct {
-		name  string
-		steps string
-		want  int
+		name   string
+		before string
+		after  string
+		want   int
 	}{
-		{"upgrade alone", "", 1},
-		{"a repo step first", repo, 2},
+		{"upgrade alone", "", "", 1},
+		{"a repo step first", repo, "", 2},
+		// upgrade refreshes its own index, not apt's.
+		{"an install after", "", pkg, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{
 				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
-				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.steps + "      - upgrade:\n          mode: safe\n",
+				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.before + "      - upgrade:\n          mode: safe\n" + tt.after,
 			})
 			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
 			if err != nil {

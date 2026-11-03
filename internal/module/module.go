@@ -90,7 +90,8 @@ type State struct {
 	// index.
 	IndexFresh bool `json:"index_fresh,omitempty"`
 	// Refreshed is true after an upgrade step of the run, also in the plan,
-	// refreshed the package index, and no later step changed a source.
+	// refreshed the package index of upgrade, and no later step changed a
+	// source.
 	Refreshed bool `json:"refreshed,omitempty"`
 	// RemovedUsers are the users that earlier steps of the host remove.
 	RemovedUsers []string `json:"removed_users,omitempty"`
