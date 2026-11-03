@@ -213,7 +213,7 @@ func (f *File) WithoutContent() Module {
 	c := *f
 	if f.Data != nil {
 		c.DataSHA256 = sha(f.Data)
-		if SSHDConfig(f.Path) {
+		if sshdFile(f.Path) {
 			c.Listens = listens(string(f.Data))
 		}
 		c.Data = nil

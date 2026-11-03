@@ -96,8 +96,8 @@ func LookupLogin(uid uint32) (*Login, error) {
 func (l *Login) Name() string { return l.entry.name }
 
 // Guard returns the plan line of a step whose change can lock out the login
-// user: it changes the PAM rules, the user's authorized_keys, a directory on
-// its path in the home, or the sudo rules of a login user other than root.
+// user: it changes the PAM rules, the user's home, ~/.ssh, a path in ~/.ssh,
+// or the sudo rules of a login user other than root.
 // It returns "" for another step. An unknown login user has no keys or sudo
 // rules to guard.
 func Guard(touches []Touch, login *Login) string {
@@ -113,10 +113,9 @@ func Guard(touches []Touch, login *Login) string {
 }
 
 func guard(touches []Touch, u passwdEntry) string {
-	keys := path.Join(u.home, ".ssh", "authorized_keys")
+	ssh := path.Join(u.home, ".ssh")
 	for _, t := range touches {
-		inHome := t.Path == u.home || t.Path == path.Dir(keys)
-		if t.Path == keys || strings.HasPrefix(keys, t.Path+"/") && (t.Tree || inHome) {
+		if t.Path == u.home || t.Path == ssh || strings.HasPrefix(t.Path, ssh+"/") || strings.HasPrefix(ssh, t.Path+"/") && t.Tree {
 			return "changes the keys of the login user " + u.name
 		}
 	}
@@ -473,7 +472,7 @@ func sameListen(m Module, res Result) bool {
 	var lines []string
 	switch m := m.(type) {
 	case *File:
-		if m.Absent || m.fromHost() {
+		if m.Absent || m.fromHost() || !sshdFile(m.Path) {
 			return false
 		}
 		// The check shows no old content when the content stays.
@@ -489,6 +488,9 @@ func sameListen(m Module, res Result) bool {
 			lines = listens(string(m.Data))
 		}
 	case *Line:
+		if !sshdFile(m.Path) {
+			return false
+		}
 		text, _ := m.Text()
 		lines = listens(string(text))
 	default:
@@ -539,8 +541,18 @@ func restartSSHSocket(ctx context.Context) error {
 	return err
 }
 
-// SSHDConfig reports whether p is sshd's config: sshd_config, sshd_config.d,
-// or a file in it.
+// SSHDConfig reports whether p is sshd's config: a file of sshd, or a unit
+// file or drop-in of ssh.service or ssh.socket.
 func SSHDConfig(p string) bool {
+	rest, ok := strings.CutPrefix(p, unitDir+"/")
+	if !ok {
+		return sshdFile(p)
+	}
+	unit, _, _ := strings.Cut(rest, "/")
+	return SSHPair(strings.TrimSuffix(unit, ".d")) != ""
+}
+
+// sshdFile reports whether p is sshd_config, sshd_config.d, or a file in it.
+func sshdFile(p string) bool {
 	return p == "/etc/ssh/sshd_config" || p == "/etc/ssh/sshd_config.d" || strings.HasPrefix(p, "/etc/ssh/sshd_config.d/")
 }

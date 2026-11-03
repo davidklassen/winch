@@ -28,6 +28,7 @@ func TestAccess(t *testing.T) {
 	}{
 		{"root", "0", "#!/bin/sh\nexit 1\n", "", ""},
 		{"sudo works", "1000", goodSudo, "-n true\n-n sh\n", ""},
+		{"sudo stops programs", "1000", "#!/bin/sh\n[ \"$1\" = -n ] || exit 2\n[ \"$2\" = true ] && exit 0\nshift 2\nPATH=/nonexistent\nexport PATH\nexec /bin/sh \"$@\"\n", "", "not found"},
 		{"sudo fails", "1000", "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n", "", "sudo: a password is required"},
 	}
 	for _, tt := range tests {

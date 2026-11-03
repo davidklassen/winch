@@ -323,7 +323,11 @@ func TestGuard(t *testing.T) {
 		{"a removed /home", admin, []Touch{{"/home", true}}, keys},
 		{"the mode of /home", admin, []Touch{{"/home", false}}, ""},
 		{"another user's keys", admin, []Touch{{"/home/deploy/.ssh/authorized_keys", true}}, ""},
-		{"a file next to the keys", admin, []Touch{{"/home/admin/.ssh/config", true}}, ""},
+		{"a file next to the keys", admin, []Touch{{"/home/admin/.ssh/config", true}}, keys},
+		{"~/.ssh/rc", admin, []Touch{{"/home/admin/.ssh/rc", true}}, keys},
+		{"authorized_keys2", admin, []Touch{{"/home/admin/.ssh/authorized_keys2", true}}, keys},
+		{"a file in the home", admin, []Touch{{"/home/admin/.profile", true}}, ""},
+		{"a name with the prefix of ~/.ssh", admin, []Touch{{"/home/admin/.sshx", true}}, ""},
 		{"a sudo rule", admin, []Touch{{"/etc/sudoers.d/admin", true}}, sudo},
 		{"a purge of the sudo rules", admin, []Touch{{"/etc/sudoers.d", false}, {"/etc/sudoers.d/90-cloud-init-users", true}}, sudo},
 		{"sudoers", admin, []Touch{{"/etc/sudoers", true}}, sudo},
@@ -389,6 +393,8 @@ func TestSSHSocketNote(t *testing.T) {
 		{"a file with a binary old content", &File{Path: conf, Data: []byte("Port 22\n")}, nil, "binary", Modify, ports},
 		{"a removed file", &File{Path: conf + ".d/a.conf", Absent: true}, nil, "", Modify, ports},
 		{"a link", &Link{Path: conf, Target: new("/etc/ssh/a")}, nil, "", Modify, ports},
+		{"a drop-in of ssh.socket", &File{Path: "/etc/systemd/system/ssh.socket.d/port.conf", Data: []byte("[Socket]\nListenStream=\nListenStream=2222\n")}, new("[Socket]\nListenStream=\nListenStream=22\n"), "", Modify, ports},
+		{"a line in a drop-in of ssh.socket", &Line{Path: "/etc/systemd/system/ssh.socket.d/port.conf", Line: "ListenStream=2222"}, new("[Socket]\nListenStream=\n"), "", Modify, ports},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -492,6 +498,14 @@ func TestSSHDConfig(t *testing.T) {
 		{"/etc/ssh/ssh_config", false},
 		{"/etc/ssh/sshd_config.dpkg-old", false},
 		{"/etc/ssh/sshd_config.d.old/port.conf", false},
+		{"/etc/systemd/system/ssh.socket", true},
+		{"/etc/systemd/system/ssh.socket.d", true},
+		{"/etc/systemd/system/ssh.socket.d/port.conf", true},
+		{"/etc/systemd/system/ssh.service", true},
+		{"/etc/systemd/system/ssh.service.d/override.conf", true},
+		{"/etc/systemd/system/ssh-agent.service.d/override.conf", false},
+		{"/etc/systemd/system/ssh.socket.d.old/port.conf", false},
+		{"/etc/systemd/system", false},
 	}
 	for _, tt := range tests {
 		if got := SSHDConfig(tt.path); got != tt.want {
