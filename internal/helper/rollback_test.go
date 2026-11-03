@@ -1101,3 +1101,34 @@ func TestHelloFailsOnANewerTimerJob(t *testing.T) {
 		})
 	}
 }
+
+// spec: Running a pipeline/Lockout protection (a step that changes sshd's
+// config saves in the store of each later step with confirm_access that
+// reloads or restarts sshd)
+func TestRollbackPutsBackTheSSHDConfigOfOtherRecipes(t *testing.T) {
+	l := startLockout(t)
+	dropIn := filepath.Join(filepath.Dir(l.a), "drop-in.conf")
+	g := protocol.Guard{Recipe: "hardening", SSHD: []string{"ssh", "site\tbase"}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(dropIn, "DenyUsers *\n"), Guard: g}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	rb := &rollbacks{dir: filepath.Join(l.dir, "rollback"), project: "acme"}
+	for name, want := range map[string]int{"hardening": 0, "ssh": 1, "site\tbase": 1} {
+		if saved, err := readIndex(rb.store(name)); err != nil || len(saved) != want {
+			t.Errorf("the store of %q holds %+v, %v; want %d paths", name, saved, err, want)
+		}
+	}
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: protocol.Guard{Recipe: "ssh", Save: true, Confirm: true}})
+	if r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if r := l.c.call(t, "rollback", nil); r.Error != "" {
+		t.Fatalf("rollback: %s", r.Error)
+	}
+	if _, err := os.Lstat(dropIn); !os.IsNotExist(err) {
+		t.Errorf("the drop-in stays after the rollback: %v", err)
+	}
+	if content(t, l.b) != "old\n" {
+		t.Errorf("b = %q after the rollback, want old", content(t, l.b))
+	}
+}

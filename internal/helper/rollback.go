@@ -109,11 +109,19 @@ func result(job string) string { return job + ".result" }
 
 // scope returns the directory of the store of g.
 func (r *rollbacks) scope(g protocol.Guard) string {
-	name := "recipe-" + g.Recipe
 	if g.Recipe == "" {
-		name = stageStore(g.Pipeline + "\t" + g.Stage)
+		return r.store(g.Pipeline + "\t" + g.Stage)
 	}
-	return filepath.Join(r.dir, r.project, name)
+	return r.store(g.Recipe)
+}
+
+// store returns the directory of the store of a recipe, or of
+// <pipeline>\t<stage>.
+func (r *rollbacks) store(name string) string {
+	if strings.Contains(name, "\t") {
+		return filepath.Join(r.dir, r.project, stageStore(name))
+	}
+	return filepath.Join(r.dir, r.project, "recipe-"+name)
 }
 
 // notified holds the records of the handlers with confirm_access that the

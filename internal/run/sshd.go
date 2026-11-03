@@ -97,14 +97,68 @@ func stores(stage *project.Stage, p Planned) []store {
 	g := guard(stage, p)
 	var out []store
 	if g.Save {
-		out = append(out, store{g.Recipe, g.Pipeline, g.Stage})
+		out = append(out, ownStore(stage, p))
 	}
 	for _, h := range p.Step.Notify {
 		if slices.Contains(g.Handlers, h.Record()) {
 			out = append(out, storeOf(h))
 		}
 	}
-	return out
+	return append(out, p.SSHD...)
+}
+
+// sshdStores sets SSHD on each step that changes sshd's config. A guarded
+// reload of sshd loads the files of every earlier step, not only those of
+// its own store.
+func (p *Plan) sshdStores() {
+	type ref struct {
+		p     *Planned
+		store store
+	}
+	steps := map[string][]ref{}
+	for _, sp := range p.Stages {
+		for _, hp := range sp.Hosts {
+			name := hp.Host.Name
+			for i := range hp.Steps {
+				s := &hp.Steps[i]
+				if s.Handler == nil {
+					steps[name] = append(steps[name], ref{s, ownStore(sp.Stage, *s)})
+					continue
+				}
+				for j := range s.Handler.Steps {
+					steps[name] = append(steps[name], ref{&s.Handler.Steps[j], storeOf(s.Handler.Handler)})
+				}
+			}
+		}
+	}
+	for _, refs := range steps {
+		var later []store
+		for _, r := range slices.Backward(refs) {
+			if slices.ContainsFunc(module.Touches(r.p.Step.Args), func(t module.Touch) bool { return module.SSHDConfig(t.Path) }) {
+				r.p.SSHD = slices.Clone(later)
+			}
+			if loads, guarded := loadsSSHD(r.p.Step); loads && guarded && !slices.Contains(later, r.store) {
+				later = append(later, r.store)
+			}
+		}
+	}
+}
+
+// ownStore is the store of the step p of stage: that of its recipe, or of
+// the stage.
+func ownStore(stage *project.Stage, p Planned) store {
+	if p.In != nil {
+		return store{recipe: p.In.Recipe.Name}
+	}
+	return store{pipeline: stage.Pipeline, stage: stage.Name}
+}
+
+// name is the store as the helper takes it: a recipe, or <pipeline>\t<stage>.
+func (s store) name() string {
+	if s.recipe != "" {
+		return s.recipe
+	}
+	return s.pipeline + "\t" + s.stage
 }
 
 // sshdThen matches a command that restarts or reloads ssh or sshd:

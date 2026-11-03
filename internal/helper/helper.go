@@ -512,6 +512,11 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 		}
 	}
+	for _, st := range s.Guard.SSHD {
+		if _, _, err := rb.save(rb.store(st), m); err != nil {
+			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+		}
+	}
 	if _, err := rb.notified().add(s.Guard.Handlers); err != nil {
 		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 	}

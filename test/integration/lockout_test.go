@@ -286,6 +286,53 @@ handlers:
       confirm_access: true
 `
 
+// spec: Running a pipeline/Lockout protection (a guarded reload of sshd puts
+// back the sshd config of other recipes)
+func TestLockoutSSHDConfigOfAnotherRecipe(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "sshd-other-recipe")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  sshd-other-recipe: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: hardening\n      - recipe: ssh\n",
+		"recipes/hardening/recipe.yaml": `steps:
+  - file:
+      path: /etc/ssh/sshd_config.d/00-deny.conf
+      content: "DenyUsers *\n"
+`,
+		"recipes/ssh/recipe.yaml": `steps:
+  - file:
+      path: /etc/ssh/sshd_config.d/local.conf
+      content: "MaxAuthTries 6\n"
+    notify: reload
+handlers:
+  reload:
+    - service:
+        name: ssh
+        reloaded: true
+      confirm_access: true
+`,
+	})
+	// With ssh.socket, the drop-in step restarts it, and its own access check
+	// fails.
+	failed := "sshd-other-recipe: ssh: failed: handler ssh.reload: service ssh: the access check failed: "
+	if osRelease().id == "ubuntu" {
+		failed = "sshd-other-recipe: hardening: failed: file /etc/ssh/sshd_config.d/00-deny.conf: the access check failed: "
+	}
+	r := lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 1 || !strings.Contains(r.Stderr, failed) ||
+		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+		t.Fatalf("apply with DenyUsers: exit %d", r.Code)
+	}
+	if out := vm.MustRun(t, "ls /etc/ssh/sshd_config.d"); strings.Contains(out, "00-deny.conf") {
+		t.Errorf("the drop-in stays after the rollback:\n%s", out)
+	}
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "file /etc/ssh/sshd_config.d/00-deny.conf") {
+		t.Errorf("plan after the rollback: exit %d, want the change again", r.Code)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection; Modules/service and unit
 // (sshd from ssh.socket; move sshd to a new port in three runs)
 func TestLockoutSSHPort(t *testing.T) {
