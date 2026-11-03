@@ -3,12 +3,11 @@ package run_test
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/cryptotest"
@@ -90,7 +89,7 @@ func TestSecrets(t *testing.T) {
 	p, _ := secretProject(t)
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/monit/conf.d/settings", "set httpd port 2812\n  allow admin:old-pass\n# Old-Pass\n")
-	h.SetThen("web1", protocol.Then{Recipe: "monit", Module: "file", Mains: []string{"/etc/monit/~^^^^^^~.key"}})
+	h.SetThen("web1", protocol.Then{Recipe: "monit", Module: "file", Mains: mains("/etc/monit/hunter2.key")})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -470,10 +469,6 @@ func TestSecretCmdMissing(t *testing.T) {
 
 // spec: Steps (the record of a then); Variables/Secrets in output
 func TestSecretThenRecord(t *testing.T) {
-	sum := func(s string) string {
-		h := sha256.Sum256([]byte(s))
-		return hex.EncodeToString(h[:])
-	}
 	tests := []struct {
 		name, step string
 		// ok makes the step check as ok.
@@ -503,7 +498,7 @@ func TestSecretThenRecord(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(recs) != 1 || strings.Contains(string(b), "hunter2") || strings.Contains(string(b), sum("setpw hunter2")) {
+			if len(recs) != 1 || strings.Contains(string(b), "hunter2") {
 				t.Errorf("then records = %s, want one record without the secret", b)
 			}
 			// A step above moves the step; its then still runs once.
@@ -521,6 +516,48 @@ func TestSecretThenRecord(t *testing.T) {
 				t.Errorf("then records after the then ran = %+v", got)
 			}
 		})
+	}
+}
+
+// spec: Steps
+func TestThenRecordHash(t *testing.T) {
+	record := func(t *testing.T, secrets map[string]string, step string) protocol.Then {
+		t.Helper()
+		h := fakehost.New()
+		h.FailCommand("web1", "echo done")
+		p, _ := secretsProject(t, secrets, stage+step, "", nil, nil)
+		if ok, got := applyAll(t, p, h); ok {
+			t.Fatalf("apply passed:\n%s", got)
+		}
+		recs := h.ThenOf("web1")
+		if len(recs) != 1 {
+			t.Fatalf("then records = %+v, want one", recs)
+		}
+		return recs[0]
+	}
+	file := func(path string) string {
+		return "      - file:\n          path: " + path + "\n          content: \"k\\n\"\n        then: echo done\n"
+	}
+	one := map[string]string{"pw": "hunter2"}
+	pw := record(t, one, file(`!tpl "/etc/app/{{ .vars.pw }}.key"`))
+	pw2 := record(t, map[string]string{"pw2": "hunter3"}, file(`!tpl "/etc/app/{{ .vars.pw2 }}.key"`))
+	if pw.Matches(pw2) {
+		t.Errorf("the pw and pw2 steps have records that match: %+v and %+v", pw, pw2)
+	}
+	if want := (protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/app/hunter2.key")}); !reflect.DeepEqual(pw, want) {
+		t.Errorf("record of the pw step = %+v, want %+v", pw, want)
+	}
+	changed := record(t, map[string]string{"pw": "hunter4"}, file(`!tpl "/etc/app/{{ .vars.pw }}.key"`))
+	if pw.Matches(changed) {
+		t.Errorf("the record did not change with the secret: %+v", changed)
+	}
+	plain := record(t, one, file("/etc/motd")+file(`!tpl "/etc/app/{{ .vars.pw }}.key"`))
+	if want := mains("/etc/motd"); !reflect.DeepEqual(plain.Mains, want) {
+		t.Errorf("main arguments of a plain step = %q, want %q", plain.Mains, want)
+	}
+	cmd := record(t, one, "      - cmd:\n          command: !tpl \"setpw {{ .vars.pw }}\"\n        then: echo done\n")
+	if want := mains("setpw hunter2"); !reflect.DeepEqual(cmd.Mains, want) {
+		t.Errorf("main arguments of a cmd step = %q, want %q", cmd.Mains, want)
 	}
 }
 

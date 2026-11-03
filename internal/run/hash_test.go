@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"testing/cryptotest"
@@ -254,6 +255,12 @@ func TestHashChanges(t *testing.T) {
 // returns the filter that knows the secret.
 func hashSecretProject(t *testing.T, value, pipeline, recipe string, extra map[string]string, set []string) (*project.Project, *secret.Filter) {
 	t.Helper()
+	return secretsProject(t, map[string]string{"pw": value}, pipeline, recipe, extra, set)
+}
+
+// secretsProject is hashSecretProject with the secret variables secrets.
+func secretsProject(t *testing.T, secrets map[string]string, pipeline, recipe string, extra map[string]string, set []string) (*project.Project, *secret.Filter) {
+	t.Helper()
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)
@@ -266,13 +273,17 @@ func hashSecretProject(t *testing.T, value, pipeline, recipe string, extra map[s
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, err := secret.Encrypt(value, rec)
-	if err != nil {
-		t.Fatal(err)
+	inv := "hosts:\n  web1:\n    vars:\n"
+	for _, name := range slices.Sorted(maps.Keys(secrets)) {
+		text, err := secret.Encrypt(secrets[name], rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inv += "      " + name + ": !secret " + text + "\n"
 	}
 	files := map[string]string{
 		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + id.Recipient().String() + "]\n",
-		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: !secret " + text + "\n",
+		"inventories/test.yaml": inv,
 		"pipelines/site.yaml":   pipeline,
 	}
 	if recipe != "" {

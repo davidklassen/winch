@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"maps"
 	"os"
@@ -282,7 +284,7 @@ func TestApply(t *testing.T) {
 				h := fakehost.New()
 				h.SetFile("web1", "/etc/motd", "hello\n")
 				h.SetFile("web2", "/etc/motd", "hello\n")
-				h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/etc/aliases"}})
+				h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/aliases")})
 				if r := winch(t, dir, h, false, "", "plan", "site", "--exit-code"); r.code != exitOK {
 					t.Errorf("plan --exit-code: exit %d", r.code)
 				}
@@ -640,4 +642,14 @@ func TestParseFlags(t *testing.T) {
 	if err != nil || !slices.Equal(pos, []string{"site", "--json"}) || f.inventory != "x" || !slices.Equal(f.set, []string{"vars.a=b"}) || !f.yes || f.json {
 		t.Errorf("parse = %q, %v; flags %+v", pos, err, f)
 	}
+}
+
+// mains are the main arguments of a then record for the main arguments args.
+func mains(args ...string) []string {
+	var hs []string
+	for _, a := range args {
+		h := sha256.Sum256([]byte(a))
+		hs = append(hs, hex.EncodeToString(h[:]))
+	}
+	return hs
 }

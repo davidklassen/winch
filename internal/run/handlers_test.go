@@ -3,6 +3,8 @@ package run_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"maps"
 	"path/filepath"
@@ -210,6 +212,16 @@ func applyAll(t *testing.T, p *project.Project, h *fakehost.Hosts) (bool, []byte
 	return ok, applyOutput(&out, &errOut)
 }
 
+// mains are the main arguments of a then record for the main arguments args.
+func mains(args ...string) []string {
+	var hs []string
+	for _, a := range args {
+		h := sha256.Sum256([]byte(a))
+		hs = append(hs, hex.EncodeToString(h[:]))
+	}
+	return hs
+}
+
 // spec: Handlers; Steps; Running a pipeline/Apply; CLI/Output
 func TestApplyHandlers(t *testing.T) {
 	h := fakehost.New()
@@ -376,7 +388,7 @@ func TestThen(t *testing.T) {
 			t.Fatalf("apply succeeded with a failing then:\n%s", got)
 		}
 		// Both elements change, and one record stays.
-		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Module: "file", Mains: []string{"/var/www/index.html", "/var/www/about.html"}}}; !reflect.DeepEqual(got, want) {
+		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Module: "file", Mains: mains("/var/www/index.html", "/var/www/about.html")}}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("then records = %v, want %v", got, want)
 		}
 		h.Fix("web1 reindex")
@@ -407,7 +419,7 @@ func TestThen(t *testing.T) {
 		if slices.Contains(h.Log["web1"], "command reindex") {
 			t.Error("then ran after a failed element")
 		}
-		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Module: "file", Mains: []string{"/var/www/index.html", "/var/www/about.html"}}}; !reflect.DeepEqual(got, want) {
+		if got, want := h.ThenOf("web1"), []protocol.Then{{Recipe: "site", Module: "file", Mains: mains("/var/www/index.html", "/var/www/about.html")}}; !reflect.DeepEqual(got, want) {
 			t.Errorf("then records = %v, want %v", got, want)
 		}
 		got := h.PendingOf("web1")
@@ -537,24 +549,26 @@ func TestPendingThen(t *testing.T) {
 	present(h, "web1", "web2")
 	h.SetFile("web1", "/etc/motd", "hi\n")
 	h.SetFile("web2", "/etc/motd", "hi\n")
-	h.SetThen("web1", protocol.Then{Recipe: "site", Module: "file", Mains: []string{"/var/www/about.html"}}, protocol.Then{Pipeline: "site", Stage: "apps", Module: "file", Mains: []string{"/etc/motd"}})
+	h.SetThen("web1", protocol.Then{Recipe: "site", Module: "file", Mains: mains("/var/www/about.html")}, protocol.Then{Pipeline: "site", Stage: "apps", Module: "file", Mains: mains("/etc/motd")})
 	// No step matches these records: a step without then, another stage, a
 	// handler that the recipe does not have, another module, another main
-	// argument, a recipe that the project does not have, and a pipeline that
-	// the project does not have.
+	// argument, a recipe that the project does not have, a pipeline that the
+	// project does not have, and the plain main argument of an earlier
+	// version.
 	gone := []protocol.Then{
-		{Recipe: "nginx", Module: "file", Mains: []string{"/etc/nginx/a.conf"}},
-		{Pipeline: "site", Stage: "web", Module: "file", Mains: []string{"/etc/motd"}},
-		{Recipe: "site", Handler: "restart", Module: "file", Mains: []string{"/etc/motd"}},
-		{Recipe: "site", Module: "dir", Mains: []string{"/var/www/about.html"}},
-		{Pipeline: "site", Stage: "apps", Module: "file", Mains: []string{"/etc/issue"}},
-		{Recipe: "apps", Module: "file", Mains: []string{"/etc/motd"}},
-		{Pipeline: "deploy", Stage: "apps", Module: "file", Mains: []string{"/etc/motd"}},
+		{Recipe: "nginx", Module: "file", Mains: mains("/etc/nginx/a.conf")},
+		{Pipeline: "site", Stage: "web", Module: "file", Mains: mains("/etc/motd")},
+		{Recipe: "site", Handler: "restart", Module: "file", Mains: mains("/etc/motd")},
+		{Recipe: "site", Module: "dir", Mains: mains("/var/www/about.html")},
+		{Pipeline: "site", Stage: "apps", Module: "file", Mains: mains("/etc/issue")},
+		{Recipe: "apps", Module: "file", Mains: mains("/etc/motd")},
+		{Pipeline: "deploy", Stage: "apps", Module: "file", Mains: mains("/etc/motd")},
+		{Pipeline: "site", Stage: "apps", Module: "file", Mains: []string{"/etc/motd"}},
 	}
 	// The plan does not check this scope on web2: a recipe whose when is
 	// false.
 	kept := []protocol.Then{
-		{Recipe: "app", Module: "file", Mains: []string{"/etc/app.conf"}},
+		{Recipe: "app", Module: "file", Mains: mains("/etc/app.conf")},
 	}
 	h.SetThen("web2", slices.Concat(gone, kept)...)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
@@ -591,7 +605,7 @@ func TestPendingThenOfAChangedStep(t *testing.T) {
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetFile("web1", "/var/www/about.html", "old\n")
-	h.SetThen("web1", protocol.Then{Recipe: "site", Module: "file", Mains: []string{"/var/www/about.html"}})
+	h.SetThen("web1", protocol.Then{Recipe: "site", Module: "file", Mains: mains("/var/www/about.html")})
 	p := handlerProject(t)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
@@ -622,7 +636,7 @@ func TestPendingThenOfAHandlerStep(t *testing.T) {
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetPending("web1", "app.restart")
-	h.SetThen("web1", protocol.Then{Recipe: "app", Handler: "restart", Module: "service", Mains: []string{"app"}})
+	h.SetThen("web1", protocol.Then{Recipe: "app", Handler: "restart", Module: "service", Mains: mains("app")})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -675,7 +689,7 @@ func TestCommandLines(t *testing.T) {
 	}
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/aliases", "a\n")
-	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/etc/aliases"}})
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/aliases")})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -1085,9 +1099,9 @@ func TestPendingThenWithoutItsStep(t *testing.T) {
 	h.SetFile("web2", "/etc/motd", "hi\n")
 	// The loop lost its last element, and the aliases step is gone.
 	h.SetThen("web1",
-		protocol.Then{Pipeline: "site", Stage: "apps", Module: "file", Mains: []string{"/etc/motd"}},
-		protocol.Then{Recipe: "site", Module: "file", Mains: []string{"/var/www/index.html", "/var/www/about.html"}},
-		protocol.Then{Pipeline: "site", Stage: "apps", Module: "file", Mains: []string{"/etc/aliases"}},
+		protocol.Then{Pipeline: "site", Stage: "apps", Module: "file", Mains: mains("/etc/motd")},
+		protocol.Then{Recipe: "site", Module: "file", Mains: mains("/var/www/index.html", "/var/www/about.html")},
+		protocol.Then{Pipeline: "site", Stage: "apps", Module: "file", Mains: mains("/etc/aliases")},
 	)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
@@ -1123,14 +1137,14 @@ func TestGoneThenScopes(t *testing.T) {
         then: db-reload
 `
 	records := []protocol.Then{
-		{Pipeline: "site", Stage: "old", Module: "file", Mains: []string{"/etc/old"}},
-		{Pipeline: "site", Stage: "old", Module: "upgrade", Mains: []string{"upgrade"}},
-		{Pipeline: "site", Stage: "old", Module: "cmd", Mains: []string{"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}},
-		{Pipeline: "site", Stage: "old", Handler: "restart", Module: "file", Mains: []string{"/etc/old"}},
-		{Pipeline: "site", Stage: "db", Module: "file", Mains: []string{"/etc/gone"}},
-		{Pipeline: "site", Stage: "apps", Module: "file", Mains: []string{"/etc/apps"}},
-		{Recipe: "app", Handler: "restart", Module: "service", Mains: []string{"app"}},
-		{Recipe: "nginx", Module: "file", Mains: []string{"/etc/nginx/gone.conf"}},
+		{Pipeline: "site", Stage: "old", Module: "file", Mains: mains("/etc/old")},
+		{Pipeline: "site", Stage: "old", Module: "upgrade", Mains: mains("upgrade")},
+		{Pipeline: "site", Stage: "old", Module: "cmd", Mains: mains("test")},
+		{Pipeline: "site", Stage: "old", Handler: "restart", Module: "file", Mains: mains("/etc/old")},
+		{Pipeline: "site", Stage: "db", Module: "file", Mains: mains("/etc/gone")},
+		{Pipeline: "site", Stage: "apps", Module: "file", Mains: mains("/etc/apps")},
+		{Recipe: "app", Handler: "restart", Module: "service", Mains: mains("app")},
+		{Recipe: "nginx", Module: "file", Mains: mains("/etc/nginx/gone.conf")},
 	}
 	for _, tc := range []struct {
 		name   string
@@ -1181,7 +1195,7 @@ func TestGoneRecordWithoutChange(t *testing.T) {
 		"pipelines/site.yaml":     "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: \"hi\\n\"\n      - recipe: app\n",
 		"recipes/app/recipe.yaml": "steps:\n  - file:\n      path: /etc/app.conf\n      content: \"app\\n\"\n",
 	}
-	then := protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/etc/aliases"}}
+	then := protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/aliases")}
 	pend := func(c protocol.Check) func(*fakehost.Hosts) { return func(h *fakehost.Hosts) { h.Pend("web1", c) } }
 	for _, tc := range []struct {
 		name   string
@@ -1200,7 +1214,7 @@ func TestGoneRecordWithoutChange(t *testing.T) {
 		{"renamed stage handler", func(h *fakehost.Hosts) { h.SetPending("web1", "site\tbase\treload") }, "a pending handler base.reload matches no handler"},
 		{"handler of a renamed stage", func(h *fakehost.Hosts) { h.SetPending("web1", "site\told\treload") }, "a pending handler old.reload matches no handler"},
 		{"then of a renamed recipe", func(h *fakehost.Hosts) {
-			h.SetThen("web1", protocol.Then{Recipe: "old", Module: "file", Mains: []string{"/etc/old.conf"}})
+			h.SetThen("web1", protocol.Then{Recipe: "old", Module: "file", Mains: mains("/etc/old.conf")})
 		}, "a pending then of a file step in recipe old matches no step"},
 		{"assert of a renamed recipe", pend(protocol.Check{Recipe: "old", Step: 1}), "a pending assert of recipe old step 1 matches no assert"},
 	} {
@@ -1269,10 +1283,10 @@ func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 	stays := records{
 		handlers: []string{"app.restart", "mail.reload", "mail\tmx\tflush"},
 		thens: []protocol.Then{
-			{Recipe: "app", Module: "file", Mains: []string{"/etc/app.old"}},
-			{Recipe: "mail", Module: "file", Mains: []string{"/etc/mail.old"}},
-			{Recipe: "mail", Handler: "reload", Module: "cmd", Mains: []string{"x"}},
-			{Pipeline: "mail", Stage: "mx", Module: "file", Mains: []string{"/etc/mx.old"}},
+			{Recipe: "app", Module: "file", Mains: mains("/etc/app.old")},
+			{Recipe: "mail", Module: "file", Mains: mains("/etc/mail.old")},
+			{Recipe: "mail", Handler: "reload", Module: "cmd", Mains: mains("x")},
+			{Pipeline: "mail", Stage: "mx", Module: "file", Mains: mains("/etc/mx.old")},
 		},
 		checks: []protocol.Check{{Recipe: "mail", Step: 1}},
 	}
@@ -1280,7 +1294,7 @@ func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 	// have.
 	known := records{
 		handlers: []string{"mail.gone", "mail\tmx\tgone", "mail\told\tflush"},
-		thens:    []protocol.Then{{Recipe: "mail", Handler: "gone", Module: "cmd", Mains: []string{"x"}}},
+		thens:    []protocol.Then{{Recipe: "mail", Handler: "gone", Module: "cmd", Mains: mains("x")}},
 		checks:   []protocol.Check{{Pipeline: "mail", Stage: "old", Step: 1}},
 	}
 	knownNotes := "web1: note: a pending handler mail.gone matches no handler and will not run\n" +
@@ -1291,7 +1305,7 @@ func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 	// These name a recipe or a pipeline that no pipeline has.
 	unknown := records{
 		handlers: []string{"old.reload", "old\tweb\treload"},
-		thens:    []protocol.Then{{Recipe: "old", Module: "file", Mains: []string{"/etc/old"}}},
+		thens:    []protocol.Then{{Recipe: "old", Module: "file", Mains: mains("/etc/old")}},
 		checks:   []protocol.Check{{Recipe: "old", Step: 1}, {Pipeline: "old", Stage: "web"}},
 	}
 	for _, tc := range []struct {
@@ -1374,7 +1388,7 @@ func TestGoneRecordOfFailedHostStays(t *testing.T) {
 	})
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/motd", "hi\n")
-	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/etc/aliases"}})
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/aliases")})
 	h.FailCheck("web1 /etc/motd")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	if plan.Failed["web1"] == nil {
@@ -1400,7 +1414,7 @@ func TestGoneRecordRemovalFails(t *testing.T) {
 	})
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/motd", "hi\n")
-	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/etc/aliases"}})
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/aliases")})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	traced := len(h.Trace)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1444,7 +1458,7 @@ func TestPendingThenOfTwoLineSteps(t *testing.T) {
 	})
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/ssh/sshd_config", "PermitRootLogin no\nPort 22\n")
-	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "ssh", Module: "line", Mains: []string{"/etc/ssh/sshd_config"}})
+	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "ssh", Module: "line", Mains: mains("/etc/ssh/sshd_config")})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
