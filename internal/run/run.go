@@ -1456,31 +1456,14 @@ func scope(stage *project.Stage, p Planned) string {
 }
 
 // thenRecord is the record of the then of the evaluated steps at place, or nil
-// for a step without then. A main argument that reads a secret enters as the
-// main argument of the placeholder variant, so the host keeps nothing that
-// tests a guess of the secret.
+// for a step without then.
 func thenRecord(steps []project.Step, place protocol.Check) *protocol.Then {
 	if len(steps) == 0 || steps[0].Then == "" {
 		return nil
 	}
 	t := &protocol.Then{Recipe: place.Recipe, Pipeline: place.Pipeline, Stage: place.Stage, Handler: place.Handler, Module: steps[0].Module}
 	for _, st := range steps {
-		main := st.Args.Main()
-		if c, ok := st.Args.(*module.Cmd); ok {
-			main = sum(c.Command)
-		}
-		// HashArgs that are not a module have no main argument.
-		hm, ok := st.HashArgs.(module.Module)
-		if st.Secret && (!ok || hm.Main() != st.Args.Main()) {
-			main = secret.Mark
-			if ok {
-				main = hm.Main()
-			}
-			if c, ok := hm.(*module.Cmd); ok {
-				main = sum(c.Command)
-			}
-		}
-		t.Mains = append(t.Mains, main)
+		t.Mains = append(t.Mains, sum(st.Args.Main()))
 	}
 	return t
 }

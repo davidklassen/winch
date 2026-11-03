@@ -137,17 +137,33 @@ handlers:
 
 // spec: CLI/Output (the summary); Steps (a pending then)
 func TestPendingThenOfCmdCounts(t *testing.T) {
-	files := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
-		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: app migrate\n        then: echo done\n",
-	}
-	h := fakehost.New()
-	sum := sha256.Sum256([]byte("app migrate"))
-	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "cmd", Mains: []string{hex.EncodeToString(sum[:])}})
-	plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{})
-	if change, _, unknown, _ := plan.Counts(); change != 1 || unknown != 0 {
-		t.Errorf("counts: %d to change, %d unknown; want a pending then to count as a change", change, unknown)
+	for _, tt := range []struct {
+		name, command, record string
+		pending               bool
+	}{
+		{"one line", "app migrate", "app migrate", true},
+		{"a block", "|\n            app migrate", "app migrate", true},
+		// A record of an earlier version hashes the final newline too.
+		{"a block record of an earlier version", "|\n            app migrate", "app migrate\n", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			files := map[string]string{
+				"winch.yaml":            "name: acme\ninventory: test\n",
+				"inventories/test.yaml": "hosts:\n  web1: {}\n",
+				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: " + tt.command + "\n        then: echo done\n",
+			}
+			h := fakehost.New()
+			sum := sha256.Sum256([]byte(tt.record))
+			h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "cmd", Mains: []string{hex.EncodeToString(sum[:])}})
+			plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{})
+			change, _, unknown, _ := plan.Counts()
+			if tt.pending && (change != 1 || unknown != 0) {
+				t.Errorf("counts: %d to change, %d unknown; want a pending then to count as a change", change, unknown)
+			}
+			if !tt.pending && (change != 0 || unknown != 1) {
+				t.Errorf("counts: %d to change, %d unknown; want a record that matches no step", change, unknown)
+			}
+		})
 	}
 }
 

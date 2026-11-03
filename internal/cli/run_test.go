@@ -93,7 +93,7 @@ func TestRunKeepsRecords(t *testing.T) {
 	dir := runProject(t)
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/motd", "hi")
-	then := protocol.Then{Pipeline: "run", Stage: "web", Module: "file", Mains: []string{"/etc/aliases"}}
+	then := protocol.Then{Pipeline: "run", Stage: "web", Module: "file", Mains: mains("/etc/aliases")}
 	gate := protocol.Check{Pipeline: "run", Stage: "web"}
 	h.SetThen("web1", then)
 	h.Pend("web1", gate)
