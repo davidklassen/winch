@@ -57,6 +57,12 @@ type repoFile struct {
 const (
 	sourcesDir = "/etc/apt/sources.list.d"
 	keyringDir = "/etc/apt/keyrings"
+	// planned holds the copy of apt's sources with the sources and keys that
+	// the repo steps of the run change.
+	planned      = aptDir + "/sources"
+	plannedList  = planned + "/sources.list"
+	plannedParts = planned + "/sources.list.d"
+	plannedKeys  = planned + "/keyrings"
 )
 
 func (r *Repo) Main() string { return r.Name }
@@ -201,15 +207,15 @@ func (r *Repo) Source() string { return uriKey(r.URL) + " " + r.Suite }
 func (r *Repo) SourcePath() string { return sourcesDir + "/" + r.Name + ".sources" }
 func (r *Repo) keyPath() string    { return keyringDir + "/" + r.Name + ".asc" }
 
-// source returns the content of the source file.
-func (r *Repo) source() []byte {
+// source returns the content of the source file, with the key file key.
+func (r *Repo) source(key string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Types: deb\nURIs: %s\nSuites: %s\n", r.URL, r.Suite)
 	if len(r.Components) > 0 {
 		fmt.Fprintf(&b, "Components: %s\n", strings.Join(r.Components, " "))
 	}
 	if r.KeyData != nil {
-		fmt.Fprintf(&b, "Signed-By: %s\n", r.keyPath())
+		fmt.Fprintf(&b, "Signed-By: %s\n", key)
 	}
 	return []byte(b.String())
 }
@@ -237,7 +243,7 @@ func (r *Repo) Check(_ context.Context, st *State, _ Say) (Result, error) {
 			r.writes = append(r.writes, f)
 		}
 	}
-	f, lines, err := checkRepoFile(r.SourcePath(), r.source())
+	f, lines, err := checkRepoFile(r.SourcePath(), r.source(r.keyPath()))
 	if err != nil {
 		return Result{}, err
 	}
@@ -262,9 +268,82 @@ func (r *Repo) Check(_ context.Context, st *State, _ Say) (Result, error) {
 	}
 	if r.refresh {
 		changes = append(changes, "refresh the index of source "+r.Name)
-		st.IndexFresh, st.Refreshed = false, false
+		if err := r.plan(st); err != nil {
+			return Result{}, fmt.Errorf("plan the sources: %w", err)
+		}
+		st.IndexFresh, st.Refreshed, st.Sources = false, false, true
 	}
 	return Result{Status: Change, Action: action, Changes: changes}, nil
+}
+
+// plan writes the source and the key of the step into the planned sources.
+// The first repo step of the run that changes one copies apt's sources there
+// first. Each drops the copies of the sources that an earlier step removes.
+func (r *Repo) plan(st *State) error {
+	if !st.Sources {
+		if err := os.RemoveAll(planned); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(plannedParts, 0o700); err != nil {
+			return err
+		}
+	}
+	parts, err := sourceParts()
+	if err != nil {
+		return err
+	}
+	for _, p := range append([]string{"/etc/apt/sources.list"}, parts...) {
+		dst := path.Join(plannedParts, path.Base(p))
+		if p == "/etc/apt/sources.list" {
+			dst = plannedList
+		}
+		if r.removed(p) {
+			if err := os.Remove(dst); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+			continue
+		}
+		if st.Sources {
+			continue
+		}
+		if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, data, 0o600); err != nil {
+			return err
+		}
+	}
+	key := path.Join(plannedKeys, r.Name+".asc")
+	if r.KeyData != nil {
+		if err := os.MkdirAll(plannedKeys, 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(key, r.KeyData, 0o600); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path.Join(plannedParts, r.Name+".sources"), r.source(key), 0o600)
+}
+
+// sourceParts returns the files in sources.list.d that apt reads by their
+// names.
+func sourceParts() ([]string, error) {
+	entries, err := os.ReadDir(sourcesDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	var parts []string
+	for _, e := range entries {
+		n := e.Name()
+		if sourceNameRe.MatchString(n) && (strings.HasSuffix(n, ".list") || strings.HasSuffix(n, ".sources")) {
+			parts = append(parts, path.Join(sourcesDir, n))
+		}
+	}
+	return parts, nil
 }
 
 // keyFileChanges describes how the key file p changes from old, nil when there
@@ -311,20 +390,12 @@ func keyText(k pgpKey) string {
 
 // checkOthers fails when another sources file of apt lists the source.
 func (r *Repo) checkOthers() error {
-	files := []string{"/etc/apt/sources.list"}
-	entries, err := os.ReadDir(sourcesDir)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	parts, err := sourceParts()
+	if err != nil {
 		return err
 	}
-	for _, e := range entries {
-		n := e.Name()
-		if n == r.Name+".sources" || !sourceNameRe.MatchString(n) || !strings.HasSuffix(n, ".list") && !strings.HasSuffix(n, ".sources") {
-			continue
-		}
-		files = append(files, path.Join(sourcesDir, n))
-	}
-	for _, f := range files {
-		if r.removed(f) {
+	for _, f := range append([]string{"/etc/apt/sources.list"}, parts...) {
+		if f == r.SourcePath() || r.removed(f) {
 			continue
 		}
 		fi, err := os.Stat(f)

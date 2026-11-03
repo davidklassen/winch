@@ -89,10 +89,13 @@ type State struct {
 	// IndexFresh is true after an install of the run refreshed the package
 	// index.
 	IndexFresh bool `json:"index_fresh,omitempty"`
-	// Refreshed is true after an upgrade step of the run, also in the plan,
-	// refreshed the package index of upgrade, and no later step changed a
-	// source.
+	// Refreshed is true after a step of the run, also in the plan, refreshed
+	// winch's package index, and no later step changed a source.
 	Refreshed bool `json:"refreshed,omitempty"`
+	// Sources is true after a repo step of the run changed a source or a key.
+	// Later checks read winch's package index of the sources that the run
+	// will have.
+	Sources bool `json:"sources,omitempty"`
 	// RemovedUsers are the users that earlier steps of the host remove.
 	RemovedUsers []string `json:"removed_users,omitempty"`
 	// MovedUsers are the users that earlier steps of the host move to

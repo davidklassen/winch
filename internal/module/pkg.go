@@ -92,6 +92,17 @@ func aptGet(ctx context.Context, args ...string) (string, error) {
 }
 
 func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
+	// index are the apt flags of the package index that the check reads, nil
+	// for apt's own.
+	var index []string
+	lists := filepath.Dir(indexLock)
+	if st.Sources {
+		var err error
+		if index, err = refreshWinchIndex(ctx, st); err != nil {
+			return Result{}, err
+		}
+		lists = winchLists
+	}
 	pkgs, err := readDpkg(ctx, say.Progress)
 	if err != nil {
 		return Result{}, err
@@ -103,7 +114,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 			missing = append(missing, n)
 		}
 	}
-	providers, foreign, known, err := showpkg(ctx, missing)
+	providers, foreign, known, err := showpkg(ctx, index, missing)
 	if err != nil {
 		return Result{}, err
 	}
@@ -116,7 +127,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 		}
 	}
 	if len(unknown) > 0 {
-		entries, err := os.ReadDir(filepath.Dir(indexLock))
+		entries, err := os.ReadDir(lists)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return Result{}, fmt.Errorf("read package index: %w", err)
 		}
@@ -181,7 +192,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 	if len(p.todo) > 0 {
 		changes = []string{p.verb() + " " + strings.Join(p.todo, ", ")}
 		if p.Absent {
-			out, err := p.simulate(ctx, say.Progress)
+			out, err := p.simulate(ctx, say.Progress, index)
 			if err != nil {
 				return Result{}, err
 			}
@@ -211,7 +222,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 	case slices.ContainsFunc(p.todo, func(n string) bool { return !known[n] }):
 		changes = append(changes, OthersUnknown)
 	case len(p.todo) > 0 || len(p.configure) > 0:
-		others, err := p.others(ctx, say.Progress)
+		others, err := p.others(ctx, say.Progress, index)
 		if err != nil {
 			return Result{}, err
 		}
@@ -255,16 +266,16 @@ func PkgPlan(changes []string) (installs, others []string) {
 	return installs, others
 }
 
-// showpkg reads the package index for names. providers holds the sorted
+// showpkg reads the package index of the apt flags index for names. providers holds the sorted
 // native providers of each name that has no version of its own. apt takes a
 // name without a package of the native architecture or all as the foreign
 // package that it knows, and foreign maps such a name to that package. known
 // holds the packages that the package index has a version of.
-func showpkg(ctx context.Context, names []string) (providers map[string][]string, foreign map[string]string, known map[string]bool, err error) {
+func showpkg(ctx context.Context, index, names []string) (providers map[string][]string, foreign map[string]string, known map[string]bool, err error) {
 	if len(names) == 0 {
 		return nil, nil, nil, nil
 	}
-	out, err := run(ctx, nil, "apt-cache", append([]string{"showpkg"}, names...)...)
+	out, err := run(ctx, nil, "apt-cache", slices.Concat([]string{"showpkg"}, index, names)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -352,9 +363,9 @@ func (p *Pkg) verb() string {
 }
 
 // candidateStanzas returns the package stanzas of the candidate versions of
-// the names that the package index knows.
-func candidateStanzas(ctx context.Context, names []string) (string, error) {
-	_, _, known, err := showpkg(ctx, names)
+// the names that the package index of the apt flags index knows.
+func candidateStanzas(ctx context.Context, index, names []string) (string, error) {
+	_, _, known, err := showpkg(ctx, index, names)
 	if err != nil {
 		return "", err
 	}
@@ -367,7 +378,7 @@ func candidateStanzas(ctx context.Context, names []string) (string, error) {
 	if len(show) == 0 {
 		return "", nil
 	}
-	return run(ctx, nil, "apt-cache", append([]string{"show", "--no-all-versions"}, show...)...)
+	return run(ctx, nil, "apt-cache", slices.Concat([]string{"show", "--no-all-versions"}, index, show)...)
 }
 
 // writeStatus writes a copy of the dpkg status file with the candidates
@@ -444,18 +455,19 @@ func parseRemovals(out string, own []string) []string {
 	return others
 }
 
-// simulate runs the apt-get call of the step with -s. It holds the package
+// simulate runs the apt-get call of the step with -s on the package index of
+// the apt flags index. It holds the package
 // locks, so it does not see the half-done packages of a running apt. apt reads
 // a copy of the dpkg status in which p.Installed are installed and p.Removed
 // are gone.
-func (p *Pkg) simulate(ctx context.Context, progress func(string), flags ...string) (string, error) {
+func (p *Pkg) simulate(ctx context.Context, progress func(string), index []string, flags ...string) (string, error) {
 	// The copy has no stanza for a package that an earlier step removes, and
 	// apt fails on a name that neither the copy nor the index has.
 	todo := slices.DeleteFunc(slices.Clone(p.todo), func(n string) bool { return slices.Contains(p.Removed, n) })
 	if len(todo) == 0 && len(p.configure) == 0 {
 		return "", nil
 	}
-	candidates, err := candidateStanzas(ctx, p.Installed)
+	candidates, err := candidateStanzas(ctx, index, p.Installed)
 	if err != nil {
 		return "", err
 	}
@@ -464,7 +476,7 @@ func (p *Pkg) simulate(ctx context.Context, progress func(string), flags ...stri
 		return "", err
 	}
 	defer unlock()
-	args := slices.Concat([]string{"-s", "-q", p.verb()}, flags)
+	args := slices.Concat([]string{"-s", "-q", p.verb()}, flags, index)
 	if candidates != "" || len(p.Removed) > 0 {
 		status, err := writeStatus(candidates, p.Removed)
 		if err != nil {
@@ -478,9 +490,9 @@ func (p *Pkg) simulate(ctx context.Context, progress func(string), flags ...stri
 
 // others returns the plan lines of the other packages that apt installs or
 // upgrades with the step's packages. A held one fails.
-func (p *Pkg) others(ctx context.Context, progress func(string)) ([]string, error) {
+func (p *Pkg) others(ctx context.Context, progress func(string), index []string) ([]string, error) {
 	// apt does not upgrade a held package and fails without its name.
-	out, err := p.simulate(ctx, progress, append(p.installFlags(), "--remove", "-o", "APT::Ignore-Hold=true")...)
+	out, err := p.simulate(ctx, progress, index, append(p.installFlags(), "--remove", "-o", "APT::Ignore-Hold=true")...)
 	if err != nil {
 		return nil, err
 	}
@@ -568,7 +580,7 @@ func (p *Pkg) Apply(ctx context.Context, say Say) error {
 	// The index of the check can be older than a refresh of this run, or
 	// empty, as on a new host.
 	if !p.Absent {
-		providers, _, _, err := showpkg(ctx, p.todo)
+		providers, _, _, err := showpkg(ctx, nil, p.todo)
 		if err != nil {
 			return err
 		}
@@ -578,7 +590,7 @@ func (p *Pkg) Apply(ctx context.Context, say Say) error {
 	}
 	// The check before the refresh read the old index.
 	if p.refresh {
-		if _, err := p.others(ctx, say.Progress); err != nil {
+		if _, err := p.others(ctx, say.Progress, nil); err != nil {
 			return err
 		}
 	}

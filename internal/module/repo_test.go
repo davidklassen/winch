@@ -72,7 +72,7 @@ func TestRepoSource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := string(tt.repo.source()); got != tt.want {
+			if got := string(tt.repo.source(tt.repo.keyPath())); got != tt.want {
 				t.Errorf("source =\n%s\nwant\n%s", got, tt.want)
 			}
 		})
@@ -570,7 +570,7 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 func TestRepoCheckOwnFile(t *testing.T) {
 	r := &Repo{Name: "debian", URL: "http://deb.debian.org/debian", Suite: "trixie", Components: []string{"main"}}
 	const p = "/etc/apt/sources.list.d/debian.sources"
-	own := string(r.source())
+	own := string(r.source(r.keyPath()))
 	tests := []struct {
 		name, old, want string
 	}{
