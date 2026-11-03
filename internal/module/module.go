@@ -78,6 +78,9 @@ type Result struct {
 	// SourceSHA256 is the hash of the content that copy_from or stock
 	// reads on the host, so the plan hash covers it.
 	SourceSHA256 string `json:"source_sha256,omitempty"`
+	// OthersRead is set when others can read the existing file that the step
+	// edits in place.
+	OthersRead bool `json:"others_read,omitempty"`
 }
 
 // State is what earlier steps of the run did on the host. The controller
