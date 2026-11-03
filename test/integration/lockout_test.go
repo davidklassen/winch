@@ -333,6 +333,74 @@ handlers:
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (the run of a host ends before
+// a guarded sshd reload that holds saved sshd files ran)
+func TestLockoutSSHDConfigBeforeAReload(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "sshd-before-reload")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\nvars:\n  tries: 6\n  fail: false\n  sleep: 0\n",
+		"inventories/test.yaml": "hosts:\n  sshd-before-reload: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - recipe: hardening
+      - name: Fails on request
+        cmd:
+          command: exit 3
+        when: !expr vars.fail
+      - cmd:
+          command: !tpl "sleep {{ .vars.sleep }}"
+      - recipe: ssh
+`,
+		"recipes/hardening/recipe.yaml": `steps:
+  - file:
+      path: /etc/ssh/sshd_config.d/hardening.conf
+      content: !tpl "MaxAuthTries {{ .vars.tries }}\n"
+`,
+		"recipes/ssh/recipe.yaml": `steps:
+  - file:
+      path: /etc/ssh/winch-tries
+      content: !tpl "{{ .vars.tries }}\n"
+    notify: reload
+handlers:
+  reload:
+    - service:
+        name: ssh
+        reloaded: true
+      confirm_access: true
+`,
+	})
+	const conf = "cat /etc/ssh/sshd_config.d/hardening.conf"
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("first apply: exit %d\n%s", r.Code, r.Stderr)
+	}
+
+	t.Run("a failed step puts back the drop-in", func(t *testing.T) {
+		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.tries=7", "--set", "vars.fail=true")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "Fails on request") {
+			t.Fatalf("apply: exit %d, want the failed step\n%s", r.Code, r.Stderr)
+		}
+		if out := vm.MustRun(t, conf); out != "MaxAuthTries 6\n" {
+			t.Errorf("drop-in after the failed run: %q, want the old file", out)
+		}
+	})
+
+	t.Run("Ctrl-C puts back the drop-in", func(t *testing.T) {
+		w := startWinch(t, dir, "apply", "site", "--yes", "--set", "vars.tries=8", "--set", "vars.sleep=10")
+		vm.MustRun(t, `timeout 60 sh -c 'until grep -qx "MaxAuthTries 8" /etc/ssh/sshd_config.d/hardening.conf; do sleep 0.2; done'`)
+		w.signal(t, syscall.SIGINT)
+		if code := w.wait(t); code == 0 {
+			t.Fatal("apply: exit 0 after Ctrl-C")
+		}
+		vm.MustRun(t, `timeout 60 sh -c 'until flock -n /var/lib/winch/lock true; do sleep 0.5; done'`)
+		if out := vm.MustRun(t, conf); out != "MaxAuthTries 6\n" {
+			t.Errorf("drop-in after Ctrl-C: %q, want the old file", out)
+		}
+	})
+}
+
 // spec: Running a pipeline/Lockout protection; Modules/service and unit
 // (sshd from ssh.socket; move sshd to a new port in three runs)
 func TestLockoutSSHPort(t *testing.T) {

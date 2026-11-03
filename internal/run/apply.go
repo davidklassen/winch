@@ -654,7 +654,7 @@ func (a *hostApply) afterStart(st project.Step, record string) project.Step {
 // store of the recipe, or of the stage for a module step of the stage, when
 // that has a step with confirm_access. It also saves in the store of each
 // confirm_access handler that the step notifies on the host, and in each
-// other store of p.SSHD.
+// store of p.SSHD.
 func guard(stage *project.Stage, p Planned) protocol.Guard {
 	g := protocol.Guard{Confirm: p.Step.ConfirmAccess}
 	if p.In != nil {
@@ -662,18 +662,16 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 	} else {
 		g.Pipeline, g.Stage, g.Save = stage.Pipeline, stage.Name, stage.ConfirmsAccess()
 	}
-	have := []store{ownStore(stage, p)}
 	for _, h := range p.Step.Notify {
 		if h.ConfirmsAccess() && slices.Contains(p.Notify, h.Record()) {
 			g.Handlers = append(g.Handlers, h.Record())
-			have = append(have, storeOf(h))
 		}
 	}
 	for _, s := range p.SSHD {
-		if !slices.Contains(have, s) {
-			g.SSHD = append(g.SSHD, s.name())
-		}
+		g.SSHD = append(g.SSHD, s.name())
 	}
+	loads, guarded := loadsSSHD(p.Step)
+	g.LoadsSSHD = loads && guarded
 	return g
 }
 

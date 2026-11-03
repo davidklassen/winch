@@ -109,7 +109,8 @@ func stores(stage *project.Stage, p Planned) []store {
 
 // sshdStores sets SSHD on each step that changes sshd's config. A guarded
 // reload of sshd loads the files of every earlier step, not only those of
-// its own store.
+// its own store. A handler that the plan does not expect to run tests
+// nothing: the helper would put back its store at the end of the session.
 func (p *Plan) sshdStores() {
 	type ref struct {
 		p     *Planned
@@ -123,6 +124,9 @@ func (p *Plan) sshdStores() {
 				s := &hp.Steps[i]
 				if s.Handler == nil {
 					steps[name] = append(steps[name], ref{s, ownStore(sp.Stage, *s)})
+					continue
+				}
+				if !s.Handler.Runs {
 					continue
 				}
 				for j := range s.Handler.Steps {
