@@ -28,6 +28,33 @@ func TestUpgradeValidate(t *testing.T) {
 	}
 }
 
+// spec: Remote execution/State on the host
+func TestCopyLinks(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "Packages")
+	if err := os.WriteFile(src, []byte("Package: a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(src, filepath.Join(dir, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "regular"), []byte("Package: b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyLinks(dir); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"linked": "Package: a\n", "regular": "Package: b\n"} {
+		p := filepath.Join(dir, name)
+		if info, err := os.Lstat(p); err != nil || !info.Mode().IsRegular() {
+			t.Errorf("%s is not a regular file: %v", name, err)
+		}
+		if b, err := os.ReadFile(p); err != nil || string(b) != want {
+			t.Errorf("%s holds %q, %v, want %q", name, b, err, want)
+		}
+	}
+}
+
 // spec: Modules/upgrade
 func TestParseUpgrade(t *testing.T) {
 	out := `NOTE: This is only a simulation!

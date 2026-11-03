@@ -296,18 +296,15 @@ func TestRepoAfterAbsentStep(t *testing.T) {
 }
 
 // oldSigned serves version 0 of winch-signed, which depends on winch-up-new,
-// from a local source. The lab's signed source has version 1, which does not.
-// The source is http: apt 2.7 links the index of a file: source into the
-// lists, and the helper refuses links in its state directory.
+// from a local file: source. The lab's signed source has version 1, which
+// does not.
 const oldSigned = `set -e
 mkdir -p /srv/old/winch-signed/DEBIAN
 printf 'Package: winch-signed\nVersion: 0\nArchitecture: all\nMaintainer: winch\nDepends: winch-up-new\nDescription: test\n' > /srv/old/winch-signed/DEBIAN/control
 cd /srv/old
 dpkg-deb -b winch-signed winch-signed_0_all.deb >/dev/null
 { dpkg-deb -f winch-signed_0_all.deb; echo "Filename: ./winch-signed_0_all.deb"; echo "Size: $(stat -c %s winch-signed_0_all.deb)"; echo "SHA256: $(sha256sum winch-signed_0_all.deb | cut -d' ' -f1)"; } > Packages
-setsid python3 -m http.server -d /srv/old -b 127.0.0.1 8001 >/dev/null 2>&1 < /dev/null &
-until curl -sf http://127.0.0.1:8001/Packages >/dev/null; do sleep 0.1; done
-echo 'deb [trusted=yes] http://127.0.0.1:8001 ./' > /etc/apt/sources.list.d/old.list
+echo 'deb [trusted=yes] file:/srv/old ./' > /etc/apt/sources.list.d/old.list
 apt-get update -q >/dev/null`
 
 // spec: Modules/pkg; Modules/repo; Modules/upgrade
