@@ -39,9 +39,10 @@ const (
 )
 
 // Result is the outcome of a check. Changes are lines for the plan. Old is
-// the current text content when the content changes, for the diff. OldReason
-// says why Old is nil when the content changes: the current content is not
-// text, or is larger than 1 MiB. Link is
+// the current text content when the content changes, for the diff. New is
+// the new text content of copy_from or stock. OldReason says why the plan
+// shows no diff when the content changes: the current or the new content is
+// not text, or is larger than 1 MiB. Link is
 // the target of the symbolic link at the path that the step follows.
 // StartedBy are the active or enabled units that start the unit that a
 // service step stops or disables; the plan needs a step for each. Deferred
@@ -51,6 +52,7 @@ type Result struct {
 	Action    Action   `json:"action,omitempty"`
 	Changes   []string `json:"changes,omitempty"`
 	Old       *string  `json:"old,omitempty"`
+	New       *string  `json:"new,omitempty"`
 	OldReason string   `json:"old_reason,omitempty"`
 	Link      string   `json:"link,omitempty"`
 	StartedBy []string `json:"started_by,omitempty"`
@@ -101,6 +103,12 @@ type State struct {
 	// MovedUsers are the users that earlier steps of the host move to
 	// another primary group.
 	MovedUsers []string `json:"moved_users,omitempty"`
+	// Paths are the results of the earlier file, dir, and link steps of the
+	// host, in order.
+	Paths []Planned `json:"paths,omitempty"`
+	// Packages are the versions that earlier pkg and upgrade steps install,
+	// by package name.
+	Packages map[string]PlannedPkg `json:"packages,omitempty"`
 	// LoginUID is the UID of the session's login user. The helper sets it.
 	LoginUID uint32 `json:"-"`
 	// SSHConnection is the SSH_CONNECTION of the session's login. The helper

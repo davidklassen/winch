@@ -254,10 +254,11 @@ type Case struct {
 	// State is the state of the run before the step.
 	State module.State
 	Args  module.Module
-	// Want is the result of the check, and of the apply without Old and
-	// OldReason.
+	// Want is the result of the check, and of the apply without Old, New,
+	// and OldReason.
 	Want module.Result
-	// WantState is the state after the check and after the apply.
+	// WantState is the state after the check and after the apply. Its Paths
+	// and Packages count only when the case sets them.
 	WantState module.State
 	// Unchanged runs as root after the check and must exit 0: it shows that
 	// the check changed nothing.
@@ -313,7 +314,7 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 			if !equal(got, c.Want) {
 				t.Fatalf("check = %s, want %s", show(got), show(c.Want))
 			}
-			if !reflect.DeepEqual(st, c.WantState) {
+			if !sameState(st, c.WantState) {
 				t.Fatalf("state after check = %+v, want %+v", st, c.WantState)
 			}
 			if c.Unchanged != "" {
@@ -345,11 +346,11 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 			}
 			// Apply returns no old content; the plan has shown the diff.
 			want := c.Want
-			want.Old, want.OldReason = nil, ""
+			want.Old, want.New, want.OldReason = nil, nil, ""
 			if !equal(applied, want) {
 				t.Errorf("apply = %s, want %s", show(applied), show(want))
 			}
-			if !reflect.DeepEqual(st, c.WantState) {
+			if !sameState(st, c.WantState) {
 				t.Errorf("state after apply = %+v, want %+v", st, c.WantState)
 			}
 			if c.After != "" {
@@ -419,17 +420,35 @@ func checkAgain(t *testing.T, s *session.Session, name string, c Case) {
 	}
 }
 
+// sameState compares the states, the Paths and the Packages only when want
+// has them.
+func sameState(got, want module.State) bool {
+	if want.Paths == nil {
+		got.Paths = nil
+	}
+	if want.Packages == nil {
+		got.Packages = nil
+	}
+	return reflect.DeepEqual(got, want)
+}
+
 func equal(got, want module.Result) bool {
-	if (got.Old == nil) != (want.Old == nil) || got.Old != nil && *got.Old != *want.Old {
+	if !sameText(got.Old, want.Old) || !sameText(got.New, want.New) {
 		return false
 	}
 	return got.Status == want.Status && got.Action == want.Action && got.OldReason == want.OldReason && got.Link == want.Link && slices.Equal(got.Changes, want.Changes) && slices.Equal(got.StartedBy, want.StartedBy) && slices.Equal(got.Missing, want.Missing) && slices.Equal(got.MissingTools, want.MissingTools) && got.Deferred == want.Deferred && got.Validates == want.Validates
 }
 
+func sameText(got, want *string) bool {
+	return (got == nil) == (want == nil) && (got == nil || *got == *want)
+}
+
 func show(r module.Result) string {
-	old := "<nil>"
-	if r.Old != nil {
-		old = *r.Old
+	text := func(s *string) string {
+		if s == nil {
+			return "<nil>"
+		}
+		return *s
 	}
-	return string(r.Status) + " " + string(r.Action) + " " + strings.Join(r.Changes, "; ") + " old=" + old + " old reason=" + r.OldReason + " link=" + r.Link + " started by=" + strings.Join(r.StartedBy, " ") + " missing=" + strings.Join(r.Missing, ", ") + " missing tools=" + fmt.Sprint(r.MissingTools) + " deferred=" + strconv.FormatBool(r.Deferred) + " validates=" + strconv.FormatBool(r.Validates)
+	return string(r.Status) + " " + string(r.Action) + " " + strings.Join(r.Changes, "; ") + " old=" + text(r.Old) + " new=" + text(r.New) + " old reason=" + r.OldReason + " link=" + r.Link + " started by=" + strings.Join(r.StartedBy, " ") + " missing=" + strings.Join(r.Missing, ", ") + " missing tools=" + fmt.Sprint(r.MissingTools) + " deferred=" + strconv.FormatBool(r.Deferred) + " validates=" + strconv.FormatBool(r.Validates)
 }

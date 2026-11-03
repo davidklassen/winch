@@ -295,3 +295,125 @@ systemctl daemon-reload && systemctl start winch-run`)
 		vm.MustRun(t, version("winch-up-new", "1"))
 	})
 }
+
+// spec: Running a pipeline/Plan; Modules/file, dir, link (stock, copy_from)
+func TestPlanAfterUpgrade(t *testing.T) {
+	t.Parallel()
+	vm := upgradeVM(t, "upgrade-plan")
+	project := func(steps string) string {
+		return vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: demo\ninventory: test\n",
+			"inventories/test.yaml": "hosts:\n  upgrade-plan: {}\n",
+			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
+			"recipes/app/recipe.yaml": "steps:\n" + steps + `handlers:
+  reload:
+    - cmd:
+        command: touch /root/reloaded
+`,
+		})
+	}
+	reset := upgradeReset + "; rm -f /root/reloaded /etc/winch-up-copy.conf /etc/winch-example.conf; dpkg --purge winch-stock >/dev/null 2>&1; rm -f /etc/winch-stock.conf; true"
+	// plan plans the project, applies it, and plans it again. The first plan
+	// must hold each of want.
+	plan := func(t *testing.T, dir string, want ...string) {
+		t.Helper()
+		r := lab.Winch(t, dir, "plan", "site")
+		for _, w := range want {
+			if r.Code != 0 || !strings.Contains(r.Stdout, w) {
+				t.Errorf("plan: exit %d, stdout %q, stderr %q, want %q", r.Code, r.Stdout, r.Stderr, w)
+			}
+		}
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 {
+			t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+		r = lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !unchanged(r.Stdout, 1) {
+			t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+	}
+
+	t.Run("copy_from of a file that the upgrade changes", func(t *testing.T) {
+		vm.MustRun(t, reset+" && "+installV1("winch-up")+" && cp /usr/share/winch-up/ucf.conf /etc/winch-up-copy.conf")
+		dir := project("  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up-copy.conf\n      copy_from: /usr/share/winch-up/ucf.conf\n    notify: reload\n")
+		plan(t, dir, "~ file /etc/winch-up-copy.conf\n          content from /usr/share/winch-up/ucf.conf\n          @@ -1,1 +1,1 @@\n          -version 1\n          +version 2\n", "! handler app.reload")
+		vm.MustRun(t, "[ \"$(cat /etc/winch-up-copy.conf)\" = 'version 2' ] && [ -e /root/reloaded ]")
+	})
+
+	t.Run("stock of a changed conffile that the upgrade keeps", func(t *testing.T) {
+		vm.MustRun(t, reset+" && "+installV1("winch-up")+" && echo local > /etc/winch-up.conf")
+		dir := project("  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up.conf\n      stock: true\n")
+		plan(t, dir, "~ file /etc/winch-up.conf\n          content of winch-up 2\n          @@ -1,1 +1,1 @@\n          -local\n          +version 2\n")
+		vm.MustRun(t, version("winch-up", "2")+" && [ \"$(cat /etc/winch-up.conf)\" = 'version 2' ]")
+	})
+
+	t.Run("stock of a package that an earlier step installs", func(t *testing.T) {
+		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
+		dir := project("  - pkg:\n      name: winch-stock\n  - file:\n      path: /etc/winch-stock.conf\n      stock: true\n")
+		plan(t, dir, "file /etc/winch-stock.conf\n          content of winch-stock 1\n")
+		vm.MustRun(t, "[ \"$(cat /etc/winch-stock.conf)\" = stock ]")
+	})
+
+	t.Run("copy_from of a file of a package that an earlier step installs", func(t *testing.T) {
+		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
+		dir := project("  - pkg:\n      name: winch-stock\n  - file:\n      path: /etc/winch-example.conf\n      copy_from: /usr/share/winch-stock/example.conf\n")
+		plan(t, dir, "+ file /etc/winch-example.conf\n          content from /usr/share/winch-stock/example.conf\n          owner root, group root, mode 0644\n          @@ -0,0 +1,1 @@\n          +example\n")
+		vm.MustRun(t, "[ \"$(cat /etc/winch-example.conf)\" = example ]")
+	})
+
+	copyConf := "  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up-copy.conf\n      copy_from: /etc/winch-up.conf\n"
+	t.Run("copy_from of a conffile that the host changed", func(t *testing.T) {
+		vm.MustRun(t, reset+" && "+installV1("winch-up")+" && echo local > /etc/winch-up.conf && cp /etc/winch-up.conf /etc/winch-up-copy.conf")
+		plan(t, project(copyConf), "upgrade winch-up 1 → 2\n\n1 host")
+		vm.MustRun(t, version("winch-up", "2")+" && [ \"$(cat /etc/winch-up-copy.conf)\" = local ]")
+	})
+
+	t.Run("copy_from of a conffile that the host removed", func(t *testing.T) {
+		vm.MustRun(t, reset+" && "+installV1("winch-up")+" && rm /etc/winch-up.conf")
+		r := lab.Winch(t, project(copyConf), "plan", "site")
+		if want := "content from /etc/winch-up.conf (does not exist yet)"; r.Code != 0 || !strings.Contains(r.Stdout, want) {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want %q: dpkg keeps a removed conffile removed", r.Code, r.Stdout, r.Stderr, want)
+		}
+	})
+}
+
+// spec: Running a pipeline/Plan
+func TestPlanThroughMovedLink(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "moved-link")
+	// v2/data is a link to a directory, which v1 does not have.
+	vm.MustRun(t, "mkdir -p /srv/app/v1 /srv/app/v2/real && echo old > /srv/app/v1/config && echo new > /srv/app/v2/config && ln -s real /srv/app/v2/data && ln -s v1 /srv/app/current")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  moved-link: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - link:
+          path: /srv/app/current
+          target: v2
+      - file:
+          path: /srv/app/current/config
+          content: "new\n"
+      - file:
+          path: /srv/app/copy
+          copy_from: /srv/app/current/config
+      - dir:
+          path: /srv/app/current/data
+`,
+	})
+	r := lab.Winch(t, dir, "plan", "site")
+	if want := "~ link /srv/app/current\n        target v1 → v2\n    + file /srv/app/copy\n        content from /srv/app/current/config\n        owner root, group root, mode 0644\n        @@ -0,0 +1,1 @@\n        +new\n\n"; r.Code != 0 || !strings.Contains(r.Stdout, want) {
+		t.Errorf("plan: exit %d, stdout %q, stderr %q, want %q", r.Code, r.Stdout, r.Stderr, want)
+	}
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 0 {
+		t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, "[ \"$(cat /srv/app/v1/config)\" = old ] && [ \"$(cat /srv/app/copy)\" = new ]")
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+}

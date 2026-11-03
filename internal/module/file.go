@@ -268,8 +268,9 @@ func ids(owner, group string) (uid, gid int, err error) {
 	return uid, gid, nil
 }
 
-func (f *File) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
-	dir, missing, err := openParent(f.Path)
+func (f *File) Check(ctx context.Context, st *State, _ Say) (Result, error) {
+	p := st.resolve(f.Path)
+	dir, missing, err := openParent(p)
 	if _, ok := errors.AsType[*noPathError](err); ok && f.Absent {
 		return Result{Status: OK}, nil
 	}
@@ -292,12 +293,13 @@ func (f *File) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		if err := noFlags(dir, name, fi, f.Path); err != nil {
 			return Result{}, err
 		}
+		st.plan(Planned{Path: p})
 		return Result{Status: Change, Action: Remove}, nil
 	}
 	if !f.hasContent() {
 		return f.checkAttrs(dir, name, fi, exists)
 	}
-	hc, err := f.hostContent(ctx)
+	hc, err := f.hostContent(ctx, st)
 	if err != nil {
 		return Result{}, err
 	}
@@ -309,12 +311,11 @@ func (f *File) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		return Result{}, err
 	}
 	want := attrLine(owner, group, mode) + userNote(owner, group)
-	// A source on the host shows no diff, only the line that names it.
 	var content []string
 	var srcSum string
-	old := new("")
+	wantSum := f.sum()
 	if hc != nil {
-		content, old, srcSum = []string{hc.line}, nil, hc.sum
+		content, srcSum, wantSum = []string{hc.line}, hc.sum, hc.sum
 		switch {
 		case !known && f.CopyFrom != "":
 			want = fmt.Sprintf("owner %s, group %s, mode from %s", owner, group, hc.from) + userNote(owner, group)
@@ -322,21 +323,23 @@ func (f *File) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 			want = "owner, group, and mode from " + hc.from
 		}
 	}
+	st.plan(Planned{Path: p, Kind: "file", SHA256: wantSum, Mode: mode})
+	res := Result{Status: Change, Action: Modify, Old: new(""), SourceSHA256: srcSum, Validates: f.Validation != nil}
 	switch {
 	case !exists:
-		changes := slices.Concat(parentChanges(missing), content, []string{want})
-		return Result{Status: Change, Action: Create, Changes: changes, Old: old, SourceSHA256: srcSum, Validates: f.Validation != nil}, nil
+		res.Action, res.Changes = Create, slices.Concat(parentChanges(missing), content, []string{want})
+		return withNew(hc, res)
 	case fi.Mode()&fs.ModeSymlink != 0:
 		target, _ := dir.Readlink(name)
-		changes := slices.Concat([]string{"replace the symbolic link to " + secret.Printable(target)}, content, []string{want})
-		return Result{Status: Change, Action: Modify, Changes: changes, Old: old, SourceSHA256: srcSum, Validates: f.Validation != nil}, nil
+		res.Changes = slices.Concat([]string{"replace the symbolic link to " + secret.Printable(target)}, content, []string{want})
+		return withNew(hc, res)
 	case fi.IsDir():
 		line, err := checkReplace(dir, name, f.Path, fi, f.Replace)
 		if err != nil {
 			return Result{}, err
 		}
-		changes := slices.Concat([]string{line}, content, []string{want})
-		return Result{Status: Change, Action: Modify, Changes: changes, Old: old, SourceSHA256: srcSum, Validates: f.Validation != nil}, nil
+		res.Changes = slices.Concat([]string{line}, content, []string{want})
+		return withNew(hc, res)
 	case !fi.Mode().IsRegular():
 		return Result{}, fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
 	}
@@ -345,25 +348,22 @@ func (f *File) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		return Result{}, err
 	}
 	defer r.Close()
-	res := Result{Status: OK, SourceSHA256: srcSum}
+	res = Result{Status: OK, SourceSHA256: srcSum}
 	sum, err := fileSHA(r)
 	if err != nil {
 		return Result{}, err
 	}
-	wantSum := f.sum()
-	if hc != nil {
-		wantSum = hc.sum
-	}
 	if sum != wantSum {
 		res.Status, res.Action, res.Changes, res.Validates = Change, Modify, content, f.Validation != nil
-		if hc == nil {
-			old, err := readHead(r)
-			if err != nil {
-				return Result{}, fmt.Errorf("read %s: %w", f.Path, err)
-			}
-			if res.OldReason = notText(old); res.OldReason == "" {
-				res.Old = new(string(old))
-			}
+		old, err := readHead(r)
+		if err != nil {
+			return Result{}, fmt.Errorf("read %s: %w", f.Path, err)
+		}
+		if res.OldReason = notText(old); res.OldReason == "" {
+			res.Old = new(string(old))
+		}
+		if res, err = withNew(hc, res); err != nil {
+			return Result{}, err
 		}
 	}
 	changes := []string{want}
@@ -384,6 +384,30 @@ func (f *File) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	return res, nil
 }
 
+// withNew adds the new text of content from the host to res, a content
+// change.
+func withNew(hc *hostContent, res Result) (Result, error) {
+	if hc != nil {
+		if hc.text == nil && hc.reason == "" && hc.content != nil {
+			head, err := readHead(hc.content)
+			if err != nil {
+				return Result{}, fmt.Errorf("read %s: %w", hc.from, err)
+			}
+			hc.setText(head)
+		}
+		res.New = hc.text
+		res.OldReason = cmp.Or(res.OldReason, hc.reason)
+		// The plan knows no new content to show.
+		if hc.missing != nil {
+			res.Old = nil
+		}
+	}
+	if res.OldReason != "" {
+		res.Old, res.New = nil, nil
+	}
+	return res, nil
+}
+
 // hasContent reports whether the step on the host sets the content.
 func (f *File) hasContent() bool {
 	return f.Data != nil || f.DataSHA256 != "" || f.fromHost()
@@ -395,14 +419,14 @@ func (f *File) fromHost() bool {
 	return f.CopyFrom != "" || f.Stock
 }
 
-// hostContent reads the source of copy_from or stock, or returns nil for
-// content from the controller.
-func (f *File) hostContent(ctx context.Context) (*hostContent, error) {
+// hostContent reads the source of copy_from or stock, as the earlier steps of
+// st leave it, or returns nil for content from the controller.
+func (f *File) hostContent(ctx context.Context, st *State) (*hostContent, error) {
 	switch {
 	case f.Stock:
-		return stockSource(ctx, f.Path)
+		return stockSource(ctx, st, f.Path)
 	case f.CopyFrom != "":
-		return copySource(f.CopyFrom)
+		return copySource(ctx, st, f.CopyFrom)
 	}
 	return nil, nil
 }
@@ -524,7 +548,7 @@ func (f *File) Apply(ctx context.Context, _ Say) error {
 	if !f.hasContent() {
 		return f.applyAttrs(name)
 	}
-	hc, err := f.hostContent(ctx)
+	hc, err := f.hostContent(ctx, nil)
 	if err != nil {
 		return err
 	}

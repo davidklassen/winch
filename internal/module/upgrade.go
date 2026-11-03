@@ -139,6 +139,7 @@ func (u *Upgrade) Check(ctx context.Context, st *State, say Say) (Result, error)
 	if err := checkAccess(parseRemovals(out, nil), st.LoginUID); err != nil {
 		return Result{}, err
 	}
+	planPkgs(st, out, index, nil)
 	if len(changes) == 0 {
 		return Result{Status: OK}, nil
 	}
@@ -151,6 +152,41 @@ func (u *Upgrade) Apply(ctx context.Context, say Say) error {
 	}
 	_, err := aptGet(ctx, slices.Concat(u.args(), aptApply, winchIndex)...)
 	return err
+}
+
+// planPkgs records the packages that the output of apt-get -s installs or
+// upgrades, with the apt flags of the package index that it read. named are
+// the packages that a pkg step names.
+func planPkgs(st *State, out string, index, named []string) {
+	if st == nil {
+		return
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[0] != "Inst" {
+			continue
+		}
+		// An upgrade shows the installed version in brackets.
+		rest := f[2:]
+		if strings.HasPrefix(rest[0], "[") {
+			rest = rest[1:]
+		}
+		if len(rest) == 0 || !strings.HasPrefix(rest[0], "(") {
+			continue
+		}
+		name, _, _ := strings.Cut(f[1], ":")
+		pp := PlannedPkg{Version: strings.TrimPrefix(rest[0], "("), Index: index, Named: slices.Contains(named, name)}
+		for _, w := range rest[1:] {
+			if strings.HasPrefix(w, "[") {
+				pp.Arch = strings.Trim(w, "[])")
+				break
+			}
+		}
+		if st.Packages == nil {
+			st.Packages = map[string]PlannedPkg{}
+		}
+		st.Packages[name] = pp
+	}
 }
 
 // parseUpgrade returns the plan lines of the output of apt-get -s: one per

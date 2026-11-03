@@ -425,14 +425,17 @@ func diffLines(p Planned) []string {
 		return nil
 	}
 	text, reason := t.Text()
+	if res.New != nil {
+		text = []byte(*res.New)
+	}
 	if res.OldReason != "" {
 		reason = res.OldReason
 	}
 	shown := st.Shown()
 	var d []byte
 	switch {
-	// The reason can come from the secret.
-	case shown.Hidden || reason != "" && shown.Lines != nil:
+	// The reason can come from the secret, also of the source of copy_from.
+	case shown.Hidden || reason != "" && shown.Lines != nil || reason == secret.Mark:
 		return []string{secret.Mark}
 	case reason != "":
 		return []string{"content (" + reason + ")"}

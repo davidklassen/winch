@@ -73,8 +73,9 @@ func dotDotAfterPart(target string) bool {
 	return false
 }
 
-func (l *Link) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
-	dir, missing, err := openParent(l.Path)
+func (l *Link) Check(ctx context.Context, st *State, _ Say) (Result, error) {
+	p := st.resolve(l.Path)
+	dir, missing, err := openParent(p)
 	if _, ok := errors.AsType[*noPathError](err); ok && l.Absent {
 		return Result{Status: OK}, nil
 	}
@@ -86,6 +87,11 @@ func (l *Link) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	fi, exists, err := lstat(dir, name, missing)
 	if err != nil {
 		return Result{}, err
+	}
+	if l.Absent && exists {
+		st.plan(Planned{Path: p})
+	} else if !l.Absent {
+		st.plan(Planned{Path: p, Kind: "link", Target: *l.Target})
 	}
 	if exists && fi.Mode()&fs.ModeSymlink == 0 {
 		if l.Absent || !fi.IsDir() && !fi.Mode().IsRegular() {

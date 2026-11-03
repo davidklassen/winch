@@ -77,8 +77,8 @@ func (l *Line) Text() ([]byte, string) {
 	return []byte(l.Line + "\n"), ""
 }
 
-func (l *Line) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
-	dir, missing, err := openParent(l.Path)
+func (l *Line) Check(ctx context.Context, st *State, _ Say) (Result, error) {
+	dir, missing, err := openParent(st.resolve(l.Path))
 	if _, ok := errors.AsType[*noPathError](err); ok && l.Absent {
 		return Result{Status: OK}, nil
 	}

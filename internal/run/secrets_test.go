@@ -1029,3 +1029,46 @@ func TestSecretErrorsOutsideStep(t *testing.T) {
 		})
 	}
 }
+
+// spec: Variables/Secrets in output; CLI/Output
+func TestSecretCopyFrom(t *testing.T) {
+	identity, recipient := ageKey(t)
+	text, err := secret.Encrypt("new-token", []age.Recipient{recipient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      token: !secret " + text + "\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/app/env
+          content: !expr vars.token
+      - file:
+          path: /etc/app/env.copy
+          copy_from: /etc/app/env
+`,
+	})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	// The copy on the host holds the old token.
+	h.SetResult("web1", "/etc/app/env.copy", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"content from /etc/app/env"},
+		Old: new("old-token"), SourceSHA256: "348e9df2a42bd6e3c6356ca9c95c5f1fe9a6b3e5cd25f4ae58df0f09049c3209"})
+	plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if want := "    ~ file /etc/app/env.copy\n        content from /etc/app/env\n        (secret)\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("plan = %q, want %q", out.String(), want)
+	}
+	for _, s := range []string{"old-token", "new-token"} {
+		if strings.Contains(out.String()+errOut.String(), s) {
+			t.Errorf("the plan shows %q", s)
+		}
+	}
+}
