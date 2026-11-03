@@ -138,6 +138,11 @@ type Plan struct {
 	gone map[string][]protocol.Check
 	// goneThens are the then records of each host that match no step.
 	goneThens map[string][]protocol.Then
+	// pipeline is the name of the pipeline of the plan.
+	pipeline string
+	// goneHandlers are the pending handlers of each host that the project no
+	// longer has.
+	goneHandlers map[string][]string
 	// refreshed are the hosts whose package index a step refreshed in the
 	// plan.
 	refreshed map[string]bool
@@ -411,7 +416,7 @@ func (p *Plan) changed() map[string]bool {
 // stage run at the same time. At the first contact with a host, it reads the
 // facts and starts the host's evaluation. A host that fails stops there.
 func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Options) *Plan {
-	plan := &Plan{Project: p.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}, Destinations: map[string]protocol.Destination{}, opts: opts,
+	plan := &Plan{Project: p.Name, pipeline: p.Pipeline.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}, Destinations: map[string]protocol.Destination{}, opts: opts,
 		sums: p.Sums(), set: p.SetFlags()}
 	inStages := map[string]bool{}
 	runs := map[string]*hostRun{}
@@ -494,14 +499,17 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	}
 	plan.gone = map[string][]protocol.Check{}
 	plan.goneThens = map[string][]protocol.Then{}
+	plan.goneHandlers = map[string][]string{}
 	plan.refreshed = map[string]bool{}
+	o := newOwners(p)
 	for name, hr := range runs {
 		plan.refreshed[name] = hr.refreshed
 		if hr.pending != nil {
 			plan.Pending[name] = *hr.pending
 			if !p.Pipeline.AdHoc {
-				plan.gone[name] = goneChecks(p.Pipeline, hr.pending.Checks)
-				plan.goneThens[name] = goneThens(p.Pipeline, name, hr)
+				plan.gone[name] = o.goneChecks(hr.pending.Checks)
+				plan.goneThens[name] = o.goneThens(name, hr)
+				plan.goneHandlers[name] = o.goneHandlers(hr.pending.Handlers)
 			}
 		}
 		plan.Destinations[name] = hr.dest
@@ -1418,7 +1426,7 @@ func (p *Plan) HasWork() bool {
 
 // removes reports whether apply removes gone records on host.
 func (p *Plan) removes(host string) bool {
-	return p.Failed[host] == nil && (len(p.gone[host]) > 0 || len(p.goneThens[host]) > 0)
+	return p.Failed[host] == nil && (len(p.gone[host]) > 0 || len(p.goneThens[host]) > 0 || len(p.goneHandlers[host]) > 0)
 }
 
 // scope is the recipe of a step, or the stage for a module step of a stage.
@@ -1469,11 +1477,77 @@ func checkRecord(st project.Step, place protocol.Check) *protocol.Check {
 	return &place
 }
 
+// owners are the pipelines and recipes of the project, which own the records
+// on a host. pl is the pipeline of the run.
+type owners struct {
+	pl        *project.Pipeline
+	pipelines map[string]*project.Pipeline
+	recipes   map[string]*project.Recipe
+	// all is false when a pipeline of the project did not load.
+	all bool
+}
+
+func newOwners(p *project.Project) owners {
+	o := owners{pl: p.Pipeline, pipelines: map[string]*project.Pipeline{}, recipes: map[string]*project.Recipe{}}
+	var pls []*project.Pipeline
+	pls, o.all = p.Pipelines()
+	for _, pl := range pls {
+		o.pipelines[pl.Name] = pl
+		for _, s := range pl.Stages {
+			for _, st := range s.Steps {
+				if st.Recipe != nil {
+					o.recipes[st.Recipe.Name] = st.Recipe
+				}
+			}
+		}
+	}
+	return o
+}
+
+// has reports whether the project has the recipe, or the pipeline and the
+// stage, and the handler of a record. When a pipeline did not load, a recipe
+// or a pipeline that the project lacks counts as there.
+func (o owners) has(c protocol.Check) bool {
+	var handlers []*project.Handler
+	if c.Recipe != "" {
+		r := o.recipes[c.Recipe]
+		if r == nil {
+			return !o.all
+		}
+		handlers = r.Handlers
+	} else {
+		pl := o.pipelines[c.Pipeline]
+		if pl == nil {
+			return !o.all
+		}
+		i := slices.IndexFunc(pl.Stages, func(s project.Stage) bool { return s.Name == c.Stage })
+		if i < 0 {
+			return false
+		}
+		handlers = pl.Stages[i].Handlers
+	}
+	return c.Handler == "" || slices.ContainsFunc(handlers, func(h *project.Handler) bool { return h.Name == c.Handler })
+}
+
+// goneHandlers returns the pending handlers whose recipe, pipeline, stage, or
+// handler the project no longer has.
+func (o owners) goneHandlers(records []string) []string {
+	var gone []string
+	for _, n := range records {
+		recipe, pipeline, stage, handler := project.ParseRecord(n)
+		if !o.has(protocol.Check{Recipe: recipe, Pipeline: pipeline, Stage: stage, Handler: handler}) {
+			gone = append(gone, n)
+		}
+	}
+	return gone
+}
+
 // goneThens returns the then records of host that no step of the plan
 // matches, in a recipe that runs on the host, or in a stage of pl that the
-// plan checks on the host or that pl no longer has. A record of another
-// pipeline, or of a recipe or stage that the plan does not check, stays.
-func goneThens(pl *project.Pipeline, host string, hr *hostRun) []protocol.Then {
+// plan checks on the host. A record whose recipe, pipeline, stage, or handler
+// the project no longer has is gone too. A record of a recipe or stage that
+// the plan does not check stays.
+func (o owners) goneThens(host string, hr *hostRun) []protocol.Then {
 	var gone []protocol.Then
 	for _, t := range hr.thens {
 		if t.matched {
@@ -1483,54 +1557,50 @@ func goneThens(pl *project.Pipeline, host string, hr *hostRun) []protocol.Then {
 		switch {
 		case t.Recipe != "":
 			reach = slices.ContainsFunc(hr.ran, func(r *project.Step) bool { return r.Recipe.Name == t.Recipe })
-		case t.Pipeline == pl.Name:
-			i := slices.IndexFunc(pl.Stages, func(s project.Stage) bool { return s.Name == t.Stage })
-			reach = i < 0 || !pl.Stages[i].Skipped && slices.ContainsFunc(pl.Stages[i].Targets, func(h project.Host) bool { return h.Name == host })
+		case t.Pipeline == o.pl.Name:
+			i := slices.IndexFunc(o.pl.Stages, func(s project.Stage) bool { return s.Name == t.Stage })
+			reach = i < 0 || !o.pl.Stages[i].Skipped && slices.ContainsFunc(o.pl.Stages[i].Targets, func(h project.Host) bool { return h.Name == host })
 		}
-		if reach {
+		if reach || !o.has(protocol.Check{Recipe: t.Recipe, Pipeline: t.Pipeline, Stage: t.Stage, Handler: t.Handler}) {
 			gone = append(gone, t.Then)
 		}
 	}
 	return gone
 }
 
-// goneChecks returns the records of gates and asserts that pl no longer has:
-// the gate of a stage without health, and an assert whose place holds no
-// assert step. A record of another pipeline, or of a recipe that pl does not
-// run, stays.
-func goneChecks(pl *project.Pipeline, records []protocol.Check) []protocol.Check {
-	recipes := map[string]*project.Recipe{}
-	for _, stage := range pl.Stages {
-		for _, st := range stage.Steps {
-			if st.Recipe != nil {
-				recipes[st.Recipe.Name] = st.Recipe
-			}
-		}
-	}
+// goneChecks returns the records of gates and asserts that the project no
+// longer has: the gate of a stage without health, an assert whose place holds
+// no assert step, and a record whose recipe, pipeline, stage, or handler is
+// gone. Only the stages of pl count for gates and steps.
+func (o owners) goneChecks(records []protocol.Check) []protocol.Check {
 	var gone []protocol.Check
 	for _, c := range records {
+		if !o.has(c) {
+			gone = append(gone, c)
+			continue
+		}
 		var steps []project.Step
 		var handlers []*project.Handler
 		switch {
 		case c.Recipe != "":
-			r := recipes[c.Recipe]
+			r := o.recipes[c.Recipe]
 			if r == nil {
 				continue
 			}
 			steps, handlers = r.Steps, r.Handlers
-		case c.Pipeline == pl.Name:
-			i := slices.IndexFunc(pl.Stages, func(s project.Stage) bool { return s.Name == c.Stage })
+		case c.Pipeline == o.pl.Name:
+			i := slices.IndexFunc(o.pl.Stages, func(s project.Stage) bool { return s.Name == c.Stage })
 			if i < 0 {
 				gone = append(gone, c)
 				continue
 			}
 			if c.Step == 0 {
-				if pl.Stages[i].Health == nil {
+				if o.pl.Stages[i].Health == nil {
 					gone = append(gone, c)
 				}
 				continue
 			}
-			steps, handlers = pl.Stages[i].Steps, pl.Stages[i].Handlers
+			steps, handlers = o.pl.Stages[i].Steps, o.pl.Stages[i].Handlers
 		default:
 			continue
 		}

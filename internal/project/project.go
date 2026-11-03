@@ -31,9 +31,11 @@ type Project struct {
 	Inventory *Inventory
 	Pipeline  *Pipeline
 	// others are the other pipelines of the project, and othersErr their load
-	// errors. Only dir purge needs them.
+	// errors. Only dir purge and gone records need them. lost is true when a
+	// pipeline did not decode, so others misses it.
 	others    []*Pipeline
 	othersErr error
+	lost      bool
 	Warnings  []*yamlx.Error
 	// vars are the defaults in the order in which they evaluate, and defaults
 	// the same by name.
@@ -259,6 +261,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 		skip = pl.Name
 	}
 	others, othersErr := l.otherPipelines(skip)
+	lost := othersErr != nil
 	l.warnings = l.warnings[:n]
 	for _, o := range others {
 		othersErr = errors.Join(othersErr, resolve(invs[0], o, map[*Recipe]bool{}))
@@ -290,7 +293,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 	for _, v := range sets {
 		setNames[v.name] = true
 	}
-	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, others: others, othersErr: othersErr, Warnings: warnings, vars: l.order, defaults: l.vars, filter: keys.Filter, secrets: len(l.sealed) > 0,
+	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, others: others, othersErr: othersErr, lost: lost, Warnings: warnings, vars: l.order, defaults: l.vars, filter: keys.Filter, secrets: len(l.sealed) > 0,
 		set: setNames, peers: peerVars(invs[0], l.decls), sums: sums, setFlags: set}, nil
 }
 
@@ -1835,6 +1838,12 @@ func secretKeys(args [3]any) []bool {
 		out = append(out, !same || k != lists[1][i] || k != lists[2][i])
 	}
 	return out
+}
+
+// Pipelines returns the pipeline of the run and the other pipelines of the
+// project. all is false when a pipeline did not decode and is missing.
+func (p *Project) Pipelines() (pipelines []*Pipeline, all bool) {
+	return append([]*Pipeline{p.Pipeline}, p.others...), !p.lost
 }
 
 // Writes are the paths that the steps for a host write, sorted. Trees are
