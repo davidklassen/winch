@@ -256,7 +256,7 @@ func TestTimerRollbackFails(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			l := startLockout(t)
 			l.applyBoth(t)
-			l.expire(t, func(j *job) { j.Undo = &undo{Module: "file", Args: failingFileArgs(l.b)} })
+			l.expire(t, func(j *job) { j.Undo = []undo{{Module: "file", Args: failingFileArgs(l.b)}} })
 			l.waitTimer(t)
 			r := l.c.call(t, method, nil)
 			want := "file " + l.b + ": validate failed, and the old file is back: false"
@@ -558,13 +558,13 @@ func TestTimerJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	j := read()
-	if len(j.Restore) != 2 || j.Undo == nil || j.Undo.Module != "service" || string(j.Undo.Args) != `{"name":"ssh","restarted":true}` {
+	if len(j.Restore) != 2 || len(j.Undo) != 1 || j.Undo[0].Module != "service" || string(j.Undo[0].Args) != `{"name":"ssh","restarted":true}` {
 		t.Errorf("confirm_access job: %+v", j)
 	}
 	if _, err := startTimer(rb, protocol.Guard{Stage: "base"}, &module.File{Path: "/b"}, saved, all); err != nil {
 		t.Fatal(err)
 	}
-	if j := read(); len(j.Restore) != 1 || j.Restore[0].Path != "/b" || j.Undo != nil {
+	if j := read(); len(j.Restore) != 1 || j.Restore[0].Path != "/b" || len(j.Undo) != 0 {
 		t.Errorf("guarded job: %+v", j)
 	}
 }
@@ -954,6 +954,149 @@ func TestRestoreDropsTheRecordsOfTheTreesItChanges(t *testing.T) {
 			lines, err := downloads.read()
 			if err != nil || !slices.Equal(lines, tt.want) {
 				t.Errorf("unpack records %q, %v; want %q", lines, err, tt.want)
+			}
+		})
+	}
+}
+
+// fakeSystemd puts a systemctl on PATH that keeps the active and enabled
+// state of each unit in a file of its own, and sets the given states. A
+// start of one SSH unit fails while the other one runs: both use port 22.
+func fakeSystemd(t *testing.T, states map[string]string) func(unit string) string {
+	t.Helper()
+	dir := t.TempDir()
+	script := `#!/bin/sh
+d=` + dir + `
+u=$(eval echo \${$#})
+case $u in *.*) ;; *) u=$u.service ;; esac
+case "$1" in
+show)
+	echo "Id=$u"
+	echo LoadState=loaded
+	echo "ActiveState=$(cat "$d/$u.active" 2>/dev/null || echo inactive)"
+	echo "UnitFileState=$(cat "$d/$u.file" 2>/dev/null || echo disabled)"
+	echo Type=notify
+	echo InvocationID=1
+	;;
+start)
+	case $u in ssh.service) o=ssh.socket ;; ssh.socket) o=ssh.service ;; esac
+	if [ -n "$o" ] && grep -qx active "$d/$o.active" 2>/dev/null; then
+		echo "$o holds port 22" >&2
+		exit 1
+	fi
+	echo active > "$d/$u.active"
+	;;
+restart|try-restart) echo active > "$d/$u.active" ;;
+stop) echo inactive > "$d/$u.active" ;;
+enable) echo enabled > "$d/$u.file" ;;
+disable) echo disabled > "$d/$u.file" ;;
+esac
+`
+	bin := filepath.Join(dir, "bin")
+	write(t, filepath.Join(bin, "systemctl"), script)
+	if err := os.Chmod(filepath.Join(bin, "systemctl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	for unit, state := range states {
+		active, file, _ := strings.Cut(state, " ")
+		write(t, filepath.Join(dir, unit+".active"), active+"\n")
+		write(t, filepath.Join(dir, unit+".file"), file+"\n")
+	}
+	return func(unit string) string {
+		return strings.TrimSpace(content(t, filepath.Join(dir, unit+".active"))) + " " + strings.TrimSpace(content(t, filepath.Join(dir, unit+".file")))
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the rollback of a switch
+// between ssh.service and ssh.socket starts and enables the unit that the
+// run stopped or disabled)
+func TestRollbackOfASwitchOfTheSSHUnits(t *testing.T) {
+	yes, no := true, false
+	for _, c := range []struct {
+		name              string
+		off, guarded      module.Service
+		service, socket   string
+		wantSvc, wantSock string
+	}{
+		{"start", module.Service{Name: "ssh", Running: &no, Enabled: &no}, module.Service{Name: "ssh.socket", Running: &yes, Enabled: &yes}, "active enabled", "inactive disabled", "active enabled", "inactive enabled"},
+		{"stop only", module.Service{Name: "ssh", Running: &no}, module.Service{Name: "ssh.socket", Running: &yes, Enabled: &yes}, "active disabled", "inactive disabled", "active disabled", "inactive enabled"},
+		{"to ssh.service", module.Service{Name: "ssh.socket", Running: &no, Enabled: &no}, module.Service{Name: "ssh", Running: &yes, Enabled: &yes}, "inactive disabled", "active enabled", "inactive enabled", "active enabled"},
+		// The socket stays up after the rollback of a restart, and holds
+		// the port of ssh.service.
+		{"restart", module.Service{Name: "ssh", Running: &no, Enabled: &no}, module.Service{Name: "ssh.socket", Restarted: true}, "active enabled", "active enabled", "inactive disabled", "active enabled"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			state := fakeSystemd(t, map[string]string{"ssh.service": c.service, "ssh.socket": c.socket})
+			l := startLockout(t)
+			off, _ := json.Marshal(c.off)
+			if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: off, Guard: protocol.Guard{Recipe: "ssh", Save: true}}); r.Error != "" {
+				t.Fatal(r.Error)
+			}
+			start, _ := json.Marshal(c.guarded)
+			if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: start, Guard: protocol.Guard{Recipe: "ssh", Save: true, Confirm: true}}); r.Error != "" {
+				t.Fatal(r.Error)
+			}
+			if r := l.c.call(t, "rollback", nil); r.Error != "" {
+				t.Fatalf("rollback: %s", r.Error)
+			}
+			if got := state("ssh.service"); got != c.wantSvc {
+				t.Errorf("ssh.service after the rollback: %s, want %s", got, c.wantSvc)
+			}
+			if got := state("ssh.socket"); got != c.wantSock {
+				t.Errorf("ssh.socket after the rollback: %s, want %s", got, c.wantSock)
+			}
+		})
+	}
+}
+
+// spec: State on the host (winch reads every older version of a file in
+// rollback/<project>/: the timer job of a helper with one undo step and no
+// version)
+func TestHelloRunsADeadTimerOfVersion1(t *testing.T) {
+	dir := t.TempDir()
+	p, q := filepath.Join(t.TempDir(), "f"), filepath.Join(t.TempDir(), "g")
+	write(t, p, "old\n")
+	write(t, q, "old\n")
+	saved, err := module.Save(module.Touch{Path: p, Tree: true}, filepath.Join(t.TempDir(), "1.tar"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, p, "new\n")
+	data, _ := json.Marshal(map[string]any{
+		"deadline":  time.Now().Add(-time.Minute),
+		"restore":   []module.Saved{saved},
+		"undo":      map[string]any{"module": "file", "args": fileArgs(q, "undone\n")},
+		"downloads": filepath.Join(dir, "downloads", "acme"),
+	})
+	write(t, filepath.Join(dir, "rollback", "timer.json"), string(data))
+	c := start(t, dir, "")
+	if r := c.call(t, "hello", hello("r1")); r.Error != "" {
+		t.Fatalf("hello: %s", r.Error)
+	}
+	if content(t, p) != "old\n" || content(t, q) != "undone\n" {
+		t.Errorf("after the dead timer: f %q, g %q; want old and undone", content(t, p), content(t, q))
+	}
+}
+
+// spec: State on the host (a version newer than winch knows fails the host)
+func TestHelloFailsOnANewerTimerJob(t *testing.T) {
+	for _, c := range []struct{ name, file, data string }{
+		{"undo", "timer.json", `{"version":99,"deadline":"2000-01-01T00:00:00Z","undo":{"module":"file"}}`},
+		{"restore", "timer.json", `{"version":99,"deadline":946684800,"restore":{"paths":[]}}`},
+		{"fired", "timer.json.fired", `{"version":99,"deadline":"2000-01-01T00:00:00Z"}`},
+		{"before its deadline", "timer.json", `{"version":99,"deadline":"2999-01-01T00:00:00Z"}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			job := filepath.Join(dir, "rollback", c.file)
+			write(t, job, c.data)
+			cl := start(t, dir, "")
+			if r := cl.call(t, "hello", hello("r1")); !strings.Contains(r.Error, "upgrade winch to read "+job) {
+				t.Errorf("hello: %q, want the upgrade error", r.Error)
+			}
+			if _, err := os.Lstat(job); err != nil {
+				t.Errorf("the job of the newer winch is gone: %v", err)
 			}
 		})
 	}
