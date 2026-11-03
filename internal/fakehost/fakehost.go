@@ -47,6 +47,8 @@ type Hosts struct {
 	thens      map[string][]protocol.Then
 	checks     map[string][]protocol.Check
 	failCmd    map[string]bool
+	// cmdOut holds the output of a command that fails, by host and command.
+	cmdOut map[string]string
 	// Log lists the service actions and the commands per host, in order.
 	Log map[string][]string
 	// Open is the number of open connections.
@@ -59,8 +61,12 @@ type Hosts struct {
 	answers  map[string]string
 	results  map[string]module.Result
 	execs    map[string]module.ExecResult
-	// failExec and failClose hold the hosts whose exec or close fails.
-	failExec, failClose map[string]bool
+	// failExec holds the hosts whose exec fails, and failClose the error text
+	// of the hosts whose close fails.
+	failExec  map[string]bool
+	failClose map[string]string
+	// failPending holds the error text of the hosts whose pending call fails.
+	failPending map[string]string
 	// OnCheck and OnApply run before each check and each apply of a step,
 	// with the host and the main argument of the step.
 	OnCheck, OnApply func(host, main string)
@@ -122,11 +128,13 @@ func New() *Hosts {
 		thens:        map[string][]protocol.Then{},
 		checks:       map[string][]protocol.Check{},
 		failCmd:      map[string]bool{},
+		cmdOut:       map[string]string{},
 		Log:          map[string][]string{},
 		results:      map[string]module.Result{},
 		execs:        map[string]module.ExecResult{},
 		failExec:     map[string]bool{},
-		failClose:    map[string]bool{},
+		failClose:    map[string]string{},
+		failPending:  map[string]string{},
 		Connects:     map[string]int{},
 		Users:        map[string]string{},
 		down:         map[string]bool{},
@@ -277,7 +285,14 @@ func (h *Hosts) ChecksOf(host string) []protocol.Check {
 	return slices.Clone(h.checks[host])
 }
 
-func (h *Hosts) FailCommand(host, command string) { h.failCmd[host+" "+command] = true }
+func (h *Hosts) FailCommand(host, command string) { h.FailCommandWith(host, command, "") }
+
+// FailCommandWith makes command fail on host as FailCommand does. A health
+// gate with the command adds output to its error.
+func (h *Hosts) FailCommandWith(host, command, output string) {
+	h.failCmd[host+" "+command] = true
+	h.cmdOut[host+" "+command] = output
+}
 
 func (h *Hosts) SetFile(host, path, content string) {
 	h.mu.Lock()
@@ -377,8 +392,9 @@ func (h *Hosts) Fix(key string) {
 	delete(h.failCmd, key)
 }
 
-// SetNote makes each check of the step with the main argument main on host
-// send the note text, or with warning the warning text, as the helper does.
+// SetNote makes each check of the step with the main argument main on host,
+// and each health gate with the command main, send the note text, or with
+// warning the warning text, as the helper does.
 // It needs a connector of ConnectorFor.
 func (h *Hosts) SetNote(host, main, text string, warning bool) {
 	h.mu.Lock()
@@ -513,6 +529,19 @@ func (c *Conn) Prompted(ctx context.Context) bool { return c.prompted }
 // Mask sets the mask of the notes that SetNote gives.
 func (c *Conn) Mask(mask func(string) string) { c.mask = mask }
 
+// sendNote gives the note of SetNote for main through the mask, as the helper
+// sends it.
+func (c *Conn) sendNote(main string) {
+	n, ok := c.hosts.notes[c.host+" "+main]
+	if !ok {
+		return
+	}
+	if c.mask != nil {
+		n.Text = c.mask(n.Text)
+	}
+	c.hosts.note(n)
+}
+
 func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error) {
 	if err := c.dead(); err != nil {
 		return module.Result{}, err
@@ -520,12 +549,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	if c.hosts.OnCheck != nil {
 		c.hosts.OnCheck(c.host, m.Main())
 	}
-	if n, ok := c.hosts.notes[c.host+" "+m.Main()]; ok {
-		if c.mask != nil {
-			n.Text = c.mask(n.Text)
-		}
-		c.hosts.note(n)
-	}
+	c.sendNote(m.Main())
 	// A real session finishes a call that has started.
 	if ctx.Err() != nil {
 		return module.Result{}, fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
@@ -1044,7 +1068,11 @@ func (c *Conn) Pending(ctx context.Context) (protocol.Pending, error) {
 	}
 	c.hosts.mu.Lock()
 	due := slices.Clone(c.hosts.due[c.host])
+	failed, fails := c.hosts.failPending[c.host]
 	c.hosts.mu.Unlock()
+	if fails {
+		return protocol.Pending{}, errors.New(failed)
+	}
 	return protocol.Pending{Handlers: c.hosts.PendingOf(c.host), Then: c.hosts.ThenOf(c.host), Checks: c.hosts.ChecksOf(c.host), Rollback: due}, nil
 }
 
@@ -1113,6 +1141,7 @@ func (c *Conn) Health(ctx context.Context, h protocol.Health) error {
 	if err := c.dead(); err != nil {
 		return err
 	}
+	c.sendNote(h.Command)
 	if ctx.Err() != nil {
 		return fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
 	}
@@ -1120,7 +1149,11 @@ func (c *Conn) Health(ctx context.Context, h protocol.Health) error {
 	defer c.hosts.mu.Unlock()
 	c.hosts.Trace = append(c.hosts.Trace, fmt.Sprintf("health %s %s %s %s", c.host, h.Command, h.Stable, h.Timeout))
 	if c.hosts.failCmd[c.host+" "+h.Command] {
-		return fmt.Errorf("did not pass within %s: exit status 1", module.Seconds(h.Timeout))
+		msg := "exit status 1"
+		if out := c.hosts.cmdOut[c.host+" "+h.Command]; out != "" {
+			msg += ": " + out
+		}
+		return fmt.Errorf("did not pass within %s: %s", module.Seconds(h.Timeout), msg)
 	}
 	c.hosts.checks[c.host] = slices.DeleteFunc(c.hosts.checks[c.host], func(k protocol.Check) bool { return k == h.Check })
 	return nil
@@ -1128,16 +1161,26 @@ func (c *Conn) Health(ctx context.Context, h protocol.Health) error {
 
 // FailExec makes winch exec fail on a host; FailClose makes its sessions
 // fail to close.
-func (h *Hosts) FailExec(host string)  { h.failExec[host] = true }
-func (h *Hosts) FailClose(host string) { h.failClose[host] = true }
+func (h *Hosts) FailExec(host string) { h.failExec[host] = true }
+
+func (h *Hosts) FailClose(host string) {
+	h.FailCloseWith(host, "the session ended without an error message (ssh: exit status 255)")
+}
+
+// FailCloseWith makes the close of the sessions with host fail with text.
+func (h *Hosts) FailCloseWith(host, text string) { h.failClose[host] = text }
+
+// FailPendingWith makes the pending call of the sessions with host fail with
+// text.
+func (h *Hosts) FailPendingWith(host, text string) { h.failPending[host] = text }
 
 func (c *Conn) Close() error {
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
 	c.hosts.Open--
 	c.hosts.Trace = append(c.hosts.Trace, "close "+c.host)
-	if c.hosts.failClose[c.host] {
-		return errors.New("the session ended without an error message (ssh: exit status 255)")
+	if text, ok := c.hosts.failClose[c.host]; ok {
+		return errors.New(text)
 	}
 	return nil
 }

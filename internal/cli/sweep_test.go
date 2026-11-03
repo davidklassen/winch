@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -424,6 +425,34 @@ func TestSecretSweep(t *testing.T) {
 `, func(h *fakehost.Hosts) {
 			h.SetResult("web1", "/srv/plain", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"owner u" + sweepSecret[2:6] + " → root"}})
 			h.SetFile("web1", "/srv/conf", "token u"+sweepSecret[2:6]+"\n")
+		}, applyAll},
+		{"host text outside a step", "user u(secret) is locked", `
+      - file:
+          path: /srv/plain
+          content: "a\n"
+  - name: app
+    hosts: all
+    health:
+      command: probe
+    steps:
+      - user:
+          name: !expr '"u" + vars.pw[2:6]'
+`, func(h *fakehost.Hosts) {
+			h.SetNote("web1", "/srv/plain", "the user u"+sweepSecret[2:6]+" reads /srv/plain", false)
+			h.FailCommandWith("web1", "probe", "user u"+sweepSecret[2:6]+" is locked")
+		}, applyAll},
+		{"a session close error", "no user u(secret)", `
+      - user:
+          name: !expr '"u" + vars.pw[2:6]'
+`, func(h *fakehost.Hosts) {
+			h.FailCloseWith("web1", "helper: no user u"+sweepSecret[2:6])
+		}, applyAll},
+		{"a failed rollback of an earlier run", "restore /home/u(secret)", `
+      - user:
+          name: !expr '"u" + vars.pw[2:6]'
+`, func(h *fakehost.Hosts) {
+			h.SetDue("web1", "~ user u(secret)")
+			h.FailRollback(errors.New("restore /home/u" + sweepSecret[2:6] + ": no space left on device"))
 		}, applyAll},
 		{"a line of a multi-line part", "validate check (secret)", `
       - file:

@@ -151,7 +151,9 @@ type Plan struct {
 	// refreshed are the hosts whose package index a step refreshed in the
 	// plan.
 	refreshed map[string]bool
-	hash      string
+	// parts are the secret parts of the evaluated steps of each host.
+	parts map[string][]string
+	hash  string
 	// sums are the SHA-256 of the project files, and set the --set flags.
 	sums map[string]string
 	set  []string
@@ -314,7 +316,9 @@ type hostRun struct {
 	// step names the step that the plan checks now in the messages of later
 	// steps: its address and label, as two steps can have one label.
 	step string
-	// parts are the secret parts of the checked steps, each once. Text from
+	// stages are the evaluated steps of each stage, from the first contact.
+	stages map[*project.Stage][]Planned
+	// parts are the secret parts of the evaluated steps, each once. Text from
 	// the host of one step can hold a value that another step built.
 	parts []string
 	// written returns the paths that the project writes on the host, for dir
@@ -457,6 +461,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hr.conn = c
 			hr.dest = c.Destination()
+			c.Mask(hr.hide)
 		}
 		return hr.conn, nil
 	}
@@ -504,13 +509,12 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 					err = errors.Join(err, s.err)
 				}
 			}
-			err = maskError(err, func(s string) string { return secret.Hide(s, hr.parts) })
 			if err != nil || !opts.Keep && last[hosts[i].Name] == si {
 				if cerr := hr.close(); err == nil {
 					err = cerr
 				}
 			}
-			return err
+			return maskError(err, hr.hide)
 		})
 		sp := StagePlan{Stage: stage}
 		for i, h := range hosts {
@@ -534,9 +538,11 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	plan.goneHandlers = map[string][]string{}
 	plan.waiting = map[string][]string{}
 	plan.refreshed = map[string]bool{}
+	plan.parts = map[string][]string{}
 	o := newOwners(p)
 	for name, hr := range runs {
 		plan.refreshed[name] = hr.refreshed
+		plan.parts[name] = hr.parts
 		if hr.pending != nil {
 			plan.Pending[name] = *hr.pending
 			if !p.Pipeline.AdHoc {
@@ -566,7 +572,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		wg.Go(func() {
 			if err := runs[name].close(); err != nil {
 				mu.Lock()
-				plan.Failed[name] = err
+				plan.Failed[name] = maskError(err, runs[name].hide)
 				mu.Unlock()
 			}
 		})
@@ -622,7 +628,8 @@ func sharedDestinations(ctx context.Context, hosts []project.Host, resolve func(
 }
 
 // check checks the steps of a stage on one host. At the first contact, it
-// reads the facts and the pending handlers, and starts the host's evaluation.
+// reads the facts and the pending handlers, and evaluates all stages of the
+// host: the text from the host then passes the secret parts of all its steps.
 func check(ctx context.Context, conn Conn, progress Progress, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun) ([]Planned, error) {
 	if hr.env == nil {
 		f, err := conn.Facts(context.WithoutCancel(ctx))
@@ -633,9 +640,32 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 			return nil, err
 		}
 		hr.written = sync.OnceValues(func() (project.Writes, error) { return p.Written(h, f) })
+		hr.stages = map[*project.Stage][]Planned{}
+		for i := range p.Pipeline.Stages {
+			s := &p.Pipeline.Stages[i]
+			if s.Skipped || !slices.ContainsFunc(s.Targets, func(t project.Host) bool { return t.Name == h.Name }) {
+				continue
+			}
+			steps, err := evaluate(s, hr)
+			if err != nil {
+				return nil, err
+			}
+			for _, p := range steps {
+				hr.addParts(p.Step.Parts)
+				if s := p.Handler; s != nil {
+					for _, hs := range s.Steps {
+						hr.addParts(hs.Step.Parts)
+					}
+				}
+			}
+			hr.stages[s] = steps
+		}
 		pending, err := conn.Pending(context.WithoutCancel(ctx))
 		if err != nil {
 			return nil, err
+		}
+		for i, l := range pending.Rollback {
+			pending.Rollback[i] = hr.hide(l)
 		}
 		hr.pending = &pending
 		for _, n := range pending.Handlers {
@@ -648,18 +678,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 			hr.checks[c] = true
 		}
 	}
-	steps, err := evaluate(stage, hr)
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range steps {
-		hr.addParts(p.Step.Parts)
-		if s := p.Handler; s != nil {
-			for _, hs := range s.Steps {
-				hr.addParts(hs.Step.Parts)
-			}
-		}
-	}
+	steps := hr.stages[stage]
 	changed := false
 	for i, p := range steps {
 		if s := p.Handler; s != nil {
@@ -698,8 +717,9 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		progress.Busy(h.Name, where)
 		mask := func(s string) string { return p.Step.HostText(s, hr.parts) }
 		conn.Mask(mask)
+		var err error
 		steps[i].Result, err = conn.Check(context.WithoutCancel(ctx), p.Step.Module, steps[i].Step.Args, &hr.state)
-		conn.Mask(nil)
+		conn.Mask(hr.hide)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", where, maskError(err, mask))
 		}
@@ -1705,6 +1725,10 @@ func maskResult(st project.Step, parts []string, res *module.Result) {
 	res.Link = st.HostText(res.Link, parts)
 }
 
+// hide returns text from the host with each secret part of the evaluated
+// steps as secret.Mark.
+func (hr *hostRun) hide(s string) string { return secret.Hide(s, hr.parts) }
+
 // addParts adds the parts that hr does not have yet.
 func (hr *hostRun) addParts(parts []string) {
 	for _, p := range parts {
@@ -1714,9 +1738,9 @@ func (hr *hostRun) addParts(parts []string) {
 	}
 }
 
-// maskHost gives each step of a host the secret parts of all checked steps of
-// the host, and masks its result: a step can come before the step that builds
-// a value from a secret.
+// maskHost gives each step of a host the secret parts of all evaluated steps
+// of the host, and masks its result. The checks of later steps read the plain
+// results.
 func maskHost(steps []Planned, parts []string) {
 	for i := range steps {
 		if s := steps[i].Handler; s != nil {

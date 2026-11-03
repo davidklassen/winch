@@ -162,6 +162,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 				return nil, err
 			}
 		}
+		c.Mask(plan.hide(h.Name))
 		if toApply[h.Name] && c.Prompted(context.WithoutCancel(ctx)) {
 			c.Close() //nolint:errcheck // the host fails already
 			return nil, errors.New("the access check cannot log in without a prompt; add the key to the agent with ssh-add")
@@ -196,6 +197,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 		return c.Close()
 	}) {
 		if err != nil {
+			err = maskError(err, plan.hide(remove[i].Name))
 			o.Failed[remove[i].Name] = err
 			rep.Host(HostEvent{Phase: "apply", Host: remove[i].Name, Status: hostStatus(err), Error: err.Error()})
 		}
@@ -243,7 +245,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 			hps, hosts = append(hps, hp), append(hosts, hp.Host)
 			if runs[name] == nil {
-				runs[name] = &hostApply{host: name, rep: rep, progress: plan.opts.progress(), state: module.State{Refreshed: plan.refreshed[name]}, notified: map[string]bool{}, notifiedAt: map[string]int{}, started: map[string]int{}, thens: slices.Clone(plan.Pending[name].Then), rollback: plan.Pending[name].Rollback}
+				runs[name] = &hostApply{host: name, hide: plan.hide(name), rep: rep, progress: plan.opts.progress(), state: module.State{Refreshed: plan.refreshed[name]}, notified: map[string]bool{}, notifiedAt: map[string]int{}, started: map[string]int{}, thens: slices.Clone(plan.Pending[name].Then), rollback: plan.Pending[name].Rollback}
 				for _, n := range plan.Pending[name].Handlers {
 					runs[name].notified[n] = true
 				}
@@ -306,6 +308,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 		for i, h := range hosts {
 			if err := errs[i]; err != nil && plan.Failed[h.Name] == nil {
 				runs[h.Name].close() //nolint:errcheck // the host failed already
+				err = maskError(err, plan.hide(h.Name))
 				o.Failed[h.Name] = err
 				delete(o.Changed, h.Name)
 				rep.Host(HostEvent{Phase: "apply", Host: h.Name, Status: hostStatus(err), Error: err.Error()})
@@ -364,7 +367,9 @@ func hostStatus(err error) string {
 
 // hostApply is what apply keeps about a host between its stages.
 type hostApply struct {
-	host     string
+	host string
+	// hide masks text from the host with the secret parts of its steps.
+	hide     func(string) string
 	rep      Reporter
 	progress Progress
 	state    module.State
@@ -422,7 +427,7 @@ func (a *hostApply) due(ctx context.Context) (bool, error) {
 	ev := rollbackEvent(a.host, a.rollback)
 	a.rollback = nil
 	a.progress.Busy(a.host, rollbackLabel)
-	if err := a.conn.Due(context.WithoutCancel(ctx)); err != nil {
+	if err := maskError(a.conn.Due(context.WithoutCancel(ctx)), a.hide); err != nil {
 		ev.Status, ev.Error = "failed", err.Error()
 		a.rep.Step(ev)
 		return false, fmt.Errorf("failed: %s: %w", rollbackLabel, err)
@@ -478,6 +483,7 @@ func (a *hostApply) health(ctx context.Context, stage *project.Stage, gate proto
 	a.progress.Busy(a.host, stage.Name+": health")
 	err := a.conn.Health(context.WithoutCancel(ctx), protocol.Health{Command: h.Command,
 		Stable: time.Duration(h.Stable) * time.Second, Timeout: time.Duration(h.Timeout) * time.Second, Check: gate})
+	err = maskError(err, a.hide)
 	if err != nil {
 		ev.Status, ev.Error = "failed", err.Error()
 	}
@@ -721,14 +727,15 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned, g protocol.Guard) (module.Result, error) {
 	a.conn.Mask(p.hostText)
 	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, p.Check, g)
-	a.conn.Mask(nil)
+	a.conn.Mask(a.hide)
 	err = maskError(err, p.hostText)
 	// The access check error is text of winch around host errors.
 	if err == nil && res.Timer != 0 {
-		err = maskError(a.confirm(ctx, res.Timer), func(s string) string { return secret.Hide(s, p.parts) })
+		err = maskError(a.confirm(ctx, res.Timer), a.hide)
 	}
 	if r, ok := p.Step.Args.(*module.Reboot); ok && err == nil && res.Status == module.Change {
 		ev.Note, err = a.reboot(ctx, r)
+		ev.Note, err = p.hostText(ev.Note), maskError(err, p.hostText)
 	}
 	if err != nil {
 		ev.Status, ev.Error = "failed", err.Error()
@@ -769,4 +776,10 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 		}
 	}
 	return res, nil
+}
+
+// hide returns a mask of text from host with the secret parts of the
+// evaluated steps of the host.
+func (p *Plan) hide(host string) func(string) string {
+	return func(s string) string { return secret.Hide(s, p.parts[host]) }
 }
