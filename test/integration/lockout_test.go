@@ -370,6 +370,59 @@ func TestLockoutSSHPort(t *testing.T) {
 	}
 }
 
+const sshSwitchRecipe = `steps:
+  - dir:
+      path: /etc/systemd/system/ssh.socket.d
+  - file:
+      path: /etc/systemd/system/ssh.socket.d/port.conf
+      content: "[Socket]\nListenStream=\nListenStream=2299\n"
+  - service:
+      name: ssh
+      running: false
+      enabled: false
+  - service:
+      name: ssh.socket
+      running: true
+      enabled: true
+    confirm_access: true
+`
+
+// spec: Running a pipeline/Lockout protection (the rollback of a switch
+// between ssh.service and ssh.socket)
+func TestLockoutSSHSwitch(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "ssh-switch")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":              "name: demo\ninventory: test\n",
+		"inventories/test.yaml":   "hosts:\n  ssh-switch: {}\n",
+		"pipelines/boot.yaml":     "stages:\n  - name: boot\n    hosts: all\n    steps:\n      - reboot:\n          if_required: false\n",
+		"pipelines/site.yaml":     "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: ssh\n",
+		"recipes/ssh/recipe.yaml": sshSwitchRecipe,
+	})
+	// Ubuntu starts sshd from ssh.socket: the test starts from ssh.service.
+	// A stop of ssh.socket leaves the sshd that it started outside of
+	// ssh.service, so the change of the units needs a reboot.
+	if osRelease().id == "ubuntu" {
+		vm.MustRun(t, "systemctl disable -q ssh.socket && systemctl enable -q ssh")
+		if r := lab.Winch(t, dir, "apply", "boot", "--yes"); r.Code != 0 {
+			t.Fatalf("apply of the reboot: exit %d", r.Code)
+		}
+	}
+
+	// ssh.socket listens on a port that winch does not connect to: the access
+	// check fails, and ssh.service runs again.
+	r := lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "ssh-switch: ssh: failed: service ssh.socket: the access check failed: ") ||
+		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+		t.Fatalf("apply: exit %d", r.Code)
+	}
+	// The rollback keeps ssh.socket enabled, and it can run beside ssh.service.
+	want := "active\nenabled\n"
+	if got := vm.MustRun(t, "systemctl is-active ssh; systemctl is-enabled ssh; test ! -e /etc/systemd/system/ssh.socket.d"); got != want {
+		t.Errorf("ssh.service after the rollback = %q, want %q", got, want)
+	}
+}
+
 const sshNoteSteps = `  - name: root
     line:
       path: /etc/ssh/sshd_config

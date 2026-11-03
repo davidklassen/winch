@@ -502,6 +502,9 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			return out, err
 		}
 	}
+	if err := recordSSHOff(rb, m, res.Changes); err != nil {
+		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+	}
 	guard := s.Guard.Confirm || res.Guard
 	var deadline time.Time
 	for _, h := range s.Guard.Handlers {
@@ -553,6 +556,23 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	return out, nil
 }
 
+// recordSSHOff records the stop and the disable of an SSH server unit, which
+// the rollback of a start of the other unit puts back.
+func recordSSHOff(rb *rollbacks, m module.Module, changes []string) error {
+	sv, ok := m.(*module.Service)
+	if !ok || module.SSHPair(sv.Unit()) == "" {
+		return nil
+	}
+	var off []string
+	for _, c := range changes {
+		if c == "stop" || c == "disable" {
+			off = append(off, c+" "+sv.Unit())
+		}
+	}
+	_, err := rb.sshOff().add(off)
+	return err
+}
+
 // resumed reports whether the params of hello are those of the connect
 // after a reboot.
 func resumed(params json.RawMessage) bool {
@@ -565,28 +585,65 @@ func resumed(params json.RawMessage) bool {
 // undo step; another guarded step puts back only what it saved.
 func startTimer(rb *rollbacks, g protocol.Guard, m module.Module, saved, all []module.Saved) (time.Time, error) {
 	j := job{Deadline: time.Now().Add(TimerTime), Restore: saved, Downloads: filepath.Join(rb.downloads.dir, rb.downloads.project)}
+	add := func(name string, step any) error {
+		args, err := json.Marshal(step)
+		j.Undo = append(j.Undo, undo{Module: name, Args: args})
+		return err
+	}
 	if u, ok := m.(*module.User); ok {
 		if un := u.Undo(); un != nil {
-			args, err := json.Marshal(un)
-			if err != nil {
+			if err := add("user", un); err != nil {
 				return time.Time{}, err
 			}
-			j.Undo = &undo{Module: "user", Args: args}
 		}
 	}
 	if g.Confirm {
 		j.Restore = all
 		if sv, ok := m.(*module.Service); ok {
 			if u := sv.Undo(); u != nil {
-				args, err := json.Marshal(u)
+				if err := add("service", u); err != nil {
+					return time.Time{}, err
+				}
+				back, err := sshBack(rb, u)
 				if err != nil {
 					return time.Time{}, err
 				}
-				j.Undo = &undo{Module: "service", Args: args}
+				if back != nil {
+					if err := add("service", back); err != nil {
+						return time.Time{}, err
+					}
+				}
 			}
 		}
 	}
 	return j.Deadline, rb.start(j)
+}
+
+// sshBack returns the step that starts and enables the other SSH server unit
+// again, when the undo step u stops one and the run stopped or disabled the
+// other: else no unit runs sshd after the rollback. It returns nil for
+// another undo step.
+func sshBack(rb *rollbacks, u *module.Service) (*module.Service, error) {
+	other := module.SSHPair(u.Unit())
+	if other == "" || u.Running == nil || *u.Running {
+		return nil, nil
+	}
+	off, err := rb.sshOff().read()
+	if err != nil {
+		return nil, err
+	}
+	yes := true
+	back := &module.Service{Name: other}
+	if slices.Contains(off, "stop "+other) {
+		back.Running = &yes
+	}
+	if slices.Contains(off, "disable "+other) {
+		back.Enabled = &yes
+	}
+	if back.Running == nil && back.Enabled == nil {
+		return nil, nil
+	}
+	return back, nil
 }
 
 func readFacts() (facts.Facts, error) {

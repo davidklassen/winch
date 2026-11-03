@@ -1151,7 +1151,7 @@ func (hr *hostRun) sshServer(m module.Module, res module.Result, where string) e
 	switch m := m.(type) {
 	case *module.Service:
 		unit := m.Unit()
-		other := sshPair(unit)
+		other := module.SSHPair(unit)
 		if other == "" {
 			return nil
 		}
@@ -1181,22 +1181,11 @@ func (hr *hostRun) sshServer(m module.Module, res module.Result, where string) e
 		}
 		unit := path.Base(m.Path)
 		if target == "/dev/null" &&
-			sshPair(unit) != "" && (&module.Unit{Name: unit}).Path() == m.Path {
+			module.SSHPair(unit) != "" && (&module.Unit{Name: unit}).Path() == m.Path {
 			return fmt.Errorf("%s: this cuts off winch's access", where)
 		}
 	}
 	return nil
-}
-
-// sshPair returns the other unit of the SSH server, or "" for another unit.
-func sshPair(unit string) string {
-	switch unit {
-	case "ssh.service":
-		return "ssh.socket"
-	case "ssh.socket":
-		return "ssh.service"
-	}
-	return ""
 }
 
 // newUnitFile gives a service step the unit file that an earlier unit step of

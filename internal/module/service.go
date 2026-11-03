@@ -341,6 +341,17 @@ func (s *Service) Undo() *Service {
 	return nil
 }
 
+// SSHPair returns the other unit of the SSH server, or "" for another unit.
+func SSHPair(unit string) string {
+	switch unit {
+	case "ssh.service":
+		return "ssh.socket"
+	case "ssh.socket":
+		return "ssh.service"
+	}
+	return ""
+}
+
 // planLabels are the plan lines of the commands that differ from the
 // command.
 var planLabels = map[string]string{"try-restart": "restart", "try-reload-or-restart": "reload"}

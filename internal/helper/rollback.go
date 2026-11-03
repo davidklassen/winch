@@ -23,18 +23,56 @@ import (
 )
 
 // job is a rollback timer: at Deadline, the timer process puts back Restore
-// and runs Undo, a step that reverses what the guarded step did. Downloads is
-// the file of the download records of the project.
+// and runs Undo, the steps that reverse what the guarded step did. Downloads
+// is the file of the download records of the project.
 type job struct {
+	Version   int            `json:"version"`
 	Deadline  time.Time      `json:"deadline"`
 	Restore   []module.Saved `json:"restore"`
-	Undo      *undo          `json:"undo,omitempty"`
+	Undo      []undo         `json:"undo,omitempty"`
 	Downloads string         `json:"downloads"`
 }
 
 type undo struct {
 	Module string          `json:"module"`
 	Args   json.RawMessage `json:"args"`
+}
+
+// jobVersion is the format version of the timer job. A job of version 1 has
+// no version, and at most one undo step, not a list.
+const jobVersion = 2
+
+// decodeJob decodes the timer job data of the file path. It returns the job
+// with its version also when the version is newer than winch knows.
+func decodeJob(path string, data []byte) (job, error) {
+	// A newer version can change the type of any field.
+	var head struct {
+		Version int `json:"version"`
+	}
+	if json.Unmarshal(data, &head) == nil && head.Version > jobVersion {
+		return job{Version: head.Version}, fmt.Errorf("upgrade winch to read %s", path)
+	}
+	var v struct {
+		job
+		Undo json.RawMessage `json:"undo"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return job{}, fmt.Errorf("read the rollback timer %s: %w", path, err)
+	}
+	j := v.job
+	var err error
+	switch {
+	case len(v.Undo) == 0 || string(v.Undo) == "null":
+	case j.Version < 2:
+		j.Undo = make([]undo, 1)
+		err = json.Unmarshal(v.Undo, &j.Undo[0])
+	default:
+		err = json.Unmarshal(v.Undo, &j.Undo)
+	}
+	if err != nil {
+		return job{}, fmt.Errorf("read the rollback timer %s: %w", path, err)
+	}
+	return j, nil
 }
 
 // TimerTime is the time between the start of a rollback timer and the
@@ -85,6 +123,12 @@ func (r *rollbacks) notified() records {
 	return records{dir: filepath.Join(r.dir, r.project), project: "notified", what: "notified handlers"}
 }
 
+// sshOff holds the stops and disables of the SSH server units that the steps
+// of the run applied, as "stop <unit>" and "disable <unit>".
+func (r *rollbacks) sshOff() records {
+	return records{dir: filepath.Join(r.dir, r.project), project: "ssh-off", what: "stopped SSH units"}
+}
+
 func (r *rollbacks) handlerStore(h string) string {
 	return filepath.Join(r.dir, r.project, handlerStoreName(h))
 }
@@ -119,8 +163,10 @@ func (r *rollbacks) idle(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read the rollback timer: %w", err)
 		}
-		var j job
-		_ = json.Unmarshal(data, &j)
+		j, err := decodeJob(p, data)
+		if j.Version > jobVersion {
+			return err
+		}
 		if time.Since(j.Deadline) < deadGrace {
 			return fmt.Errorf("a rollback timer of an earlier run runs until %s; run winch again after it ends", j.Deadline.UTC().Format(time.RFC3339))
 		}
@@ -207,6 +253,7 @@ func (r *rollbacks) start(j job) error {
 	if r.self == "" {
 		return errors.New("the helper does not know its own binary to start the rollback timer")
 	}
+	j.Version = jobVersion
 	data, err := json.Marshal(j)
 	if err != nil {
 		return err
@@ -422,8 +469,8 @@ func RunTimer(ctx context.Context, path string, poll time.Duration) error {
 		if err != nil {
 			return err
 		}
-		var j job
-		if err := json.Unmarshal(data, &j); err != nil {
+		j, err := decodeJob(path, data)
+		if err != nil {
 			return err
 		}
 		if !time.Now().Before(j.Deadline) {
@@ -446,30 +493,34 @@ func runJob(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	var j job
-	if err := json.Unmarshal(data, &j); err != nil {
+	j, err := decodeJob(path, data)
+	if err != nil {
 		return err
 	}
-	err = restore(ctx, downloadRecords(j.Downloads), j.Restore)
-	if j.Undo == nil {
-		return err
+	errs := []error{restore(ctx, downloadRecords(j.Downloads), j.Restore)}
+	for _, u := range j.Undo {
+		errs = append(errs, runUndo(ctx, u))
 	}
-	m, ok := module.New(j.Undo.Module)
+	return errors.Join(errs...)
+}
+
+func runUndo(ctx context.Context, u undo) error {
+	m, ok := module.New(u.Module)
 	if !ok {
-		return errors.Join(err, fmt.Errorf("unknown module %q", j.Undo.Module))
+		return fmt.Errorf("unknown module %q", u.Module)
 	}
-	if uerr := json.Unmarshal(j.Undo.Args, m); uerr != nil {
-		return errors.Join(err, uerr)
+	if err := json.Unmarshal(u.Args, m); err != nil {
+		return err
 	}
 	// The timer has no session, so no login user: uid -1 is no user.
-	res, cerr := m.Check(ctx, &module.State{LoginUID: math.MaxUint32}, module.Silent{})
-	if cerr == nil && res.Status != module.OK {
-		cerr = m.Apply(ctx, module.Silent{})
+	res, err := m.Check(ctx, &module.State{LoginUID: math.MaxUint32}, module.Silent{})
+	if err == nil && res.Status != module.OK {
+		err = m.Apply(ctx, module.Silent{})
 	}
-	if cerr != nil {
-		cerr = fmt.Errorf("%s %s: %w", j.Undo.Module, m.Main(), cerr)
+	if err != nil {
+		return fmt.Errorf("%s %s: %w", u.Module, m.Main(), err)
 	}
-	return errors.Join(err, cerr)
+	return nil
 }
 
 // restore puts back the saved paths. It first drops the unpack records of the
