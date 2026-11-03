@@ -703,6 +703,9 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		hr.trackUnits(p.Step.Args, steps[i].Result, where)
 		steps[i].PendingAssert = p.Check != nil && hr.checks[*p.Check]
 		if steps[i].Result.Status != module.OK {
+			if err := hr.leftOut(p.Step, where); err != nil {
+				return nil, err
+			}
 			changed = true
 			for _, n := range p.Notify {
 				hr.notified[n] = true
@@ -716,6 +719,21 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		changed = false
 	}
 	return steps, nil
+}
+
+// leftOut fails a changed step that notifies a handler with confirm_access
+// whose recipe runs in a stage that the selection leaves out. The session end
+// would put back the step's files.
+func (hr *hostRun) leftOut(st project.Step, where string) error {
+	for _, h := range st.Notify {
+		if h.Recipe == nil || !h.ConfirmsAccess() {
+			continue
+		}
+		if s := hr.env.RunsIn(h.Recipe.Name); s != nil && s.Skipped {
+			return fmt.Errorf("%s: the confirm_access handler %s runs in stage %s, which --stages leaves out", where, h.FullName(), s.Name)
+		}
+	}
+	return nil
 }
 
 // need is a step that needs a user, a group, or a directory, and that need as
@@ -1296,7 +1314,7 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 		var notify []string
 		for _, h := range st.Notify {
 			// A recipe that does not run on the host never runs its handler.
-			if h.Recipe != nil && !hr.env.Runs(h.Recipe.Name) {
+			if h.Recipe != nil && hr.env.RunsIn(h.Recipe.Name) == nil {
 				continue
 			}
 			notify = append(notify, h.Record())
