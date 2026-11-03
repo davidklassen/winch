@@ -402,6 +402,30 @@ func TestHelloDeletesOldHelpers(t *testing.T) {
 	}
 }
 
+// spec: Modules/file, dir, link (stock)
+func TestSessionDeletesFetchedArchives(t *testing.T) {
+	dir := t.TempDir()
+	fetched := filepath.Join(dir, "apt", "fetched")
+	mkdir(t, fetched)
+	write(t, filepath.Join(fetched, "old_1_all.deb"), "")
+	c := start(t, dir, "")
+	if r := c.call(t, "hello", hello("r1")); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if _, err := os.Stat(fetched); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("hello kept the archives of an earlier session: %v", err)
+	}
+	mkdir(t, fetched)
+	write(t, filepath.Join(fetched, "new_1_all.deb"), "")
+	c.w.Close()
+	if err := <-c.done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fetched); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the end of the session kept its archives: %v", err)
+	}
+}
+
 // spec: Remote execution/Helper (the check of every entry under the state
 // directory)
 func TestCheckTree(t *testing.T) {

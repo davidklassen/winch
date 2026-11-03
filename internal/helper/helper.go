@@ -59,6 +59,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		if !rebooting {
 			err = errors.Join(err, rb.end(ctx, handlers, thens))
 		}
+		err = errors.Join(err, os.RemoveAll(filepath.Join(dir, module.FetchedDir)))
 		lock.close()
 	}()
 	for {
@@ -249,6 +250,9 @@ func takeLock(ctx context.Context, params json.RawMessage, dir, self string) (_ 
 		return nil, "", fmt.Errorf("write lock: %w", err)
 	}
 	if err := deleteOld(filepath.Join(dir, "bin"), self); err != nil {
+		return nil, "", err
+	}
+	if err := os.RemoveAll(filepath.Join(dir, module.FetchedDir)); err != nil {
 		return nil, "", err
 	}
 	return l, h.Project, nil

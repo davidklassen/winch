@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -44,12 +45,12 @@ func TestStockModule(t *testing.T) {
 			After: `[ "$(stat -c '%U %G %a' ` + stockConf + `)" = "root adm 640" ]`,
 		},
 		{
-			Name:      "stock downloads an archive that is not in the cache",
+			Name:      "stock fetches an archive that is not in apt's cache",
 			Setup:     "rm -f /var/cache/apt/archives/winch-stock_*.deb && echo edited >> " + stockConf,
 			Args:      stockArgs,
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"content of winch-stock 1"}},
-			Unchanged: `grep -q edited ` + stockConf,
-			After:     `[ -f /var/cache/apt/archives/winch-stock_1_all.deb ] && [ "$(cat ` + stockConf + `)" = stock ]`,
+			Unchanged: `grep -q edited ` + stockConf + ` && ! ls /var/cache/apt/archives/winch-stock_*.deb 2>/dev/null`,
+			After:     `[ "$(cat ` + stockConf + `)" = stock ] && ! ls /var/cache/apt/archives/winch-stock_*.deb 2>/dev/null`,
 		},
 		{
 			Name:      "stock creates a missing file",
@@ -252,6 +253,29 @@ func TestStockModule(t *testing.T) {
 }
 
 // spec: Modules/file, dir, link (stock)
+func TestStockFetchedArchivesEndWithTheSession(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "stockfetch")
+	vm.MustRun(t, "apt-get update -q >/dev/null && "+installStock+"\n"+
+		"rm -f /var/cache/apt/archives/winch-stock_*.deb && echo edited >> "+stockConf+"\n"+
+		"mkdir -p /var/lib/winch/apt/fetched && touch /var/lib/winch/apt/fetched/old_1_all.deb")
+	s := vm.Session(t)
+	if out := vm.MustRun(t, "find /var/lib/winch/apt -name '*.deb'"); out != "" {
+		t.Errorf("a new session kept %q of an earlier session", out)
+	}
+	got, err := s.Check(t.Context(), "file", &module.File{Path: stockConf, Stock: true}, &module.State{})
+	if err != nil || got.Status != module.Change || !slices.Equal(got.Changes, []string{"content of winch-stock 1"}) {
+		t.Fatalf("check = %+v, %v; want the content of winch-stock 1", got, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if out := vm.MustRun(t, "find /var/cache/apt /var/lib/winch/apt -name 'winch-stock_*'"); out != "" {
+		t.Errorf("the archive stays after the session: %q", out)
+	}
+}
+
+// spec: Modules/file, dir, link (stock)
 func TestStockKilledDownload(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
@@ -268,12 +292,12 @@ func TestStockKilledDownload(t *testing.T) {
 		_, err := s.Check(ctx, "file", args, &module.State{})
 		done <- err
 	}()
-	vm.MustRun(t, "timeout 10 sh -c 'until [ -n \"$(find /var/cache/apt/archives -name monit_\\* -size +0)\" ]; do sleep 0.1; done'; pkill -KILL -x apt-get; pkill -KILL -x http; true")
+	vm.MustRun(t, "timeout 10 sh -c 'until [ -n \"$(find /var/lib/winch/apt -name monit_\\* -size +0)\" ]; do sleep 0.1; done' && { pkill -KILL -x apt-get; pkill -KILL -x http; true; }")
 	if err := <-done; err == nil || !strings.Contains(err.Error(), "get the archive of monit") {
 		t.Fatalf("check with a killed download = %v, want an error of the download", err)
 	}
-	if out := vm.MustRun(t, "find /var/cache/apt -name 'monit_*' -o -name winch"); out != "" {
-		t.Errorf("a killed download left %q in apt's cache", out)
+	if out := vm.MustRun(t, "find /var/cache/apt /var/lib/winch/apt -name 'monit_*' -o -name winch"); out != "" {
+		t.Errorf("a killed download left %q", out)
 	}
 	vm.MustRun(t, "rm "+limit)
 	got, err := s.Check(ctx, "file", args, &module.State{})

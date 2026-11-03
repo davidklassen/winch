@@ -628,7 +628,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		if !st.Refreshed {
 			c.hosts.Refreshes[c.host]++
 		}
-		st.IndexFresh, st.Refreshed = true, true
+		st.Refreshed = true
 		if res, ok := c.hosts.result(c.host + " " + u.Main()); ok {
 			return res, nil
 		}

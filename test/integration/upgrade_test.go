@@ -56,9 +56,16 @@ func upgradeVM(t *testing.T, name string) *vmtest.VM {
 	return vm
 }
 
-const upgradeReset = "pkill -f 'fcntl[.]lockf'; rm -f /root/locked /etc/winch-fragile.ok /etc/apt/sources.list.d/winch-down.sources; " +
+// hookConf is an apt config with update hooks.
+const hookConf = "/etc/apt/apt.conf.d/99winch-hook"
+
+const upgradeReset = "pkill -f 'fcntl[.]lockf'; rm -f " + hookConf + " /root/hook /root/locked /etc/winch-fragile.ok /etc/apt/sources.list.d/winch-down.sources; " +
 	"while pgrep -x dpkg >/dev/null; do sleep 0.1; done; apt-mark showhold | xargs -r apt-mark unhold >/dev/null; dpkg --configure -a >/dev/null 2>&1; " +
 	"dpkg --purge winch-up winch-up-deps winch-up-new winch-up-conflict winch-up-old winch-fragile >/dev/null 2>&1; ucf --purge /etc/winch-up-ucf.conf 2>/dev/null; rm -f /etc/winch-up.conf* /etc/winch-up-ucf.conf*; true"
+
+// aptFiles lists apt's index and caches with the size and modification time
+// of each file.
+const aptFiles = "find /var/lib/apt/lists /var/cache/apt -printf '%p %s %T@\\n' | sort"
 
 // downSource adds a source that apt cannot fetch: nothing listens on port 9.
 const downSource = "printf 'Types: deb\\nURIs: http://127.0.0.1:9/winch-down\\nSuites: trixie\\nComponents: main\\nTrusted: yes\\n' > /etc/apt/sources.list.d/winch-down.sources"
@@ -67,7 +74,7 @@ const downSource = "printf 'Types: deb\\nURIs: http://127.0.0.1:9/winch-down\\nS
 func TestUpgradeModule(t *testing.T) {
 	t.Parallel()
 	vm := upgradeVM(t, "upgrade")
-	fresh := module.State{IndexFresh: true, Refreshed: true}
+	fresh := module.State{Refreshed: true}
 	safe := &module.Upgrade{Mode: "safe"}
 	full := &module.Upgrade{Mode: "full"}
 	vmtest.RunCases(t, vm, "upgrade", upgradeReset, []vmtest.Case{
@@ -81,12 +88,20 @@ func TestUpgradeModule(t *testing.T) {
 			Name: "the check refreshes the index and safe upgrades a package",
 			// Without the index of the test source, only a refresh finds
 			// version 2.
-			Setup:     installV1("winch-up") + " && rm -f /var/lib/apt/lists/10.0.2.100_test_*",
+			Setup:     installV1("winch-up") + " && rm -f /var/lib/apt/lists/10.0.2.100_test_* /var/lib/winch/apt/lists/10.0.2.100_test_* && " + aptFiles + " > /root/apt-files",
 			Args:      safe,
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"upgrade winch-up 1 → 2"}},
 			WantState: fresh,
-			Unchanged: version("winch-up", "1"),
+			Unchanged: version("winch-up", "1") + " && " + aptFiles + " | cmp - /root/apt-files",
 			After:     version("winch-up", "2"),
+		},
+		{
+			Name:      "the refresh runs no update hook",
+			Setup:     `echo 'APT::Update::Pre-Invoke {"touch /root/hook";}; APT::Update::Post-Invoke-Success {"touch /root/hook";};' > ` + hookConf,
+			Args:      safe,
+			Want:      module.Result{Status: module.OK},
+			WantState: fresh,
+			Unchanged: "[ ! -e /root/hook ]",
 		},
 		{
 			Name: "the check skips the refresh after a refresh of the run",
