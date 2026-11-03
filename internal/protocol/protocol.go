@@ -95,6 +95,16 @@ type Guard struct {
 	// the timer of that handler puts back. When the session ends while one is
 	// pending, the helper puts back its store and drops its record.
 	Handlers []string `json:"handlers,omitempty"`
+	// SSHD are the stores of the later steps of the host with
+	// confirm_access that restart or reload sshd: a recipe, or
+	// <pipeline>\t<stage>. A step that changes sshd's config keeps its old
+	// state in each, so the rollback of such a step puts it back. When the
+	// session ends before such a step ran, the helper puts back the paths of
+	// the step.
+	SSHD []string `json:"sshd,omitempty"`
+	// LoadsSSHD is set on a step with confirm_access that restarts or
+	// reloads sshd. Its rollback timer tests the sshd files of its store.
+	LoadsSSHD bool `json:"loads_sshd,omitempty"`
 	// Confirm is the confirm_access of the step: a change starts the
 	// rollback timer, which puts back the whole store.
 	Confirm bool `json:"confirm,omitempty"`

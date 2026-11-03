@@ -512,6 +512,21 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 		}
 	}
+	for _, st := range s.Guard.SSHD {
+		if _, _, err := rb.save(rb.store(st), m); err != nil {
+			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+		}
+	}
+	var untested []string
+	for _, st := range s.Guard.SSHD {
+		for _, t := range module.Touches(m) {
+			line, _ := json.Marshal(untestedFile{Store: st, Path: t.Path})
+			untested = append(untested, string(line))
+		}
+	}
+	if _, err := rb.sshd().add(untested); err != nil {
+		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+	}
 	if _, err := rb.notified().add(s.Guard.Handlers); err != nil {
 		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 	}
@@ -549,6 +564,13 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	if guard {
 		out.Timer = time.Until(deadline)
 		rb.running = &guarded{handlers: notified, thens: thenLines}
+	}
+	// sshd now loads all its files: the access check tests them, and the
+	// rollback puts back those of the store.
+	if guard && s.Guard.LoadsSSHD {
+		if err := rb.tested(rb.scope(s.Guard)); err != nil {
+			return out, err
+		}
 	}
 	if unpack {
 		return out, record(downloads, d.Record(), d.Unpack)

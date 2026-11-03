@@ -653,7 +653,8 @@ func (a *hostApply) afterStart(st project.Step, record string) project.Step {
 // guard returns how the helper guards the step p of stage: it saves in the
 // store of the recipe, or of the stage for a module step of the stage, when
 // that has a step with confirm_access. It also saves in the store of each
-// confirm_access handler that the step notifies on the host.
+// confirm_access handler that the step notifies on the host, and in each
+// store of p.SSHD.
 func guard(stage *project.Stage, p Planned) protocol.Guard {
 	g := protocol.Guard{Confirm: p.Step.ConfirmAccess}
 	if p.In != nil {
@@ -666,6 +667,11 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 			g.Handlers = append(g.Handlers, h.Record())
 		}
 	}
+	for _, s := range p.SSHD {
+		g.SSHD = append(g.SSHD, s.name())
+	}
+	loads, guarded := loadsSSHD(p.Step)
+	g.LoadsSSHD = loads && guarded
 	return g
 }
 

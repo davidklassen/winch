@@ -1101,3 +1101,145 @@ func TestHelloFailsOnANewerTimerJob(t *testing.T) {
 		})
 	}
 }
+
+// spec: Running a pipeline/Lockout protection (a step that changes sshd's
+// config saves in the store of each later step with confirm_access that
+// reloads or restarts sshd)
+func TestRollbackPutsBackTheSSHDConfigOfOtherRecipes(t *testing.T) {
+	l := startLockout(t)
+	dropIn := filepath.Join(filepath.Dir(l.a), "drop-in.conf")
+	g := protocol.Guard{Recipe: "hardening", SSHD: []string{"ssh", "site\tbase"}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(dropIn, "DenyUsers *\n"), Guard: g}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	rb := &rollbacks{dir: filepath.Join(l.dir, "rollback"), project: "acme"}
+	for name, want := range map[string]int{"hardening": 0, "ssh": 1, "site\tbase": 1} {
+		if saved, err := readIndex(rb.store(name)); err != nil || len(saved) != want {
+			t.Errorf("the store of %q holds %+v, %v; want %d paths", name, saved, err, want)
+		}
+	}
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: protocol.Guard{Recipe: "ssh", Save: true, Confirm: true}})
+	if r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if r := l.c.call(t, "rollback", nil); r.Error != "" {
+		t.Fatalf("rollback: %s", r.Error)
+	}
+	if _, err := os.Lstat(dropIn); !os.IsNotExist(err) {
+		t.Errorf("the drop-in stays after the rollback: %v", err)
+	}
+	if content(t, l.b) != "old\n" {
+		t.Errorf("b = %q after the rollback, want old", content(t, l.b))
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the run of a host ends before
+// a guarded sshd reload that holds saved sshd files ran)
+func TestEndPutsBackTheSSHDFilesOfAReloadThatDidNotRun(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		// reload is the guard of a later step, or nil when none runs.
+		reload *protocol.Guard
+		stays  bool
+	}{
+		{"no reload ran", nil, false},
+		{"the reload ran", &protocol.Guard{Recipe: "ssh", Save: true, Confirm: true, LoadsSSHD: true}, true},
+		{"the reload of another store ran", &protocol.Guard{Pipeline: "site", Stage: "late", Save: true, Confirm: true, LoadsSSHD: true}, true},
+		{"another guarded step of the store ran", &protocol.Guard{Recipe: "ssh", Save: true, Confirm: true}, false},
+		{"the reload of a store without the file ran", &protocol.Guard{Pipeline: "site", Stage: "other", Save: true, Confirm: true, LoadsSSHD: true}, false},
+	} {
+		l := startLockout(t)
+		dropIn := filepath.Join(filepath.Dir(l.a), "drop-in.conf")
+		g := protocol.Guard{Recipe: "hardening", SSHD: []string{"ssh", "site\tlate"}}
+		if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(dropIn, "DenyUsers *\n"), Guard: g}); r.Error != "" {
+			t.Fatal(r.Error)
+		}
+		if tt.reload != nil {
+			if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: *tt.reload}); r.Error != "" {
+				t.Fatal(r.Error)
+			}
+			if r := l.c.call(t, "confirm", nil); r.Error != "" {
+				t.Fatal(r.Error)
+			}
+		}
+		l.end(t)
+		if _, err := os.Lstat(dropIn); (err == nil) != tt.stays {
+			t.Errorf("%s: the drop-in after the session: %v, want it to stay: %t", tt.name, err, tt.stays)
+		}
+		// The end puts back only the untested sshd files.
+		if tt.reload != nil && content(t, l.b) != "new\n" {
+			t.Errorf("%s: b = %q after the session, want the tested file", tt.name, content(t, l.b))
+		}
+		rb := &rollbacks{dir: filepath.Join(l.dir, "rollback"), project: "acme"}
+		if lines, err := rb.sshd().read(); err != nil || len(lines) != 0 {
+			t.Errorf("%s: sshd records after the session: %q, %v; want none", tt.name, lines, err)
+		}
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the run of a host ends before
+// a guarded sshd reload that holds saved sshd files ran)
+func TestEndPutsBackAnUntestedTreeAfterItsAttributes(t *testing.T) {
+	d := filepath.Join(t.TempDir(), "conf.d")
+	write(t, filepath.Join(d, "x.conf"), "x\n")
+	rb := &rollbacks{dir: t.TempDir(), project: "acme"}
+	store := rb.store("ssh")
+	if _, _, err := rb.save(store, &module.Dir{Path: d}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := rb.save(store, &module.Dir{Path: d, Absent: true}); err != nil {
+		t.Fatal(err)
+	}
+	line, _ := json.Marshal(untestedFile{Store: "ssh", Path: d})
+	if _, err := rb.sshd().add([]string{string(line)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := rb.putBackUntested(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if content(t, filepath.Join(d, "x.conf")) != "x\n" {
+		t.Error("x.conf is not back")
+	}
+	if fi, err := os.Stat(d); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("conf.d after the put-back: %v, %v; want mode 0700", fi, err)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the rollback of a switch
+// between ssh.service and ssh.socket, after a change of sshd's config of
+// another recipe)
+func TestRollbackOfASwitchPutsBackTheSSHDConfigOfOtherRecipes(t *testing.T) {
+	yes, no := true, false
+	state := fakeSystemd(t, map[string]string{"ssh.service": "inactive disabled", "ssh.socket": "active enabled"})
+	l := startLockout(t)
+	dropIn := filepath.Join(filepath.Dir(l.a), "drop-in.conf")
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(dropIn, "DenyUsers *\n"), Guard: protocol.Guard{Recipe: "hardening", SSHD: []string{"ssh"}}}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	off, _ := json.Marshal(module.Service{Name: "ssh.socket", Running: &no, Enabled: &no})
+	if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: off, Guard: protocol.Guard{Recipe: "ssh", Save: true}}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	start, _ := json.Marshal(module.Service{Name: "ssh", Running: &yes, Enabled: &yes})
+	if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: start, Guard: protocol.Guard{Recipe: "ssh", Save: true, Confirm: true, LoadsSSHD: true}}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if r := l.c.call(t, "rollback", nil); r.Error != "" {
+		t.Fatalf("rollback: %s", r.Error)
+	}
+	if _, err := os.Lstat(dropIn); !os.IsNotExist(err) {
+		t.Errorf("the drop-in stays after the rollback: %v", err)
+	}
+	if got := state("ssh.socket"); got != "active enabled" {
+		t.Errorf("ssh.socket after the rollback: %s, want active enabled", got)
+	}
+	if got := state("ssh.service"); got != "inactive enabled" {
+		t.Errorf("ssh.service after the rollback: %s, want inactive enabled", got)
+	}
+}

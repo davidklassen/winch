@@ -109,11 +109,33 @@ func result(job string) string { return job + ".result" }
 
 // scope returns the directory of the store of g.
 func (r *rollbacks) scope(g protocol.Guard) string {
-	name := "recipe-" + g.Recipe
 	if g.Recipe == "" {
-		name = stageStore(g.Pipeline + "\t" + g.Stage)
+		return r.store(g.Pipeline + "\t" + g.Stage)
 	}
-	return filepath.Join(r.dir, r.project, name)
+	return r.store(g.Recipe)
+}
+
+// sshd holds the sshd files that the run changed after its last guarded
+// restart or reload of sshd, as untested lines, each with a store that keeps
+// its old state.
+func (r *rollbacks) sshd() records {
+	return records{dir: filepath.Join(r.dir, r.project), project: "sshd", what: "untested sshd files"}
+}
+
+// untestedFile is a line of the untested sshd files: Store names a store as
+// Guard.SSHD does.
+type untestedFile struct {
+	Store string `json:"store"`
+	Path  string `json:"path"`
+}
+
+// store returns the directory of the store of a recipe, or of
+// <pipeline>\t<stage>.
+func (r *rollbacks) store(name string) string {
+	if strings.Contains(name, "\t") {
+		return filepath.Join(r.dir, r.project, stageStore(name))
+	}
+	return filepath.Join(r.dir, r.project, "recipe-"+name)
 }
 
 // notified holds the records of the handlers with confirm_access that the
@@ -401,7 +423,7 @@ func (r *rollbacks) clear(handlers records) error {
 // handler whose store does not come back stays pending. A timer that still
 // runs rolls back first.
 func (r *rollbacks) end(ctx context.Context, handlers, thens records) error {
-	errs := []error{rollbackStep(ctx, r, handlers, thens)}
+	errs := []error{rollbackStep(ctx, r, handlers, thens), r.putBackUntested(ctx)}
 	notified, err := r.notified().read()
 	if err != nil || len(notified) == 0 {
 		return errors.Join(append(errs, err)...)
@@ -432,6 +454,62 @@ func (r *rollbacks) end(ctx context.Context, handlers, thens records) error {
 		drop = append(drop, h)
 	}
 	return errors.Join(append(errs, handlers.remove(drop...))...)
+}
+
+// tested drops the lines of the untested sshd files that the store in dir
+// holds: the rollback of a guarded sshd reload with that store puts them
+// back.
+func (r *rollbacks) tested(dir string) error {
+	saved, err := readIndex(dir)
+	if err != nil {
+		return err
+	}
+	lines, err := r.sshd().read()
+	if err != nil {
+		return err
+	}
+	var drop []string
+	for _, line := range lines {
+		var u untestedFile
+		if json.Unmarshal([]byte(line), &u) == nil && slices.ContainsFunc(saved, func(s module.Saved) bool { return s.Path == u.Path }) {
+			drop = append(drop, line)
+		}
+	}
+	return r.sshd().remove(drop...)
+}
+
+// putBackUntested puts back the sshd files that no guarded restart or
+// reload of sshd tested, each from the store of its first line, and drops
+// the lines.
+func (r *rollbacks) putBackUntested(ctx context.Context) error {
+	lines, err := r.sshd().read()
+	if err != nil || len(lines) == 0 {
+		return err
+	}
+	var back []module.Saved
+	for _, line := range lines {
+		var u untestedFile
+		if err := json.Unmarshal([]byte(line), &u); err != nil {
+			return fmt.Errorf("read the untested sshd files: %w", err)
+		}
+		if slices.ContainsFunc(back, func(s module.Saved) bool { return s.Path == u.Path }) {
+			continue
+		}
+		saved, err := readIndex(r.store(u.Store))
+		if err != nil {
+			return err
+		}
+		// A tree can follow the attributes of its directory.
+		for _, s := range saved {
+			if s.Path == u.Path {
+				back = append(back, s)
+			}
+		}
+	}
+	if err := restore(ctx, r.downloads, back); err != nil {
+		return fmt.Errorf("put back the sshd files that no guarded sshd reload tested: %w", err)
+	}
+	return r.sshd().write(nil)
 }
 
 // rollbackStep ends the timer of the guarded step at once, and drops the

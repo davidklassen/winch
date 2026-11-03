@@ -204,6 +204,10 @@ type Planned struct {
 	// parts are the secret parts of the steps of the host. Text from the host
 	// of one step can hold a value that another step built from a secret.
 	parts []string
+	// SSHD is set on a step that changes sshd's config: the stores of the
+	// later steps of the host with confirm_access that restart or reload
+	// sshd.
+	SSHD []store
 }
 
 // hostText returns text from the host of the step with each secret part of
@@ -557,6 +561,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		}
 	}
 	plan.suppressMissingUnitFiles()
+	plan.sshdStores()
 	plan.Warnings = append(plan.sshdWarnings(), plan.publicWarnings()...)
 	plan.hash = sumBytes(plan.HashInput())[:16]
 	return plan
