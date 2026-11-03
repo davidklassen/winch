@@ -398,10 +398,10 @@ steps:
       path: !tpl /etc/nginx/sites-enabled/{{ .item }}.conf
       content: !tpl "server_name {{ .item }}.{{ .host.short }};\n"
     loop: !expr vars.sites
-  - name: Allow the admins
+  - name: List the admins
     file:
-      path: /etc/ssh/sshd_config.d/admins.conf
-      content: !tpl "AllowUsers{{ range .vars.admins }} {{ . }}{{ end }}\n"
+      path: /etc/app/admins.conf
+      content: !tpl "admins ={{ range .vars.admins }} {{ . }}{{ end }}\n"
   - name: List the other hosts
     recipe: peers
     vars:
