@@ -664,8 +664,9 @@ func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *m
 const accessMarker = "winch-access"
 
 // accessCommand runs the marker the way the session start runs its script, so
-// it proves what the next session needs.
-var accessCommand = command("echo " + accessMarker)
+// it proves what the next session needs. env runs echo as a program, not as a
+// builtin of sh, so a sudo rule that stops programs, such as noexec, fails it.
+var accessCommand = command("env echo " + accessMarker)
 
 // Access opens a new SSH connection to the host and runs a command that needs the login and sudo.
 // Like the session start, it fails when the login prints to stdout.

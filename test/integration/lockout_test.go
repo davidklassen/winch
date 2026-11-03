@@ -524,9 +524,15 @@ func TestLockoutSSHSwitch(t *testing.T) {
 		}
 	}
 
+	// The drop-in of ssh.socket is sshd's config. A start of ssh.socket is no
+	// load of sshd, so no guarded step tests the drop-in.
+	var warnings []string
+	for _, at := range []string{"2:5", "4:5"} {
+		warnings = append(warnings, "recipes/ssh/recipe.yaml:"+at+": warning: sshd's config changes, and no step reloads sshd with confirm_access: true; the new config loads untested at the next restart")
+	}
 	// ssh.socket listens on a port that winch does not connect to: the access
 	// check fails, and ssh.service runs again.
-	r := lab.Winch(t, dir, "apply", "site", "--yes")
+	r := lab.WinchEnvWarnings(t, dir, nil, warnings, "apply", "site", "--yes")
 	if r.Code != 1 || !strings.Contains(r.Stderr, "ssh-switch: ssh: failed: service ssh.socket: the access check failed: ") ||
 		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply: exit %d", r.Code)
@@ -535,6 +541,49 @@ func TestLockoutSSHSwitch(t *testing.T) {
 	want := "active\nenabled\n"
 	if got := vm.MustRun(t, "systemctl is-active ssh; systemctl is-enabled ssh; test ! -e /etc/systemd/system/ssh.socket.d"); got != want {
 		t.Errorf("ssh.service after the rollback = %q, want %q", got, want)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a drop-in of ssh.socket is
+// sshd's config)
+func TestLockoutSSHSocketDropIn(t *testing.T) {
+	t.Parallel()
+	if osRelease().id != "ubuntu" {
+		t.Skip("Debian starts sshd from ssh.service")
+	}
+	vm := lab.StartVM(t, "ssh-socket-drop-in")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  ssh-socket-drop-in: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: ssh\n",
+		"recipes/ssh/recipe.yaml": `steps:
+  - dir:
+      path: /etc/systemd/system/ssh.socket.d
+  - file:
+      path: /etc/systemd/system/ssh.socket.d/port.conf
+      content: "[Socket]\nListenStream=\nListenStream=2222\n"
+    notify: restart
+handlers:
+  restart:
+    - service:
+        name: ssh.socket
+        restarted: true
+`,
+	})
+	r := lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "+ file /etc/systemd/system/ssh.socket.d/port.conf\n          changes the ports of ssh.socket, which winch connects to\n") {
+		t.Errorf("plan: exit %d, want the ports line at the file step", r.Code)
+	}
+	// The file step restarts ssh.socket on the new port, and its own access
+	// check fails.
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "ssh-socket-drop-in: ssh: failed: file /etc/systemd/system/ssh.socket.d/port.conf: the access check failed: ") ||
+		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+		t.Fatalf("apply: exit %d", r.Code)
+	}
+	vm.MustRun(t, "test ! -e /etc/systemd/system/ssh.socket.d/port.conf")
+	if out := vm.MustRun(t, "ss -Hltn"); !strings.Contains(out, ":22 ") || strings.Contains(out, ":2222 ") {
+		t.Errorf("ssh.socket after the rollback listens on:\n%s", out)
 	}
 }
 

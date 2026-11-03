@@ -603,6 +603,9 @@ handlers:
 		{"restart", recipe("/etc/ssh/sshd_config", "ssh\n        restarted: true"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
 		{"reload of sshd in sshd_config.d", recipe("/etc/ssh/sshd_config.d/local.conf", "sshd.service\n        reloaded: true"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
 		{"confirm_access", recipe("/etc/ssh/sshd_config", "ssh\n        restarted: true\n      confirm_access: true"), "", "", nil, ""},
+		{"drop-in of ssh.service", recipe("/etc/systemd/system/ssh.service.d/override.conf", "ssh\n        restarted: true"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
+		{"drop-in of ssh.socket", recipe("/etc/systemd/system/ssh.socket.d/port.conf", "ssh.socket\n        restarted: true"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"drop-in of another unit", recipe("/etc/systemd/system/nginx.service.d/override.conf", "ssh\n        restarted: true"), "", "", nil, ""},
 		{"no sshd config change", recipe("/etc/motd", "ssh\n        restarted: true"), "", "", nil, ""},
 		{"restart of another unit", recipe("/etc/ssh/sshd_config", "nginx\n        restarted: true"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
 		{"then", `steps:
