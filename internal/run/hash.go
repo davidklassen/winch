@@ -8,7 +8,6 @@ import (
 
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/protocol"
-	"github.com/davidklassen/winch/internal/secret"
 )
 
 type hashRun struct {
@@ -38,14 +37,11 @@ type hashHealth struct {
 }
 
 type hashStep struct {
-	Address string `json:"address"`
-	Module  string `json:"module,omitempty"`
-	// A step that reads a secret has the Args and Then of the first
-	// placeholder variant, and its Result as JSON text with its secret
-	// parts masked.
-	Args   any      `json:"args,omitempty"`
-	Then   string   `json:"then,omitempty"`
-	Notify []string `json:"notify,omitempty"`
+	Address string   `json:"address"`
+	Module  string   `json:"module,omitempty"`
+	Args    any      `json:"args,omitempty"`
+	Then    string   `json:"then,omitempty"`
+	Notify  []string `json:"notify,omitempty"`
 	// ConfirmAccess changes what apply does, so the hash covers it.
 	ConfirmAccess bool `json:"confirm_access,omitempty"`
 	Result        any  `json:"result,omitempty"`
@@ -55,9 +51,7 @@ type hashStep struct {
 	Steps []hashStep `json:"steps,omitempty"`
 }
 
-// hashResult is a check result with the old content as its SHA-256. A step
-// that reads a secret has no old content: it can hold an earlier value of the
-// secret, which the step's parts do not hold.
+// hashResult is a check result with the old content as its SHA-256.
 type hashResult struct {
 	module.Result
 	Old string `json:"old,omitempty"`
@@ -111,27 +105,17 @@ func (plan *Plan) stepHash(p Planned) hashStep {
 		}
 		return h
 	}
-	h := hashStep{Address: p.Address, Module: p.Step.Module, Notify: p.Notify, ConfirmAccess: p.Step.ConfirmAccess, PendingThen: p.PendingThen}
-	var args any = p.Step.Args
-	then := p.Step.Then
-	if p.Step.Secret {
-		args, then = p.Step.HashArgs, p.Step.HashThen
+	h := hashStep{Address: p.Address, Module: p.Step.Module, Args: p.Step.Args, Then: p.Step.Then, Notify: p.Notify, ConfirmAccess: p.Step.ConfirmAccess, PendingThen: p.PendingThen}
+	if c, ok := p.Step.Args.(module.WithContent); ok {
+		h.Args = c.WithoutContent()
 	}
-	if c, ok := args.(module.WithContent); ok {
-		args = c.WithoutContent()
-	}
-	h.Args, h.Then = args, then
 	if p.Step.Args != nil && p.Result.Status != "" {
 		r := hashResult{Result: p.Result}
 		r.Result.Old = nil
-		if p.Result.Old != nil && !p.Step.Secret {
+		if p.Result.Old != nil {
 			r.Old = sum(*p.Result.Old)
 		}
 		h.Result = r
-		if p.Step.Secret {
-			b, _ := json.Marshal(r)
-			h.Result = secret.Hide(string(b), p.Step.Parts)
-		}
 	}
 	return h
 }

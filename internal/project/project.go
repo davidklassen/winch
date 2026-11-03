@@ -160,18 +160,10 @@ type Step struct {
 	// Hidden is true in the masked copy when the output shows no part of
 	// the content.
 	Hidden bool
-	// Secret is true after Eval when the evaluation of the step reads a
-	// secret.
-	Secret bool
 	// Parts are the parts of the arguments, then, and content that come
 	// from a secret, and the lines of a multi-line part that count on their
 	// own, after Eval.
 	Parts []string
-	// HashArgs and HashThen are the arguments and the command of then in
-	// the first placeholder variant of a step that reads a secret. HashArgs
-	// is the module, or the computed arguments when the module rejects them.
-	HashArgs any
-	HashThen string
 	// in is the recipe that holds the step, or nil in a stage.
 	in *Recipe
 	// masked is the copy of the step that the output shows, set after Eval
@@ -1651,12 +1643,11 @@ func (st Step) eval(e *Env) ([]Step, error) {
 		}
 		s.Then = then
 		if variants {
-			var hash any
-			if s.masked, hash, err = st.shown(ie, s, args, thens); err != nil {
+			if s.masked, err = st.shown(ie, s, args, thens); err != nil {
 				return nil, err
 			}
 			if s.masked != nil {
-				s.Secret, s.HashArgs, s.HashThen, s.Parts = true, hash, thens[1], s.masked.Parts
+				s.Parts = s.masked.Parts
 			}
 		}
 		out = append(out, s)
@@ -1749,11 +1740,10 @@ func (st Step) instance(e *Env, decode func(*yamlx.Node, any) error) (Step, any,
 
 // shown returns the masked copy of s, the step for the real variant of e,
 // or nil when the step reads no secret: a part comes from a secret, or a
-// placeholder variant fails. It also returns the HashArgs of s. real are the
-// computed arguments of s, and thens the commands of then in the three
-// variants. The placeholder variants skip the checks of the module, which
-// can reject a placeholder.
-func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, any, error) {
+// placeholder variant fails. real are the computed arguments of s, and thens
+// the commands of then in the three variants. The placeholder variants skip
+// the checks of the module, which can reject a placeholder.
+func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, error) {
 	mods := [3]module.Module{s.Args}
 	args := [3]any{real}
 	contentOK := true
@@ -1800,7 +1790,7 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, any, err
 	}
 	parts = slices.DeleteFunc(parts, func(p string) bool { return p == "" })
 	if contentOK && len(parts) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
 	var lines []string
 	for _, p := range parts {
@@ -1810,18 +1800,14 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, any, err
 	if real != nil {
 		n, err := yamlx.FromValue(tree, st.Pos)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		sh.Args, _ = st.newModule(st.Module)
 		// A field that cannot hold secret.Mark, such as a number, stays
 		// empty.
 		_ = yamlx.DecodeUnchecked(n, sh.Args)
 	}
-	hash := args[1]
-	if mods[1] != nil {
-		hash = mods[1]
-	}
-	return &sh, hash, nil
+	return &sh, nil
 }
 
 // secretKeys marks the authorized_keys elements of the arguments real that

@@ -686,7 +686,7 @@ func TestMatchSecret(t *testing.T) {
 		}
 		for _, s := range steps {
 			shown = append(shown, shownLines(s))
-			if !s.Secret {
+			if s.masked == nil {
 				t.Errorf("step %s does not read a secret", s.Args.Main())
 			}
 		}

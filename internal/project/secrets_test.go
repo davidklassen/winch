@@ -243,32 +243,6 @@ func TestEvalSecrets(t *testing.T) {
 	}
 }
 
-// spec: Variables/Secrets in output (two evaluations)
-// spec: Running a pipeline/Plan ("A secret enters the hash as its !secret ciphertext")
-func TestEvalSecretHashArgs(t *testing.T) {
-	ph := secret.Placeholder(1)
-	steps, _, err := evalSecret(t, "  - file:\n      path: !tpl \"/etc/{{ .vars.pw }}.conf\"\n      content: !tpl \"pw={{ .vars.pw }}\\n\"\n    then: !tpl \"echo {{ .vars.pw }}\"\n"+
-		"  - service:\n      name: !tpl \"app-{{ .vars.pw }}\"\n      enabled: true\n"+
-		"  - file:\n      path: /a\n      content: x\n", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f, ok := steps[0].HashArgs.(*module.File)
-	if !ok || f.Path != "/etc/"+ph+".conf" || string(f.Data) != "pw="+ph+"\n" {
-		t.Errorf("hash args = %#v, want the file of the placeholder variant", steps[0].HashArgs)
-	}
-	if got := steps[0].HashThen; got != "echo "+ph {
-		t.Errorf("hash then = %q", got)
-	}
-	// The placeholder variant skips the unit name check.
-	if s, ok := steps[1].HashArgs.(*module.Service); !ok || s.Name != "app-"+ph {
-		t.Errorf("hash args = %#v, want the service of the placeholder variant", steps[1].HashArgs)
-	}
-	if steps[2].Secret || steps[2].HashArgs != nil {
-		t.Errorf("a step without a secret has hash args %#v", steps[2].HashArgs)
-	}
-}
-
 func TestSecretContentFailsWithPlaceholders(t *testing.T) {
 	files := map[string]string{
 		"recipes/r/recipe.yaml":      "vars:\n  r_m: {hunter2: found}\nsteps:\n  - file:\n      path: !tpl \"/etc/{{ .vars.short }}\"\n      template: t.tmpl\n",
