@@ -1784,7 +1784,7 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, error) {
 			sh.Hidden = !ok
 			sh.Lines = lines
 			for _, l := range lines {
-				parts = append(parts, l.Part())
+				parts = append(parts, l.Parts()...)
 			}
 		}
 	}

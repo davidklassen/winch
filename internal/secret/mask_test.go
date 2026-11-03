@@ -3,6 +3,7 @@ package secret
 import (
 	"encoding/base64"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"text/template"
@@ -14,38 +15,167 @@ import (
 // spec: Variables/Secrets in output (two evaluations)
 func TestPlaceholders(t *testing.T) {
 	a, b := Placeholder(1), Placeholder(2)
-	if a == "" || b == "" || len(a) == len(b) {
-		t.Fatalf("placeholders %q and %q: want two of different lengths", a, b)
+	if a != "aaaaaaaa" || b != "zzzzzzzzzzzz" {
+		t.Errorf("placeholders %q and %q, want aaaaaaaa and zzzzzzzzzzzz", a, b)
 	}
-	if strings.ContainsAny(a, b) {
-		t.Errorf("placeholders %q and %q share characters", a, b)
-	}
-	if strings.ContainsAny(a+b, Mark+"\n") {
-		t.Errorf("placeholders share characters with %q or hold a newline", Mark)
+	if strings.ContainsAny(a+b, Mark) {
+		t.Errorf("placeholders share characters with %q", Mark)
 	}
 }
 
-// spec: Variables/Secrets in output (two evaluations)
+// spec: Variables/Secrets in output (three evaluations)
 func TestMask(t *testing.T) {
 	a, b := Placeholder(1), Placeholder(2)
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 	tests := []struct {
 		real, a, b string
 		shown      string
-		part       string
+		parts      []string
 	}{
-		{"allow monit:hunter2\n", "allow monit:" + a + "\n", "allow monit:" + b + "\n", "allow monit:(secret)\n", "hunter2"},
-		{"no secret", "no secret", "no secret", "no secret", ""},
-		{"n=8", "n=8", "n=9", "n=(secret)", "8"},
-		{"strong", "weak", "weak", "(secret)", "strong"},
-		{"pre x mid y post", "pre " + a + " mid " + a + " post", "pre " + b + " mid " + b + " post", "pre (secret) post", "x mid y"},
-		{"", a, b, "(secret)", ""},
+		{"allow monit:hunter2\n", "allow monit:" + a + "\n", "allow monit:" + b + "\n", "allow monit:(secret)\n", []string{"hunter2"}},
+		{"no secret", "no secret", "no secret", "no secret", nil},
+		{"n=8", "n=8", "n=9", "n=(secret)", []string{"8"}},
+		{"strong", "weak", "weak", "(secret)", []string{"strong"}},
+		{"pre x mid y post", "pre " + a + " mid " + a + " post", "pre " + b + " mid " + b + " post", "pre (secret) mid (secret) post", []string{"x", "y"}},
+		{"", a, b, "(secret)", nil},
+		{"--user alice --host x --token s3cr3t", "--user " + a + " --host x --token " + a, "--user " + b + " --host x --token " + b, "--user (secret) --host x --token (secret)", []string{"alice", "s3cr3t"}},
+		{"k=apple;", "k=" + a + ";", "k=" + b + ";", "k=(secret);", []string{"apple"}},
+		{"k=bulb;", "k=" + a + ";", "k=" + b + ";", "k=(secret);", []string{"bulb"}},
+		{"k=sofa;", "k=" + a + ";", "k=" + b + ";", "k=(secret);", []string{"sofa"}},
+		{"k=club;", "k=" + a + ";", "k=" + b + ";", "k=(secret);", []string{"club"}},
+		{"xaapple", "xa" + a, "xa" + b, "xa(secret)", []string{"apple"}},
+		{"x1bb;", "x" + a + "b;", "x" + b + "b;", "x(secret)b;", []string{"1b"}},
+		{"k=zoo;", "k=" + a + ";", "k=" + b + ";", "k=(secret);", []string{"zoo"}},
+		{"x1zz;", "x" + a + "z;", "x" + b + "z;", "x(secret)z;", []string{"1z"}},
+		// Plain text that ends in a placeholder letter splits a or b at
+		// another place, so the text between two secrets is masked.
+		{"1aa2", a + "a" + a, b + "a" + b, "(secret)", []string{"1aa2"}},
+		{"1zaz2", a + "za" + a, b + "za" + b, "(secret)", []string{"1zaz2"}},
+		{"1xaz2", a + "xaz" + a, b + "xaz" + b, "(secret)", []string{"1xaz2"}},
+		{"1azx2", a + "azx" + a, b + "azx" + b, "(secret)azx(secret)", []string{"1", "2"}},
+		{":t", a + ":" + a, b + ":" + b, "(secret):(secret)", []string{"t"}},
+		{"s-x", "-", "-", "(secret)", []string{"s-x"}},
+		{"sweaky", "weak", "weak", "(secret)", []string{"sweaky"}},
+		{"ab/cd/ef", a + "/" + a, b + "/" + b, "(secret)/(secret)", []string{"ab", "cd/ef", "ab/cd", "ef"}},
+		{"k=" + b64("xabcabcx") + ";", "k=" + b64(a) + ";", "k=" + b64(b) + ";", "k=(secret);", []string{"eGFiY2FiY3g="}},
+		// The placeholders differ in the top 6 bits of their first byte,
+		// so base64 of a secret that starts with one of ` a b c shares no
+		// first character with them.
+		{"k=" + b64("cat"), "k=" + b64(a), "k=" + b64(b), "k=(secret)", []string{b64("cat")}},
+		{"k=" + b64("`x"), "k=" + b64(a), "k=" + b64(b), "k=(secret)", []string{b64("`x")}},
+		{"k=" + b64("bob"), "k=" + b64(a), "k=" + b64(b), "k=(secret)", []string{b64("bob")}},
+		{"u " + b64("user:hunter2"), "u " + b64("user:"+a), "u " + b64("user:"+b), "u dXNlcjp(secret)", []string{"odW50ZXIy"}},
 	}
 	for _, tt := range tests {
-		shown, part := Mask(tt.real, tt.a, tt.b)
-		if shown != tt.shown || part != tt.part {
-			t.Errorf("Mask(%q) = %q, %q; want %q, %q", tt.real, shown, part, tt.shown, tt.part)
+		shown, parts := Mask(tt.real, tt.a, tt.b)
+		if shown != tt.shown || !slices.Equal(parts, tt.parts) {
+			t.Errorf("Mask(%q) = %q, %q; want %q, %q", tt.real, shown, parts, tt.shown, tt.parts)
 		}
 	}
+}
+
+// spec: Variables/Secrets in output (three evaluations)
+func TestMaskParts(t *testing.T) {
+	line := func(u, t string) string { return "u " + u + " --host x --token " + t + "\n" }
+	real, a, b := line("alice", "n3w2"), line(Placeholder(1), Placeholder(1)), line(Placeholder(2), Placeholder(2))
+	want := []string{"alice", "n3w2"}
+	if _, parts := MaskLines(real+"end", a+"end", b+"end"); !slices.Equal(parts, want) {
+		t.Errorf("MaskLines parts = %q, want %q", parts, want)
+	}
+	lines, ok := Lines([]byte(real), []byte(a), []byte(b))
+	if !ok || len(lines) != 1 || !slices.Equal(lines[0].Parts(), want) {
+		t.Errorf("Lines = %+v, %v; want one line with parts %q", lines, ok, want)
+	}
+}
+
+// spec: Variables/Secrets in output (three evaluations)
+func TestMaskCoversSecrets(t *testing.T) {
+	var texts, secrets []string
+	for n := range 3 {
+		texts = append(texts, words("az=1", n)...)
+		secrets = append(secrets, words("az1", n)...)
+	}
+	for _, p0 := range texts {
+		for _, p1 := range texts {
+			for _, two := range []bool{false, true} {
+				build := func(s, u string) (string, []bool) {
+					parts := []string{p0, s, p1}
+					if two {
+						parts = append(parts, u, p0)
+					}
+					var text string
+					var secret []bool
+					for i, p := range parts {
+						text += p
+						for range p {
+							secret = append(secret, i%2 == 1)
+						}
+					}
+					return text, secret
+				}
+				a, _ := build(Placeholder(1), Placeholder(1))
+				b, _ := build(Placeholder(2), Placeholder(2))
+				first := ""
+				for _, s := range secrets {
+					for _, u := range secrets {
+						real, secret := build(s, u)
+						shown, _ := Mask(real, a, b)
+						if !covers(strings.Split(shown, Mark), real, secret) {
+							t.Fatalf("Mask(%q, %q, %q) = %q: shows a part of a secret", real, a, b, shown)
+						}
+						if first == "" {
+							first = shown
+						}
+						if shown != first {
+							t.Fatalf("Mask(%q, %q, %q) = %q, and %q for other secrets", real, a, b, shown, first)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// words returns all strings of n characters of the alphabet.
+func words(alphabet string, n int) []string {
+	if n == 0 {
+		return []string{""}
+	}
+	var out []string
+	for _, w := range words(alphabet, n-1) {
+		for _, c := range alphabet {
+			out = append(out, w+string(c))
+		}
+	}
+	return out
+}
+
+// covers reports whether the visible pieces of a masked text, in order, fit
+// real at characters that are not secret, with a mask between two pieces.
+func covers(pieces []string, real string, secret []bool) bool {
+	var fit func(k, at int) bool
+	fit = func(k, at int) bool {
+		if k == len(pieces) {
+			return true
+		}
+		p := pieces[k]
+		for i := at; i+len(p) <= len(real); i++ {
+			if k == 0 && i > 0 {
+				break
+			}
+			if k == len(pieces)-1 && i+len(p) != len(real) {
+				continue
+			}
+			if real[i:i+len(p)] != p || slices.Contains(secret[i:i+len(p)], true) {
+				continue
+			}
+			if fit(k+1, i+len(p)) {
+				return true
+			}
+		}
+		return false
+	}
+	return fit(0, 0)
 }
 
 // spec: Variables/Secrets in output (secret variables, two evaluations)
@@ -296,6 +426,16 @@ func TestMaskedDiff(t *testing.T) {
  (secret)
 -listen 80
 +listen 8080
+`},
+		{name: "two secrets on a line, another plain text", oldTpl: "u {{ .u }} --host y --token {{ .t }}\n", newTpl: "u {{ .u }} --host x --token {{ .t }}\n",
+			oldData: map[string]any{"u": sec("alice"), "t": sec("old1")}, newData: map[string]any{"u": sec("alice"), "t": sec("old1")}, want: `@@ -1,1 +1,1 @@
+-(line hidden: may hold a secret)
++u (secret) --host x --token (secret)
+`},
+		{name: "two secrets on a line, both rotated", oldTpl: "u {{ .u }} --host x --token {{ .t }}\n", newTpl: "u {{ .u }} --host x --token {{ .t }}\n",
+			oldData: map[string]any{"u": sec("alice"), "t": sec("old1")}, newData: map[string]any{"u": sec("carol"), "t": sec("new2")}, want: `@@ -1,1 +1,1 @@
+-u (secret) --host x --token (secret)
++u (secret) --host x --token (secret) (secret value changed)
 `},
 		{name: "the length of a secret as long as a placeholder", oldTpl: "n={{ len .pw }}\n", newTpl: "n={{ len .pw }}\n", oldData: pw("1234567"), newData: pw("12345678"), want: `@@ -1,1 +1,1 @@
 -n=(secret)
