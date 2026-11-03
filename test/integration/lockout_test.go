@@ -396,7 +396,14 @@ func TestLockoutSSHSocketNote(t *testing.T) {
 	if got := vm.MustRun(t, "systemctl is-active ssh.socket || true") == "active\n"; got != socket {
 		t.Fatalf("ssh.socket active: %t, want %t", got, socket)
 	}
-	r := lab.Winch(t, dir, "plan")
+	// A restart of ssh.socket under the access check tests the new config.
+	var warnings []string
+	if !socket {
+		for _, at := range []string{"5:5", "10:5", "15:5"} {
+			warnings = append(warnings, "winch.yaml:"+at+": warning: sshd's config changes, and no step reloads sshd with confirm_access: true; the new config loads untested at the next restart")
+		}
+	}
+	r := lab.WinchEnvWarnings(t, dir, nil, warnings, "plan")
 	if r.Code != 0 {
 		t.Fatalf("plan: exit %d", r.Code)
 	}

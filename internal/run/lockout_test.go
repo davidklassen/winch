@@ -570,7 +570,10 @@ func TestApplyAfterPrompt(t *testing.T) {
 // spec: Running a pipeline/Lockout protection (the plan warns when sshd loads
 // a changed config without confirm_access)
 func TestSSHDWarning(t *testing.T) {
-	const warning = "sshd loads a changed config without an access check; reload it in a service handler with confirm_access: true"
+	const (
+		warning  = "sshd loads a changed config without an access check; reload it in a service handler with confirm_access: true"
+		untested = "sshd's config changes, and no step reloads sshd with confirm_access: true; the new config loads untested at the next restart"
+	)
 	recipe := func(path, handler string) string {
 		return `steps:
   - file:
@@ -588,27 +591,33 @@ handlers:
 	}
 	tests := []struct {
 		name, recipe, want string
+		// untested is the position of the warning that no guarded reload
+		// tests the change.
+		untested string
 		// have are the files that are already in place on the host.
 		have []string
+		// pipeline is the pipeline, when it is not one stage that runs the
+		// recipe.
+		pipeline string
 	}{
-		{"restart", recipe("/etc/ssh/sshd_config", "ssh\n        restarted: true"), "recipes/ssh/recipe.yaml:8:7", nil},
-		{"reload of sshd in sshd_config.d", recipe("/etc/ssh/sshd_config.d/local.conf", "sshd.service\n        reloaded: true"), "recipes/ssh/recipe.yaml:8:7", nil},
-		{"confirm_access", recipe("/etc/ssh/sshd_config", "ssh\n        restarted: true\n      confirm_access: true"), "", nil},
-		{"no sshd config change", recipe("/etc/motd", "ssh\n        restarted: true"), "", nil},
-		{"restart of another unit", recipe("/etc/ssh/sshd_config", "nginx\n        restarted: true"), "", nil},
+		{"restart", recipe("/etc/ssh/sshd_config", "ssh\n        restarted: true"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
+		{"reload of sshd in sshd_config.d", recipe("/etc/ssh/sshd_config.d/local.conf", "sshd.service\n        reloaded: true"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
+		{"confirm_access", recipe("/etc/ssh/sshd_config", "ssh\n        restarted: true\n      confirm_access: true"), "", "", nil, ""},
+		{"no sshd config change", recipe("/etc/motd", "ssh\n        restarted: true"), "", "", nil, ""},
+		{"restart of another unit", recipe("/etc/ssh/sshd_config", "nginx\n        restarted: true"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
 		{"then", `steps:
   - file:
       path: /etc/ssh/sshd_config
       content: "UsePAM no\n"
     then: systemctl restart ssh
-`, "recipes/ssh/recipe.yaml:2:5", nil},
-		{"then of another unit", then("sshd -t && systemctl restart nginx"), "", nil},
-		{"then of init.d", then("/etc/init.d/ssh restart"), "recipes/ssh/recipe.yaml:2:5", nil},
-		{"then of sshd.service", then("systemctl restart sshd.service"), "recipes/ssh/recipe.yaml:2:5", nil},
-		{"then of ssh.socket", then("systemctl restart ssh.socket"), "", nil},
-		{"then of ssh-agent", then("systemctl restart ssh-agent"), "", nil},
-		{"then of two lines", then(`"systemctl restart caddy\nsshd -T"`), "", nil},
-		{"config already in place", recipe("/etc/ssh/sshd_config", "ssh\n        restarted: true"), "", []string{"/etc/ssh/sshd_config"}},
+`, "recipes/ssh/recipe.yaml:2:5", "", nil, ""},
+		{"then of another unit", then("sshd -t && systemctl restart nginx"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"then of init.d", then("/etc/init.d/ssh restart"), "recipes/ssh/recipe.yaml:2:5", "", nil, ""},
+		{"then of sshd.service", then("systemctl restart sshd.service"), "recipes/ssh/recipe.yaml:2:5", "", nil, ""},
+		{"then of ssh.socket", then("systemctl restart ssh.socket"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"then of ssh-agent", then("systemctl restart ssh-agent"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"then of two lines", then(`"systemctl restart caddy\nsshd -T"`), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"config already in place", recipe("/etc/ssh/sshd_config", "ssh\n        restarted: true"), "", "", []string{"/etc/ssh/sshd_config"}, ""},
 		{"handler not notified", `steps:
   - file:
       path: /etc/ssh/sshd_config
@@ -622,7 +631,7 @@ handlers:
     - service:
         name: ssh
         restarted: true
-`, "", []string{"/etc/motd"}},
+`, "", "recipes/ssh/recipe.yaml:2:5", []string{"/etc/motd"}, ""},
 		{"handler notified by another step", `steps:
   - file:
       path: /etc/ssh/sshd_config
@@ -636,21 +645,21 @@ handlers:
     - service:
         name: ssh
         restarted: true
-`, "", []string{"/etc/ssh/sshd_config"}},
+`, "", "", []string{"/etc/ssh/sshd_config"}, ""},
 		{"then of a later step", `steps:
   - file:
       path: /etc/ssh/sshd_config
       content: "UsePAM no\n"
   - cmd: {command: "true"}
     then: systemctl restart ssh
-`, "recipes/ssh/recipe.yaml:5:5", nil},
+`, "recipes/ssh/recipe.yaml:5:5", "", nil, ""},
 		{"then before the change", `steps:
   - cmd: {command: "true"}
     then: systemctl restart ssh
   - file:
       path: /etc/ssh/sshd_config
       content: "UsePAM no\n"
-`, "", nil},
+`, "", "recipes/ssh/recipe.yaml:4:5", nil, ""},
 		{"then that does not run", `steps:
   - file:
       path: /etc/ssh/sshd_config
@@ -659,7 +668,7 @@ handlers:
       path: /etc/motd
       content: hi
     then: systemctl restart ssh
-`, "", []string{"/etc/motd"}},
+`, "", "recipes/ssh/recipe.yaml:2:5", []string{"/etc/motd"}, ""},
 		{"then of a handler step", `steps:
   - file:
       path: /etc/ssh/sshd_config
@@ -671,11 +680,51 @@ handlers:
         path: /etc/motd
         content: hi
       then: service ssh reload
-`, "recipes/ssh/recipe.yaml:8:7", nil},
+`, "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
+		{"drop-in without a reload", `steps:
+  - file:
+      path: /etc/ssh/sshd_config.d/local.conf
+      content: "UsePAM no\n"
+`, "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"drop-in with a confirm_access reload", recipe("/etc/ssh/sshd_config.d/local.conf", "ssh\n        reloaded: true\n      confirm_access: true"), "", "", nil, ""},
+		{"confirm_access reload not notified", `steps:
+  - file:
+      path: /etc/ssh/sshd_config
+      content: "UsePAM no\n"
+  - file:
+      path: /etc/motd
+      content: hi
+    notify: reload
+handlers:
+  reload:
+    - service:
+        name: ssh
+        reloaded: true
+      confirm_access: true
+`, "", "recipes/ssh/recipe.yaml:2:5", []string{"/etc/motd"}, ""},
+		{"confirm_access on running", recipe("/etc/ssh/sshd_config", "ssh\n        running: true\n      confirm_access: true"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"confirm_access restart of another unit", recipe("/etc/ssh/sshd_config", "nginx\n        restarted: true\n      confirm_access: true"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"then of a guarded handler of another unit", recipe("/etc/ssh/sshd_config", "nginx\n        restarted: true\n      confirm_access: true\n      then: systemctl restart ssh"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
+		{"confirm_access reload in an earlier stage", recipe("/etc/motd", "ssh\n        reloaded: true\n      confirm_access: true"), "", "pipelines/site.yaml:9:9", nil, `stages:
+  - name: base
+    hosts: all
+    steps:
+      - recipe: ssh
+  - name: late
+    hosts: all
+    steps:
+      - file:
+          path: /etc/ssh/sshd_config
+          content: "UsePAM no\n"
+`},
 	}
 	for _, tt := range tests {
+		pipeline := tt.pipeline
+		if pipeline == "" {
+			pipeline = "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: ssh\n"
+		}
 		p := loadWeb1(t, map[string]string{
-			"pipelines/site.yaml":     "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: ssh\n",
+			"pipelines/site.yaml":     pipeline,
 			"recipes/ssh/recipe.yaml": tt.recipe,
 		})
 		h := fakehost.New()
@@ -692,10 +741,112 @@ handlers:
 		}
 		var want []string
 		if tt.want != "" {
-			want = []string{tt.want + ": " + warning}
+			want = append(want, tt.want+": "+warning)
+		}
+		if tt.untested != "" {
+			want = append(want, tt.untested+": "+untested)
 		}
 		if !slices.Equal(got, want) {
 			t.Errorf("%s: warnings %q, want %q", tt.name, got, want)
+		}
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (an untested sshd file never
+// stays on the host)
+func TestSSHDUntestedWarning(t *testing.T) {
+	const untested = "sshd's config changes, and no step reloads sshd with confirm_access: true; the new config loads untested at the next restart"
+	const guarded = `steps:
+  - file:
+      path: /etc/motd
+      content: hi
+    notify: reload
+handlers:
+  reload:
+    - service:
+        name: ssh
+        reloaded: true
+      confirm_access: true
+`
+	tests := []struct {
+		name     string
+		files    map[string]string
+		setup    func(h *fakehost.Hosts)
+		warnings []string
+	}{
+		{"ssh.socket restart under the access check", map[string]string{
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - line:
+          path: /etc/ssh/sshd_config
+          match: "^#?PermitRootLogin "
+          line: PermitRootLogin no
+`,
+		}, func(h *fakehost.Hosts) {
+			h.SetResult("web1", "^#?PermitRootLogin ", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"restarts ssh.socket, which winch connects to", "daemon-reload", module.SSHSocketRestart}})
+		}, nil},
+		{"guarded reload on another host", map[string]string{
+			"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
+			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: ssh\n",
+			"recipes/ssh/recipe.yaml": `steps:
+  - file:
+      path: /etc/ssh/sshd_config
+      content: "UsePAM no\n"
+  - file:
+      path: /etc/motd
+      content: hi
+    notify: reload
+handlers:
+  reload:
+    - service:
+        name: ssh
+        reloaded: true
+      confirm_access: true
+`,
+		}, func(h *fakehost.Hosts) { h.SetFile("web1", "/etc/motd", "hi") }, []string{"recipes/ssh/recipe.yaml:2:5: " + untested}},
+		{"guarded reload of another store", map[string]string{
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/ssh/sshd_config
+          content: "UsePAM no\n"
+      - recipe: ssh
+`,
+			"recipes/ssh/recipe.yaml": guarded,
+		}, nil, []string{"pipelines/site.yaml:5:9: " + untested}},
+		{"guarded reload that the change notifies", map[string]string{
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/ssh/sshd_config
+          content: "UsePAM no\n"
+        notify: ssh.reload
+      - recipe: ssh
+`,
+			"recipes/ssh/recipe.yaml": guarded,
+		}, nil, nil},
+	}
+	for _, tt := range tests {
+		h := fakehost.New()
+		if tt.setup != nil {
+			tt.setup(h)
+		}
+		plan := run.MakePlan(t.Context(), loadWeb1(t, tt.files), h.Connector(), run.Options{})
+		if len(plan.Failed) > 0 {
+			t.Fatalf("%s: plan failed: %v", tt.name, plan.Failed)
+		}
+		var got []string
+		for _, w := range plan.Warnings {
+			got = append(got, w.Error())
+		}
+		if !slices.Equal(got, tt.warnings) {
+			t.Errorf("%s: warnings %q, want %q", tt.name, got, tt.warnings)
 		}
 	}
 }

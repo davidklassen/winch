@@ -443,7 +443,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		}
 		socket, err = module.SSHSocket(ctx, touches)
 		if socket {
-			res.Changes = append(res.Changes, "daemon-reload", "restart ssh.socket")
+			res.Changes = append(res.Changes, "daemon-reload", module.SSHSocketRestart)
 			if !res.Guard {
 				res.Guard = true
 				res.Changes = append([]string{module.SSHSocketNote(m, res)}, res.Changes...)
