@@ -908,3 +908,73 @@ func TestSSHDStores(t *testing.T) {
 		}
 	}
 }
+
+// spec: Running a pipeline/Lockout protection (the plan fails a step that
+// notifies a handler with confirm_access in a stage that --stages leaves out)
+func TestConfirmAccessHandlerLeftOut(t *testing.T) {
+	files := map[string]string{
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - recipe: ssh
+  - name: mail
+    hosts: all
+    steps:
+      - file:
+          path: /etc/ssh/sshd_config.d/10-mail.conf
+          content: "PasswordAuthentication no\n"
+        notify: ssh.NOTIFY
+`,
+		"recipes/ssh/recipe.yaml": `steps:
+  - pkg:
+      name: openssh-server
+handlers:
+  reload:
+    - service:
+        name: ssh
+        reloaded: true
+      confirm_access: true
+  restart:
+    - service:
+        name: ssh
+        restarted: true
+`,
+	}
+	const leftOut = "mail: file /etc/ssh/sshd_config.d/10-mail.conf: the confirm_access handler ssh.reload runs in stage base, which --stages leaves out"
+	for _, tt := range []struct {
+		name, stages, notify string
+		same                 bool
+		want                 string
+	}{
+		{"all stages", "", "reload", false, ""},
+		{"both stages", "base,mail", "reload", false, ""},
+		{"the stage of the handler left out", "mail", "reload", false, leftOut},
+		{"no change", "mail", "reload", true, ""},
+		{"a handler without confirm_access", "mail", "restart", false, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := loadWeb1(t, map[string]string{
+				"pipelines/site.yaml":     strings.Replace(files["pipelines/site.yaml"], "NOTIFY", tt.notify, 1),
+				"recipes/ssh/recipe.yaml": files["recipes/ssh/recipe.yaml"],
+			})
+			if tt.stages != "" {
+				if err := p.Select(project.Selection{Stages: tt.stages}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			h := fakehost.New()
+			if tt.same {
+				h.SetFile("web1", "/etc/ssh/sshd_config.d/10-mail.conf", "PasswordAuthentication no\n")
+			}
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+			got := ""
+			if err := plan.Failed["web1"]; err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("error = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

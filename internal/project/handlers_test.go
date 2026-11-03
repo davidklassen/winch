@@ -278,8 +278,8 @@ func TestEvalThenAndRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	for recipe, want := range map[string]bool{"nginx": true, "site": false, "db": false, "unknown": false} {
-		if got := env.Runs(recipe); got != want {
-			t.Errorf("Runs(%s) = %v, want %v", recipe, got, want)
+		if got := env.RunsIn(recipe) != nil; got != want {
+			t.Errorf("RunsIn(%s) != nil is %v, want %v", recipe, got, want)
 		}
 	}
 	h := p.Pipeline.Stages[0].Steps[0].Recipe.Handlers[0]
