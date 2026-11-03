@@ -85,6 +85,11 @@ var aptApply = []string{"-y", "-q", "-o", aptLock, "-o", "Dpkg::Options::=--forc
 // an install, where the classic solver removes the dependent package.
 const aptSolver = "APT::Solver=internal"
 
+// noBinaryCache are the apt flags of a call that writes no binary cache. apt
+// rewrites /var/cache/apt/pkgcache.bin when it is older than the index or the
+// dpkg status, also in a simulation or in apt-mark showauto.
+var noBinaryCache = []string{"-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache="}
+
 // aptGet runs apt-get without the time limit. An apt-get that the limit stops
 // leaves dpkg half done.
 func aptGet(ctx context.Context, args ...string) (string, error) {
@@ -92,9 +97,8 @@ func aptGet(ctx context.Context, args ...string) (string, error) {
 }
 
 func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
-	// index are the apt flags of the package index that the check reads, nil
-	// for apt's own.
-	var index []string
+	// index are the apt flags of the package index that the check reads.
+	index := noBinaryCache
 	lists := filepath.Dir(indexLock)
 	if st.Sources {
 		var err error
@@ -178,7 +182,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 	}
 	// apt-mark showauto with no names lists every automatic package.
 	if len(inst) > 0 {
-		out, err := run(ctx, nil, "apt-mark", append([]string{"showauto"}, inst...)...)
+		out, err := run(ctx, nil, "apt-mark", slices.Concat([]string{"showauto"}, noBinaryCache, inst)...)
 		if err != nil {
 			return Result{}, err
 		}

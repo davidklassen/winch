@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -243,7 +244,7 @@ func archive(ctx context.Context, pkg, version, file string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, noResult(commandLimit))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "apt-get", "download", "-q", "-o", "APT::Sandbox::User=root", pkg+"="+version)
+	cmd := exec.CommandContext(ctx, "apt-get", slices.Concat([]string{"download", "-q", "-o", "APT::Sandbox::User=root"}, noBinaryCache, []string{pkg + "=" + version})...)
 	cmd.Dir = fetched
 	cmd.Env = append(cmd.Environ(), aptEnv...)
 	var out bytes.Buffer
