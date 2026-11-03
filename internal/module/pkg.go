@@ -226,7 +226,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 	case slices.ContainsFunc(p.todo, func(n string) bool { return !known[n] }):
 		changes = append(changes, OthersUnknown)
 	case len(p.todo) > 0 || len(p.configure) > 0:
-		others, err := p.others(ctx, say.Progress, index)
+		others, err := p.others(ctx, st, say.Progress, index)
 		if err != nil {
 			return Result{}, err
 		}
@@ -494,7 +494,7 @@ func (p *Pkg) simulate(ctx context.Context, progress func(string), index []strin
 
 // others returns the plan lines of the other packages that apt installs or
 // upgrades with the step's packages. A held one fails.
-func (p *Pkg) others(ctx context.Context, progress func(string), index []string) ([]string, error) {
+func (p *Pkg) others(ctx context.Context, st *State, progress func(string), index []string) ([]string, error) {
 	// apt does not upgrade a held package and fails without its name.
 	out, err := p.simulate(ctx, progress, index, append(p.installFlags(), "--remove", "-o", "APT::Ignore-Hold=true")...)
 	if err != nil {
@@ -516,6 +516,7 @@ func (p *Pkg) others(ctx context.Context, progress func(string), index []string)
 		n, _, _ := strings.Cut(c, "=")
 		own = append(own, n)
 	}
+	planPkgs(st, out, index, own)
 	installs, upgrades := parseSimulation(out, own)
 	for _, n := range slices.Concat(installs, upgrades) {
 		if p.pkgs[n].held {
@@ -594,7 +595,7 @@ func (p *Pkg) Apply(ctx context.Context, say Say) error {
 	}
 	// The check before the refresh read the old index.
 	if p.refresh {
-		if _, err := p.others(ctx, say.Progress, nil); err != nil {
+		if _, err := p.others(ctx, nil, say.Progress, nil); err != nil {
 			return err
 		}
 	}

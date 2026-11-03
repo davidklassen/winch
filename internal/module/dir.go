@@ -100,8 +100,9 @@ func (d *Dir) ModeWarning() string {
 	return fmt.Sprintf("%s can read the directory but not enter it; use \"%04o\"", who, fixed)
 }
 
-func (d *Dir) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
-	dir, missing, err := openParent(d.Path)
+func (d *Dir) Check(ctx context.Context, st *State, _ Say) (Result, error) {
+	p := st.resolve(d.Path)
+	dir, missing, err := openParent(p)
 	if _, ok := errors.AsType[*noPathError](err); ok && d.Absent {
 		return Result{Status: OK}, nil
 	}
@@ -125,8 +126,10 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
+		st.plan(Planned{Path: p})
 		return Result{Status: Change, Action: Remove, Changes: []string{"remove its content: " + t.counts()}}, nil
 	}
+	st.plan(Planned{Path: p, Kind: "dir"})
 	owner, group, mode, err := attrs(d.Owner, d.Group, d.Mode, "0755")
 	if err != nil {
 		return Result{}, err
@@ -138,7 +141,7 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		if link, err = dir.Readlink(name); err != nil {
 			return Result{}, err
 		}
-		behind, err := openLinked(d.Path)
+		behind, err := openLinked(p)
 		if err != nil {
 			return Result{}, err
 		}
@@ -193,6 +196,7 @@ func (d *Dir) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		for _, rm := range rs {
 			changes = append(changes, rm.line)
 			d.removed = append(d.removed, path.Join(d.Path, rm.name))
+			st.plan(Planned{Path: path.Join(p, rm.name)})
 		}
 	}
 	if d.Recurse {

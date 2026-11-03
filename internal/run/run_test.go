@@ -617,3 +617,65 @@ func TestPlanVars(t *testing.T) {
 		}
 	}
 }
+
+// spec: Running a pipeline/Plan; CLI/Output
+func TestPlanCopyFromAnEarlierFile(t *testing.T) {
+	p := loadFiles(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
+		"recipes/app/recipe.yaml": `steps:
+  - file:
+      path: /etc/app/default.conf
+      content: "B\n"
+  - file:
+      path: /etc/app/app.conf
+      copy_from: /etc/app/default.conf
+    notify: reload
+handlers:
+  reload:
+    - service:
+        name: app
+        reloaded: true
+`,
+	})
+	h := fakehost.New()
+	// The helper reads the source as the first step leaves it.
+	h.SetResult("web1", "/etc/app/app.conf", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"content from /etc/app/default.conf"},
+		Old: new("A\n"), SourceSHA256: "c0cde77fa8fef97d476c10aad3d2d54fcc2f336140d073651c2dcccf1e379fd6"})
+	plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	for _, want := range []string{"~ file /etc/app/app.conf\n          content from /etc/app/default.conf\n          @@ -1,1 +1,1 @@\n          -A\n          +B\n", "! handler app.reload"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("plan = %q, want %q", out.String(), want)
+		}
+	}
+}
+
+// spec: Running a pipeline/Plan; CLI/Output
+func TestPlanCopyFromAnEarlierBinaryFile(t *testing.T) {
+	p := loadFiles(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
+		"recipes/app/recipe.yaml": `steps:
+  - file:
+      path: /etc/app/blob
+      source: blob
+  - file:
+      path: /etc/app/copy
+      copy_from: /etc/app/blob
+`,
+		"recipes/app/files/blob": "a\x00b",
+	})
+	h := fakehost.New()
+	h.SetResult("web1", "/etc/app/copy", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"content from /etc/app/blob"},
+		Old: new("A\n"), SourceSHA256: "59b271ae1bbcb1d31d41929817f4b16fb439eb4f31520b5ad1d5ce98920a7138"})
+	plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if want := "~ file /etc/app/copy\n          content from /etc/app/blob\n          content (binary)\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("plan = %q, want %q", out.String(), want)
+	}
+}

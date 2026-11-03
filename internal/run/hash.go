@@ -111,7 +111,8 @@ func (plan *Plan) stepHash(p Planned) hashStep {
 	}
 	if p.Step.Args != nil && p.Result.Status != "" {
 		r := hashResult{Result: p.Result}
-		r.Result.Old = nil
+		// SourceSHA256 covers the new text.
+		r.Result.Old, r.New = nil, nil
 		if p.Result.Old != nil {
 			r.Old = sum(*p.Result.Old)
 		}

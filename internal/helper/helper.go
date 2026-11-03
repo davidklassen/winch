@@ -493,7 +493,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		}
 	}
 	// The plan has shown the diff already.
-	out.Old, out.OldReason = nil, ""
+	out.Old, out.New, out.OldReason = nil, nil, ""
 	// A failed unpack leaves the unpack directory, so only the record shows
 	// that the unpack is not done.
 	if unpack {

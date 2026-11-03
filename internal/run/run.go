@@ -313,6 +313,9 @@ type hostRun struct {
 	lines map[string][]lineStep
 	// pkgs are the checked pkg steps.
 	pkgs []pkgStep
+	// texts are the text contents of the checked steps, by SHA-256. A later
+	// copy_from of a file that a step writes shows its diff from them.
+	texts map[string]sourceText
 	// step names the step that the plan checks now in the messages of later
 	// steps: its address and label, as two steps can have one label.
 	step string
@@ -493,7 +496,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]need{}, created: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]need{}, created: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}, texts: map[string]sourceText{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -724,6 +727,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 			return nil, fmt.Errorf("%s: %w", where, maskError(err, mask))
 		}
 		hr.refreshed = hr.refreshed || hr.state.Refreshed
+		hr.newText(p.Step, &steps[i].Result)
 		hr.trackRemoved(p.Step.Args)
 		hr.trackUnitFile(p.Step.Args, steps[i].Result)
 		hr.dropCreated(&steps[i].Result)
@@ -1270,6 +1274,41 @@ func (hr *hostRun) trackUnitFile(m module.Module, res module.Result) {
 		hr.unitFiles[u.Name] = u.Data
 	}
 }
+
+// newText records the text content of a step, or why the plan shows no diff
+// of it. It adds the new text of a copy_from whose source an earlier step
+// writes, or drops the old text when no new text is known.
+func (hr *hostRun) newText(st project.Step, res *module.Result) {
+	if t, ok := st.Args.(module.WithText); ok {
+		if text, reason := t.Text(); text != nil {
+			if shown := st.Shown(); shown.Hidden || shown.Lines != nil {
+				reason = secret.Mark
+			}
+			hr.texts[sumBytes(text)] = sourceText{string(text), reason}
+		}
+	}
+	if res.SourceSHA256 == "" {
+		return
+	}
+	if t, ok := hr.texts[res.SourceSHA256]; ok && res.New == nil && res.Old != nil {
+		if t.reason != "" {
+			res.Old, res.OldReason = nil, t.reason
+			return
+		}
+		res.New = &t.text
+	}
+	switch {
+	case res.New != nil:
+		hr.texts[res.SourceSHA256] = sourceText{text: *res.New}
+	// The plan knows no new content to show.
+	case res.OldReason == "":
+		res.Old = nil
+	}
+}
+
+// sourceText is the text content of a step, or the reason the plan shows no
+// diff of it.
+type sourceText struct{ text, reason string }
 
 // trackRemoved records the path of an absent step.
 func (hr *hostRun) trackRemoved(m module.Module) {
