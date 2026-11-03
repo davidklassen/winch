@@ -454,6 +454,10 @@ func SSHSocket(ctx context.Context, touches []Touch) (bool, error) {
 	return sshSocketUp(ctx)
 }
 
+// SSHSocketRestart is the plan line of a change of sshd's config that
+// restarts ssh.socket, and with it sshd, under the access check.
+const SSHSocketRestart = "restart ssh.socket"
+
 // SSHSocketNote returns the plan line of a checked change of sshd's config
 // that restarts ssh.socket.
 func SSHSocketNote(m Module, res Result) string {
