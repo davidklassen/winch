@@ -1472,7 +1472,6 @@ func thenRecord(steps []project.Step, place protocol.Check) *protocol.Then {
 		// HashArgs that are not a module have no main argument.
 		hm, ok := st.HashArgs.(module.Module)
 		if st.Secret && (!ok || hm.Main() != st.Args.Main()) {
-			t.Legacy = append(t.Legacy, main)
 			main = secret.Mark
 			if ok {
 				main = hm.Main()

@@ -865,10 +865,8 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 		}
 	}
 	if then != nil {
-		rec := *then
-		rec.Legacy = nil
-		if !slices.ContainsFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return reflect.DeepEqual(t, rec) }) {
-			c.hosts.thens[c.host] = append(c.hosts.thens[c.host], rec)
+		if !slices.ContainsFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return reflect.DeepEqual(t, *then) }) {
+			c.hosts.thens[c.host] = append(c.hosts.thens[c.host], *then)
 		}
 	}
 	c.hosts.mu.Unlock()
