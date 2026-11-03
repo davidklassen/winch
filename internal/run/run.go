@@ -975,9 +975,10 @@ func (hr *hostRun) same(st project.Step, where string) error {
 // tree fails a step that removes a tree that holds a path that another step of
 // the host writes, in either order. A dir or link step with replace removes a
 // tree only once: the paths below then go into the new directory, or through
-// the link.
+// the link. A download with unpack removes the tree of its directory only for
+// the earlier steps: a later step writes into the new tree.
 func (hr *hostRun) tree(m module.Module, where string) error {
-	removes := ""
+	removes, later := "", true
 	switch m := m.(type) {
 	case *module.Dir:
 		if m.Absent {
@@ -987,6 +988,8 @@ func (hr *hostRun) tree(m module.Module, where string) error {
 		if m.Replace {
 			removes = m.Path
 		}
+	case *module.Download:
+		removes, later = m.Unpack, false
 	}
 	if removes != "" {
 		for _, w := range hr.writes {
@@ -994,7 +997,9 @@ func (hr *hostRun) tree(m module.Module, where string) error {
 				return fmt.Errorf("%s: this step removes %s, which %s writes; the two steps undo each other on every run", where, w.path, w.where)
 			}
 		}
-		hr.trees = append(hr.trees, pathStep{removes, hr.step})
+		if later {
+			hr.trees = append(hr.trees, pathStep{removes, hr.step})
+		}
 	}
 	w, ok := m.(module.Writer)
 	if !ok {
