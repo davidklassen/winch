@@ -492,9 +492,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	var thenLines []string
 	if s.Then != nil {
-		rec := *s.Then
-		rec.Legacy = nil
-		line, err := json.Marshal(rec)
+		line, err := json.Marshal(s.Then)
 		if err != nil {
 			return out, err
 		}

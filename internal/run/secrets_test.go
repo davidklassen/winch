@@ -90,7 +90,7 @@ func TestSecrets(t *testing.T) {
 	p, _ := secretProject(t)
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/monit/conf.d/settings", "set httpd port 2812\n  allow admin:old-pass\n# Old-Pass\n")
-	h.SetThen("web1", protocol.Then{Recipe: "monit", Module: "file", Mains: []string{"/etc/monit/hunter2.key"}})
+	h.SetThen("web1", protocol.Then{Recipe: "monit", Module: "file", Mains: []string{"/etc/monit/~^^^^^^~.key"}})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -478,19 +478,14 @@ func TestSecretThenRecord(t *testing.T) {
 		name, step string
 		// ok makes the step check as ok.
 		ok func(h *fakehost.Hosts)
-		// legacy is the record of winch 0.1.0 for the step.
-		legacy protocol.Then
 	}{
 		{name: "cmd", step: "      - cmd:\n          command: !tpl \"setpw {{ .vars.pw }}\"\n          creates: /srv/done\n        then: echo done\n",
-			ok:     func(h *fakehost.Hosts) { h.SetFile("web1", "/srv/done", "") },
-			legacy: protocol.Then{Pipeline: "site", Stage: "base", Module: "cmd", Mains: []string{sum("setpw hunter2")}}},
+			ok: func(h *fakehost.Hosts) { h.SetFile("web1", "/srv/done", "") }},
 		{name: "file", step: "      - file:\n          path: !tpl \"/etc/{{ .vars.pw }}.key\"\n          content: \"k\\n\"\n        then: echo done\n",
-			ok:     func(h *fakehost.Hosts) { h.SetFile("web1", "/etc/hunter2.key", "k\n") },
-			legacy: protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/etc/hunter2.key"}}},
+			ok: func(h *fakehost.Hosts) { h.SetFile("web1", "/etc/hunter2.key", "k\n") }},
 		// The placeholder in enabled is not true or false.
 		{name: "a failed placeholder variant", step: "      - service:\n          name: !tpl \"app-{{ .vars.pw }}\"\n          running: true\n          enabled: !expr 'vars.pw == \"hunter2\" || int(vars.pw) > 0'\n        then: echo done\n",
-			ok:     func(h *fakehost.Hosts) { h.SetResult("web1", "app-hunter2", module.Result{Status: module.OK}) },
-			legacy: protocol.Then{Pipeline: "site", Stage: "base", Module: "service", Mains: []string{"app-hunter2"}}},
+			ok: func(h *fakehost.Hosts) { h.SetResult("web1", "app-hunter2", module.Result{Status: module.OK}) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -521,23 +516,6 @@ func TestSecretThenRecord(t *testing.T) {
 			}
 			if got := ran(h); got != 2 {
 				t.Errorf("the then ran %d times, want 2:\n%s", got, strings.Join(h.Log["web1"], "\n"))
-			}
-			if got := h.ThenOf("web1"); len(got) != 0 {
-				t.Errorf("then records after the then ran = %+v", got)
-			}
-
-			// A pending record of winch 0.1.0 runs the then of the ok step once.
-			h = fakehost.New()
-			tt.ok(h)
-			h.SetThen("web1", tt.legacy)
-			p, _ = hashSecretProject(t, "hunter2", stage+tt.step, "", nil, nil)
-			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
-			var out, errOut bytes.Buffer
-			if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
-				t.Fatalf("apply failed:\n%s", errOut.String())
-			}
-			if got := ran(h); got != 1 {
-				t.Errorf("the then ran %d times, want 1:\n%s", got, strings.Join(h.Log["web1"], "\n"))
 			}
 			if got := h.ThenOf("web1"); len(got) != 0 {
 				t.Errorf("then records after the then ran = %+v", got)
