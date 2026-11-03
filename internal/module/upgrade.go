@@ -34,40 +34,58 @@ func (u *Upgrade) args() []string {
 	return []string{"dist-upgrade"}
 }
 
-// upgradeLists is the package index of upgrade. Its refresh leaves apt's own
-// index as it is.
-const upgradeLists = aptDir + "/lists"
+// winchLists is winch's package index. Its refresh leaves apt's own index as
+// it is.
+const winchLists = aptDir + "/lists"
 
-// upgradeIndex are the apt-get flags that read the index of upgrade. Without
-// binary caches, apt writes no cache of that index into /var/cache/apt. apt
-// fetches as root: the user _apt cannot enter the state directory, and apt
-// gives the directories of the index to its sandbox user, which the check of
-// the state directory rejects.
-var upgradeIndex = []string{"-o", "Dir::State::Lists=" + upgradeLists, "-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=", "-o", "APT::Sandbox::User=root"}
+// winchIndex are the apt flags that read winch's index. Without binary
+// caches, apt writes no cache of that index into /var/cache/apt. apt fetches
+// as root: the user _apt cannot enter the state directory, and apt gives the
+// directories of the index to its sandbox user, which the check of the state
+// directory rejects.
+var winchIndex = []string{"-o", "Dir::State::Lists=" + winchLists, "-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=", "-o", "APT::Sandbox::User=root"}
+
+// plannedIndex are the apt flags that read winch's index of the planned
+// sources. The refresh keeps the lists of the sources that the run changes,
+// which an upgrade before the change reads at apply.
+var plannedIndex = slices.Concat(winchIndex, []string{"-o", "Dir::Etc::SourceList=" + plannedList, "-o", "Dir::Etc::SourceParts=" + plannedParts, "-o", "APT::Get::List-Cleanup=0"})
 
 // noUpdateHooks drops the commands that other packages run around a refresh,
 // such as update-notifier on Ubuntu. They read and write apt's own state.
 const noUpdateHooks = "#clear APT::Update::Pre-Invoke;\n#clear APT::Update::Post-Invoke;\n#clear APT::Update::Post-Invoke-Success;\n#clear APT::Update::Post-Invoke-Stats;\n"
 
-func refreshUpgradeIndex(ctx context.Context) error {
-	if err := os.MkdirAll(path.Join(upgradeLists, "partial"), 0o700); err != nil {
-		return fmt.Errorf("create the package index: %w", err)
+// refreshWinchIndex refreshes winch's index, once until a step changes a
+// source, and returns the apt flags that read it.
+func refreshWinchIndex(ctx context.Context, st *State) ([]string, error) {
+	index := winchIndex
+	if st.Sources {
+		index = plannedIndex
+	}
+	if st.Refreshed {
+		return index, nil
+	}
+	if err := os.MkdirAll(path.Join(winchLists, "partial"), 0o700); err != nil {
+		return nil, fmt.Errorf("create the package index: %w", err)
 	}
 	conf := path.Join(aptDir, "update.conf")
 	if err := os.WriteFile(conf, []byte(noUpdateHooks), 0o600); err != nil {
-		return fmt.Errorf("create the package index: %w", err)
+		return nil, fmt.Errorf("create the package index: %w", err)
 	}
-	_, err := aptGet(ctx, slices.Concat([]string{"update", "-q", "--error-on=any", "-c", conf}, upgradeIndex)...)
-	return err
+	if _, err := aptGet(ctx, slices.Concat([]string{"update", "-q", "--error-on=any", "-c", conf}, index)...); err != nil {
+		if st.Sources {
+			return nil, fmt.Errorf("refresh the index of the sources that the run will have: %w", err)
+		}
+		return nil, err
+	}
+	st.Refreshed = true
+	return index, nil
 }
 
 func (u *Upgrade) Check(ctx context.Context, st *State, say Say) (Result, error) {
-	if !st.Refreshed {
-		if err := refreshUpgradeIndex(ctx); err != nil {
-			return Result{}, err
-		}
+	index, err := refreshWinchIndex(ctx, st)
+	if err != nil {
+		return Result{}, err
 	}
-	st.Refreshed = true
 	pkgs, err := readDpkg(ctx, say.Progress)
 	if err != nil {
 		return Result{}, err
@@ -80,7 +98,7 @@ func (u *Upgrade) Check(ctx context.Context, st *State, say Say) (Result, error)
 		return Result{}, err
 	}
 	defer unlock()
-	out, err := aptGet(ctx, slices.Concat([]string{"-s", "-q"}, u.args(), upgradeIndex)...)
+	out, err := aptGet(ctx, slices.Concat([]string{"-s", "-q"}, u.args(), index)...)
 	if err != nil {
 		return Result{}, err
 	}
@@ -98,7 +116,7 @@ func (u *Upgrade) Apply(ctx context.Context, say Say) error {
 	if err := waitLocks(ctx, dpkgLocks, say.Progress); err != nil {
 		return err
 	}
-	_, err := aptGet(ctx, slices.Concat(u.args(), aptApply, upgradeIndex)...)
+	_, err := aptGet(ctx, slices.Concat(u.args(), aptApply, winchIndex)...)
 	return err
 }
 

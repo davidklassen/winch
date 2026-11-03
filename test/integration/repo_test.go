@@ -59,15 +59,16 @@ func TestRepoModule(t *testing.T) {
 			State:     module.State{IndexFresh: true},
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
-			WantState: module.State{},
+			WantState: module.State{Sources: true},
 			Unchanged: "[ ! -e " + signedFile + " ] && [ ! -e " + signedAsc + " ] && ! ls /var/lib/apt/lists/10.0.2.100_signed_* 2>/dev/null",
 			After: "[ \"$(stat -c '%a %U %G' " + signedFile + " " + signedAsc + ")\" = \"$(printf '644 root root\\n644 root root')\" ] && " +
 				"apt-cache policy winch-signed | grep -q 'Candidate: 1' && " + others,
 		},
 		{
-			Name:  "the keyrings directory is missing",
-			Setup: "rmdir /etc/apt/keyrings",
-			Args:  args(),
+			Name:      "the keyrings directory is missing",
+			WantState: module.State{Sources: true},
+			Setup:     "rmdir /etc/apt/keyrings",
+			Args:      args(),
 			Want: module.Result{Status: module.Change, Action: module.Create, Changes: []string{
 				"create directory /etc/apt/keyrings (owner root, group root, mode 0755)",
 				"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
@@ -79,7 +80,7 @@ func TestRepoModule(t *testing.T) {
 			State:     module.State{IndexFresh: true, Refreshed: true},
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{signedFile + ": Suites bookworm → " + suite, refresh}},
-			WantState: module.State{},
+			WantState: module.State{Sources: true},
 		},
 		{
 			Name:      "change the url",
@@ -87,7 +88,7 @@ func TestRepoModule(t *testing.T) {
 			State:     module.State{IndexFresh: true},
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{signedFile + ": URIs http://10.0.2.100:80/signed → " + signedURL, refresh}},
-			WantState: module.State{},
+			WantState: module.State{Sources: true},
 			After:     "apt-cache policy winch-signed | grep -q 'Candidate: 1'",
 		},
 		{
@@ -104,7 +105,7 @@ func TestRepoModule(t *testing.T) {
 			State:     module.State{IndexFresh: true},
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove key " + other + " winch test key <test@example.com>", keyLine, refresh}},
-			WantState: module.State{},
+			WantState: module.State{Sources: true},
 		},
 		{
 			Name:      "an immutable source file",
@@ -138,6 +139,7 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:         "a key that does not sign the source",
+			WantState:    module.State{Sources: true},
 			Args:         withOther(),
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, "add key " + other + " winch test key <test@example.com>", "create file " + signedFile + sourceAttrs, refresh}},
 			WantApplyErr: "refresh the index of source winch-signed",
@@ -146,6 +148,7 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:         "a failed refresh puts the old files back",
+			WantState:    module.State{Sources: true},
 			Setup:        signedSource(suite) + " && mkdir /root/saved && cp " + signedFile + " " + signedAsc + " /root/saved/",
 			Args:         withOther(),
 			Want:         module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"remove key " + fpr + " winch test repository", "add key " + other + " winch test key <test@example.com>", refresh}},
@@ -155,6 +158,7 @@ func TestRepoModule(t *testing.T) {
 		},
 		{
 			Name:         "a source that apt cannot fetch",
+			WantState:    module.State{Sources: true},
 			Args:         &module.Repo{Name: "winch-signed", URL: "http://127.0.0.1:9/down", Suite: suite, Components: []string{"main"}},
 			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedFile + sourceAttrs, refresh}},
 			WantApplyErr: "refresh the index of source winch-signed",
@@ -178,7 +182,7 @@ func TestRepoModule(t *testing.T) {
 			Setup:     signedSource(suite) + " && echo 'not a key' > " + signedAsc,
 			Args:      args(),
 			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"replace " + signedAsc + ": is not an ASCII-armored OpenPGP public key", keyLine, refresh}},
-			WantState: module.State{},
+			WantState: module.State{Sources: true},
 		},
 		{
 			Name:    "an old source file larger than 1 MiB",
@@ -193,37 +197,42 @@ func TestRepoModule(t *testing.T) {
 			WantErr: "the source " + signedURL + " " + suite + " is also in /etc/apt/sources.list; remove it there",
 		},
 		{
-			Name:  "apt does not read a backup file",
-			Setup: "echo 'deb " + signedURL + " " + suite + " main' > /etc/apt/sources.list.d/vendor.list.save",
-			Args:  args(),
-			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
+			Name:      "apt does not read a backup file",
+			WantState: module.State{Sources: true},
+			Setup:     "echo 'deb " + signedURL + " " + suite + " main' > /etc/apt/sources.list.d/vendor.list.save",
+			Args:      args(),
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
 		},
 		{
-			Name: "apply waits for the lock of the index",
-			Args: args(),
-			Want: module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
+			Name:      "apply waits for the lock of the index",
+			WantState: module.State{Sources: true},
+			Args:      args(),
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
 			// The fcntl lock of apt; flock(1) takes a lock that apt does not see.
 			BeforeApply: `(python3 -c 'import fcntl, time; f = open("/var/lib/apt/lists/lock", "w"); fcntl.lockf(f, fcntl.LOCK_EX); open("/root/locked", "w"); time.sleep(3)' >/dev/null 2>&1 &) && ` +
 				"timeout 10 sh -c 'until [ -e /root/locked ]; do sleep 0.1; done'",
 			After: "! pgrep -f 'fcntl[.]lockf'",
 		},
 		{
-			Name:  "a disabled source in another file",
-			Setup: "printf 'Types: deb\\nURIs: " + signedURL + "\\nSuites: " + suite + "\\nComponents: main\\nEnabled: no\\n' > /etc/apt/sources.list.d/vendor.sources",
-			Args:  args(),
-			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
+			Name:      "a disabled source in another file",
+			WantState: module.State{Sources: true},
+			Setup:     "printf 'Types: deb\\nURIs: " + signedURL + "\\nSuites: " + suite + "\\nComponents: main\\nEnabled: no\\n' > /etc/apt/sources.list.d/vendor.sources",
+			Args:      args(),
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
 		},
 		{
-			Name:  "a deb-src entry in another file",
-			Setup: "echo 'deb-src " + signedURL + " " + suite + " main' > /etc/apt/sources.list.d/vendor.list",
-			Args:  args(),
-			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
+			Name:      "a deb-src entry in another file",
+			WantState: module.State{Sources: true},
+			Setup:     "echo 'deb-src " + signedURL + " " + suite + " main' > /etc/apt/sources.list.d/vendor.list",
+			Args:      args(),
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
 		},
 		{
-			Name:  "a directory with the name of a sources file",
-			Setup: "mkdir /etc/apt/sources.list.d/vendor.list",
-			Args:  args(),
-			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
+			Name:      "a directory with the name of a sources file",
+			WantState: module.State{Sources: true},
+			Setup:     "mkdir /etc/apt/sources.list.d/vendor.list",
+			Args:      args(),
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"create file " + signedAsc + sourceAttrs, keyLine, "create file " + signedFile + sourceAttrs, refresh}},
 		},
 		{
 			Name:    "the image's debian.sources at the step's path",
@@ -284,4 +293,107 @@ func TestRepoAfterAbsentStep(t *testing.T) {
 	if r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
+}
+
+// oldSigned serves version 0 of winch-signed, which depends on winch-up-new,
+// from a local source. The lab's signed source has version 1, which does not.
+// The source is http: apt 2.7 links the index of a file: source into the
+// lists, and the helper refuses links in its state directory.
+const oldSigned = `set -e
+mkdir -p /srv/old/winch-signed/DEBIAN
+printf 'Package: winch-signed\nVersion: 0\nArchitecture: all\nMaintainer: winch\nDepends: winch-up-new\nDescription: test\n' > /srv/old/winch-signed/DEBIAN/control
+cd /srv/old
+dpkg-deb -b winch-signed winch-signed_0_all.deb >/dev/null
+{ dpkg-deb -f winch-signed_0_all.deb; echo "Filename: ./winch-signed_0_all.deb"; echo "Size: $(stat -c %s winch-signed_0_all.deb)"; echo "SHA256: $(sha256sum winch-signed_0_all.deb | cut -d' ' -f1)"; } > Packages
+setsid python3 -m http.server -d /srv/old -b 127.0.0.1 8001 >/dev/null 2>&1 < /dev/null &
+until curl -sf http://127.0.0.1:8001/Packages >/dev/null; do sleep 0.1; done
+echo 'deb [trusted=yes] http://127.0.0.1:8001 ./' > /etc/apt/sources.list.d/old.list
+apt-get update -q >/dev/null`
+
+// spec: Modules/pkg; Modules/repo; Modules/upgrade
+func TestPlanAfterRepo(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "repo-plan")
+	vm.MustRun(t, "rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list.d/winch-debian.sources && apt-get update -q >/dev/null && "+oldSigned)
+	suite := osRelease().codename
+	repo := func(name, url string) string {
+		return "  - repo:\n      name: " + name + "\n      url: " + url + "\n      suite: " + suite + "\n      components: [main]\n      key: signed.asc\n"
+	}
+	project := func(steps ...string) string {
+		return vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":                      "name: demo\ninventory: test\n",
+			"inventories/test.yaml":           "hosts:\n  repo-plan: {}\n",
+			"pipelines/site.yaml":             "stages:\n  - name: apt\n    hosts: all\n    steps:\n      - recipe: signed\n",
+			"recipes/signed/recipe.yaml":      "steps:\n" + strings.Join(steps, ""),
+			"recipes/signed/files/signed.asc": string(vmtest.RepoKey),
+		})
+	}
+	reset := "dpkg --purge winch-signed winch-up-new >/dev/null; rm -f /etc/apt/sources.list.d/winch-* /etc/apt/keyrings/winch-* /etc/apt/sources.list /etc/apt/sources.list.d/stale.list && " +
+		"printf 'Types: deb\\nURIs: http://10.0.2.100/test/\\nSuites: ./\\nTrusted: yes\\n' > /etc/apt/sources.list.d/winch-test.sources && apt-get update -q >/dev/null"
+	// stale lists the signed source with another key, which apt refuses next
+	// to the step's source.
+	stale := "deb [signed-by=/etc/apt/keyrings/stale.asc] " + signedURL + " " + suite + " main"
+	absent := func(p string) string { return "  - file:\n      path: " + p + "\n      absent: true\n" }
+	const apt = "find /etc/apt /var/lib/apt/lists -printf '%p %s %T@ %m\\n' | sort"
+
+	t.Run("pkg", func(t *testing.T) {
+		vm.MustRun(t, reset+" && DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-up-new >/dev/null")
+		dir := project(repo("winch-signed", signedURL), "  - pkg:\n      name: winch-signed\n", "  - pkg:\n      name: winch-up-new\n      absent: true\n")
+		before := vm.MustRun(t, apt)
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "install winch-signed") || !strings.Contains(r.Stdout, "remove winch-up-new") ||
+			strings.Contains(r.Stdout, "also") || strings.Contains(r.Stdout, module.OthersUnknown) {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want winch-signed 1, which needs no winch-up-new", r.Code, r.Stdout, r.Stderr)
+		}
+		if after := vm.MustRun(t, apt); after != before {
+			t.Errorf("the plan changed apt's files:\nbefore:\n%s\nafter:\n%s", before, after)
+		}
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 {
+			t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+		vm.MustRun(t, version("winch-signed", "1")+" && ! dpkg -s winch-up-new >/dev/null 2>&1")
+		r = lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, ": 0 to change,") {
+			t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+
+	t.Run("upgrade", func(t *testing.T) {
+		vm.MustRun(t, reset+" && DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-signed=0 >/dev/null")
+		dir := project(repo("winch-signed", signedURL), "  - upgrade:\n      mode: safe\n")
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "upgrade winch-signed 0 → 1") {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want the upgrade of winch-signed", r.Code, r.Stdout, r.Stderr)
+		}
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 {
+			t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+		vm.MustRun(t, version("winch-signed", "1"))
+	})
+
+	t.Run("a removed sources.list", func(t *testing.T) {
+		vm.MustRun(t, reset+" && echo '"+stale+"' > /etc/apt/sources.list")
+		r := lab.Winch(t, project(absent("/etc/apt/sources.list"), repo("winch-signed", signedURL), "  - pkg:\n      name: winch-signed\n"), "plan", "site")
+		if r.Code != 0 {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+
+	t.Run("a source that a step between two repo steps removes", func(t *testing.T) {
+		vm.MustRun(t, reset+" && echo '"+stale+"' > /etc/apt/sources.list.d/stale.list")
+		r := lab.Winch(t, project(repo("winch-signed80", "http://10.0.2.100:80/signed"), absent("/etc/apt/sources.list.d/stale.list"), repo("winch-signed", signedURL), "  - pkg:\n      name: winch-signed\n"), "plan", "site")
+		if r.Code != 0 {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+
+	t.Run("a source that apt cannot fetch", func(t *testing.T) {
+		vm.MustRun(t, reset)
+		r := lab.Winch(t, project(repo("winch-signed", "http://127.0.0.1:9/down"), "  - pkg:\n      name: winch-up-new\n"), "plan", "site")
+		if want := "refresh the index of the sources that the run will have"; r.Code == 0 || !strings.Contains(r.Stderr, want) {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want an error with %q", r.Code, r.Stdout, r.Stderr, want)
+		}
+	})
 }

@@ -184,9 +184,9 @@ func TestPackageSources(t *testing.T) {
 		t.Errorf("the plan notes a package that is not installed: %q", r.Stderr)
 	}
 	// The first install refreshes, and the first install after the repo
-	// step refreshes again. The index on the host does not know
-	// winch-signed before the refresh.
-	want := regexp.MustCompile(`(?s)\+ pkg hello\n\s+refresh the package index\n.*\+ pkg winch-signed\n\s+refresh the package index\n\s+install winch-signed\n\s+other packages: known after the refresh\n\s+\+ pkg sl\n\s+install sl\n`)
+	// step refreshes again. The plan reads the index of the new source, so
+	// it knows the other packages of winch-signed: none.
+	want := regexp.MustCompile(`(?s)\+ pkg hello\n\s+refresh the package index\n.*\+ pkg winch-signed\n\s+refresh the package index\n\s+install winch-signed\n\s+\+ pkg sl\n\s+install sl\n`)
 	if n := strings.Count(r.Stdout, "refresh the package index"); n != 2 || !want.MatchString(r.Stdout) {
 		t.Errorf("the plan does not refresh before hello and before winch-signed only")
 	}
