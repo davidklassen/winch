@@ -204,6 +204,14 @@ func (p *Plan) Notes() []Note {
 		for _, c := range p.gone[h.Name] {
 			add(h.Name, goneNote(c, p.place(c.Recipe, c.Pipeline, c.Stage, c.Handler))+" and will not run", false)
 		}
+		for _, n := range p.waiting[h.Name] {
+			recipe, pipeline, stage, handler := project.ParseRecord(n)
+			owner := "stage"
+			if recipe != "" {
+				owner = "recipe"
+			}
+			add(h.Name, "a pending "+p.place(recipe, pipeline, stage, handler)+" waits until its "+owner+" runs on this host", false)
+		}
 	}
 	return notes
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -183,6 +184,36 @@ func TestExitCode(t *testing.T) {
 	then := writeProject(t, strings.Replace(motd, `content: "hello\n"`, `content: "hello\n"`+"\n        then: echo done", 1))
 	if r := winch(t, then, h, false, "", "plan", "site", "--exit-code"); r.code != exitChanges {
 		t.Errorf("a plan with only a pending then: exit %d, want %d, stdout %q", r.code, exitChanges, r.out)
+	}
+}
+
+// spec: Handlers; CLI ("--exit-code")
+func TestPendingHandlerOfALeftOutStage(t *testing.T) {
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml": motd + `  - name: access
+    hosts: all
+    steps:
+      - recipe: ssh
+`,
+		"recipes/ssh/recipe.yaml": "steps:\n  - file:\n      path: /etc/ssh/banner\n      content: \"hi\\n\"\n    notify: reload\nhandlers:\n  reload:\n    - service:\n        name: ssh\n        reloaded: true\n",
+	})
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/motd", "hello\n")
+	h.SetPending("web1", "ssh.reload")
+	r := winch(t, dir, h, false, "", "plan", "site", "--stages", "base", "--exit-code")
+	if r.code != exitOK {
+		t.Errorf("plan --exit-code: exit %d, want 0", r.code)
+	}
+	if want := "web1: note: a pending handler ssh.reload waits until its recipe runs on this host\n"; !strings.Contains(r.err, want) {
+		t.Errorf("stderr %q has no %q", r.err, want)
+	}
+	if r := winch(t, dir, h, false, "", "apply", "site", "--stages", "base"); r.code != exitOK {
+		t.Errorf("apply without a terminal: exit %d, stderr %q", r.code, r.err)
+	}
+	if want := []string{"ssh.reload"}; !slices.Equal(h.PendingOf("web1"), want) {
+		t.Errorf("pending = %q, want %q", h.PendingOf("web1"), want)
 	}
 }
 

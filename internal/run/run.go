@@ -143,6 +143,9 @@ type Plan struct {
 	// goneHandlers are the pending handlers of each host that the project no
 	// longer has.
 	goneHandlers map[string][]string
+	// waiting are the pending handlers of each host whose recipe or stage the
+	// plan does not reach on the host.
+	waiting map[string][]string
 	// refreshed are the hosts whose package index a step refreshed in the
 	// plan.
 	refreshed map[string]bool
@@ -516,6 +519,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	plan.gone = map[string][]protocol.Check{}
 	plan.goneThens = map[string][]protocol.Then{}
 	plan.goneHandlers = map[string][]string{}
+	plan.waiting = map[string][]string{}
 	plan.refreshed = map[string]bool{}
 	o := newOwners(p)
 	for name, hr := range runs {
@@ -525,7 +529,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			if !p.Pipeline.AdHoc {
 				plan.gone[name] = o.goneChecks(hr.pending.Checks)
 				plan.goneThens[name] = o.goneThens(name, hr)
-				plan.goneHandlers[name] = o.goneHandlers(hr.pending.Handlers)
+				plan.goneHandlers[name], plan.waiting[name] = o.pendingHandlers(hr.pending.Handlers, hr.notified)
 			}
 		}
 		plan.Destinations[name] = hr.dest
@@ -1547,17 +1551,20 @@ func (o owners) has(c protocol.Check) bool {
 	return c.Handler == "" || slices.ContainsFunc(handlers, func(h *project.Handler) bool { return h.Name == c.Handler })
 }
 
-// goneHandlers returns the pending handlers whose recipe, pipeline, stage, or
-// handler the project no longer has.
-func (o owners) goneHandlers(records []string) []string {
-	var gone []string
+// pendingHandlers returns the pending handlers whose recipe, pipeline, stage,
+// or handler the project no longer has, and the others that no slot of the
+// plan took from notified.
+func (o owners) pendingHandlers(records []string, notified map[string]bool) (gone, waiting []string) {
 	for _, n := range records {
 		recipe, pipeline, stage, handler := project.ParseRecord(n)
-		if !o.has(protocol.Check{Recipe: recipe, Pipeline: pipeline, Stage: stage, Handler: handler}) {
+		switch {
+		case !o.has(protocol.Check{Recipe: recipe, Pipeline: pipeline, Stage: stage, Handler: handler}):
 			gone = append(gone, n)
+		case notified[n]:
+			waiting = append(waiting, n)
 		}
 	}
-	return gone
+	return gone, waiting
 }
 
 // goneThens returns the then records of host that no step of the plan

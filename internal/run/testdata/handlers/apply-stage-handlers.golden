@@ -10,3 +10,4 @@ web1: other: ~ handler other.reload: cmd other-reload
 
 1 host: 1 changed, 0 unchanged
 stderr:
+web1: note: a pending handler web.reload of pipeline deploy waits until its stage runs on this host
