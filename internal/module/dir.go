@@ -23,7 +23,7 @@ type Dir struct {
 	Group        yamlx.NameOrID `yaml:"group" json:"group,omitempty" doc:"A group name, or a numeric ID that needs no group. A value of only digits is an ID, also in quotes." default:"root"`
 	Mode         string         `yaml:"mode" json:"mode,omitempty" line:"octal, in quotes" doc:"Octal, in quotes: \"0750\". Without quotes, YAML reads it as a number." default:"0755"`
 	ModePos      yamlx.Pos      `json:"-"`
-	Recurse      bool           `yaml:"recurse" json:"recurse,omitempty" line:"owner and group for the whole tree" doc:"Owner and group for the whole tree. The mode stays the mode of the directory alone."`
+	Recurse      bool           `yaml:"recurse" json:"recurse,omitempty" line:"owner and group for the whole tree" doc:"Owner and group for the whole tree. The mode stays the mode of the directory alone. The plan fails when another step gives a path in the tree another owner or group; a file with content and no owner counts as root."`
 	Absent       bool           `yaml:"absent" json:"absent,omitempty" line:"remove it with its content" doc:"Remove it with its content."`
 	Replace      bool           `yaml:"replace" json:"replace,omitempty" line:"remove another kind of thing at path first" doc:"Remove another kind of thing at path first, such as a file or a link. Without it, such a thing fails the check."`
 	Purge        bool           `yaml:"purge" json:"purge,omitempty" line:"remove entries that nothing declares" doc:"Remove entries that nothing declares. Purge looks only at the direct entries. It keeps an entry that a package owns, or that a step for the host writes. Each removal is a change."`
