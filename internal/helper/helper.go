@@ -449,6 +449,11 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		}
 	}
 	res, err := m.Check(ctx, &s.State, say)
+	// The apply of this step installs them, so a later check reads dpkg: the
+	// refresh can have replaced the versions that the check recorded.
+	if apply {
+		s.State.Packages = nil
+	}
 	var socket bool
 	if err == nil && res.Status == module.Change {
 		touches := module.Touches(m)

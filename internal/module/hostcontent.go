@@ -132,6 +132,9 @@ func copySource(ctx context.Context, st *State, p string) (*hostContent, error) 
 			if _, ok := errors.AsType[*noEntryError](perr); ok {
 				return noSource()
 			}
+			if h.afterRefresh(perr) {
+				return h, nil
+			}
 			if perr != nil {
 				return nil, perr
 			}
@@ -207,7 +210,7 @@ func openSourceStep(p string) (*os.File, fs.FileInfo, string, error) {
 // stockSource reads what the package that owns p ships for p, in the version
 // that the earlier steps of st leave installed.
 func stockSource(ctx context.Context, st *State, p string) (*hostContent, error) {
-	h := &hostContent{line: "content of the package that ships " + p + " (no installed package ships it yet)", from: "the package"}
+	h := &hostContent{line: "content of the package that ships " + p, from: "the package"}
 	stock := func(deb *debFile) (*hostContent, error) {
 		h.line = "content of " + deb.name + " " + deb.version
 		h.fromArchive(deb)
@@ -220,20 +223,20 @@ func stockSource(ctx context.Context, st *State, p string) (*hostContent, error)
 		return nil, err
 	}
 	deb, err := upgradedFile(ctx, st, pkg, p, false)
+	if pkg == "" {
+		deb, err = shippedFile(ctx, st, p)
+	}
+	if h.afterRefresh(err) {
+		return h, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	if deb != nil {
 		return stock(deb)
 	}
+	const noPackage = " (no installed package ships it yet)"
 	if pkg == "" {
-		deb, err := shippedFile(ctx, st, p)
-		if err != nil {
-			return nil, err
-		}
-		if deb != nil {
-			return stock(deb)
-		}
 		registry, err := os.ReadFile(ucfRegistry)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, err
@@ -241,6 +244,7 @@ func stockSource(ctx context.Context, st *State, p string) (*hostContent, error)
 		if pkg = ucfOwner(registry, p); pkg != "" {
 			return nil, fmt.Errorf("%s makes %s with ucf and ships no copy; use copy_from with its source in /usr/share", pkg, p)
 		}
+		h.line += noPackage
 		h.missing = fmt.Errorf("no installed package ships %s; install its package in an earlier pkg step, or use copy_from for a file that a package script makes", p)
 		return h, nil
 	}
@@ -256,6 +260,7 @@ func stockSource(ctx context.Context, st *State, p string) (*hostContent, error)
 	// The second letter of the status is the state; the first is the
 	// selection, such as h for a held package.
 	if len(status) < 2 || status[1] != 'i' {
+		h.line += noPackage
 		h.missing = fmt.Errorf("%s is not installed, so no installed package ships %s; install it in an earlier pkg step", pkg, p)
 		return h, nil
 	}
@@ -277,6 +282,17 @@ func (h *hostContent) fromArchive(deb *debFile) {
 	h.content, h.sum = bytes.NewReader(deb.data), sha(deb.data)
 	h.mode = uint32(deb.hdr.Mode) & 0o7777
 	h.setText(deb.data)
+}
+
+// afterRefresh reports whether err is an afterRefreshError, and then makes h
+// content that the plan does not know yet.
+func (h *hostContent) afterRefresh(err error) bool {
+	_, ok := errors.AsType[*afterRefreshError](err)
+	if ok {
+		h.line += " (known after the refresh)"
+		h.missing = err
+	}
+	return ok
 }
 
 // plannedSource returns the copy_from source p from the archive of the
@@ -329,7 +345,7 @@ func upgradedFile(ctx context.Context, st *State, pkg, p string, conffiles bool)
 	if pkg == "" || !ok {
 		return nil, nil
 	}
-	// During apply, the earlier step has installed the version.
+	// A half-done package keeps its version.
 	installed, err := run(ctx, nil, "dpkg-query", "-W", "-f=${Version}", pkg)
 	if err != nil || installed == pp.Version {
 		return nil, err
@@ -344,9 +360,12 @@ func upgradedFile(ctx context.Context, st *State, pkg, p string, conffiles bool)
 }
 
 // shippedFile returns the file p of the first package that an earlier pkg
-// step of st names and that ships p, or nil when none does.
+// step of st names and that ships p, or nil when none does. An archive that it
+// cannot fetch before the refresh can hold p, so without a package that ships
+// p, it returns the afterRefreshError of that archive.
 func shippedFile(ctx context.Context, st *State, p string) (*debFile, error) {
 	pkgs := st.packages()
+	var unknown error
 	for _, name := range slices.Sorted(maps.Keys(pkgs)) {
 		if !pkgs[name].Named {
 			continue
@@ -357,9 +376,13 @@ func shippedFile(ctx context.Context, st *State, p string) (*debFile, error) {
 		if none || other {
 			continue
 		}
+		if _, ok := errors.AsType[*afterRefreshError](err); ok {
+			unknown = err
+			continue
+		}
 		return deb, err
 	}
-	return nil, nil
+	return nil, unknown
 }
 
 // fetchFile returns the file p of the archive of version pp of the package
@@ -461,7 +484,11 @@ func archive(ctx context.Context, pkg, version, file string, index []string) (st
 	if err := wait(ctx, cmd, KillDelay); err != nil {
 		// apt-get download writes to the final name as data arrives.
 		_ = os.Remove(deb)
-		return "", failure("apt-get download", err, out.String())
+		err = failure("apt-get download", err, out.String())
+		if slices.Equal(index, noBinaryCache) && ctx.Err() == nil {
+			return "", &afterRefreshError{err}
+		}
+		return "", err
 	}
 	return deb, nil
 }
@@ -498,6 +525,10 @@ func tarEntry(r io.Reader, p string) ([]byte, *tar.Header, error) {
 		return nil, nil, &notFileError{p, "a special entry"}
 	}
 }
+
+// afterRefreshError is the error of a failed fetch of a version from apt's
+// own index. The refresh at apply can replace that version.
+type afterRefreshError struct{ error }
 
 // notFileError is the error of a package archive that has p as another kind
 // of entry than a file.

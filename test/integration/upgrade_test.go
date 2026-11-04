@@ -56,6 +56,9 @@ func upgradeVM(t *testing.T, name string) *vmtest.VM {
 	return vm
 }
 
+// testIndex is the file of the lab's test source in apt's index.
+const testIndex = "/var/lib/apt/lists/10.0.2.100_test_*Packages"
+
 // hookConf is an apt config with update hooks.
 const hookConf = "/etc/apt/apt.conf.d/99winch-hook"
 
@@ -312,7 +315,7 @@ func TestPlanAfterUpgrade(t *testing.T) {
 `,
 		})
 	}
-	reset := upgradeReset + "; rm -f /root/reloaded /etc/winch-up-copy.conf /etc/winch-example.conf; dpkg --purge winch-stock >/dev/null 2>&1; rm -f /etc/winch-stock.conf; true"
+	reset := upgradeReset + "; rm -f /root/reloaded /etc/winch-up-copy.conf /etc/winch-example.conf; dpkg --purge winch-stock >/dev/null 2>&1; rm -f /etc/winch-stock.conf /var/cache/apt/archives/winch-stock_0_all.deb; true"
 	// plan plans the project, applies it, and plans it again. The first plan
 	// must hold each of want.
 	plan := func(t *testing.T, dir string, want ...string) {
@@ -359,6 +362,69 @@ func TestPlanAfterUpgrade(t *testing.T) {
 		dir := project("  - pkg:\n      name: winch-stock\n  - file:\n      path: /etc/winch-example.conf\n      copy_from: /usr/share/winch-stock/example.conf\n")
 		plan(t, dir, "+ file /etc/winch-example.conf\n          content from /usr/share/winch-stock/example.conf\n          owner root, group root, mode 0644\n          @@ -0,0 +1,1 @@\n          +example\n")
 		vm.MustRun(t, "[ \"$(cat /etc/winch-example.conf)\" = example ]")
+	})
+
+	// stale makes apt's index an old one, in which the test source has version
+	// 0 of winch-stock. The source has only version 1. The old date makes the
+	// refresh fetch the index again.
+	stale := " && apt-get update -q >/dev/null && sed -i '/^Package: winch-stock$/,/^$/{s/^Version: 1$/Version: 0/;s/winch-stock_1_all/winch-stock_0_all/}' " + testIndex + " && touch -d 2000-01-01 " + testIndex
+	staleUp := "sed -i -e '/^Package: winch-up$/,/^$/{s/^Version: 2$/Version: 3/;s/winch-up_2_all/winch-up_3_all/}' -e '/^Package: winch-up-new$/a Depends: winch-up (>= 3)' " + testIndex + " && touch -d 2000-01-01 " + testIndex
+	stockSteps := "  - pkg:\n      name: winch-stock\n  - file:\n      path: /etc/winch-stock.conf\n      stock: true\n"
+
+	t.Run("stock of a version that the source no longer has", func(t *testing.T) {
+		vm.MustRun(t, reset+stale+" && echo local > /etc/winch-stock.conf")
+		plan(t, project(stockSteps), "~ file /etc/winch-stock.conf\n          content of the package that ships /etc/winch-stock.conf (known after the refresh)\n          owner, group, and mode from the package\n")
+		vm.MustRun(t, version("winch-stock", "1")+" && [ \"$(cat /etc/winch-stock.conf)\" = stock ]")
+	})
+
+	t.Run("copy_from of a version that the source no longer has", func(t *testing.T) {
+		vm.MustRun(t, reset+stale)
+		dir := project("  - pkg:\n      name: winch-stock\n  - file:\n      path: /etc/winch-example.conf\n      copy_from: /usr/share/winch-stock/example.conf\n")
+		plan(t, dir, "+ file /etc/winch-example.conf\n          content from /usr/share/winch-stock/example.conf (known after the refresh)\n          owner root, group root, mode from /usr/share/winch-stock/example.conf\n")
+		vm.MustRun(t, "[ \"$(cat /etc/winch-example.conf)\" = example ]")
+	})
+
+	t.Run("copy_from of an upgrade to a version that the source no longer has", func(t *testing.T) {
+		// In the old index, winch-up-new needs version 3 of the installed winch-up.
+		vm.MustRun(t, reset+" && "+installV1("winch-up")+" && apt-get update -q >/dev/null && "+staleUp)
+		dir := project("  - pkg:\n      name: winch-up-new\n  - file:\n      path: /etc/winch-up-copy.conf\n      copy_from: /usr/share/winch-up/ucf.conf\n")
+		plan(t, dir, "also upgrade winch-up\n", "+ file /etc/winch-up-copy.conf\n          content from /usr/share/winch-up/ucf.conf (known after the refresh)\n")
+		vm.MustRun(t, version("winch-up", "1")+" && [ \"$(cat /etc/winch-up-copy.conf)\" = 'version 1' ]")
+	})
+
+	t.Run("stock reads the installed version after an install from an old index", func(t *testing.T) {
+		// apt's cache has the archive of version 0, so the plan reads it, and
+		// the file holds its content. apt deletes a cached archive whose size
+		// differs from the index.
+		vm.MustRun(t, reset+stale+` && mkdir -p /var/cache/apt/archives /root/stock0/DEBIAN /root/stock0/etc && echo old > /root/stock0/etc/winch-stock.conf &&
+printf 'Package: winch-stock\nVersion: 0\nArchitecture: all\nMaintainer: winch\nDescription: test\n' > /root/stock0/DEBIAN/control &&
+dpkg-deb -b /root/stock0 /var/cache/apt/archives/winch-stock_0_all.deb >/dev/null && echo old > /etc/winch-stock.conf &&
+size=$(stat -c %s /var/cache/apt/archives/winch-stock_0_all.deb) && sum=$(sha256sum /var/cache/apt/archives/winch-stock_0_all.deb | cut -d' ' -f1) &&
+sed -i "/^Package: winch-stock$/,/^$/{/^MD5sum:\|^SHA1:\|^SHA512:/d;s/^Size: .*/Size: $size/;s/^SHA256: .*/SHA256: $sum/}" `+testIndex+` && touch -d 2000-01-01 `+testIndex)
+		dir := project(stockSteps)
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || strings.Contains(r.Stdout, "known after the refresh") || strings.Contains(r.Stdout, "file /etc/winch-stock.conf") {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want the file ok with version 0", r.Code, r.Stdout, r.Stderr)
+		}
+		plan(t, dir)
+		vm.MustRun(t, version("winch-stock", "1")+" && [ \"$(cat /etc/winch-stock.conf)\" = stock ]")
+	})
+
+	t.Run("stock of an upgrade to a version that the source no longer has", func(t *testing.T) {
+		// In the old index, winch-up-new needs version 3 of the installed
+		// winch-up. The refresh removes that need, so apply reads version 1.
+		vm.MustRun(t, reset+" && "+installV1("winch-up")+" && mkdir -p /var/cache/apt/archives && cp /root/debs/winch-up.deb /var/cache/apt/archives/winch-up_1_all.deb && apt-get update -q >/dev/null && "+staleUp)
+		dir := project("  - pkg:\n      name: winch-up-new\n  - file:\n      path: /etc/winch-up.conf\n      stock: true\n")
+		plan(t, dir, "also upgrade winch-up\n", "~ file /etc/winch-up.conf\n          content of the package that ships /etc/winch-up.conf (known after the refresh)\n")
+		vm.MustRun(t, "rm /var/cache/apt/archives/winch-up_1_all.deb; "+version("winch-up", "1")+" && [ \"$(cat /etc/winch-up.conf)\" = 'version 1' ]")
+	})
+
+	t.Run("stock of a named package beside one whose version the source no longer has", func(t *testing.T) {
+		// winch-conflict sorts before winch-stock, and its archive is gone.
+		vm.MustRun(t, reset+" && dpkg --purge winch-conflict >/dev/null 2>&1; apt-get update -q >/dev/null && sed -i '/^Package: winch-conflict$/,/^$/{s/^Version: .*/Version: 0/;s/winch-conflict_[^_]*_all/winch-conflict_0_all/}' "+testIndex+" && touch -d 2000-01-01 "+testIndex)
+		dir := project("  - pkg:\n      name: [winch-conflict, winch-stock]\n  - file:\n      path: /etc/winch-stock.conf\n      stock: true\n")
+		plan(t, dir, "file /etc/winch-stock.conf\n          content of winch-stock 1\n")
+		vm.MustRun(t, "dpkg --purge winch-conflict >/dev/null")
 	})
 
 	copyConf := "  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up-copy.conf\n      copy_from: /etc/winch-up.conf\n"

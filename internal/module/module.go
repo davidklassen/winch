@@ -107,7 +107,7 @@ type State struct {
 	// host, in order.
 	Paths []Planned `json:"paths,omitempty"`
 	// Packages are the versions that earlier pkg and upgrade steps install,
-	// by package name.
+	// by package name. Only the plan keeps them; at apply, dpkg has them.
 	Packages map[string]PlannedPkg `json:"packages,omitempty"`
 	// LoginUID is the UID of the session's login user. The helper sets it.
 	LoginUID uint32 `json:"-"`
