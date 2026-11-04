@@ -1072,8 +1072,6 @@ func TestLockoutDueRollback(t *testing.T) {
 	if w.err == nil {
 		t.Fatal("apply succeeded after the helper died")
 	}
-	// The job is past its deadline and its grace time.
-	vm.MustRun(t, "sleep 95")
 
 	r := lab.Winch(t, dir, "plan", "site")
 	want := "due-rollback\n  ! rollback of an earlier run\n      put back /etc/winch-due.conf\n      service winch-due: reload\n  base\n"
