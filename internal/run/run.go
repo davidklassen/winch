@@ -303,6 +303,8 @@ type hostRun struct {
 	// trees are the paths of steps that remove the tree there, and writes the
 	// paths that steps write, with the step.
 	trees, writes []pathStep
+	// owned are the paths whose owner and group steps set, with the step.
+	owned []ownedStep
 	// unitFiles are the contents of the unit files that checked unit steps
 	// change, by name.
 	unitFiles map[string][]byte
@@ -364,6 +366,11 @@ type managed struct {
 
 type pathStep struct {
 	path  string
+	where string
+}
+
+type ownedStep struct {
+	module.Owned
 	where string
 }
 
@@ -713,6 +720,9 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 			return nil, err
 		}
 		if err := hr.tree(p.Step.Args, where); err != nil {
+			return nil, err
+		}
+		if err := hr.ownerTree(p.Step.Args, where); err != nil {
 			return nil, err
 		}
 		if err := hr.unitOrder(p, where); err != nil {
@@ -1099,6 +1109,32 @@ func (hr *hostRun) tree(m module.Module, where string) error {
 		hr.writes = append(hr.writes, pathStep{p, hr.step})
 	}
 	return nil
+}
+
+// ownerTree fails a step that gives a path another owner or group than a dir
+// step with recurse gives the tree that holds the path, in either order.
+func (hr *hostRun) ownerTree(m module.Module, where string) error {
+	for _, o := range module.Owns(m) {
+		for _, e := range hr.owned {
+			if otherOwner(o, e.Owned) {
+				return fmt.Errorf("%s: this step sets the owner and group of its tree, and %s gives %s another owner or group; the two steps undo each other on every run", where, e.where, e.Path)
+			}
+			if otherOwner(e.Owned, o) {
+				return fmt.Errorf("%s: %s sets the owner and group of its tree, and this step gives %s another owner or group; the two steps undo each other on every run", where, e.where, o.Path)
+			}
+		}
+		hr.owned = append(hr.owned, ownedStep{o, hr.step})
+	}
+	return nil
+}
+
+// otherOwner reports whether tree recurses and holds o, and o sets another
+// owner or group.
+func otherOwner(tree, o module.Owned) bool {
+	if !tree.Tree || o.Path != tree.Path && !strings.HasPrefix(o.Path, tree.Path+"/") {
+		return false
+	}
+	return o.Owner != "" && o.Owner != tree.Owner || o.Group != "" && o.Group != tree.Group
 }
 
 // unitOrder fails a unit step whose unit file an earlier service step needs to
