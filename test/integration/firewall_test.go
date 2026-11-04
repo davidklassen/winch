@@ -56,6 +56,14 @@ func TestFirewallModule(t *testing.T) {
 		t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 
+	// The cases below remove the rules by hand. Without a rule that uses
+	// conntrack, the kernel stops conntrack a moment later. A login that
+	// starts just before that keeps an old entry. The next load starts
+	// conntrack again, the entry does not match the login's packets, and the
+	// table drops them as invalid. This rule keeps conntrack running until the
+	// restart of nftables.service below, after the last of those cases.
+	vm.MustRun(t, "nft add table inet keep && nft add chain inet keep c && nft add rule inet keep c ct state new")
+
 	// The tables of other programs, such as fail2ban and Docker, stay.
 	others := "nft add table inet f2b-table && nft add chain inet f2b-table f2b-chain '{ type filter hook input priority -1; }' && " +
 		"nft add table ip filter && nft add chain ip filter DOCKER-FORWARD '{ type filter hook forward priority 0; policy accept; }'"
