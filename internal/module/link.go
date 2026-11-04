@@ -1,6 +1,7 @@
 package module
 
 import (
+	"archive/tar"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -88,6 +89,16 @@ func (l *Link) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	deb, err := packaged(ctx, st, p, tar.TypeSymlink)
+	if err != nil {
+		return Result{}, err
+	}
+	if deb != nil {
+		if fi, err = deb.info(); err != nil {
+			return Result{}, err
+		}
+		exists = true
+	}
 	if l.Absent && exists {
 		st.plan(Planned{Path: p})
 	} else if !l.Absent {
@@ -111,8 +122,10 @@ func (l *Link) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	case !exists:
 		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), "target "+*l.Target), Validates: l.Validation != nil}, nil
 	}
-	cur, err := dir.Readlink(name)
-	if err != nil {
+	var cur string
+	if deb != nil {
+		cur = deb.hdr.Linkname
+	} else if cur, err = dir.Readlink(name); err != nil {
 		return Result{}, err
 	}
 	if cur == *l.Target {

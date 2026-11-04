@@ -70,7 +70,7 @@ func (c *Cmd) Validate() error {
 	return nil
 }
 
-func (c *Cmd) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
+func (c *Cmd) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	res, err := c.check(ctx)
 	if err != nil || res.Status == OK {
 		return res, err
@@ -88,7 +88,9 @@ func (c *Cmd) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		_, err := os.Stat(c.Dir)
 		switch {
 		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
-			res.Missing = append(res.Missing, "dir "+c.Dir)
+			if e, ok := st.planned(st.resolve(c.Dir)); !ok || e.Kind != "dir" {
+				res.Missing = append(res.Missing, "dir "+c.Dir)
+			}
 		case err != nil:
 			return Result{}, err
 		}

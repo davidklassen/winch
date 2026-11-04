@@ -312,7 +312,7 @@ func TestPlanAfterUpgrade(t *testing.T) {
 `,
 		})
 	}
-	reset := upgradeReset + "; rm -f /root/reloaded /etc/winch-up-copy.conf /etc/winch-example.conf; dpkg --purge winch-stock >/dev/null 2>&1; rm -f /etc/winch-stock.conf; true"
+	reset := "rm -f /usr/local/bin/apt-get /root/apt-called /etc/winch-new.conf; " + upgradeReset + "; rm -f /root/reloaded /etc/winch-up-copy.conf /etc/winch-example.conf; dpkg --purge winch-stock >/dev/null 2>&1; rm -f /etc/winch-stock.conf; true"
 	// plan plans the project, applies it, and plans it again. The first plan
 	// must hold each of want.
 	plan := func(t *testing.T, dir string, want ...string) {
@@ -347,11 +347,61 @@ func TestPlanAfterUpgrade(t *testing.T) {
 		vm.MustRun(t, version("winch-up", "2")+" && [ \"$(cat /etc/winch-up.conf)\" = 'version 2' ]")
 	})
 
+	const (
+		upgradeOne = "~ upgrade safe\n          upgrade winch-up 1 → 2\n"
+		pkgStock   = "+ pkg winch-stock\n          refresh the package index\n          install winch-stock\n"
+	)
+	// planFirst plans the project, applies it, and plans it again. The first
+	// plan must show only the first step, which shows as first.
+	planFirst := func(t *testing.T, dir, first string) {
+		t.Helper()
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !strings.HasPrefix(r.Stdout, "upgrade-plan\n  base\n    app\n      "+first+"\n1 host: 1 to change") {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want only %q", r.Code, r.Stdout, r.Stderr, first)
+		}
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 {
+			t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+		vm.MustRun(t, "[ ! -e /root/reloaded ]")
+		r = lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !unchanged(r.Stdout, 1) {
+			t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+	}
+
+	t.Run("stock of an unmodified conffile that the upgrade replaces", func(t *testing.T) {
+		vm.MustRun(t, reset+" && "+installV1("winch-up"))
+		dir := project("  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up.conf\n      stock: true\n    notify: reload\n")
+		planFirst(t, dir, upgradeOne)
+		vm.MustRun(t, version("winch-up", "2")+" && [ \"$(cat /etc/winch-up.conf)\" = 'version 2' ]")
+	})
+
 	t.Run("stock of a package that an earlier step installs", func(t *testing.T) {
 		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
-		dir := project("  - pkg:\n      name: winch-stock\n  - file:\n      path: /etc/winch-stock.conf\n      stock: true\n")
-		plan(t, dir, "file /etc/winch-stock.conf\n          content of winch-stock 1\n")
+		dir := project("  - pkg:\n      name: winch-stock\n  - file:\n      path: /etc/winch-stock.conf\n      stock: true\n    notify: reload\n")
+		planFirst(t, dir, pkgStock)
 		vm.MustRun(t, "[ \"$(cat /etc/winch-stock.conf)\" = stock ]")
+	})
+
+	t.Run("steps on paths of a package that an earlier step installs", func(t *testing.T) {
+		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
+		dir := project(`  - pkg:
+      name: winch-stock
+  - dir:
+      path: /etc/winch-stock.d
+    notify: reload
+  - file:
+      path: /etc/winch-stock.d/README
+      mode: "0644"
+    notify: reload
+  - line:
+      path: /etc/winch-stock.conf
+      line: stock
+      match: ^stock$
+    notify: reload
+`)
+		planFirst(t, dir, pkgStock)
 	})
 
 	t.Run("copy_from of a file of a package that an earlier step installs", func(t *testing.T) {
@@ -359,6 +409,129 @@ func TestPlanAfterUpgrade(t *testing.T) {
 		dir := project("  - pkg:\n      name: winch-stock\n  - file:\n      path: /etc/winch-example.conf\n      copy_from: /usr/share/winch-stock/example.conf\n")
 		plan(t, dir, "+ file /etc/winch-example.conf\n          content from /usr/share/winch-stock/example.conf\n          owner root, group root, mode 0644\n          @@ -0,0 +1,1 @@\n          +example\n")
 		vm.MustRun(t, "[ \"$(cat /etc/winch-example.conf)\" = example ]")
+	})
+
+	t.Run("apply reads the host after an earlier step installed the package", func(t *testing.T) {
+		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
+		dir := project(`  - pkg:
+      name: winch-stock
+  - cmd:
+      command: rm -f /var/cache/apt/archives/winch-stock_* /var/lib/winch/apt/fetched/winch-stock_*; printf '#!/bin/sh\ntouch /root/apt-called\nexit 1\n' > /usr/local/bin/apt-get; chmod 755 /usr/local/bin/apt-get
+  - file:
+      path: /etc/winch-new.conf
+      content: "new\n"
+`)
+		r := lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 {
+			t.Errorf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+		vm.MustRun(t, "[ ! -e /root/apt-called ] && [ \"$(cat /etc/winch-new.conf)\" = new ]")
+	})
+
+	t.Run("an archive that apt cannot fetch leaves other paths to the plan", func(t *testing.T) {
+		vm.MustRun(t, reset+` && apt-get update -q >/dev/null && rm -f /var/cache/apt/archives/winch-stock_* && printf '#!/bin/sh\ncase " $* " in *" download "*) exit 1 ;; esac\nexec /usr/bin/apt-get "$@"\n' > /usr/local/bin/apt-get && chmod 755 /usr/local/bin/apt-get`)
+		dir := project("  - pkg:\n      name: winch-stock\n  - file:\n      path: /etc/winch-new.conf\n      content: \"new\\n\"\n")
+		r := lab.Winch(t, dir, "plan", "site")
+		if want := "+ file /etc/winch-new.conf\n"; r.Code != 0 || !strings.Contains(r.Stdout, want) {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want %q", r.Code, r.Stdout, r.Stderr, want)
+		}
+	})
+
+	t.Run("an archive that apt cannot fetch fails a step on a path of its package", func(t *testing.T) {
+		vm.MustRun(t, reset+" && "+installV1("winch-up")+` && rm -f /var/cache/apt/archives/winch-up_* && printf '#!/bin/sh\ncase " $* " in *" download "*) exit 1 ;; esac\nexec /usr/bin/apt-get "$@"\n' > /usr/local/bin/apt-get && chmod 755 /usr/local/bin/apt-get`)
+		dir := project("  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up.conf\n      content: \"mine\\n\"\n")
+		r := lab.Winch(t, dir, "plan", "site")
+		if want := "get the archive of winch-up 2"; r.Code == 0 || !strings.Contains(r.Stderr, want) {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want %q", r.Code, r.Stdout, r.Stderr, want)
+		}
+	})
+
+	t.Run("a cmd in a directory that a dir step keeps", func(t *testing.T) {
+		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
+		dir := project("  - pkg:\n      name: winch-stock\n  - dir:\n      path: /etc/winch-stock.d\n  - cmd:\n      command: \"true\"\n      dir: /etc/winch-stock.d\n")
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || strings.Contains(r.Stdout+r.Stderr, "does not exist yet") {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+
+	t.Run("a link step on a link that an earlier step installs", func(t *testing.T) {
+		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
+		dir := project("  - pkg:\n      name: winch-stock\n  - link:\n      path: /etc/winch-stock.link\n      target: winch-stock.conf\n    notify: reload\n")
+		planFirst(t, dir, pkgStock)
+	})
+
+	t.Run("a link step that moves a link of an earlier install", func(t *testing.T) {
+		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
+		dir := project("  - pkg:\n      name: winch-stock\n  - link:\n      path: /etc/winch-stock.link\n      target: /etc/hostname\n")
+		plan(t, dir, "~ link /etc/winch-stock.link\n          target winch-stock.conf → /etc/hostname\n")
+	})
+
+	t.Run("steps that change paths of a package that an earlier step installs", func(t *testing.T) {
+		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
+		dir := project(`  - pkg:
+      name: winch-stock
+  - dir:
+      path: /etc/winch-stock.d
+      mode: "0700"
+  - file:
+      path: /etc/winch-stock.d/README
+      mode: "0600"
+  - file:
+      path: /usr/share/winch-stock/example.conf
+      content: "mine\n"
+    notify: reload
+  - line:
+      path: /etc/winch-stock.conf
+      line: added
+      match: ^added$
+`)
+		plan(t, dir,
+			"~ dir /etc/winch-stock.d\n          mode 0755 → 0700\n",
+			"~ file /etc/winch-stock.d/README\n          mode 0644 → 0600\n",
+			"~ file /usr/share/winch-stock/example.conf\n          @@ -1,1 +1,1 @@\n          -example\n          +mine\n",
+			"~ line /etc/winch-stock.conf\n          +added\n",
+			"! handler app.reload",
+		)
+		vm.MustRun(t, "[ -e /root/reloaded ]")
+	})
+
+	t.Run("absent steps on paths of a package that an earlier step installs", func(t *testing.T) {
+		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
+		dir := project("  - pkg:\n      name: winch-stock\n  - file:\n      path: /etc/winch-stock.conf\n      absent: true\n  - dir:\n      path: /etc/winch-stock.d\n      absent: true\n    notify: reload\n")
+		plan(t, dir, "- file /etc/winch-stock.conf\n", "- dir /etc/winch-stock.d\n", "! handler app.reload")
+		vm.MustRun(t, "[ -e /root/reloaded ] && [ ! -e /etc/winch-stock.conf ] && [ ! -e /etc/winch-stock.d ]")
+	})
+
+	t.Run("dir recurse on a directory that an earlier step installs", func(t *testing.T) {
+		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
+		dir := project("  - pkg:\n      name: winch-stock\n  - dir:\n      path: /etc/winch-stock.d\n      owner: root\n      group: root\n      recurse: true\n")
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+
+	t.Run("a conffile that the upgrade leaves keeps its mode", func(t *testing.T) {
+		vm.MustRun(t, reset+" && rm -rf /root/up-same && cp -r /root/debs/winch-up /root/up-same && echo 'version 2' > /root/up-same/etc/winch-up.conf && dpkg-deb -b /root/up-same /root/up-same.deb >/dev/null && dpkg -i /root/up-same.deb >/dev/null && chmod 600 /etc/winch-up.conf")
+		dir := project("  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up.conf\n      mode: \"0600\"\n    notify: reload\n")
+		planFirst(t, dir, upgradeOne)
+		vm.MustRun(t, "[ \"$(stat -c %a /etc/winch-up.conf)\" = 600 ]")
+	})
+
+	t.Run("a conffile that the host removed stays removed for its own step", func(t *testing.T) {
+		vm.MustRun(t, reset+" && "+installV1("winch-up")+" && rm /etc/winch-up.conf")
+		dir := project("  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up.conf\n      content: \"mine\\n\"\n")
+		plan(t, dir, "+ file /etc/winch-up.conf\n")
+	})
+
+	t.Run("a conffile that is no file fails the plan", func(t *testing.T) {
+		vm.MustRun(t, reset+" && "+installV1("winch-up")+" && rm /etc/winch-up.conf && mkfifo /etc/winch-up.conf")
+		dir := project("  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up.conf\n      mode: \"0640\"\n")
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code == 0 || !strings.Contains(r.Stderr, "not a file") {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
 	})
 
 	copyConf := "  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up-copy.conf\n      copy_from: /etc/winch-up.conf\n"

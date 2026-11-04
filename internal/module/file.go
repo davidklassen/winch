@@ -1,6 +1,7 @@
 package module
 
 import (
+	"archive/tar"
 	"bytes"
 	"cmp"
 	"context"
@@ -283,6 +284,16 @@ func (f *File) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	deb, err := packaged(ctx, st, p, tar.TypeReg)
+	if err != nil {
+		return Result{}, err
+	}
+	if deb != nil {
+		if fi, err = deb.info(); err != nil {
+			return Result{}, err
+		}
+		exists = true
+	}
 	if f.Absent {
 		switch {
 		case !exists:
@@ -343,11 +354,17 @@ func (f *File) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	case !fi.Mode().IsRegular():
 		return Result{}, fmt.Errorf("%s is %s, not a file", f.Path, kind(fi))
 	}
-	r, err := openSame(dir, name, fi)
-	if err != nil {
-		return Result{}, err
+	var r io.ReadSeeker
+	if deb != nil {
+		r = bytes.NewReader(deb.data)
+	} else {
+		h, err := openSame(dir, name, fi)
+		if err != nil {
+			return Result{}, err
+		}
+		defer h.Close()
+		r = h
 	}
-	defer r.Close()
 	res = Result{Status: OK, SourceSHA256: srcSum}
 	sum, err := fileSHA(r)
 	if err != nil {
@@ -470,11 +487,11 @@ func (f *File) checkAttrs(dir *os.Root, name string, fi fs.FileInfo, exists bool
 // attrsOr returns the owner, group, and mode that the step gives, and those
 // of fi for the ones it does not give.
 func (f *File) attrsOr(fi fs.FileInfo) (string, string, uint32, error) {
-	st := fi.Sys().(*syscall.Stat_t)
-	owner := cmp.Or(string(f.Owner), strconv.FormatUint(uint64(st.Uid), 10))
-	group := cmp.Or(string(f.Group), strconv.FormatUint(uint64(st.Gid), 10))
+	uid, gid, mode := attrsOf(fi)
+	owner := cmp.Or(string(f.Owner), strconv.FormatUint(uint64(uid), 10))
+	group := cmp.Or(string(f.Group), strconv.FormatUint(uint64(gid), 10))
 	if f.Mode == "" {
-		return owner, group, uint32(st.Mode) & 0o7777, nil
+		return owner, group, mode, nil
 	}
 	n, err := strconv.ParseUint(f.Mode, 8, 32)
 	return owner, group, uint32(n), err
@@ -514,12 +531,12 @@ func (f *File) applyAttrs(name string) error {
 // attrChanges describes how the owner, group, and mode of fi differ from the
 // wanted ones.
 func attrChanges(fi fs.FileInfo, owner, group string, mode uint32) ([]string, error) {
-	st := fi.Sys().(*syscall.Stat_t)
-	ownerLine, err := ownerChange("owner", owner, st.Uid, lookupUser, userName)
+	uid, gid, cur := attrsOf(fi)
+	ownerLine, err := ownerChange("owner", owner, uid, lookupUser, userName)
 	if err != nil {
 		return nil, err
 	}
-	groupLine, err := ownerChange("group", group, st.Gid, lookupGroup, groupName)
+	groupLine, err := ownerChange("group", group, gid, lookupGroup, groupName)
 	if err != nil {
 		return nil, err
 	}
@@ -529,10 +546,19 @@ func attrChanges(fi fs.FileInfo, owner, group string, mode uint32) ([]string, er
 			changes = append(changes, c)
 		}
 	}
-	if cur := uint32(st.Mode) & 0o7777; cur != mode {
+	if cur != mode {
 		changes = append(changes, fmt.Sprintf("mode %04o → %04o", cur, mode))
 	}
 	return changes, nil
+}
+
+// attrsOf returns the UID, GID, and permission bits of fi.
+func attrsOf(fi fs.FileInfo) (uid, gid, mode uint32) {
+	if e, ok := fi.(*entryInfo); ok {
+		return e.uid, e.gid, e.mode
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	return st.Uid, st.Gid, uint32(st.Mode) & 0o7777
 }
 
 func (f *File) Apply(ctx context.Context, _ Say) error {

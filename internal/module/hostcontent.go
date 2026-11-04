@@ -122,21 +122,23 @@ func copySource(ctx context.Context, st *State, p string) (*hostContent, error) 
 	if err != nil && !errors.Is(err, errNoSource) {
 		return nil, err
 	}
-	if len(st.packages()) > 0 {
-		deb, perr := plannedSource(ctx, st, src)
-		if perr != nil || deb != nil {
-			if f != nil {
-				f.Close()
-			}
-			// The new version no longer ships the file.
-			if _, ok := errors.AsType[*noEntryError](perr); ok {
-				return noSource()
-			}
-			if perr != nil {
-				return nil, perr
-			}
-			return fromDeb(deb)
+	deb, perr := plannedEntry(ctx, st, src)
+	if perr == nil && deb != nil && deb.file() != nil {
+		// The host follows the link that the package ships.
+		deb = nil
+	}
+	if perr != nil || deb != nil {
+		if f != nil {
+			f.Close()
 		}
+		// The new version no longer ships the file.
+		if _, ok := errors.AsType[*noEntryError](perr); ok {
+			return noSource()
+		}
+		if perr != nil {
+			return nil, perr
+		}
+		return fromDeb(deb)
 	}
 	if err != nil {
 		return noSource()
@@ -219,7 +221,10 @@ func stockSource(ctx context.Context, st *State, p string) (*hostContent, error)
 	if err != nil {
 		return nil, err
 	}
-	deb, err := upgradedFile(ctx, st, pkg, p, false)
+	deb, err := upgraded(ctx, st, pkg, p, false)
+	if err == nil && deb != nil {
+		err = deb.file()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -227,11 +232,11 @@ func stockSource(ctx context.Context, st *State, p string) (*hostContent, error)
 		return stock(deb)
 	}
 	if pkg == "" {
-		deb, err := shippedFile(ctx, st, p)
+		deb, err := shipped(ctx, st, p)
 		if err != nil {
 			return nil, err
 		}
-		if deb != nil {
+		if deb != nil && deb.file() == nil {
 			return stock(deb)
 		}
 		registry, err := os.ReadFile(ucfRegistry)
@@ -259,7 +264,10 @@ func stockSource(ctx context.Context, st *State, p string) (*hostContent, error)
 		h.missing = fmt.Errorf("%s is not installed, so no installed package ships %s; install it in an earlier pkg step", pkg, p)
 		return h, nil
 	}
-	if deb, err = fetchFile(ctx, pkg, PlannedPkg{Version: version, Arch: arch}, p); err != nil {
+	if deb, err = fetchEntry(ctx, pkg, PlannedPkg{Version: version, Arch: arch}, p); err != nil {
+		return nil, err
+	}
+	if err := deb.file(); err != nil {
 		return nil, err
 	}
 	return stock(deb)
@@ -279,27 +287,49 @@ func (h *hostContent) fromArchive(deb *debFile) {
 	h.setText(deb.data)
 }
 
-// plannedSource returns the copy_from source p from the archive of the
-// version that an earlier step installs, or nil when the host keeps its own
-// p. A source that no installed package owns comes from a package that an
-// earlier pkg step names.
-func plannedSource(ctx context.Context, st *State, p string) (*debFile, error) {
-	pkg, err := owner(p)
+// plannedEntry returns the entry that an earlier pkg or upgrade step of st
+// puts at p, or nil when the host keeps what it has at p. A conffile that the
+// host changed or removed stays, as dpkg keeps it. A path that no planned
+// package owns comes from a package that an earlier pkg step names. The error
+// is a noEntryError when the new version drops p.
+func plannedEntry(ctx context.Context, st *State, p string) (*debFile, error) {
+	if len(st.packages()) == 0 {
+		return nil, nil
+	}
+	pkg, err := plannedOwner(st, p)
 	if err != nil {
 		return nil, err
 	}
-	if pkg == "" {
-		if _, err := os.Lstat(p); !errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
-		return shippedFile(ctx, st, p)
+	if pkg != "" {
+		return upgraded(ctx, st, pkg, p, true)
 	}
-	deb, err := upgradedFile(ctx, st, pkg, p, true)
-	if _, ok := errors.AsType[*notFileError](err); ok {
-		// The host follows the link that the package ships.
+	if _, err := os.Lstat(p); !errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
-	return deb, err
+	return shipped(ctx, st, p)
+}
+
+// plannedOwner returns the package of st.Packages that is installed and owns
+// p, or "". It reads only the file lists of those packages.
+func plannedOwner(st *State, p string) (string, error) {
+	pkgs := st.packages()
+	for _, name := range slices.Sorted(maps.Keys(pkgs)) {
+		for _, pkg := range []string{name, name + ":" + pkgs[name].Arch} {
+			data, err := os.ReadFile(path.Join(dpkgInfo, pkg+".list"))
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return "", err
+			}
+			for line := range bytes.Lines(data) {
+				if string(bytes.TrimSuffix(line, []byte("\n"))) == p {
+					return pkg, nil
+				}
+			}
+		}
+	}
+	return "", nil
 }
 
 // owner returns the installed package that owns p, or "".
@@ -316,121 +346,258 @@ func (st *State) packages() map[string]PlannedPkg {
 	return st.Packages
 }
 
-// upgradedFile returns the file p of the version of pkg, the installed
-// package that owns p, that an earlier pkg or upgrade step of st installs, or
-// nil when no such step changes pkg. With conffiles, a conffile that the host
-// changed or removed stays, as dpkg keeps it.
-func upgradedFile(ctx context.Context, st *State, pkg, p string, conffiles bool) (*debFile, error) {
-	if pkg == "" {
-		return nil, nil
-	}
+// upgraded returns the entry p of the version of pkg, the installed package
+// that owns p, that an earlier pkg or upgrade step of st installs, or nil when
+// no such step changes pkg. With conffiles, a conffile that the host changed
+// or removed stays, as dpkg keeps it.
+func upgraded(ctx context.Context, st *State, pkg, p string, conffiles bool) (*debFile, error) {
 	name, _, _ := strings.Cut(pkg, ":")
 	pp, ok := st.packages()[name]
 	if pkg == "" || !ok {
 		return nil, nil
 	}
-	// During apply, the earlier step has installed the version.
-	installed, err := run(ctx, nil, "dpkg-query", "-W", "-f=${Version}", pkg)
-	if err != nil || installed == pp.Version {
-		return nil, err
-	}
+	var sum string
 	if conffiles {
-		kept, err := keptConffile(ctx, pkg, p)
-		if err != nil || kept {
+		var kept bool
+		var err error
+		if kept, sum, err = keptConffile(ctx, pkg, p); err != nil || kept {
 			return nil, err
 		}
 	}
-	return fetchFile(ctx, name, pp, p)
+	deb, err := fetchEntry(ctx, name, pp, p)
+	if err != nil {
+		return nil, err
+	}
+	// dpkg leaves a conffile that the new version does not change, with its
+	// owner and mode.
+	if got := md5.Sum(deb.data); sum == hex.EncodeToString(got[:]) {
+		return nil, nil
+	}
+	return deb, nil
 }
 
-// shippedFile returns the file p of the first package that an earlier pkg
-// step of st names and that ships p, or nil when none does.
-func shippedFile(ctx context.Context, st *State, p string) (*debFile, error) {
+// shipped returns the entry p of the first package that an earlier pkg step
+// of st names and that ships p, or nil when none does.
+func shipped(ctx context.Context, st *State, p string) (*debFile, error) {
 	pkgs := st.packages()
 	for _, name := range slices.Sorted(maps.Keys(pkgs)) {
 		if !pkgs[name].Named {
 			continue
 		}
-		deb, err := fetchFile(ctx, name, pkgs[name], p)
-		_, none := errors.AsType[*noEntryError](err)
-		_, other := errors.AsType[*notFileError](err)
-		if none || other {
+		deb, err := fetchEntry(ctx, name, pkgs[name], p)
+		if _, none := errors.AsType[*noEntryError](err); none {
 			continue
+		}
+		if ae, ok := errors.AsType[*archiveError](err); ok {
+			ae.search = true
 		}
 		return deb, err
 	}
 	return nil, nil
 }
 
-// fetchFile returns the file p of the archive of version pp of the package
+// packaged is plannedEntry for a step on its own path p, when the entry has
+// kind, a tar type flag.
+func packaged(ctx context.Context, st *State, p string, kind byte) (*debFile, error) {
+	deb, err := plannedEntry(ctx, st, p)
+	if _, ok := errors.AsType[*noEntryError](err); ok {
+		// A path that the new version drops reads from the host. dpkg
+		// removes such a file, but keeps a conffile.
+		return nil, nil
+	}
+	if ae, ok := errors.AsType[*archiveError](err); ok && ae.search {
+		// The check of a pkg step can read an index older than the refresh of
+		// its apply, so apt can lack the version. A path that the package may
+		// not ship must not fail the plan.
+		return nil, nil
+	}
+	if err != nil || deb == nil || deb.hdr.Typeflag != kind {
+		return nil, err
+	}
+	return deb, nil
+}
+
+// fetchEntry returns the entry p of the archive of version pp of the package
 // pkg, which can name its architecture.
-func fetchFile(ctx context.Context, pkg string, pp PlannedPkg, p string) (*debFile, error) {
+func fetchEntry(ctx context.Context, pkg string, pp PlannedPkg, p string) (*debFile, error) {
 	name, _, _ := strings.Cut(pkg, ":")
 	deb, err := archive(ctx, pkg, pp.Version, archiveName(name, pp.Version, pp.Arch), pp.Index)
 	if err != nil {
-		return nil, fmt.Errorf("get the archive of %s %s: %w", name, pp.Version, err)
+		return nil, &archiveError{err: fmt.Errorf("get the archive of %s %s: %w", name, pp.Version, err)}
 	}
-	data, hdr, err := debEntry(ctx, deb, p)
+	data, hdr, err := listedEntry(ctx, deb, p)
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w", name, pp.Version, err)
 	}
 	return &debFile{name: name, version: pp.Version, data: data, hdr: hdr}, nil
 }
 
+// file returns an error when the entry is no file.
+func (d *debFile) file() error {
+	kind := "a special entry"
+	switch d.hdr.Typeflag {
+	case tar.TypeReg:
+		return nil
+	case tar.TypeDir:
+		kind = "a directory"
+	case tar.TypeSymlink:
+		kind = "a symbolic link"
+	}
+	return fmt.Errorf("%s %s: %w", d.name, d.version, &notFileError{entryPath(d.hdr), kind})
+}
+
+// info returns the info of the entry as dpkg unpacks it on the host.
+// dpkg takes the owner and group by name when the host has the name.
+func (d *debFile) info() (fs.FileInfo, error) {
+	uid, gid := d.hdr.Uid, d.hdr.Gid
+	if d.hdr.Uname != "" {
+		id, ok, err := lookupUser(d.hdr.Uname)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			uid = id
+		}
+	}
+	if d.hdr.Gname != "" {
+		id, ok, err := lookupGroup(d.hdr.Gname)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			gid = id
+		}
+	}
+	return &entryInfo{d.hdr.FileInfo(), uint32(uid), uint32(gid), uint32(d.hdr.Mode) & 0o7777}, nil
+}
+
+// entryInfo is the info of an archive entry that an earlier step unpacks.
+type entryInfo struct {
+	fs.FileInfo
+	uid, gid, mode uint32
+}
+
+// listedEntry is debEntry with the list of the archive's paths, which it
+// keeps in the directory of the session. The first read of an archive reads
+// all of it and writes the list. A later read of a path that the list does
+// not have does not read the archive.
+func listedEntry(ctx context.Context, deb, p string) ([]byte, *tar.Header, error) {
+	list := path.Join(fetched, path.Base(deb)+".paths")
+	paths, err := os.ReadFile(list)
+	switch {
+	case err == nil && !bytes.Contains(paths, []byte("\n"+p+"\n")):
+		return nil, nil, &noEntryError{p}
+	case err == nil:
+		return debEntry(ctx, deb, p)
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, nil, err
+	}
+	var data []byte
+	var hdr *tar.Header
+	b := bytes.NewBufferString("\n")
+	err = readFsys(ctx, deb, func(tr *tar.Reader) error {
+		for {
+			h, err := tr.Next()
+			if err != nil {
+				return err
+			}
+			b.WriteString(entryPath(h) + "\n")
+			if entryPath(h) != p {
+				continue
+			}
+			if hdr = h; h.Typeflag == tar.TypeReg {
+				if data, err = io.ReadAll(tr); err != nil {
+					return err
+				}
+			}
+		}
+	})
+	if err != io.EOF {
+		return nil, nil, err
+	}
+	if err := os.MkdirAll(fetched, 0o700); err != nil {
+		return nil, nil, err
+	}
+	if err := os.WriteFile(list, b.Bytes(), 0o600); err != nil {
+		return nil, nil, err
+	}
+	if hdr == nil {
+		return nil, nil, &noEntryError{p}
+	}
+	return data, hdr, nil
+}
+
 // keptConffile reports whether p is a conffile of the installed package pkg
-// that the host changed or removed.
-func keptConffile(ctx context.Context, pkg, p string) (bool, error) {
+// that the host changed or removed. sum is the md5 that dpkg records for a
+// conffile, or "".
+func keptConffile(ctx context.Context, pkg, p string) (kept bool, sum string, err error) {
 	out, err := run(ctx, nil, "dpkg-query", "-W", "-f=${Conffiles}", pkg)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	for line := range strings.SplitSeq(out, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 2 || f[0] != p {
 			continue
 		}
-		data, err := os.ReadFile(p)
-		if errors.Is(err, fs.ErrNotExist) {
-			return true, nil
+		h, _, err := openSource(p)
+		if errors.Is(err, errNoSource) {
+			return true, f[1], nil
 		}
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
-		sum := md5.Sum(data)
-		return hex.EncodeToString(sum[:]) != f[1], nil
+		defer h.Close()
+		hash := md5.New()
+		if _, err := io.Copy(hash, h); err != nil {
+			return false, "", fmt.Errorf("read %s: %w", p, err)
+		}
+		return hex.EncodeToString(hash.Sum(nil)) != f[1], f[1], nil
 	}
-	return false, nil
+	return false, "", nil
 }
 
-// debEntry returns the content and the header of the file p in the package
-// archive deb. It reads the data archive as dpkg-deb unpacks it, and stops at
-// p.
+// debEntry returns the header of the entry p in the package archive deb, and
+// the content of a file. It stops at p.
 func debEntry(ctx context.Context, deb, p string) ([]byte, *tar.Header, error) {
+	var data []byte
+	var hdr *tar.Header
+	err := readFsys(ctx, deb, func(tr *tar.Reader) error {
+		var err error
+		data, hdr, err = tarEntry(tr, p)
+		return err
+	})
+	return data, hdr, err
+}
+
+// readFsys runs read on the data archive of the package archive deb, as
+// dpkg-deb unpacks it. read can stop before the end.
+func readFsys(ctx context.Context, deb string, read func(*tar.Reader) error) error {
 	cmd := exec.CommandContext(ctx, "dpkg-deb", "--fsys-tarfile", deb)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.WaitDelay = KillDelay
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, nil, err
+		return err
 	}
-	data, hdr, err := tarEntry(out, p)
+	err = read(tar.NewReader(out))
 	if err == nil {
 		// The processes of dpkg-deb, also its decompressor, end on the
 		// closed pipe.
 		_ = out.Close()
 		_ = cmd.Wait()
-		return data, hdr, nil
+		return nil
 	}
 	// dpkg-deb runs to its end, so Wait gets its own error.
 	_, _ = io.Copy(io.Discard, out)
 	if werr := cmd.Wait(); werr != nil {
-		return nil, nil, failure("dpkg-deb", werr, stderr.String())
+		return failure("dpkg-deb", werr, stderr.String())
 	}
-	return nil, nil, err
+	return err
 }
 
 // archive returns the path of the archive file of version of pkg: in apt's
@@ -471,10 +638,9 @@ func archiveName(pkg, version, arch string) string {
 	return pkg + "_" + strings.ReplaceAll(version, ":", "%3a") + "_" + arch + ".deb"
 }
 
-// tarEntry returns the content and the header of the file p in the data
-// archive of a package.
-func tarEntry(r io.Reader, p string) ([]byte, *tar.Header, error) {
-	tr := tar.NewReader(r)
+// tarEntry returns the header of the entry p in the data archive of a
+// package, and the content of a file.
+func tarEntry(tr *tar.Reader, p string) ([]byte, *tar.Header, error) {
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -483,20 +649,21 @@ func tarEntry(r io.Reader, p string) ([]byte, *tar.Header, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		if strings.TrimSuffix(strings.TrimPrefix(hdr.Name, "."), "/") != p {
+		if entryPath(hdr) != p {
 			continue
 		}
-		switch hdr.Typeflag {
-		case tar.TypeReg:
-			data, err := io.ReadAll(tr)
-			return data, hdr, err
-		case tar.TypeDir:
-			return nil, nil, &notFileError{p, "a directory"}
-		case tar.TypeSymlink:
-			return nil, nil, &notFileError{p, "a symbolic link"}
+		if hdr.Typeflag != tar.TypeReg {
+			return nil, hdr, nil
 		}
-		return nil, nil, &notFileError{p, "a special entry"}
+		data, err := io.ReadAll(tr)
+		return data, hdr, err
 	}
+}
+
+// entryPath is the path on the host of an entry of the data archive of a
+// package.
+func entryPath(hdr *tar.Header) string {
+	return strings.TrimSuffix(strings.TrimPrefix(hdr.Name, "."), "/")
 }
 
 // notFileError is the error of a package archive that has p as another kind
@@ -506,6 +673,18 @@ type notFileError struct{ p, kind string }
 func (e *notFileError) Error() string {
 	return "the archive has " + e.p + " as " + e.kind + ", not a file"
 }
+
+// archiveError is the error of a package archive that apt cannot fetch. search
+// is set when the archive came up in a search for a path that no installed
+// package owns.
+type archiveError struct {
+	err    error
+	search bool
+}
+
+func (e *archiveError) Error() string { return e.err.Error() }
+
+func (e *archiveError) Unwrap() error { return e.err }
 
 // noEntryError is the error of a package archive without the file p.
 type noEntryError struct{ p string }

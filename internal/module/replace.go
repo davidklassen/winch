@@ -97,7 +97,8 @@ func countEntries(dir *os.Root, name string, fi fs.FileInfo, p string, uid, gid 
 // noFlags fails when the file or directory fi at name in dir has the immutable
 // or append-only flag. Apply cannot change or remove it.
 func noFlags(dir *os.Root, name string, fi fs.FileInfo, p string) error {
-	if !fi.Mode().IsRegular() && !fi.IsDir() {
+	// The host has no entry that an earlier step unpacks yet.
+	if _, ok := fi.(*entryInfo); ok || !fi.Mode().IsRegular() && !fi.IsDir() {
 		return nil
 	}
 	f, err := openSame(dir, name, fi)

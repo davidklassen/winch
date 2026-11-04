@@ -448,6 +448,10 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			c.PendingHooks = strings.Split(hooks, ",")
 		}
 	}
+	// During apply, the earlier steps have run, so the host has their packages.
+	if apply {
+		s.State.Packages = nil
+	}
 	res, err := m.Check(ctx, &s.State, say)
 	var socket bool
 	if err == nil && res.Status == module.Change {

@@ -172,6 +172,13 @@ func writeTree(tw *tar.Writer, fsys fs.FS) error {
 		if d.IsDir() {
 			return tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: name + "/", Mode: 0o755})
 		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			target, err := fs.ReadLink(fsys, path)
+			if err != nil {
+				return err
+			}
+			return tw.WriteHeader(&tar.Header{Typeflag: tar.TypeSymlink, Name: name, Linkname: target, Mode: 0o777})
+		}
 		info, err := d.Info()
 		if err != nil {
 			return err

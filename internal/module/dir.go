@@ -1,6 +1,7 @@
 package module
 
 import (
+	"archive/tar"
 	"cmp"
 	"context"
 	"errors"
@@ -117,7 +118,12 @@ func (d *Dir) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	}
 	if d.Absent {
 		if !exists {
-			return Result{Status: OK}, nil
+			deb, err := packaged(ctx, st, p, tar.TypeDir)
+			if err != nil || deb == nil {
+				return Result{Status: OK}, err
+			}
+			st.plan(Planned{Path: p})
+			return Result{Status: Change, Action: Remove}, nil
 		}
 		if !fi.IsDir() {
 			return Result{}, fmt.Errorf("%s is %s, not a directory", d.Path, kind(fi))
@@ -130,6 +136,19 @@ func (d *Dir) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 		return Result{Status: Change, Action: Remove, Changes: []string{"remove its content: " + t.counts()}}, nil
 	}
 	st.plan(Planned{Path: p, Kind: "dir"})
+	// dpkg leaves a directory that exists as it is.
+	if !exists && !d.Purge && !d.Recurse {
+		deb, err := packaged(ctx, st, p, tar.TypeDir)
+		if err != nil {
+			return Result{}, err
+		}
+		if deb != nil {
+			if fi, err = deb.info(); err != nil {
+				return Result{}, err
+			}
+			exists = true
+		}
+	}
 	owner, group, mode, err := attrs(d.Owner, d.Group, d.Mode, "0755")
 	if err != nil {
 		return Result{}, err

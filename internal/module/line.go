@@ -1,6 +1,7 @@
 package module
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
@@ -78,7 +79,8 @@ func (l *Line) Text() ([]byte, string) {
 }
 
 func (l *Line) Check(ctx context.Context, st *State, _ Say) (Result, error) {
-	dir, missing, err := openParent(st.resolve(l.Path))
+	p := st.resolve(l.Path)
+	dir, missing, err := openParent(p)
 	if _, ok := errors.AsType[*noPathError](err); ok && l.Absent {
 		return Result{Status: OK}, nil
 	}
@@ -88,9 +90,20 @@ func (l *Line) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	defer dir.Close()
 	name := path.Base(l.Path)
 	fi, data, exists, err := l.read(dir, name, missing)
-	switch {
-	case err != nil:
+	if err != nil {
 		return Result{}, err
+	}
+	deb, err := packaged(ctx, st, p, tar.TypeReg)
+	if err != nil {
+		return Result{}, err
+	}
+	if deb != nil {
+		if fi, err = deb.info(); err != nil {
+			return Result{}, err
+		}
+		data, exists = deb.data, true
+	}
+	switch {
 	case !exists && l.Absent:
 		return Result{Status: OK}, nil
 	case !exists:

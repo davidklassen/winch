@@ -163,21 +163,70 @@ func TestTarEntry(t *testing.T) {
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	data, hdr, err := tarEntry(bytes.NewReader(buf.Bytes()), "/etc/x.conf")
+	data, hdr, err := tarEntry(tar.NewReader(bytes.NewReader(buf.Bytes())), "/etc/x.conf")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(data) != "stock\n" || hdr.Uname != "root" || hdr.Gname != "adm" || hdr.Mode&0o7777 != 0o640 {
 		t.Errorf("got %q, %s %s %o", data, hdr.Uname, hdr.Gname, hdr.Mode)
 	}
+	if err := (&debFile{name: "x", version: "1", hdr: hdr}).file(); err != nil {
+		t.Errorf("file: %v", err)
+	}
+	if _, hdr, err := tarEntry(tar.NewReader(bytes.NewReader(buf.Bytes())), "/etc/l"); err != nil || hdr.Linkname != "x.conf" {
+		t.Errorf("/etc/l: %v, %+v", err, hdr)
+	}
+	if _, _, err := tarEntry(tar.NewReader(bytes.NewReader(buf.Bytes())), "/etc/missing"); err == nil || err.Error() != "the archive has no /etc/missing" {
+		t.Errorf("/etc/missing: error %v", err)
+	}
 	for p, want := range map[string]string{
-		"/etc/missing": "the archive has no /etc/missing",
-		"/etc/l":       "the archive has /etc/l as a symbolic link, not a file",
-		"/etc":         "the archive has /etc as a directory, not a file",
+		"/etc/l": "x 1: the archive has /etc/l as a symbolic link, not a file",
+		"/etc":   "x 1: the archive has /etc as a directory, not a file",
 	} {
-		if _, _, err := tarEntry(bytes.NewReader(buf.Bytes()), p); err == nil || err.Error() != want {
+		_, hdr, err := tarEntry(tar.NewReader(bytes.NewReader(buf.Bytes())), p)
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if err := (&debFile{name: "x", version: "1", hdr: hdr}).file(); err == nil || err.Error() != want {
 			t.Errorf("%s: error %v, want %q", p, err, want)
 		}
+	}
+}
+
+// spec: Running a pipeline/Plan
+func TestDebFileInfo(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		hdr          tar.Header
+		uid, gid, mo uint32
+	}{
+		{"names on the host win over the numbers", tar.Header{Uname: "root", Uid: 12345, Gname: "no-such-group-winch", Gid: 67, Mode: 0o4640}, 0, 67, 0o4640},
+		{"an unknown name keeps the number", tar.Header{Uname: "no-such-user-winch", Uid: 12345, Mode: 0o644}, 12345, 0, 0o644},
+		{"no name keeps the number", tar.Header{Uid: 5, Gid: 6, Mode: 0o100600}, 5, 6, 0o600},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			c.hdr.Name, c.hdr.Typeflag = "./x", tar.TypeReg
+			fi, err := (&debFile{hdr: &c.hdr}).info()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if uid, gid, mode := attrsOf(fi); uid != c.uid || gid != c.gid || mode != c.mo {
+				t.Errorf("got %d %d %o, want %d %d %o", uid, gid, mode, c.uid, c.gid, c.mo)
+			}
+		})
+	}
+}
+
+// spec: Running a pipeline/Plan
+func TestListedEntryReportsAFailedArchive(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "dpkg-deb"), []byte("#!/bin/sh\necho broken >&2\nexit 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	_, _, err := listedEntry(t.Context(), "winch-test-broken.deb", "/etc/x")
+	if err == nil || !strings.Contains(err.Error(), "dpkg-deb") {
+		t.Errorf("error = %v, want the failure of dpkg-deb", err)
 	}
 }
 
