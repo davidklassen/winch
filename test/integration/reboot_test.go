@@ -340,6 +340,43 @@ func TestRebootCommandFails(t *testing.T) {
 	}
 }
 
+// spec: Modules/reboot (the reboot starts after the answer, when the session
+// ends: a reboot that starts earlier can cut the answer off)
+func TestRebootWaitsForTheSessionEnd(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "rebootgate")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  rebootgate: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: 'true'\n",
+	})
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	// A masked target makes the reboot command fail, and its record shows that
+	// it ran.
+	vm.MustRun(t, "systemctl mask reboot.target")
+	got := vm.MustRun(t, `set -e
+record=/var/lib/winch/reboot
+mkfifo /root/in
+$(ls /var/lib/winch/bin/*) "" </root/in >/root/out 2>/dev/null &
+helper=$!
+exec 3>/root/in
+printf '%s\n' '{"id":1,"method":"hello","params":{"run":"r1","project":"demo"}}' '{"id":2,"method":"reboot"}' >&3
+timeout 60 sh -c 'until grep -q "\"id\":2" /root/out; do sleep 0.1; done'
+# The session stays open: only a reboot that starts too early can show here.
+sleep 1.5
+test ! -e $record || echo early
+exec 3>&-
+wait $helper
+timeout 60 sh -c "until [ -e $record ]; do sleep 0.1; done"
+cat $record
+`)
+	if !strings.HasPrefix(got, "exit status 1") {
+		t.Errorf("after the session: %q, want only the record of the failed reboot", got)
+	}
+}
+
 // spec: Modules/reboot (with true, apply reboots when the host reports a
 // pending reboot at that moment; gap: a host with molly-guard reboots)
 func TestRebootRequiredInRun(t *testing.T) {

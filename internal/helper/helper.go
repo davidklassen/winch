@@ -51,6 +51,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 	// After a reboot, the same run goes on in a new session. A session that
 	// finds the host not rebooted yet is a try to reconnect.
 	rebooting := false
+	var rebootGate *os.File
+	defer func() { rebootGate.Close() }()
 	defer func() {
 		if lock == nil {
 			return
@@ -154,7 +156,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "rollback":
 			err = rollbackStep(ctx, rb, handlers, thens)
 		case req.Method == "reboot":
-			result, err = reboot(filepath.Join(dir, rebootRecord))
+			result, rebootGate, err = reboot(filepath.Join(dir, rebootRecord))
 			rebooting = err == nil
 		case req.Method == "booted":
 			var b protocol.Boot

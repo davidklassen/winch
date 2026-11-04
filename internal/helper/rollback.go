@@ -176,11 +176,16 @@ func stageStore(stage string) string {
 	return "stage-" + hex.EncodeToString(sum[:8])
 }
 
-// idle fails while a rollback timer runs or puts back files. A job that is
-// past its deadline by more than deadGrace has no process left, for example
-// after a power cycle: idle adds it to the due jobs.
+// idle fails while a rollback timer runs or puts back files. A job whose lock
+// is free has no process left, for example after a power cycle: idle adds it to
+// the due jobs.
 func (r *rollbacks) idle() error {
 	for _, p := range []string{r.job(), r.job() + ".fired"} {
+		live, err := timerLive(p)
+		if err != nil {
+			return fmt.Errorf("read the rollback timer: %w", err)
+		}
+		// A timer that ended since the lock check has removed its job.
 		data, err := os.ReadFile(p)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -195,12 +200,32 @@ func (r *rollbacks) idle() error {
 		if err != nil {
 			return fmt.Errorf("the rollback timer of an earlier run ended without its process: %w", errors.Join(err, os.Remove(p)))
 		}
-		if time.Since(j.Deadline) < deadGrace {
-			return fmt.Errorf("a rollback timer of an earlier run runs until %s; run winch again after it ends", j.Deadline.UTC().Format(time.RFC3339))
+		if !live {
+			r.due = append(r.due, p)
+			continue
 		}
-		r.due = append(r.due, p)
+		deadline := j.Deadline.UTC().Format(time.RFC3339)
+		if time.Now().After(j.Deadline) {
+			return fmt.Errorf("a rollback timer of an earlier run started its rollback at %s; run winch again after it ends", deadline)
+		}
+		return fmt.Errorf("a rollback timer of an earlier run runs until %s; run winch again after it ends", deadline)
 	}
 	return nil
+}
+
+// timerLive reports whether a process holds the flock of the job file p. The
+// flock follows the file through its rename when the timer fires.
+func timerLive(p string) (bool, error) {
+	f, err := os.Open(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	free, err := tryLock(f)
+	return !free, err
 }
 
 // dueChanges returns what the due jobs do, as plan lines: the paths that they
@@ -262,10 +287,6 @@ func (r *rollbacks) runDue(ctx context.Context, handlers records) error {
 	r.due = nil
 	return r.clear(handlers)
 }
-
-// deadGrace is the time after its deadline when a timer has surely put back
-// its files.
-const deadGrace = 30 * time.Second
 
 // index returns the records of the saved paths of the store in dir.
 func index(dir string) records {
@@ -333,8 +354,14 @@ func (r *rollbacks) save(dir string, m module.Module) (saved, all []module.Saved
 	return saved, all, index(dir).write(lines)
 }
 
+// timerLock is the descriptor of the timer process that holds the flock of its
+// job.
+const timerLock = 3
+
 // start writes the job of a rollback timer and starts the timer process in a
-// session of its own, so it outlives the helper and the SSH connection.
+// session of its own, so it outlives the helper and the SSH connection. The
+// flock of the job passes to the process with its start, so no session sees a
+// started timer with a free lock.
 func (r *rollbacks) start(j job) error {
 	if r.self == "" {
 		return errors.New("the helper does not know its own binary to start the rollback timer")
@@ -350,11 +377,27 @@ func (r *rollbacks) start(j job) error {
 	if err := writeJob(r.job(), data); err != nil {
 		return err
 	}
-	cmd := exec.Command(r.self, "--rollback", r.job())
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
+	if err := r.spawnTimer(); err != nil {
 		os.Remove(r.job())
 		return fmt.Errorf("start the rollback timer: %w", err)
+	}
+	return nil
+}
+
+func (r *rollbacks) spawnTimer() error {
+	lock, err := os.Open(r.job())
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return err
+	}
+	cmd := exec.Command(r.self, "--rollback", r.job())
+	cmd.ExtraFiles = []*os.File{lock}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return err
 	}
 	done := make(chan struct{})
 	go func() {
@@ -607,6 +650,9 @@ func confirmStep(ctx context.Context, r *rollbacks, handlers, thens records) err
 // stops the timer, or until its deadline. Then it puts back the files, runs
 // the undo step, and writes the result for the helper.
 func RunTimer(ctx context.Context, path string, poll time.Duration) error {
+	// A process that a command of the rollback leaves must not look like a live
+	// timer.
+	syscall.CloseOnExec(timerLock)
 	for {
 		data, err := os.ReadFile(path)
 		if errors.Is(err, fs.ErrNotExist) {

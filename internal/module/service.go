@@ -454,7 +454,10 @@ func checkStarted(ctx context.Context, unit, action string, reload bool) error {
 	deadline := time.Now().Add(commandLimit)
 	u, err := showUnit(ctx, unit)
 	invocation := u.invocation
-	for err == nil && u.active == "activating" && !u.restarting() && time.Now().Before(deadline) {
+	for err == nil && u.active == "activating" && !u.restarting() {
+		if !time.Now().Before(deadline) {
+			return withJournal(ctx, unit, fmt.Errorf("%s is still activating %s after its %s", unit, Seconds(commandLimit), action))
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

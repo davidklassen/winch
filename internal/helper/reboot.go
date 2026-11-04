@@ -22,31 +22,50 @@ const bootIDFile = "/proc/sys/kernel/random/boot_id"
 // the reboot command. The next reboot removes it.
 const rebootRecord = "reboot"
 
-// rebootScript runs systemctl reboot. When it fails, the script writes its
-// exit status and output to the file $1, so a reconnect can report them.
-const rebootScript = `sleep 1
+// rebootScript runs systemctl reboot when its stdin closes. When the reboot
+// fails, the script writes its exit status and output to the file $1, so a
+// reconnect can report them.
+const rebootScript = `read -r _
 out=$(systemctl reboot 2>&1) && exit
 printf 'exit status %s%s' "$?" "${out:+: $out}" > "$1.tmp"
 mv "$1.tmp" "$1"
 `
 
-// reboot starts the reboot in a process of its own, a second from now, so
-// the answer reaches the controller first. It returns the boot ID.
-func reboot(record string) (string, error) {
+// reboot starts the reboot in a process of its own. The controller closes the
+// session after it reads the answer, and the helper then ends: the reboot waits
+// for that, through the returned file. It also returns the boot ID.
+func reboot(record string) (string, *os.File, error) {
 	id, err := os.ReadFile(bootIDFile)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
+	ended, err := startReboot(record)
+	if err != nil {
+		return "", nil, err
+	}
+	return strings.TrimSpace(string(id)), ended, nil
+}
+
+// startReboot starts the process of the reboot. The process runs the reboot
+// when the returned file closes.
+func startReboot(record string) (*os.File, error) {
 	if err := os.Remove(record); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", err
+		return nil, err
 	}
+	stdin, ended, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("start the reboot: %w", err)
+	}
+	defer stdin.Close()
 	cmd := exec.Command("sh", "-c", rebootScript, "sh", record)
+	cmd.Stdin = stdin
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start the reboot: %w", err)
+		ended.Close()
+		return nil, fmt.Errorf("start the reboot: %w", err)
 	}
 	go cmd.Wait() //nolint:errcheck // the reboot ends the helper
-	return strings.TrimSpace(string(id)), nil
+	return ended, nil
 }
 
 // booted reports whether the host has another boot ID than the one before

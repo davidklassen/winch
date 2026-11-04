@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 )
 
 // spec: Modules/service and unit
@@ -140,6 +142,24 @@ func TestStartWatch(t *testing.T) {
 			}
 		})
 	}
+}
+
+// spec: Modules/service and unit (a unit still activating at the command limit
+// fails the step)
+func TestActivatingAtTheLimit(t *testing.T) {
+	fakeCommand(t, "systemctl", "Id=app.service\nLoadState=loaded\nActiveState=activating\nSubState=start\nInvocationID=1\nType=notify")
+	fakeCommand(t, "journalctl", "waits for its database")
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		s := &Service{Name: "app", todo: []string{"start"}}
+		err := s.Apply(t.Context(), Silent{})
+		if want := "app.service is still activating 600s after its start\nwaits for its database"; err == nil || err.Error() != want {
+			t.Errorf("apply: %v, want %q", err, want)
+		}
+		if took := time.Since(start); took < commandLimit {
+			t.Errorf("the step failed after %s, before the limit", took)
+		}
+	})
 }
 
 // spec: Modules/service; CLI/Messages (a fix works in its case)

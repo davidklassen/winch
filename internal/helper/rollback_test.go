@@ -315,6 +315,7 @@ func TestHelloFailsWhileATimerRuns(t *testing.T) {
 	deadline := time.Now().Add(time.Hour).UTC()
 	data, _ := json.Marshal(job{Deadline: deadline})
 	write(t, filepath.Join(dir, "rollback", "timer.json"), string(data))
+	holdLock(t, filepath.Join(dir, "rollback", "timer.json"))
 	c := start(t, dir, "")
 	r := c.call(t, "hello", hello("r1"))
 	if want := "a rollback timer of an earlier run runs until " + deadline.Format(time.RFC3339) + "; run winch again after it ends"; r.Error != want {
@@ -322,6 +323,197 @@ func TestHelloFailsWhileATimerRuns(t *testing.T) {
 	}
 	if r := c.call(t, "facts", nil); r.Error != "the first request must be hello" {
 		t.Errorf("a request after the failed hello: %q", r.Error)
+	}
+}
+
+// holdLock takes the flock of the job file p, as a live timer process holds it.
+func holdLock(t *testing.T, p string) {
+	t.Helper()
+	f, err := os.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a session fails while a timer
+// still runs; a timer whose process is gone does not run on its own)
+func TestIdleTellsATimerByItsLock(t *testing.T) {
+	past := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	future := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	for _, name := range []string{"timer.json", "timer.json.fired"} {
+		for _, c := range []struct {
+			name     string
+			deadline time.Time
+			held     bool
+			wantErr  string
+		}{
+			{"held before the deadline", future, true, "a rollback timer of an earlier run runs until " + future.Format(time.RFC3339) + "; run winch again after it ends"},
+			{"held past the deadline", past, true, "a rollback timer of an earlier run started its rollback at " + past.Format(time.RFC3339) + "; run winch again after it ends"},
+			{"free before the deadline", future, false, ""},
+			{"free past the deadline", past, false, ""},
+		} {
+			t.Run(name+" "+c.name, func(t *testing.T) {
+				rb := &rollbacks{dir: t.TempDir(), project: "acme"}
+				p := filepath.Join(rb.dir, name)
+				data, _ := json.Marshal(job{Version: jobVersion, Deadline: c.deadline})
+				write(t, p, string(data))
+				if c.held {
+					holdLock(t, p)
+				}
+				err := rb.idle()
+				if c.wantErr != "" {
+					if err == nil || err.Error() != c.wantErr {
+						t.Errorf("idle: %v, want %q", err, c.wantErr)
+					}
+					if len(rb.due) != 0 {
+						t.Errorf("due %q, want none", rb.due)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("idle: %v", err)
+				}
+				if !slices.Equal(rb.due, []string{p}) {
+					t.Errorf("due %q, want the job", rb.due)
+				}
+			})
+		}
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the timer process holds the
+// lock of its job from its start until it ends)
+func TestTimerHoldsTheLockOfItsJob(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb := &rollbacks{dir: t.TempDir(), project: "acme", self: self}
+	if err := rb.start(job{Deadline: time.Now().Add(time.Hour), Downloads: filepath.Join(rb.dir, "downloads")}); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(rb.job())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if free, err := tryLock(f); err != nil || free {
+		t.Errorf("the lock of a started timer: free %v, %v", free, err)
+	}
+	if err := rb.confirm(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if free, err := tryLock(f); err != nil || !free {
+		t.Errorf("the lock after the timer ended: free %v, %v", free, err)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a session fails while a timer
+// still runs, also when its rollback runs long past the deadline)
+func TestSlowRollbackIsNotDue(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, state := t.TempDir(), t.TempDir()
+	running, release := filepath.Join(state, "running"), filepath.Join(state, "release")
+	write(t, filepath.Join(bin, "systemctl"), "#!/bin/sh\n: > "+running+"\nwhile [ ! -e "+release+" ]; do sleep 0.01; done\nexit 1\n")
+	if err := os.Chmod(filepath.Join(bin, "systemctl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	yes := true
+	args, _ := json.Marshal(module.Service{Name: "app", Running: &yes})
+	deadline := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	rb := &rollbacks{dir: t.TempDir(), project: "acme", self: self}
+	if err := rb.start(job{Deadline: deadline, Undo: []undo{{Module: "service", Args: args}}, Downloads: filepath.Join(rb.dir, "downloads")}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		write(t, release, "")
+		// The fake systemctl fails the rollback.
+		if err := rb.timerResult(t.Context()); err == nil {
+			t.Error("the rollback did not run the fake systemctl")
+		}
+	}()
+	for {
+		if _, err := os.Lstat(running); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	next := &rollbacks{dir: rb.dir, project: "acme"}
+	want := "a rollback timer of an earlier run started its rollback at " + deadline.Format(time.RFC3339) + "; run winch again after it ends"
+	if err := next.idle(); err == nil || err.Error() != want {
+		t.Errorf("idle: %v, want %q", err, want)
+	}
+	if len(next.due) != 0 {
+		t.Errorf("due %q, want none", next.due)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a command of the rollback keeps
+// no lock of the timer: a process that it leaves would look like a live timer)
+func TestTimerCommandsHaveNoLock(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "marker")
+	write(t, filepath.Join(bin, "systemctl"), "#!/bin/sh\nif (: <&3) 2>/dev/null; then echo open > "+marker+"; else echo closed > "+marker+"; fi\nexit 1\n")
+	if err := os.Chmod(filepath.Join(bin, "systemctl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	yes := true
+	args, _ := json.Marshal(module.Service{Name: "app", Running: &yes})
+	rb := &rollbacks{dir: t.TempDir(), project: "acme", self: self}
+	j := job{Deadline: time.Now().Add(-time.Second), Undo: []undo{{Module: "service", Args: args}}, Downloads: filepath.Join(rb.dir, "downloads")}
+	if err := rb.start(j); err != nil {
+		t.Fatal(err)
+	}
+	// The fake systemctl fails the rollback after it wrote the marker.
+	if err := rb.timerResult(t.Context()); err == nil {
+		t.Fatal("the rollback did not run the fake systemctl")
+	}
+	if got := content(t, marker); got != "closed\n" {
+		t.Errorf("the command sees the lock: %q", got)
+	}
+}
+
+// spec: Modules/reboot (the reboot starts after the answer, when the helper
+// ends; a failed reboot command leaves its error)
+func TestRebootStartsWhenTheHelperEnds(t *testing.T) {
+	bin := t.TempDir()
+	write(t, filepath.Join(bin, "systemctl"), "#!/bin/sh\necho no such target >&2\nexit 1\n")
+	if err := os.Chmod(filepath.Join(bin, "systemctl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	record := filepath.Join(t.TempDir(), "reboot")
+	ended, err := startReboot(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only a reboot that starts too early can fail on this wait.
+	time.Sleep(1500 * time.Millisecond)
+	if _, err := os.Lstat(record); !os.IsNotExist(err) {
+		t.Fatalf("the reboot ran while the helper runs: %v", err)
+	}
+	ended.Close()
+	for {
+		if _, err := os.Lstat(record); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := content(t, record); got != "exit status 1: no such target" {
+		t.Errorf("the record of the failed reboot: %q", got)
 	}
 }
 
