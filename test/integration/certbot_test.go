@@ -57,6 +57,11 @@ func issue(args string) string {
 	return "certbot certonly --non-interactive --agree-tos --no-eff-email --email admin@example.com --authenticator nginx " + args + " >/root/issue.log 2>&1 || { cat /root/issue.log; exit 1; }\n"
 }
 
+const (
+	nginxReload  = "when a challenge runs, certbot reloads nginx, or starts it outside systemd when it is stopped"
+	apacheReload = "when a challenge runs, certbot reloads apache2; when it is stopped, certbot starts it outside systemd or fails"
+)
+
 const keySum = "sha256sum /etc/letsencrypt/live/a.example.com/privkey.pem"
 
 const certbotReset = `[ ! -e /usr/bin/certbot.off ] || mv /usr/bin/certbot.off /usr/bin/certbot
@@ -110,7 +115,7 @@ func TestCertbotModule(t *testing.T) {
 		{
 			Name:      "first issue",
 			Args:      &module.Certbot{Name: "a.example.com", Domains: ab, Email: "admin@example.com", DeployHook: &deployed},
-			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com, b.example.com", "authenticator nginx", "deploy_hook echo deployed >> /root/deployed"}},
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com, b.example.com", "authenticator nginx", "deploy_hook echo deployed >> /root/deployed", nginxReload}},
 			Unchanged: "test ! -e /etc/letsencrypt/renewal/a.example.com.conf",
 			After:     sans("DNS:a.example.com, DNS:b.example.com") + ` && [ "$(cat /root/deployed)" = deployed ] && ` + webUnchanged,
 		},
@@ -124,7 +129,7 @@ func TestCertbotModule(t *testing.T) {
 			Name:  "a new domain",
 			Setup: issue("--cert-name a.example.com -d a.example.com"),
 			Args:  &module.Certbot{Name: "a.example.com", Domains: ab, Email: "admin@example.com"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"domains a.example.com → a.example.com, b.example.com", "issue the certificate again, with a new key"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"domains a.example.com → a.example.com, b.example.com", "issue the certificate again, with a new key", nginxReload}},
 			After: sans("DNS:a.example.com, DNS:b.example.com"),
 		},
 		{
@@ -134,6 +139,7 @@ func TestCertbotModule(t *testing.T) {
 			Want: module.Result{Status: module.Change, Action: module.Modify, Changes: []string{
 				"deploy_hook echo old >> /root/deployed → echo deployed >> /root/deployed",
 				"issue the certificate again, with a new key; run deploy_hook",
+				nginxReload,
 			}},
 			After: `[ "$(cat /root/deployed)" = deployed ] && python3 -c ` + vmtest.Quote(`from configobj import ConfigObj; assert ConfigObj("/etc/letsencrypt/renewal/a.example.com.conf")["renewalparams"]["renew_hook"] == "sh -ec 'echo deployed >> /root/deployed'"`),
 		},
@@ -159,21 +165,21 @@ func TestCertbotModule(t *testing.T) {
 			Name:  "reuse_key keeps the key",
 			Setup: issue("--cert-name a.example.com -d a.example.com --reuse-key") + keySum + " > /root/key.sum",
 			Args:  &module.Certbot{Name: "a.example.com", Domains: ab, Email: "admin@example.com", ReuseKey: true},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"domains a.example.com → a.example.com, b.example.com", "issue the certificate again, with the same key"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"domains a.example.com → a.example.com, b.example.com", "issue the certificate again, with the same key", nginxReload}},
 			After: sans("DNS:a.example.com, DNS:b.example.com") + " && " + keySum + " | cmp -s - /root/key.sum",
 		},
 		{
 			Name:  "without reuse_key, the key changes",
 			Setup: issue("--cert-name a.example.com -d a.example.com --reuse-key") + keySum + " > /root/key.sum",
 			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"reuse_key true → false", "issue the certificate again, with a new key"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"reuse_key true → false", "issue the certificate again, with a new key", nginxReload}},
 			After: "! " + keySum + " | cmp -s - /root/key.sum",
 		},
 		{
 			Name:  "a removed hook goes away",
 			Setup: issue("--cert-name a.example.com -d a.example.com --pre-hook true"),
 			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com"},
-			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"pre_hook true → (none)", "issue the certificate again, with a new key"}},
+			Want:  module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"pre_hook true → (none)", "issue the certificate again, with a new key", nginxReload}},
 			After: "! grep -q pre_hook /etc/letsencrypt/renewal/a.example.com.conf",
 		},
 		{
@@ -200,19 +206,19 @@ func TestCertbotModuleHooksAndAuthenticators(t *testing.T) {
 		{
 			Name:  "a hook of several lines, with white space at the end of its first line",
 			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: new("echo one >> /root/deployed \necho two >> /root/deployed\n")},
-			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook\necho one >> /root/deployed \necho two >> /root/deployed"}},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook\necho one >> /root/deployed \necho two >> /root/deployed", nginxReload}},
 			After: `[ "$(cat /root/deployed)" = "$(printf 'one\ntwo')" ]`,
 		},
 		{
 			Name:  "a hook of several lines with quotes",
 			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: new("test \"$X\" = '' && echo 'one' >> /root/deployed\necho '\"\"\"' >> /root/deployed\necho \"'''\" >> /root/deployed")},
-			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook\ntest \"$X\" = '' && echo 'one' >> /root/deployed\necho '\"\"\"' >> /root/deployed\necho \"'''\" >> /root/deployed"}},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook\ntest \"$X\" = '' && echo 'one' >> /root/deployed\necho '\"\"\"' >> /root/deployed\necho \"'''\" >> /root/deployed", nginxReload}},
 			After: `[ "$(cat /root/deployed)" = "$(printf "one\n\"\"\"\n'''")" ] && { certbot renew --dry-run --no-random-sleep-on-renew --cert-name a.example.com >/root/renew.log 2>&1 || { cat /root/renew.log; exit 1; }; }`,
 		},
 		{
 			Name:         "a failing deploy_hook fails the step",
 			Args:         &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", DeployHook: new("test -e /root/hook-ok || { echo oops >&2; exit 3; }")},
-			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook test -e /root/hook-ok || { echo oops >&2; exit 3; }"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "deploy_hook test -e /root/hook-ok || { echo oops >&2; exit 3; }", nginxReload}},
 			WantApplyErr: "a hook failed:\nHook 'deploy-hook' reported error code 3\nHook 'deploy-hook' ran with error output:\n oops",
 			After:        "test -e /etc/letsencrypt/renewal/a.example.com.conf",
 			Fix:          "touch /root/hook-ok",
@@ -220,7 +226,7 @@ func TestCertbotModuleHooksAndAuthenticators(t *testing.T) {
 		{
 			Name:         "a failing pre_hook fails the step",
 			Args:         &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", PreHook: new("false")},
-			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "pre_hook false"}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", "pre_hook false", nginxReload}},
 			WantApplyErr: "Hook 'pre-hook' reported error code 1",
 			// certbot issues the certificate after a failed pre_hook.
 			ErrAfterChange: true,
@@ -229,7 +235,7 @@ func TestCertbotModuleHooksAndAuthenticators(t *testing.T) {
 			Name:  "apache",
 			Setup: "systemctl stop nginx && systemctl start apache2",
 			Args:  &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", Authenticator: "apache"},
-			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator apache"}},
+			Want:  module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator apache", apacheReload}},
 			After: sans("DNS:a.example.com") + " && systemctl is-active -q apache2 && " + webUnchanged,
 		},
 		{
@@ -262,6 +268,68 @@ func TestCertbotModuleHooksAndAuthenticators(t *testing.T) {
 				"authenticator nginx → webroot", "webroot_path (none) → /var/www/html", "issue the certificate again, with a new key",
 			}},
 			After: "grep -qx 'authenticator = webroot' /etc/letsencrypt/renewal/a.example.com.conf",
+		},
+	})
+}
+
+// spec: Modules/certbot
+func TestCertbotReloadsTheWebServer(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "certbot-reload")
+	startPebble(t, vm)
+	// A new account keeps Pebble from reusing an authorization, which needs no
+	// challenge.
+	const reset = `systemctl stop nginx apache2
+pkill -x nginx; pkill -x apache2
+while pgrep -x 'nginx|apache2' >/dev/null; do sleep 0.1; done
+rm -rf /etc/letsencrypt/accounts /etc/letsencrypt/live/* /etc/letsencrypt/archive/* /etc/letsencrypt/renewal/* /etc/nginx/conf.d/probe.conf /etc/apache2/conf-enabled/probe.conf`
+	// The server has not loaded this config.
+	const nginxConf = "echo 'server { listen 8082; return 204; }' > /etc/nginx/conf.d/probe.conf"
+	const apacheConf = "echo 'Listen 8082' > /etc/apache2/conf-enabled/probe.conf"
+	const loaded = "curl -s -o /dev/null http://localhost:8082"
+	const notLoaded = "! " + loaded
+	const pebbleReuse = `systemctl stop pebble
+systemd-run --unit pebble -E PEBBLE_VA_NOSLEEP=1 -E PEBBLE_WFE_NONCEREJECT=0 -E PEBBLE_AUTHZREUSE=100 pebble -config /etc/pebble/config.json -dnsserver 127.0.0.1:8053
+until curl -sf -o /dev/null https://localhost:14000/dir; do sleep 0.1; done
+`
+	cert := func(authenticator, webroot string) *module.Certbot {
+		return &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com"}, Email: "admin@example.com", Authenticator: authenticator, WebrootPath: webroot}
+	}
+	nginxWant := module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator nginx", nginxReload}}
+	apacheWant := module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator apache", apacheReload}}
+	apacheStopped := vmtest.Case{
+		Name: "apache stopped", Setup: apacheConf, Args: cert("apache", ""), Want: apacheWant, Unchanged: notLoaded,
+		After: loaded + " && ! systemctl is-active -q apache2",
+	}
+	// apache2ctl graceful of Ubuntu 26.04 runs systemctl reload, which fails on
+	// a stopped unit.
+	if lab.OS() == "ubuntu-26.04" {
+		apacheStopped.After = notLoaded
+		apacheStopped.WantApplyErr = "apache2.service is not active, cannot reload"
+		apacheStopped.Fix = "systemctl start apache2"
+	}
+	vmtest.RunCases(t, vm, "certbot", reset, []vmtest.Case{
+		{Name: "nginx running", Setup: "systemctl start nginx && " + nginxConf, Args: cert("nginx", ""), Want: nginxWant, Unchanged: notLoaded, After: loaded + " && systemctl is-active -q nginx"},
+		{Name: "nginx stopped", Setup: nginxConf, Args: cert("nginx", ""), Want: nginxWant, Unchanged: notLoaded, After: loaded + " && ! systemctl is-active -q nginx"},
+		{Name: "apache running", Setup: "systemctl start apache2 && " + apacheConf, Args: cert("apache", ""), Want: apacheWant, Unchanged: notLoaded, After: loaded + " && systemctl is-active -q apache2"},
+		apacheStopped,
+		{
+			Name: "webroot beside nginx", Setup: "systemctl start nginx && " + nginxConf, Args: cert("webroot", "/var/www/html"),
+			Want:      module.Result{Status: module.Change, Action: module.Create, Changes: []string{"domains a.example.com", "authenticator webroot", "webroot_path /var/www/html"}},
+			Unchanged: notLoaded, After: notLoaded,
+		},
+		{
+			Name: "a new domain", Setup: "systemctl start nginx\n" + issue("--cert-name a.example.com -d a.example.com") + nginxConf,
+			Args:      &module.Certbot{Name: "a.example.com", Domains: []string{"a.example.com", "b.example.com"}, Email: "admin@example.com"},
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"domains a.example.com → a.example.com, b.example.com", "issue the certificate again, with a new key", nginxReload}},
+			Unchanged: notLoaded, After: loaded,
+		},
+		// The last case: Pebble keeps reusing authorizations.
+		{
+			Name: "a reused authorization needs no challenge", Setup: "systemctl start nginx\n" + pebbleReuse + issue("--cert-name a.example.com -d a.example.com --reuse-key") + nginxConf,
+			Args:      cert("nginx", ""),
+			Want:      module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"reuse_key true → false", "issue the certificate again, with a new key", nginxReload}},
+			Unchanged: notLoaded, After: notLoaded,
 		},
 	})
 }

@@ -317,6 +317,12 @@ func (c *Certbot) check(dir string, warn func(string)) (Result, error) {
 		if err := noFlagsAt(renewalPath(dir, c.Name)); err != nil {
 			return Result{}, err
 		}
+		switch c.authenticator() {
+		case "nginx":
+			changes = append(changes, "when a challenge runs, certbot reloads nginx, or starts it outside systemd when it is stopped")
+		case "apache":
+			changes = append(changes, "when a challenge runs, certbot reloads apache2; when it is stopped, certbot starts it outside systemd or fails")
+		}
 	}
 	for _, hook := range c.PendingHooks {
 		changes = append(changes, "pending "+hook)
