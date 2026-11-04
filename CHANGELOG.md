@@ -50,6 +50,11 @@
   whose command has no final newline. The plan shows a note, apply removes
   the record, and the `then` does not run. Run the command yourself.
 - SIGTERM and SIGHUP act as Ctrl-C in `plan`, `apply`, `run`, and `exec`.
+- winch keeps the masked content of each file that holds a secret in
+  `/var/lib/winch/masked/<project>/`, and a plan compares removed lines with
+  it. Until a run has applied a step on such a file, its removed lines show as
+  `(line hidden: may hold a secret)`, and so does a line that winch did not
+  write.
 
 ### Added
 
@@ -74,6 +79,10 @@
 - Secret masking: all text from the host passes the secret parts of its
   host, also outside a step. Text between two secrets stays visible. A
   plain check error shows in full beside a value from a secret.
+- A plan diff no longer shows an old secret after a rotation, such as a
+  multi-line secret that loses a line.
+- A slow rollback no longer runs twice: a lock on its job tells a live timer
+  from a dead one, whatever the time.
 - A rollback of a switch between `ssh.service` and `ssh.socket` starts the
   stopped unit again. A guarded sshd reload saves the sshd config that
   other recipes changed.
