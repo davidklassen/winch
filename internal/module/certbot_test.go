@@ -296,6 +296,49 @@ func TestCertbotCheckBrokenLineage(t *testing.T) {
 	}
 }
 
+// spec: Modules/certbot (the plan lists the reload of the web server)
+func TestCertbotCheckServerLine(t *testing.T) {
+	nginx := "when a challenge runs, certbot reloads nginx, or starts it outside systemd when it is stopped"
+	apache := "when a challenge runs, certbot reloads apache2; when it is stopped, certbot starts it outside systemd or fails"
+	dir := t.TempDir()
+	cert := filepath.Join(dir, "live", "a", "cert.pem")
+	writeCert(t, cert, time.Now().Add(60*24*time.Hour), "a.example.com")
+	if err := os.MkdirAll(filepath.Join(dir, "renewal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, authenticator := range map[string]string{"a": "nginx", "w": "webroot"} {
+		conf := "cert = " + cert + "\n[renewalparams]\nauthenticator = " + authenticator + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "renewal", name+".conf"), []byte(conf), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tt := range []struct {
+		name string
+		c    Certbot
+		want []string
+	}{
+		{"new with nginx", Certbot{Name: "new", Domains: []string{"a.example.com"}}, []string{"domains a.example.com", "authenticator nginx", nginx}},
+		{"new with apache", Certbot{Name: "new", Domains: []string{"a.example.com"}, Authenticator: "apache"}, []string{"domains a.example.com", "authenticator apache", apache}},
+		{"new with standalone", Certbot{Name: "new", Domains: []string{"a.example.com"}, Authenticator: "standalone"}, []string{"domains a.example.com", "authenticator standalone"}},
+		{"a new domain with nginx", Certbot{Name: "a", Domains: []string{"a.example.com", "b.example.com"}}, []string{"domains a.example.com → a.example.com, b.example.com", "issue the certificate again, with a new key", nginx}},
+		{"from nginx to webroot", Certbot{Name: "a", Domains: []string{"a.example.com"}, Authenticator: "webroot", WebrootPath: "/var/www"}, []string{"authenticator nginx → webroot", "webroot_path (none) → /var/www", "issue the certificate again, with a new key"}},
+		{"from webroot to nginx", Certbot{Name: "w", Domains: []string{"a.example.com"}}, []string{"authenticator webroot → nginx", "issue the certificate again, with a new key", nginx}},
+		{"from nginx to apache", Certbot{Name: "a", Domains: []string{"a.example.com"}, Authenticator: "apache"}, []string{"authenticator nginx → apache", "issue the certificate again, with a new key", apache}},
+		{"a pending hook only", Certbot{Name: "a", Domains: []string{"a.example.com"}, PendingHooks: []string{"deploy_hook"}}, []string{"pending deploy_hook"}},
+		{"a new domain and a pending hook", Certbot{Name: "a", Domains: []string{"a.example.com", "b.example.com"}, PendingHooks: []string{"deploy_hook"}}, []string{"domains a.example.com → a.example.com, b.example.com", "issue the certificate again, with a new key", nginx, "pending deploy_hook"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := tt.c.check(dir, func(string) {})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(res.Changes, tt.want) {
+				t.Errorf("got  %q\nwant %q", res.Changes, tt.want)
+			}
+		})
+	}
+}
+
 // spec: Modules/certbot (an expiring certificate gives a plan note)
 func TestCertbotCheckExpiry(t *testing.T) {
 	day := 24 * time.Hour
