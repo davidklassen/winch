@@ -441,6 +441,48 @@ sed -i "/^Package: winch-stock$/,/^$/{/^MD5sum:\|^SHA1:\|^SHA512:/d;s/^Size: .*/
 			t.Errorf("plan: exit %d, stdout %q, stderr %q, want %q: dpkg keeps a removed conffile removed", r.Code, r.Stdout, r.Stderr, want)
 		}
 	})
+
+	// upgraded upgrades winch-up to version 2 while apt's index names version
+	// 1, so only winch's index has version 2, and cleans apt's cache.
+	upgraded := func(t *testing.T) {
+		t.Helper()
+		vm.MustRun(t, reset+" && "+installV1("winch-up")+" && apt-get update -q >/dev/null && sed -i '/^Package: winch-up$/,/^$/{s/^Version: 2$/Version: 1/;s/winch-up_2_all/winch-up_1_all/}' "+testIndex)
+		if r := lab.Winch(t, project("  - upgrade:\n      mode: safe\n"), "apply", "site", "--yes"); r.Code != 0 {
+			t.Fatalf("apply the upgrade: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+		vm.MustRun(t, version("winch-up", "2")+" && apt-get clean && echo local > /etc/winch-up.conf && "+aptFiles+" > /root/apt-files")
+	}
+	stockUp := "  - file:\n      path: /etc/winch-up.conf\n      stock: true\n"
+
+	t.Run("stock after an upgrade and a clean of apt's cache", func(t *testing.T) {
+		upgraded(t)
+		plan(t, project(stockUp), "~ file /etc/winch-up.conf\n          content of winch-up 2\n          @@ -1,1 +1,1 @@\n          -local\n          +version 2\n")
+		vm.MustRun(t, "[ \"$(cat /etc/winch-up.conf)\" = 'version 2' ] && "+sameCache)
+	})
+
+	t.Run("stock beside an upgrade step after a clean of apt's cache", func(t *testing.T) {
+		upgraded(t)
+		plan(t, project("  - upgrade:\n      mode: safe\n"+stockUp), "~ file /etc/winch-up.conf\n          content of winch-up 2\n")
+		vm.MustRun(t, sameCache)
+	})
+
+	for _, c := range []struct {
+		name, setup string
+		both        bool
+	}{
+		{"stock of a version that no index has", "rm -f /var/lib/winch/apt/lists/10.0.2.100_test_*", true},
+		{"stock of a version that apt's index lacks, without winch's index", "rm -rf /var/lib/winch/apt/lists", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			upgraded(t)
+			vm.MustRun(t, c.setup)
+			r := lab.Winch(t, project(stockUp), "plan", "site")
+			if r.Code == 0 || !strings.Contains(r.Stderr, "get the archive of winch-up 2: apt-get download") || strings.Contains(r.Stderr, "through winch's index") != c.both {
+				t.Errorf("plan: exit %d, stdout %q, stderr %q, want a failed fetch, through winch's index: %v", r.Code, r.Stdout, r.Stderr, c.both)
+			}
+			vm.MustRun(t, sameCache)
+		})
+	}
 }
 
 // spec: Running a pipeline/Plan

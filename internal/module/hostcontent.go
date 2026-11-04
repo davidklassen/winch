@@ -459,6 +459,9 @@ func debEntry(ctx context.Context, deb, p string) ([]byte, *tar.Header, error) {
 // archive returns the path of the archive file of version of pkg: in apt's
 // cache, or in the directory of the session. It fetches a missing archive
 // into the directory of the session, so the plan leaves apt's cache as it is.
+// A nil index is the version that dpkg reports. apt's own index lacks that
+// version after an install from winch's index, so the fetch then also tries
+// winch's index.
 func archive(ctx context.Context, pkg, version, file string, index []string) (string, error) {
 	for _, dir := range []string{archives, fetched} {
 		deb := path.Join(dir, file)
@@ -476,6 +479,31 @@ func archive(ctx context.Context, pkg, version, file string, index []string) (st
 	}
 	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, noResult(commandLimit))
 	defer cancel()
+	err := download(ctx, pkg, version, deb, index)
+	if err == nil {
+		return deb, nil
+	}
+	if ctx.Err() != nil {
+		return "", err
+	}
+	if slices.Equal(index, noBinaryCache) {
+		return "", &afterRefreshError{err}
+	}
+	if index != nil {
+		return "", err
+	}
+	if _, serr := os.Stat(winchLists); serr != nil {
+		return "", err
+	}
+	if werr := download(ctx, pkg, version, deb, winchIndex); werr != nil {
+		return "", fmt.Errorf("%w; through winch's index: %w", err, werr)
+	}
+	return deb, nil
+}
+
+// download fetches the archive of version of pkg to deb, in the directory of
+// the session.
+func download(ctx context.Context, pkg, version, deb string, index []string) error {
 	cmd := exec.CommandContext(ctx, "apt-get", slices.Concat([]string{"download", "-q", "-o", "APT::Sandbox::User=root"}, noBinaryCache, index, []string{pkg + "=" + version})...)
 	cmd.Dir = fetched
 	cmd.Env = append(cmd.Environ(), aptEnv...)
@@ -484,13 +512,9 @@ func archive(ctx context.Context, pkg, version, file string, index []string) (st
 	if err := wait(ctx, cmd, KillDelay); err != nil {
 		// apt-get download writes to the final name as data arrives.
 		_ = os.Remove(deb)
-		err = failure("apt-get download", err, out.String())
-		if slices.Equal(index, noBinaryCache) && ctx.Err() == nil {
-			return "", &afterRefreshError{err}
-		}
-		return "", err
+		return failure("apt-get download", err, out.String())
 	}
-	return deb, nil
+	return nil
 }
 
 // archiveName is the name of a package archive in apt's cache.
