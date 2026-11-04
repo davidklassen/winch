@@ -524,15 +524,9 @@ func TestLockoutSSHSwitch(t *testing.T) {
 		}
 	}
 
-	// The drop-in of ssh.socket is sshd's config. A start of ssh.socket is no
-	// load of sshd, so no guarded step tests the drop-in.
-	var warnings []string
-	for _, at := range []string{"2:5", "4:5"} {
-		warnings = append(warnings, "recipes/ssh/recipe.yaml:"+at+": warning: sshd's config changes, and no step reloads sshd with confirm_access: true; the new config loads untested at the next restart")
-	}
 	// ssh.socket listens on a port that winch does not connect to: the access
 	// check fails, and ssh.service runs again.
-	r := lab.WinchEnvWarnings(t, dir, nil, warnings, "apply", "site", "--yes")
+	r := lab.Winch(t, dir, "apply", "site", "--yes")
 	if r.Code != 1 || !strings.Contains(r.Stderr, "ssh-switch: ssh: failed: service ssh.socket: the access check failed: ") ||
 		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply: exit %d", r.Code)
@@ -799,12 +793,18 @@ func TestLockoutPendingHandler(t *testing.T) {
 	})
 	const conf = "cat /etc/ssh/sshd_config.d/winch.conf"
 	const records = "sed '/^version 1$/d' /var/lib/winch/handlers/pdemo 2>/dev/null; true"
-	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+	// The reboot loads a drop-in that no access check tested. On Ubuntu, the
+	// step's restart of ssh.socket tests it.
+	var warnings []string
+	if osRelease().id != "ubuntu" {
+		warnings = []string{"pipelines/site.yaml:14:9: warning: sshd loads a changed config without an access check; reload it in a service handler with confirm_access: true"}
+	}
+	if r := lab.WinchEnvWarnings(t, dir, nil, warnings, "apply", "site", "--yes"); r.Code != 0 {
 		t.Fatalf("first apply: exit %d\n%s", r.Code, r.Stderr)
 	}
 
 	t.Run("a failed step puts back the file", func(t *testing.T) {
-		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.tries=7", "--set", "vars.fail=true")
+		r := lab.WinchEnvWarnings(t, dir, nil, warnings, "apply", "site", "--yes", "--set", "vars.tries=7", "--set", "vars.fail=true")
 		if r.Code != 1 || !strings.Contains(r.Stderr, "Fails on request") {
 			t.Fatalf("apply: exit %d, want the failed step\n%s", r.Code, r.Stderr)
 		}
@@ -814,7 +814,7 @@ func TestLockoutPendingHandler(t *testing.T) {
 		if out := vm.MustRun(t, records); out != "" {
 			t.Errorf("pending handlers = %q, want none", out)
 		}
-		r = lab.Winch(t, dir, "plan", "site", "--set", "vars.tries=7")
+		r = lab.WinchEnvWarnings(t, dir, nil, warnings, "plan", "site", "--set", "vars.tries=7")
 		if r.Code != 0 || !strings.Contains(r.Stdout, "~ file /etc/ssh/sshd_config.d/winch.conf") {
 			t.Errorf("plan after the failed run: exit %d, want the change again\n%s", r.Code, r.Stdout)
 		}
@@ -848,7 +848,7 @@ func TestLockoutPendingHandler(t *testing.T) {
 
 	t.Run("a failed step after a reboot puts back the file", func(t *testing.T) {
 		vm.MustRun(t, "touch /run/reboot-required")
-		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.tries=10", "--set", "vars.fail_late=true")
+		r := lab.WinchEnvWarnings(t, dir, nil, warnings, "apply", "site", "--yes", "--set", "vars.tries=10", "--set", "vars.fail_late=true")
 		if r.Code != 1 || !strings.Contains(r.Stderr, "Fails after the reboot on request") {
 			t.Fatalf("apply: exit %d, want the failed step\n%s", r.Code, r.Stderr)
 		}
@@ -862,7 +862,7 @@ func TestLockoutPendingHandler(t *testing.T) {
 
 	t.Run("a reboot keeps the file for the handler", func(t *testing.T) {
 		vm.MustRun(t, "touch /run/reboot-required")
-		r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.tries=9")
+		r := lab.WinchEnvWarnings(t, dir, nil, warnings, "apply", "site", "--yes", "--set", "vars.tries=9")
 		if r.Code != 0 || !strings.Contains(r.Stdout, "~ handler base.reload: service ssh") {
 			t.Fatalf("apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
 		}

@@ -191,3 +191,22 @@ func TestExecTimeLimit(t *testing.T) {
 		t.Errorf("error = %v, want the time limit with the output", err)
 	}
 }
+
+// spec: Running a pipeline/Lockout protection (an upgrade whose simulation
+// upgrades openssh-server loads sshd)
+func TestUpgradesSSHServer(t *testing.T) {
+	for _, tt := range []struct {
+		name, out string
+		want      bool
+	}{
+		{"upgrade", "Inst openssh-server [1:10.0p1-7] (1:10.0p1-8 Debian:13 [arm64])\n", true},
+		{"install", "Inst openssh-server (1:10.0p1-8 Debian:13 [arm64])\n", false},
+		{"removal", "Remv openssh-server [1:10.0p1-7]\n", false},
+		{"another package", "Inst openssh-sftp-server [1:10.0p1-7] (1:10.0p1-8 Debian:13 [arm64])\n", false},
+		{"nothing", "0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n", false},
+	} {
+		if got := UpgradesSSHServer(parseUpgrade(tt.out)); got != tt.want {
+			t.Errorf("%s: UpgradesSSHServer = %t, want %t", tt.name, got, tt.want)
+		}
+	}
+}

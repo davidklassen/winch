@@ -341,6 +341,12 @@ func (s *Service) Undo() *Service {
 	return nil
 }
 
+// RunsAfter reports whether the checked step leaves the unit running. A restart
+// or a reload leaves a stopped unit stopped.
+func (s *Service) RunsAfter() bool {
+	return s.up || slices.Contains(s.todo, "start")
+}
+
 // SSHPair returns the other unit of the SSH server, or "" for another unit.
 func SSHPair(unit string) string {
 	switch unit {

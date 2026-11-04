@@ -215,6 +215,8 @@ type Planned struct {
 	// later steps of the host with confirm_access that restart or reload
 	// sshd.
 	SSHD []store
+	// LoadsSSHD is true on a step that the plan counts as a load of sshd.
+	LoadsSSHD bool
 }
 
 // hostText returns text from the host of the step with each secret part of

@@ -206,3 +206,9 @@ func parseUpgrade(out string) []string {
 	}
 	return lines
 }
+
+// UpgradesSSHServer reports whether changes, the plan lines of an upgrade step,
+// upgrade openssh-server.
+func UpgradesSSHServer(changes []string) bool {
+	return slices.ContainsFunc(changes, func(c string) bool { return strings.HasPrefix(c, "upgrade openssh-server ") })
+}
