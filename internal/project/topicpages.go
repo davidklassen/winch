@@ -293,7 +293,7 @@ recipes:
 		doc.Heading("Handler steps"),
 		doc.Paragraph(`A handler step can have when. It cannot use notify or run a recipe. Only a handler step and winch run can use restarted and reloaded of service.`),
 		doc.Heading("Pending handlers"),
-		doc.Paragraph(`When a step notifies a handler, winch marks the handler as pending on the host before the step changes anything. The mark goes when the handler succeeds. When a run stops first, the handler stays pending. It runs the next time its recipe or stage runs on that host. The plan shows a handler that will run with "!".`),
+		doc.Paragraph(`When a step notifies a handler, winch marks the handler as pending on the host before the step changes anything. The mark goes when the handler succeeds. When a run stops first, or --stages leaves out the stage of its recipe, the handler stays pending. It runs the next time its recipe or stage runs on that host. The plan shows a handler that will run with "!". For a handler that the run does not reach, the plan shows a note, such as "a pending handler ssh.reload waits until its recipe runs on this host". The note is not a change.`),
 	},
 }
 

@@ -145,8 +145,8 @@ type Plan struct {
 	// goneHandlers are the pending handlers of each host that the project no
 	// longer has.
 	goneHandlers map[string][]string
-	// waiting are the pending handlers of each host whose recipe or stage the
-	// plan does not reach on the host.
+	// waiting are the handlers of each host, pending or notified by a changed
+	// step, whose recipe or stage the plan does not reach on the host.
 	waiting map[string][]string
 	// refreshed are the hosts whose package index a step refreshed in the
 	// plan.
@@ -1624,8 +1624,8 @@ func (o owners) has(c protocol.Check) bool {
 }
 
 // pendingHandlers returns the pending handlers whose recipe, pipeline, stage,
-// or handler the project no longer has, and the others that no slot of the
-// plan took from notified.
+// or handler the project no longer has, and the other handlers that no slot of
+// the plan took from notified, the records first.
 func (o owners) pendingHandlers(records []string, notified map[string]bool) (gone, waiting []string) {
 	for _, n := range records {
 		recipe, pipeline, stage, handler := project.ParseRecord(n)
@@ -1633,6 +1633,11 @@ func (o owners) pendingHandlers(records []string, notified map[string]bool) (gon
 		case !o.has(protocol.Check{Recipe: recipe, Pipeline: pipeline, Stage: stage, Handler: handler}):
 			gone = append(gone, n)
 		case notified[n]:
+			waiting = append(waiting, n)
+		}
+	}
+	for _, n := range slices.Sorted(maps.Keys(notified)) {
+		if !slices.Contains(records, n) {
 			waiting = append(waiting, n)
 		}
 	}
