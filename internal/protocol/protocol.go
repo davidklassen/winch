@@ -102,8 +102,8 @@ type Guard struct {
 	// session ends before such a step ran, the helper puts back the paths of
 	// the step.
 	SSHD []string `json:"sshd,omitempty"`
-	// LoadsSSHD is set on a step with confirm_access that restarts or
-	// reloads sshd. Its rollback timer tests the sshd files of its store.
+	// LoadsSSHD is set on a step with confirm_access that loads sshd. Its
+	// rollback timer tests the sshd files of its store.
 	LoadsSSHD bool `json:"loads_sshd,omitempty"`
 	// Confirm is the confirm_access of the step: a change starts the
 	// rollback timer, which puts back the whole store.

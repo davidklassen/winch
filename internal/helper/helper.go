@@ -580,7 +580,8 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	// sshd now loads all its files: the access check tests them, and the
 	// rollback puts back those of the store.
-	if guard && s.Guard.LoadsSSHD {
+	sv, isService := m.(*module.Service)
+	if guard && s.Guard.LoadsSSHD && (!isService || sv.RunsAfter()) {
 		if err := rb.tested(rb.scope(s.Guard)); err != nil {
 			return out, err
 		}

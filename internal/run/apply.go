@@ -716,8 +716,7 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 	for _, s := range p.SSHD {
 		g.SSHD = append(g.SSHD, s.name())
 	}
-	loads, guarded := loadsSSHD(p.Step)
-	g.LoadsSSHD = loads && guarded
+	g.LoadsSSHD = p.LoadsSSHD && p.Step.ConfirmAccess
 	return g
 }
 

@@ -1035,7 +1035,7 @@ start)
 	fi
 	echo active > "$d/$u.active"
 	;;
-restart|try-restart) echo active > "$d/$u.active" ;;
+restart) echo active > "$d/$u.active" ;;
 stop) echo inactive > "$d/$u.active" ;;
 enable) echo enabled > "$d/$u.file" ;;
 disable) echo disabled > "$d/$u.file" ;;
@@ -1334,5 +1334,35 @@ func TestRollbackOfASwitchPutsBackTheSSHDConfigOfOtherRecipes(t *testing.T) {
 	}
 	if got := state("ssh.service"); got != "inactive enabled" {
 		t.Errorf("ssh.service after the rollback: %s, want inactive enabled", got)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (an untested sshd file never
+// stays on the host)
+func TestRestartOfAStoppedUnitTestsNoSSHDFile(t *testing.T) {
+	for _, tt := range []struct {
+		state string
+		stays bool
+	}{
+		{"active enabled", true},
+		{"inactive disabled", false},
+	} {
+		fakeSystemd(t, map[string]string{"ssh.socket": tt.state})
+		l := startLockout(t)
+		dropIn := filepath.Join(filepath.Dir(l.a), "drop-in.conf")
+		if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(dropIn, "DenyUsers *\n"), Guard: protocol.Guard{Recipe: "hardening", SSHD: []string{"ssh"}}}); r.Error != "" {
+			t.Fatal(r.Error)
+		}
+		restart, _ := json.Marshal(module.Service{Name: "ssh.socket", Restarted: true})
+		if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: restart, Guard: protocol.Guard{Recipe: "ssh", Save: true, Confirm: true, LoadsSSHD: true}}); r.Error != "" {
+			t.Fatal(r.Error)
+		}
+		if r := l.c.call(t, "confirm", nil); r.Error != "" {
+			t.Fatal(r.Error)
+		}
+		l.end(t)
+		if _, err := os.Lstat(dropIn); (err == nil) != tt.stays {
+			t.Errorf("ssh.socket %s: the drop-in after the session: %v, want it to stay: %t", tt.state, err, tt.stays)
+		}
 	}
 }

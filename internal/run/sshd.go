@@ -9,10 +9,10 @@ import (
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
-// sshdWarnings warns at each step without confirm_access that restarts or
-// reloads sshd after an earlier step of its host changed sshd's config. It
-// also warns at each change of sshd's config that no later step loads, or
-// that a guarded reload loads but its rollback cannot put back.
+// sshdWarnings warns at each step without confirm_access that loads sshd while
+// sshd's config has a change that no access check tested. It also warns at
+// each change of sshd's config that no later step loads, or that a guarded
+// load loads but its rollback cannot put back.
 func (p *Plan) sshdWarnings() []*yamlx.Error {
 	var out []*yamlx.Error
 	warn := func(pos yamlx.Pos, msg string) {
@@ -30,12 +30,18 @@ func (p *Plan) sshdWarnings() []*yamlx.Error {
 		stores []store
 	}
 	var pending []change
-	loaded := func(host string, guard *store) {
-		pending = slices.DeleteFunc(pending, func(c change) bool {
-			return c.host == host && (guard == nil || slices.Contains(c.stores, *guard))
-		})
+	load := func(host string, s Planned, owner store, thenRuns bool) {
+		switch {
+		case s.LoadsSSHD && s.Step.ConfirmAccess:
+			pending = slices.DeleteFunc(pending, func(c change) bool { return c.host == host && slices.Contains(c.stores, owner) })
+		case s.LoadsSSHD, thenRuns && sshdThen.MatchString(s.Step.Then):
+			before := len(pending)
+			pending = slices.DeleteFunc(pending, func(c change) bool { return c.host == host })
+			if len(pending) != before {
+				warn(s.Step.Pos, unguarded)
+			}
+		}
 	}
-	changed := map[string]bool{}
 	for _, sp := range p.Stages {
 		for _, hp := range sp.Hosts {
 			name := hp.Host.Name
@@ -44,33 +50,17 @@ func (p *Plan) sshdWarnings() []*yamlx.Error {
 			}
 			for _, s := range hp.Steps {
 				if s.Handler == nil {
-					if s.Result.Status == module.Change && slices.ContainsFunc(module.Touches(s.Step.Args), func(t module.Touch) bool { return module.SSHDConfig(t.Path) }) {
-						changed[name] = true
-						if !slices.Contains(s.Result.Changes, module.SSHSocketRestart) {
-							pending = append(pending, change{name, s.Step.Pos, stores(sp.Stage, s)})
-						}
+					if s.Result.Status == module.Change && slices.ContainsFunc(module.Touches(s.Step.Args), func(t module.Touch) bool { return module.SSHDConfig(t.Path) }) && !slices.Contains(s.Result.Changes, module.SSHSocketRestart) {
+						pending = append(pending, change{name, s.Step.Pos, stores(sp.Stage, s)})
 					}
-					if changed[name] && s.ThenRuns && sshdThen.MatchString(s.Step.Then) {
-						warn(s.Step.Pos, unguarded)
-						loaded(name, nil)
-					}
+					load(name, s, ownStore(sp.Stage, s), s.ThenRuns)
 					continue
 				}
-				if !changed[name] || !s.Handler.Runs {
+				if !s.Handler.Runs {
 					continue
 				}
 				for _, hs := range s.Handler.Steps {
-					loads, guarded := loadsSSHD(hs.Step)
-					if !loads {
-						continue
-					}
-					if !guarded {
-						warn(hs.Step.Pos, unguarded)
-						loaded(name, nil)
-						continue
-					}
-					owner := storeOf(s.Handler.Handler)
-					loaded(name, &owner)
+					load(name, hs, storeOf(s.Handler.Handler), true)
 				}
 			}
 		}
@@ -107,30 +97,35 @@ func stores(stage *project.Stage, p Planned) []store {
 	return append(out, p.SSHD...)
 }
 
-// sshdStores sets SSHD on each step that changes sshd's config. A guarded
-// reload of sshd loads the files of every earlier step, not only those of
-// its own store. A handler that the plan does not expect to run tests
-// nothing: the helper would put back its store at the end of the session.
+// sshdStores sets LoadsSSHD on each step that loads sshd, and SSHD on each step
+// that changes sshd's config. A guarded load of sshd loads the files of every
+// earlier step, not only those of its own store. A handler that the plan does
+// not expect to run tests nothing: the helper would put back its store at the
+// end of the session.
 func (p *Plan) sshdStores() {
 	type ref struct {
 		p     *Planned
 		store store
 	}
 	steps := map[string][]ref{}
+	socketOff := map[string]bool{}
 	for _, sp := range p.Stages {
 		for _, hp := range sp.Hosts {
 			name := hp.Host.Name
 			for i := range hp.Steps {
 				s := &hp.Steps[i]
 				if s.Handler == nil {
+					s.LoadsSSHD = loadsSSHD(*s, socketOff[name])
+					socketOff[name] = socketOff[name] || stopsSocket(*s)
 					steps[name] = append(steps[name], ref{s, ownStore(sp.Stage, *s)})
 					continue
 				}
-				if !s.Handler.Runs {
-					continue
-				}
 				for j := range s.Handler.Steps {
-					steps[name] = append(steps[name], ref{&s.Handler.Steps[j], storeOf(s.Handler.Handler)})
+					hs := &s.Handler.Steps[j]
+					hs.LoadsSSHD = loadsSSHD(*hs, socketOff[name])
+					if s.Handler.Runs {
+						steps[name] = append(steps[name], ref{hs, storeOf(s.Handler.Handler)})
+					}
 				}
 			}
 		}
@@ -141,7 +136,7 @@ func (p *Plan) sshdStores() {
 			if slices.ContainsFunc(module.Touches(r.p.Step.Args), func(t module.Touch) bool { return module.SSHDConfig(t.Path) }) {
 				r.p.SSHD = slices.Clone(later)
 			}
-			if loads, guarded := loadsSSHD(r.p.Step); loads && guarded && !slices.Contains(later, r.store) {
+			if r.p.LoadsSSHD && r.p.Step.ConfirmAccess && !slices.Contains(later, r.store) {
 				later = append(later, r.store)
 			}
 		}
@@ -165,15 +160,33 @@ func (s store) name() string {
 	return s.pipeline + "\t" + s.stage
 }
 
-// sshdThen matches a command that restarts or reloads ssh or sshd:
-// systemctl restart ssh, service ssh reload.
-var sshdThen = regexp.MustCompile(`(restart|reload)[ \t]+([^\s;&|]+[ \t]+)*sshd?(\.service)?($|[\s;&|)])|(^|[\s;&|(/])sshd?[ \t]+(restart|reload)`)
+// sshdThen matches a command that restarts or reloads ssh or sshd, or that
+// starts or restarts ssh.socket: systemctl restart ssh, service ssh reload,
+// systemctl start ssh.socket.
+var sshdThen = regexp.MustCompile(`(restart|reload)[ \t]+([^\s;&|]+[ \t]+)*sshd?(\.service)?($|[\s;&|)])|(^|[\s;&|(/])sshd?[ \t]+(restart|reload)|start[ \t]+([^\s;&|]+[ \t]+)*ssh\.socket($|[\s;&|)])`)
 
-// loadsSSHD reports whether the handler step st restarts or reloads sshd,
-// and whether the access check guards it. The check does not cover a then.
-func loadsSSHD(st project.Step) (loads, guarded bool) {
-	if sv, ok := st.Args.(*module.Service); ok && (sv.Restarted || sv.Reloaded) && (sv.Unit() == "ssh.service" || sv.Unit() == "sshd.service") {
-		return true, st.ConfirmAccess
+// loadsSSHD reports whether the step p loads sshd. socketOff is whether an
+// earlier step of the host stopped or disabled ssh.socket. The plan does not
+// check a handler step, so a start in a handler does not count.
+func loadsSSHD(p Planned, socketOff bool) bool {
+	switch a := p.Step.Args.(type) {
+	case *module.Reboot:
+		return true
+	case *module.Upgrade:
+		return module.UpgradesSSHServer(p.Result.Changes)
+	case *module.Service:
+		switch a.Unit() {
+		case "ssh.service", "sshd.service":
+			return a.Restarted || a.Reloaded || p.Result.Starts && socketOff && p.Step.ConfirmAccess
+		case "ssh.socket":
+			return a.Restarted || a.Reloaded || p.Result.Starts
+		}
 	}
-	return sshdThen.MatchString(st.Then), false
+	return false
+}
+
+// stopsSocket reports whether the step p stops or disables ssh.socket.
+func stopsSocket(p Planned) bool {
+	sv, ok := p.Step.Args.(*module.Service)
+	return ok && sv.Unit() == "ssh.socket" && (slices.Contains(p.Result.Changes, "stop") || slices.Contains(p.Result.Changes, "disable"))
 }
