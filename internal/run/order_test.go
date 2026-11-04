@@ -703,6 +703,324 @@ handlers:
           path: /opt/a
           absent: true
 `), "", "s: dir /opt/a: this step removes /opt/a/done, which s#1 cmd make writes; the two steps undo each other on every run"},
+		{"a recursive dir and a file with another owner", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - file:
+          path: /srv/app/.env
+          owner: root
+          content: ""
+`), "", "s: file /srv/app/.env: s#1 dir /srv/app sets the owner and group of its tree, and this step gives /srv/app/.env another owner or group; the two steps undo each other on every run"},
+		{"a file with another owner and a recursive dir", steps(`      - file:
+          path: /srv/app/.env
+          owner: root
+          content: ""
+      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+`), "", "s: dir /srv/app: this step sets the owner and group of its tree, and s#1 file /srv/app/.env gives /srv/app/.env another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir and a file with the default owner", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - file:
+          path: /srv/app/a
+          content: ""
+`), "", "s: file /srv/app/a: s#1 dir /srv/app sets the owner and group of its tree, and this step gives /srv/app/a another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir and a file with the same owner and group", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - file:
+          path: /srv/app/a
+          owner: app
+          group: root
+          content: ""
+`), "", ""},
+		{"a file with the same owner and group and a recursive dir", steps(`      - file:
+          path: /srv/app/a
+          owner: app
+          content: ""
+      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+`), "", ""},
+		{"a recursive dir and a file with another group", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - file:
+          path: /srv/app/a
+          owner: app
+          group: adm
+          content: ""
+`), "", "s: file /srv/app/a: s#1 dir /srv/app sets the owner and group of its tree, and this step gives /srv/app/a another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir and a file that sets only mode", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - file:
+          path: /srv/app/a
+          mode: "0600"
+`), "", ""},
+		{"a file that sets only mode and a recursive dir", steps(`      - file:
+          path: /srv/app/a
+          mode: "0600"
+      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+`), "", ""},
+		{"a recursive dir and a file that sets only the same owner", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - file:
+          path: /srv/app/a
+          owner: app
+`), "", ""},
+		{"a recursive dir and a file that sets only another owner", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - file:
+          path: /srv/app/a
+          owner: root
+`), "", "s: file /srv/app/a: s#1 dir /srv/app sets the owner and group of its tree, and this step gives /srv/app/a another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir and a file removed in it", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - file:
+          path: /srv/app/a
+          absent: true
+`), "", ""},
+		{"a recursive dir and a stock file without an owner", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - file:
+          path: /srv/app/a
+          stock: true
+`), "", "s: file /srv/app/a: s#1 dir /srv/app sets the owner and group of its tree, and this step gives /srv/app/a another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir and a stock file with the same owner and group", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          group: www
+          recurse: true
+      - file:
+          path: /srv/app/a
+          stock: true
+          owner: app
+          group: www
+`), "", ""},
+		{"a recursive dir and an unpack in it", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - download:
+          url: https://example.com/a.tgz
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          unpack: /srv/app/rel
+`), "", ""},
+		{"a recursive dir and a dir removed in it", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - dir:
+          path: /srv/app/sub
+          absent: true
+`), "", ""},
+		{"a recursive dir with a group and a file that sets only mode", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          group: www
+          recurse: true
+      - file:
+          path: /srv/app/a
+          mode: "0600"
+`), "", ""},
+		{"a recursive dir with a group and a file that sets only the same owner", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          group: www
+          recurse: true
+      - file:
+          path: /srv/app/a
+          owner: app
+`), "", ""},
+		{"a recursive dir with a group and a file that sets only another group", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          group: www
+          recurse: true
+      - file:
+          path: /srv/app/a
+          group: adm
+`), "", "s: file /srv/app/a: s#1 dir /srv/app sets the owner and group of its tree, and this step gives /srv/app/a another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir with the group that the user step gives", steps(`      - dir:
+          path: /home/deploy
+          owner: deploy
+          group: staff
+          recurse: true
+      - user:
+          name: deploy
+          group: staff
+          authorized_keys: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl a@b"]
+`), "", ""},
+		{"a recursive dir and a file beside it", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - file:
+          path: /srv/app2/a
+          owner: root
+          content: ""
+`), "", ""},
+		{"a recursive dir and a dir in it with the default owner", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - dir:
+          path: /srv/app/sub
+`), "", "s: dir /srv/app/sub: s#1 dir /srv/app sets the owner and group of its tree, and this step gives /srv/app/sub another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir in a recursive dir with another owner", steps(`      - dir:
+          path: /srv/app/sub
+          owner: www-data
+          recurse: true
+      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+`), "", "s: dir /srv/app: this step sets the owner and group of its tree, and s#1 dir /srv/app/sub gives /srv/app/sub another owner or group; the two steps undo each other on every run"},
+		{"a dir that does not recurse and a file in it", steps(`      - dir:
+          path: /srv/app
+          owner: app
+      - file:
+          path: /srv/app/.env
+          owner: root
+          content: ""
+`), "", ""},
+		{"a recursive dir and a link and a line in it", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - link:
+          path: /srv/app/l
+          target: /etc/hosts
+      - line:
+          path: /srv/app/conf
+          line: a=1
+          match: "^a="
+`), "", ""},
+		{"a recursive dir and a download with the default owner", steps(`      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+      - download:
+          url: https://example.com/a
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          path: /srv/app/a
+`), "", "s: download /srv/app/a: s#1 dir /srv/app sets the owner and group of its tree, and this step gives /srv/app/a another owner or group; the two steps undo each other on every run"},
+		{"an unpack with the default owner and a recursive dir on its directory", steps(`      - download:
+          url: https://example.com/a.tgz
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          unpack: /srv/app
+      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+`), "", ""},
+		{"an unpack with the same owner and a recursive dir on its directory", steps(`      - download:
+          url: https://example.com/a.tgz
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          unpack: /srv/app
+          owner: app
+      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+`), "", ""},
+		{"a recursive dir with another group and the keys of a user", steps(`      - dir:
+          path: /home/deploy
+          owner: deploy
+          recurse: true
+      - user:
+          name: deploy
+          authorized_keys: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl a@b"]
+`), "", "s: user deploy: s#1 dir /home/deploy sets the owner and group of its tree, and this step gives /home/deploy/.ssh another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir with the owner and group of the keys of a user", steps(`      - dir:
+          path: /home/deploy
+          owner: deploy
+          group: deploy
+          recurse: true
+      - user:
+          name: deploy
+          authorized_keys: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl a@b"]
+`), "", ""},
+		{"a recursive dir on the home of a user without keys", steps(`      - dir:
+          path: /home/deploy
+          owner: deploy
+          recurse: true
+      - user:
+          name: deploy
+`), "", ""},
+		{"a recursive dir and a file in a later stage", `stages:
+  - name: s
+    hosts: all
+    steps:
+      - dir:
+          path: /srv/app
+          owner: app
+          recurse: true
+  - name: t
+    hosts: all
+    steps:
+      - file:
+          path: /srv/app/.env
+          owner: root
+          content: ""
+`, "", "t: file /srv/app/.env: s#1 dir /srv/app sets the owner and group of its tree, and this step gives /srv/app/.env another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir and a unit in it", steps(`      - dir:
+          path: /etc/systemd/system
+          owner: app
+          recurse: true
+      - recipe: web
+`), `steps:
+  - unit:
+      name: app.service
+      source: app.service
+`, "web: unit app.service: s#1 dir /etc/systemd/system sets the owner and group of its tree, and this step gives /etc/systemd/system/app.service another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir and a repo in it", steps(`      - dir:
+          path: /etc/apt/sources.list.d
+          owner: app
+          recurse: true
+      - repo:
+          name: a
+          url: http://x.example/apt
+          suite: trixie
+          components: [main]
+`), "", "s: repo a: s#1 dir /etc/apt/sources.list.d sets the owner and group of its tree, and this step gives /etc/apt/sources.list.d/a.sources another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir and a firewall in it", steps(`      - dir:
+          path: /etc/winch
+          owner: app
+          recurse: true
+      - firewall:
+          allow:
+            - tcp: 22
+`), "", "s: firewall: s#1 dir /etc/winch sets the owner and group of its tree, and this step gives /etc/winch/firewall.nft another owner or group; the two steps undo each other on every run"},
+		{"a recursive dir with root and a unit in it", steps(`      - dir:
+          path: /etc/systemd/system
+          recurse: true
+      - recipe: web
+`), `steps:
+  - unit:
+      name: app.service
+      source: app.service
+`, ""},
 		{"a file in an unpack dir before the download", steps(`      - file:
           path: /opt/app/config.yml
           content: ""

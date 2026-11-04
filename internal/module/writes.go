@@ -1,6 +1,9 @@
 package module
 
-import "path"
+import (
+	"cmp"
+	"path"
+)
 
 // Writer is a module that writes known paths on the host. A dir step with
 // purge keeps them.
@@ -52,6 +55,55 @@ func (c *Cmd) Writes() []string {
 		return nil
 	}
 	return []string{c.Creates}
+}
+
+// Owned is a path with the owner and group that a step wants. An empty owner
+// or group is one that the step does not set. Tree says that the step also
+// sets them on everything below the path.
+type Owned struct {
+	Path, Owner, Group string
+	Tree               bool
+}
+
+// Owns returns the paths whose owner and group the step m compares with the
+// host on every run. The plan does not know the host here: a stock file counts
+// as root, and the keys of a user as the group with the name of the user. A
+// step that writes the owner or group decides. An unpack is not here: it
+// compares its record, not the tree.
+func Owns(m Module) []Owned {
+	switch m := m.(type) {
+	case *File:
+		if !m.hasContent() {
+			return []Owned{{Path: m.Path, Owner: string(m.Owner), Group: string(m.Group)}}
+		}
+		return []Owned{{Path: m.Path, Owner: cmp.Or(string(m.Owner), "root"), Group: cmp.Or(string(m.Group), "root")}}
+	case *Dir:
+		if m.Absent {
+			return nil
+		}
+		return []Owned{{m.Path, cmp.Or(string(m.Owner), "root"), cmp.Or(string(m.Group), "root"), m.Recurse}}
+	case *Download:
+		if m.Unpack != "" {
+			return nil
+		}
+		return []Owned{{Path: m.Path, Owner: cmp.Or(string(m.Owner), "root"), Group: cmp.Or(string(m.Group), "root")}}
+	case *Unit:
+		return Owns(m.File())
+	case *Repo, *Firewall:
+		var out []Owned
+		for _, p := range m.(Writer).Writes() {
+			out = append(out, Owned{Path: p, Owner: "root", Group: "root"})
+		}
+		return out
+	case *User:
+		if m.AuthorizedKeys == nil {
+			return nil
+		}
+		group := cmp.Or(string(m.Group), m.Name)
+		w := m.Writes()
+		return []Owned{{Path: w[1], Owner: m.Name, Group: group}, {Path: w[2], Owner: m.Name, Group: group}}
+	}
+	return nil
 }
 
 func present(absent bool, p string) []string {
