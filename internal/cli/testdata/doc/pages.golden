@@ -2629,6 +2629,15 @@ when a service step of the run started the unit after the handler's last
 notify, no earlier step of the handler changed anything, and the step
 has no confirm_access.
 
+A unit of type simple, exec, forking, or idle does not report readiness.
+After its start or restart, apply watches it for 2 seconds. A reload of
+such a unit without ExecReload is a restart, and gets the watch. The
+step fails when the unit is not running then, or when systemd restarted
+it in that time. A unit that crashes after the 2 seconds passes. A
+reload ends when ExecReload ends: one that only sends a signal is
+confirmed as sent, and the unit can still end after it. A health gate
+checks that a service works. Run winch doc pipeline.health.
+
 Keys:
   name       string   required  unit, with or without .service
   running    boolean  -         start or stop; unset leaves it

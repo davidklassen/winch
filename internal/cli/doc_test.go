@@ -64,6 +64,17 @@ func TestDocFunctions(t *testing.T) {
 	}
 }
 
+// spec: Modules/service and unit
+func TestDocServiceWatch(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "service")
+	out := strings.Join(strings.Fields(r.out), " ")
+	for _, want := range []string{"apply watches it for 2 seconds", "one that only sends a signal is confirmed as sent"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("winch doc service lacks %q:\n%s", want, r.out)
+		}
+	}
+}
+
 // spec: CLI
 func TestDocOldTopics(t *testing.T) {
 	for _, name := range []string{"values", "functions", "lockout", "plan"} {

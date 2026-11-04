@@ -621,24 +621,13 @@ systemctl daemon-reload`,
 			NoConverge:   true,
 		},
 		{
-			Name: "reloaded on a unit whose reload ends it fails",
-			Setup: `systemctl start winch-test
-mkdir /etc/systemd/system/winch-test.service.d
-printf '[Service]\nExecReload=/bin/kill $MAINPID\n' > /etc/systemd/system/winch-test.service.d/reload.conf
-systemctl daemon-reload`,
-			Args:         &module.Service{Name: "winch-test", Reloaded: true},
-			Want:         change("reload"),
-			WantApplyErr: "winch-test.service is not running after its reload: ",
-			Fix:          "rm -r /etc/systemd/system/winch-test.service.d && systemctl daemon-reload",
-			NoConverge:   true,
-		},
-		{
-			// systemd cancels the reload job when the unit ends before its
-			// ExecReload ends, and systemctl fails.
+			// The unit ends before its ExecReload ends. systemd v259 cancels the
+			// reload job, and systemctl fails. v255 and v257 end the job after
+			// the unit is inactive.
 			Name: "reloaded on a unit that ends during its reload fails",
 			Setup: `systemctl start winch-test
 mkdir /etc/systemd/system/winch-test.service.d
-printf '[Service]\nExecReload=/bin/sh -c "kill $MAINPID; sleep 1"\n' > /etc/systemd/system/winch-test.service.d/reload.conf
+printf '[Service]\nExecReload=/bin/sh -c "kill $MAINPID; while kill -0 $MAINPID 2>/dev/null; do sleep 0.1; done"\n' > /etc/systemd/system/winch-test.service.d/reload.conf
 systemctl daemon-reload`,
 			Args:         &module.Service{Name: "winch-test", Reloaded: true},
 			Want:         change("reload"),
