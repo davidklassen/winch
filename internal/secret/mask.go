@@ -187,11 +187,10 @@ type Line struct {
 	// Secret is true when Show has a Mark.
 	Secret bool
 	// Block is true for a line of a secret that has another number of lines
-	// than its placeholders. An old line never fits it.
+	// than its placeholders.
 	Block bool
-	// pieces are the parts of Text between the marks of Show, and parts the
-	// parts of Text in their place.
-	pieces, parts []string
+	// parts are the parts of Text in place of the marks of Show.
+	parts []string
 }
 
 // Lines returns the lines of real, the content for the host, with each part
@@ -220,7 +219,7 @@ func Lines(real, a, b []byte) ([]Line, bool) {
 			out[i] = Line{Text: s, Show: withEnd(Mark, s), Secret: true, Block: true}
 		case ok:
 			pieces, parts := mask(s, ya[j], yb[j])
-			out[i] = Line{Text: s, Show: strings.Join(pieces, Mark), Secret: true, pieces: pieces, parts: parts}
+			out[i] = Line{Text: s, Show: strings.Join(pieces, Mark), Secret: true, parts: parts}
 		}
 	}
 	return out, true
@@ -284,12 +283,45 @@ const (
 	changed = " (secret value changed)"
 )
 
+// Plain returns the lines of text, which holds no secret.
+func Plain(text []byte) []Line {
+	x := diff.Lines(text)
+	out := make([]Line, len(x))
+	for i, s := range x {
+		out[i] = Line{Text: s, Show: s}
+	}
+	return out
+}
+
+// Record returns the masked content of the lines: what winch keeps on the
+// host in place of the content. Each line ends in a newline.
+func Record(lines []Line) string {
+	var b strings.Builder
+	for _, l := range lines {
+		head, _, _ := strings.Cut(l.Show, "\n")
+		b.WriteString(head + "\n")
+	}
+	return b.String()
+}
+
+// RecordAdd returns record with the line added when record does not hold it.
+func RecordAdd(record *string, line string) string {
+	if record == nil {
+		return line
+	}
+	if slices.Contains(strings.SplitAfter(*record, "\n"), line) {
+		return *record
+	}
+	return *record + line
+}
+
 // Diff returns the diff of old, the content on the host, to the new lines,
-// in the format of diff.Diff. In a change with a new secret line, an old line
-// that fits a masked new line, first of the change and then of the whole
-// content, is masked at the same places, and another old line is hidden. A new line
-// whose old line had another secret gets a note.
-func Diff(old []byte, lines []Line) []byte {
+// in the format of diff.Diff. A removed line shows as the line of record that
+// it fits. A removed line that fits none is hidden when a new line holds a
+// secret or when there is a record. With showOther, a record does not hide it:
+// a line step changes one line, and the record holds no plain line that this
+// step wrote.
+func Diff(old []byte, record *string, lines []Line, showOther bool) []byte {
 	x := diff.Lines(old)
 	y := make([]string, len(lines))
 	for i, l := range lines {
@@ -298,69 +330,91 @@ func Diff(old []byte, lines []Line) []byte {
 	if slices.Equal(x, y) {
 		return nil
 	}
-	secrets := slices.DeleteFunc(slices.Clone(lines), func(l Line) bool { return !l.Secret || l.Block })
-	var out bytes.Buffer
-	for _, h := range diff.Hunks(x, y) {
-		out.WriteString(h.Header())
-		k := 0
-		for _, c := range changes(h) {
-			for ; h.Ops[k].Kind == ' '; k++ {
-				out.WriteString(" " + lines[h.Ops[k].Y].Show)
+	hide := record != nil && !showOther || slices.ContainsFunc(lines, func(l Line) bool { return l.Secret })
+	var known []recordLine
+	if record != nil {
+		known = recordLines(*record)
+	}
+	hunks := diff.Hunks(x, y)
+	// other holds the old text of each masked line, for the note.
+	other := map[string][]string{}
+	for _, h := range hunks {
+		for _, op := range h.Ops {
+			if op.Kind != '-' {
+				continue
 			}
-			k += len(c.del) + len(c.add)
-			var add []Line
-			for _, j := range c.add {
-				add = append(add, lines[j])
-			}
-			hasSecret := slices.ContainsFunc(add, func(l Line) bool { return l.Secret })
-			masked := map[string]bool{}
-			for _, i := range c.del {
-				if s, ok := fit(x[i], add, secrets); ok && hasSecret {
-					masked[s] = true
-					out.WriteString("-" + s)
-					continue
-				}
-				if hasSecret {
-					out.WriteString("-" + hidden)
-					continue
-				}
-				out.WriteString("-" + x[i])
-			}
-			for _, l := range add {
-				show := l.Show
-				if l.Secret && !l.Block && masked[show] {
-					head, tail, _ := strings.Cut(show, "\n")
-					show = head + changed + "\n" + tail
-				}
-				out.WriteString("+" + show)
+			head, _, _ := strings.Cut(x[op.X], "\n")
+			m, ok := fit(head, known)
+			switch {
+			case ok:
+				x[op.X] = m + x[op.X][len(head):]
+				other[m] = append(other[m], head)
+			case hide:
+				x[op.X] = hidden
 			}
 		}
-		for ; k < len(h.Ops); k++ {
-			out.WriteString(" " + lines[h.Ops[k].Y].Show)
+	}
+	var out bytes.Buffer
+	for _, h := range hunks {
+		out.WriteString(h.Header())
+		for _, op := range h.Ops {
+			switch op.Kind {
+			case ' ':
+				out.WriteString(" " + lines[op.Y].Show)
+			case '-':
+				out.WriteString("-" + x[op.X])
+			default:
+				l := lines[op.Y]
+				head, tail, _ := strings.Cut(l.Show, "\n")
+				text, _, _ := strings.Cut(l.Text, "\n")
+				if l.Secret && !l.Block && slices.ContainsFunc(other[head], func(s string) bool { return s != text }) {
+					out.WriteString("+" + head + changed + "\n" + tail)
+					continue
+				}
+				out.WriteString("+" + l.Show)
+			}
 		}
 	}
 	return out.Bytes()
 }
 
-// fit returns the old line masked like the first secret line that it fits:
-// it holds the pieces of the line in order, the first at its start and the
-// last at its end.
-func fit(old string, add, all []Line) (string, bool) {
-	for _, set := range [][]Line{add, all} {
-		for _, l := range set {
-			if !l.Secret || l.Block {
-				continue
-			}
-			if fits(old, l.pieces) {
-				return l.Show, true
-			}
+// recordLine is a line of a record, and its text between the marks.
+type recordLine struct {
+	show   string
+	pieces []string
+}
+
+// recordLines returns the lines of a record, those with the most plain text
+// first: a plain line wins over a line that is only a secret, which fits every
+// old line.
+func recordLines(record string) []recordLine {
+	var lines []recordLine
+	for l := range strings.Lines(record) {
+		show := strings.TrimSuffix(l, "\n")
+		lines = append(lines, recordLine{show, strings.Split(show, Mark)})
+	}
+	plain := func(l recordLine) int { return len(l.show) - (len(l.pieces)-1)*len(Mark) }
+	slices.SortStableFunc(lines, func(a, b recordLine) int { return plain(b) - plain(a) })
+	return lines
+}
+
+// fit returns the first line of known that old fits.
+func fit(old string, known []recordLine) (string, bool) {
+	for _, l := range known {
+		if fits(old, l.pieces) {
+			return l.show, true
 		}
 	}
 	return "", false
 }
 
+// fits reports whether s holds the pieces in order, the first at its start
+// and the last at its end.
 func fits(s string, pieces []string) bool {
 	first, last := pieces[0], pieces[len(pieces)-1]
+	if len(pieces) == 1 {
+		return s == first
+	}
 	if len(s) < len(first)+len(last) || !strings.HasPrefix(s, first) || !strings.HasSuffix(s, last) {
 		return false
 	}

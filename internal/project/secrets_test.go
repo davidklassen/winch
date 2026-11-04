@@ -157,6 +157,35 @@ func shownLines(st Step) string {
 	return b.String()
 }
 
+// spec: Variables/Secrets in output (file diffs)
+func TestMaskedContent(t *testing.T) {
+	file := func(data string) module.Module { return &module.File{Path: "/f", Data: []byte(data)} }
+	lines, ok := secret.Lines([]byte("pw=one\n"), []byte("pw=aaaaaaaa\n"), []byte("pw=zzzzzzzzzzzz\n"))
+	if !ok {
+		t.Fatal("Lines: not ok")
+	}
+	tests := []struct {
+		name string
+		st   Step
+		want *string
+	}{
+		{"no secret", Step{Args: file("plain\n")}, nil},
+		{"a secret in the arguments only", Step{Args: file("plain\n"), masked: &Step{Args: file("plain\n")}}, nil},
+		{"a secret line", Step{Args: file("pw=one\n"), masked: &Step{Lines: lines}}, new("pw=(secret)\n")},
+		{"a hidden content", Step{Args: file("pw=one\n"), masked: &Step{Hidden: true}}, new("(secret)\n")},
+		{"binary content", Step{Args: file("a\x00b"), masked: &Step{Lines: lines}}, new("(secret)\n")},
+		{"a module without text", Step{Args: &module.Dir{Path: "/d"}, masked: &Step{Lines: lines}}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.st.MaskedContent()
+			if (got == nil) != (tt.want == nil) || got != nil && *got != *tt.want {
+				t.Errorf("MaskedContent = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // spec: Modules/user and group; Variables/Secrets in output
 func TestEvalSecretKeys(t *testing.T) {
 	blob := binary.BigEndian.AppendUint32(nil, uint32(len("ssh-ed25519")))

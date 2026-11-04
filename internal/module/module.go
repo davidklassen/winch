@@ -48,10 +48,13 @@ const (
 // service step stops or disables; the plan needs a step for each. Deferred
 // marks a step that runs during apply without a change, such as an assert.
 type Result struct {
-	Status    Status   `json:"status"`
-	Action    Action   `json:"action,omitempty"`
-	Changes   []string `json:"changes,omitempty"`
-	Old       *string  `json:"old,omitempty"`
+	Status  Status   `json:"status"`
+	Action  Action   `json:"action,omitempty"`
+	Changes []string `json:"changes,omitempty"`
+	Old     *string  `json:"old,omitempty"`
+	// Masked is what winch keeps of the old content, with no secret value, so
+	// the plan can mask the removed lines of Old.
+	Masked    *string  `json:"masked,omitempty"`
 	New       *string  `json:"new,omitempty"`
 	OldReason string   `json:"old_reason,omitempty"`
 	Link      string   `json:"link,omitempty"`
@@ -83,6 +86,12 @@ type Result struct {
 	// OthersRead is set when others can read the existing file that the step
 	// edits in place.
 	OthersRead bool `json:"others_read,omitempty"`
+}
+
+// WritesContent reports whether the change writes or removes the content of a
+// file.
+func (r Result) WritesContent() bool {
+	return r.Old != nil || r.OldReason != "" || r.Action == Remove
 }
 
 // State is what earlier steps of the run did on the host. The controller

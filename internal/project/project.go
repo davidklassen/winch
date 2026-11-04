@@ -1810,6 +1810,20 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, error) {
 	return &sh, nil
 }
 
+// MaskedContent returns what the host keeps of the content of the step in
+// place of the content: nil when the content reads no secret.
+func (st Step) MaskedContent() *string {
+	shown := st.Shown()
+	t, ok := st.Args.(module.WithText)
+	if !ok || !shown.Hidden && shown.Lines == nil {
+		return nil
+	}
+	if _, reason := t.Text(); shown.Hidden || reason != "" {
+		return new(secret.Mark + "\n")
+	}
+	return new(secret.Record(shown.Lines))
+}
+
 // secretKeys marks the authorized_keys elements of the arguments real that
 // differ from the placeholder variants. When a variant has another number of
 // elements, each element is from a secret.

@@ -127,6 +127,120 @@ func TestSecretBinaryFile(t *testing.T) {
 	}
 }
 
+// spec: Variables/Secrets in output (file diffs); Remote execution/State on
+// the host
+func TestSecretMaskedRecord(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "secret-masked")
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(t.TempDir(), "age.key")
+	if err := os.WriteFile(key, []byte(id.String()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"WINCH_AGE_KEY=" + key}
+	vm.MustRun(t, `printf 'token old\nworkers 2\n' > /etc/line.conf; chmod 600 /etc/line.conf`)
+	// password is "" for a project with no secret; the two texts are !tpl
+	// strings.
+	project := func(password, content, token, workers string) string {
+		vars := "{}"
+		if password != "" {
+			text, err := secret.Encrypt(password, []age.Recipient{id.Recipient()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			vars = "\n    vars:\n      pw: !secret " + text
+		}
+		return vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: acme\ninventory: test\nrecipients:\n  - " + id.Recipient().String() + "\n",
+			"inventories/test.yaml": "hosts:\n  " + vm.Name + ": " + vars + "\n",
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/app.conf
+          content: !tpl "` + content + `"
+          mode: "0600"
+      - line:
+          path: /etc/line.conf
+          line: !tpl "` + token + `"
+          match: "^token "
+      - line:
+          path: /etc/line.conf
+          line: ` + workers + `
+          match: "^workers "
+`,
+		})
+	}
+	records := func() []string {
+		return strings.Fields(vm.MustRun(t, "find /var/lib/winch/masked/acme -type f"))
+	}
+	const old, rotated = "first-password", "second-password"
+	const withSecret, tokenSecret = `workers = 2\npassword = {{ .vars.pw }}\nkeep\n`, `token {{ .vars.pw }}`
+	dir := project(old, withSecret, tokenSecret, "workers 2")
+	if r := lab.WinchEnv(t, dir, env, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d, stderr %q", r.Code, r.Stderr)
+	}
+	first := records()
+	if len(first) != 2 {
+		t.Fatalf("records %q, want two: one per file", first)
+	}
+	shown := map[string]bool{}
+	for _, p := range first {
+		if got := strings.TrimSpace(vm.MustRun(t, "stat -c %a "+p)); got != "600" {
+			t.Errorf("record mode %s, want 600", got)
+		}
+		shown[vm.MustRun(t, "cat "+p)] = true
+	}
+	if !shown["workers = 2\npassword = (secret)\nkeep\n"] || !shown["token (secret)\n"] {
+		t.Errorf("records = %v", shown)
+	}
+
+	// An ok step keeps the record, in an apply that changes another step.
+	vm.MustRun(t, "rm "+strings.Join(first, " ")+"; sed -i 's/^workers 2/workers 1/' /etc/line.conf")
+	if r := lab.WinchEnv(t, dir, env, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply of an ok step: exit %d, stderr %q", r.Code, r.Stderr)
+	}
+	if got := records(); len(got) != 2 {
+		t.Errorf("records after an apply of an ok step: %q, want two", got)
+	}
+
+	next := project(rotated, `workers = 3\npassword = {{ .vars.pw }}\nkeep\n`, tokenSecret, "workers 3")
+	r := lab.WinchEnv(t, next, env, "plan", "site")
+	for _, want := range []string{
+		"-workers = 2\n", "-password = (secret)\n", "+workers = 3\n", "+password = (secret) (secret value changed)\n",
+		"-token (secret)\n", "+token (secret) (secret value changed)\n", "-workers 2\n", "+workers 3\n",
+	} {
+		if r.Code != 0 || !strings.Contains(r.Stdout, want) {
+			t.Errorf("plan after a rotation lacks %q: exit %d, stdout %q", want, r.Code, r.Stdout)
+		}
+	}
+	noSecrets(t, "plan after a rotation", r.Stdout+r.Stderr, old, rotated)
+	if r := lab.WinchEnv(t, next, env, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply after a rotation: exit %d, stderr %q", r.Code, r.Stderr)
+	}
+
+	plain := project("", `workers = 3\npassword = open\nkeep\n`, "token open", "workers 3")
+	r = lab.WinchEnv(t, plain, env, "plan", "site")
+	for _, want := range []string{"-password = (secret)\n", "+password = open\n", "-token (secret)\n", "+token open\n"} {
+		if r.Code != 0 || !strings.Contains(r.Stdout, want) {
+			t.Errorf("plan of a variable made plain lacks %q: exit %d, stdout %q", want, r.Code, r.Stdout)
+		}
+	}
+	noSecrets(t, "plan of a variable made plain", r.Stdout+r.Stderr, old, rotated)
+	if r := lab.WinchEnv(t, plain, env, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply without a secret: exit %d, stderr %q", r.Code, r.Stderr)
+	}
+	// The record of the file step goes. A line step cannot tell that the file
+	// has no secret left.
+	if got := records(); len(got) != 1 || vm.MustRun(t, "cat "+got[0]) != "token (secret)\n" {
+		t.Errorf("records after a write without a secret: %q, want the record of the line step", got)
+	}
+}
+
 // spec: Modules/user and group; Variables/Secrets in output
 func TestSecretKeyOptions(t *testing.T) {
 	t.Parallel()

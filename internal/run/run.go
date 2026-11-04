@@ -44,7 +44,7 @@ type Conn interface {
 	// Apply records the handlers in notify and then on the host before it
 	// changes something, and the record check of an assert that fails. It
 	// guards the step against a lockout as guard says.
-	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard) (module.Result, error)
+	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard, masked *string) (module.Result, error)
 	// Access opens a second SSH connection and runs a command that needs the
 	// login and sudo.
 	Access(ctx context.Context) error

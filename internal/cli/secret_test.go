@@ -342,6 +342,7 @@ func TestSecretPlan(t *testing.T) {
 	setPassword(t, dir, encrypt(t, dir, "hunter2\n"))
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/pw", "pw=old-password\n")
+	h.SetMasked("web1", "/etc/pw", "pw=(secret)\n")
 	r := winchWith(t, dir, "", identity, "", h, false, "", "plan", "site")
 	if r.code != exitOK || !strings.Contains(r.out, "-pw=(secret)\n") || !strings.Contains(r.out, "+pw=(secret) (secret value changed)\n") {
 		t.Errorf("plan: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)

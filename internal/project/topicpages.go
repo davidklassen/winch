@@ -736,6 +736,7 @@ winch apply site --batch
 		doc.Table([][]string{
 			{"bin/", "the helper"},
 			{"handlers/<project>", "pending handlers"},
+			{"masked/<project>/", "the masked content of each file that holds a secret"},
 			{"then/<project>", "pending then commands"},
 			{"checks/<project>", "pending health gates and asserts"},
 			{"certbot-hooks/<project>", "pending certbot hooks"},

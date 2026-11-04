@@ -89,6 +89,7 @@ type rollbacks struct {
 	// self is the helper binary, which runs the timer process.
 	self      string
 	downloads records
+	masked    maskedRecords
 	// running holds the records that the guarded step added, while its timer
 	// runs.
 	running *guarded
@@ -219,6 +220,8 @@ func (r *rollbacks) dueChanges(ctx context.Context) ([]string, error) {
 		}
 		for _, s := range j.Restore {
 			switch {
+			// The job can be of another project.
+			case filepath.Dir(filepath.Dir(s.Path)) == filepath.Dir(r.masked.dir):
 			case s.Missing:
 				out = append(out, "remove "+s.Path)
 			case s.Dir != nil:
@@ -289,6 +292,18 @@ func readIndex(dir string) ([]module.Saved, error) {
 	return out, nil
 }
 
+// touches returns the paths that a rollback puts back for the step m. It puts
+// back a file with an old secret, so also its record.
+func (r *rollbacks) touches(m module.Module) []module.Touch {
+	touches := module.Touches(m)
+	if p := r.masked.path(m); p != "" {
+		if _, err := os.Lstat(p); err == nil {
+			touches = append(touches, module.Touch{Path: p, Tree: true})
+		}
+	}
+	return touches
+}
+
 // save keeps the old state of the paths that the checked step m changes in
 // the store in dir. It returns the saved state of each, and the whole store.
 // A path that the store has keeps its first state: the state before the first
@@ -302,7 +317,7 @@ func (r *rollbacks) save(dir string, m module.Module) (saved, all []module.Saved
 		return nil, nil, err
 	}
 	have := len(all)
-	for _, t := range module.Touches(m) {
+	for _, t := range r.touches(m) {
 		// A tree is saved again after the attributes of its directory: the
 		// restore of the tree comes first, then that of the attributes.
 		i := slices.IndexFunc(all, func(s module.Saved) bool {

@@ -34,6 +34,8 @@ type Hosts struct {
 	pkgDeps   map[string][]string
 	failCheck map[string]bool
 	failApply map[string]bool
+	// masked are the records of masked content, by host and path.
+	masked map[string]*string
 	// notes are the notes and warnings that a check sends, by host and main
 	// argument.
 	notes map[string]run.Note
@@ -120,6 +122,7 @@ func New() *Hosts {
 		pkgDeps:      map[string][]string{},
 		failCheck:    map[string]bool{},
 		failApply:    map[string]bool{},
+		masked:       map[string]*string{},
 		notes:        map[string]run.Note{},
 		Refreshes:    map[string]int{},
 		FactsReads:   map[string]int{},
@@ -383,6 +386,13 @@ func (h *Hosts) File(host, path string) (string, bool) {
 // "host path".
 func (h *Hosts) FailCheck(key string) { h.failCheck[key] = true }
 func (h *Hosts) FailApply(key string) { h.failApply[key] = true }
+
+// SetMasked sets the record of the masked content of the file at path.
+func (h *Hosts) SetMasked(host, path, content string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.masked[host+" "+path] = &content
+}
 
 // Fix ends the failures that FailCheck, FailApply, and FailCommand set for
 // key.
@@ -712,6 +722,9 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		res := module.Result{Status: module.Change, Action: module.Modify, Validates: f.Validation != nil}
 		if _, res.OldReason = (&module.File{Data: []byte(cur)}).Text(); res.OldReason == "" {
 			res.Old = &cur
+			c.hosts.mu.Lock()
+			res.Masked = c.hosts.masked[c.host+" "+f.Path]
+			c.hosts.mu.Unlock()
 		}
 		return res, nil
 	}
@@ -836,13 +849,21 @@ func serviceAction(s *module.Service) string {
 
 // Apply starts a rollback timer that ends at once for a changed step with
 // confirm_access, or a result with Guard.
-func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard) (module.Result, error) {
+func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard, masked *string) (module.Result, error) {
 	if err := c.dead(); err != nil {
 		return module.Result{}, err
 	}
 	res, err := c.apply(ctx, name, m, st, notify, then, check)
 	c.hosts.mu.Lock()
 	c.hosts.Guards[c.host+" "+m.Main()] = guard
+	if _, ok := m.(module.WithText); ok && err == nil {
+		key := c.host + " " + module.Touches(m)[0].Path
+		if masked != nil {
+			c.hosts.masked[key] = masked
+		} else if _, isLine := m.(*module.Line); !isLine && res.WritesContent() {
+			delete(c.hosts.masked, key)
+		}
+	}
 	c.hosts.mu.Unlock()
 	if err == nil && res.Status == module.Change && (guard.Confirm || res.Guard) {
 		c.hosts.mu.Lock()

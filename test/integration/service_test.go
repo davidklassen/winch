@@ -199,7 +199,7 @@ func TestServiceModule(t *testing.T) {
 			if _, err := s.Check(t.Context(), "service", args, &module.State{}); err != nil {
 				t.Fatalf("run %d: check: %v", i, err)
 			}
-			_, err := s.Apply(t.Context(), "service", args, &module.State{}, nil, nil, nil, protocol.Guard{})
+			_, err := s.Apply(t.Context(), "service", args, &module.State{}, nil, nil, nil, protocol.Guard{}, nil)
 			if want := "winch-late.service is not running after its start: failed (failed)\n"; err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("run %d: apply error = %v, want %q", i, err, want)
 			}
@@ -211,7 +211,7 @@ func TestServiceModule(t *testing.T) {
 		if _, err := s.Check(t.Context(), "service", args, &module.State{}); err != nil {
 			t.Fatal(err)
 		}
-		_, err := s.Apply(t.Context(), "service", args, &module.State{}, nil, nil, nil, protocol.Guard{})
+		_, err := s.Apply(t.Context(), "service", args, &module.State{}, nil, nil, nil, protocol.Guard{}, nil)
 		if want := "winch-later.service is not running after its start: failed (failed)\n"; err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("apply error = %v, want %q", err, want)
 		}
@@ -228,7 +228,7 @@ func TestServiceModule(t *testing.T) {
 			t.Fatal(err)
 		}
 		start := time.Now()
-		if _, err := s.Apply(t.Context(), "service", args, &module.State{}, nil, nil, nil, protocol.Guard{}); err != nil {
+		if _, err := s.Apply(t.Context(), "service", args, &module.State{}, nil, nil, nil, protocol.Guard{}, nil); err != nil {
 			t.Fatal(err)
 		}
 		if d, sys := time.Since(start), time.Duration(ns); d > sys+time.Second {
@@ -244,7 +244,7 @@ func TestServiceModule(t *testing.T) {
 			if _, err := s.Check(t.Context(), "service", args, &module.State{}); err != nil {
 				t.Fatalf("run %d: check: %v", i, err)
 			}
-			_, err := s.Apply(t.Context(), "service", args, &module.State{}, nil, nil, nil, protocol.Guard{})
+			_, err := s.Apply(t.Context(), "service", args, &module.State{}, nil, nil, nil, protocol.Guard{}, nil)
 			if want := "winch-loop.service stopped after its start, and systemd started it again\n"; err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("run %d: apply error = %v, want %q", i, err, want)
 			}
