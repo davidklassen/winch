@@ -1979,9 +1979,10 @@ Let's Encrypt account address.
 certbot.authenticator: string, default nginx
 
 Challenge plugin: nginx, apache, standalone, or webroot. The nginx and
-apache plugins do not change the config of the web server. standalone
-binds port 80 itself; pre_hook and post_hook can stop and start what
-holds that port. webroot needs webroot_path.
+apache plugins do not change the config of the web server. When a
+challenge runs, they reload it, and the plan says so. standalone binds
+port 80 itself; pre_hook and post_hook can stop and start what holds
+that port. webroot needs webroot_path.
 ==> winch doc certbot.webroot_path
 certbot.webroot_path: string
 
@@ -2150,7 +2151,9 @@ Octal, in quotes: "0750". Without quotes, YAML reads it as a number.
 dir.recurse: boolean, default false
 
 Owner and group for the whole tree. The mode stays the mode of the
-directory alone.
+directory alone. The plan fails when another step gives a path in the
+tree another owner or group; a file with content and no owner counts as
+root.
 ==> winch doc dir.absent
 dir.absent: boolean, default false
 
