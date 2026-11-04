@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -1075,6 +1076,113 @@ func TestStageHandlerOfASkippedStage(t *testing.T) {
 	if want := []string{"access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
+}
+
+// spec: Handlers (a handler that a changed step of this run notifies and that
+// the run does not reach gets the note of a pending handler)
+func TestNotifiedHandlerOfALeftOutStage(t *testing.T) {
+	const (
+		conf = "/etc/mail.conf"
+		note = "web1: note: a pending handler ssh.reload waits until its recipe runs on this host\n"
+		both = "[ssh.restart, ssh.reload]"
+	)
+	restart := "web1: note: a pending handler ssh.restart waits until its recipe runs on this host\n"
+	files := func(when, notify string) map[string]string {
+		return map[string]string{
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - recipe: ssh
+` + when + `  - name: mail
+    hosts: all
+    steps:
+      - file:
+          path: ` + conf + `
+          content: "a\n"
+        notify: ` + notify + `
+`,
+			"recipes/ssh/recipe.yaml": `steps:
+  - file:
+      path: /etc/ssh/banner
+      content: "b\n"
+handlers:
+  reload:
+    - cmd:
+        command: reload ssh
+  restart:
+    - cmd:
+        command: restart ssh
+`,
+		}
+	}
+	for _, tt := range []struct {
+		name, stages, when string
+		notify, pending    string
+		same               bool
+		want               string
+	}{
+		{name: "a changed step", stages: "mail", want: note},
+		{name: "an unchanged step", stages: "mail", same: true},
+		{name: "an unchanged step with the handler pending", stages: "mail", same: true, pending: "ssh.reload", want: note},
+		{name: "a changed step with the handler pending", stages: "mail", pending: "ssh.reload", want: note},
+		{name: "two handlers in sorted order", stages: "mail", notify: both, want: note + restart},
+		{name: "a pending handler before a new one", stages: "mail", notify: both, pending: "ssh.restart", want: restart + note},
+		{name: "the stage of the recipe runs", stages: "base,mail"},
+		{name: "a recipe that does not run on the host", stages: "mail", when: "        when: !expr \"false\"\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := loadWeb1(t, files(tt.when, cmp.Or(tt.notify, "ssh.reload")))
+			if err := p.Select(project.Selection{Stages: tt.stages}); err != nil {
+				t.Fatal(err)
+			}
+			h := fakehost.New()
+			if tt.same {
+				h.SetFile("web1", conf, "a\n")
+			}
+			if tt.pending != "" {
+				h.SetPending("web1", tt.pending)
+			}
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+			var out, errOut bytes.Buffer
+			plan.Write(plain(&out), plain(&errOut))
+			if errOut.String() != tt.want {
+				t.Errorf("plan notes %q, want %q", errOut.String(), tt.want)
+			}
+		})
+	}
+	t.Run("the note is not a change and the next plan shows it again", func(t *testing.T) {
+		p := loadWeb1(t, files("", "ssh.reload"))
+		if err := p.Select(project.Selection{Stages: "mail"}); err != nil {
+			t.Fatal(err)
+		}
+		h := fakehost.New()
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		var out, errOut bytes.Buffer
+		plan.Write(plain(&out), plain(&errOut))
+		if !strings.Contains(out.String(), "1 host: 1 to change, 0 unchanged, 0 unknown\n") || strings.Contains(out.String(), "handler") {
+			t.Errorf("plan:\n%s", out.String())
+		}
+		if errOut.String() != note {
+			t.Errorf("plan notes %q, want %q", errOut.String(), note)
+		}
+		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+			t.Fatal(errOut.String())
+		}
+		if want := []string{"ssh.reload"}; !slices.Equal(h.PendingOf("web1"), want) {
+			t.Errorf("pending = %q, want %q", h.PendingOf("web1"), want)
+		}
+		next := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		if next.HasChanges() {
+			t.Error("the next plan has changes")
+		}
+		out.Reset()
+		errOut.Reset()
+		next.Write(plain(&out), plain(&errOut))
+		if errOut.String() != note {
+			t.Errorf("next plan notes %q, want %q", errOut.String(), note)
+		}
+	})
 }
 
 // spec: Handlers
