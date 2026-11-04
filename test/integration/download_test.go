@@ -139,7 +139,7 @@ func TestDownloadModule(t *testing.T) {
 		s := vm.Session(t)
 		vm.MustRun(t, reset+"\n"+extracted)
 		args := &module.Download{URL: urlEscape, SHA256: sha(escape), Unpack: "/tmp/w/opt", Owner: "admin"}
-		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, nil, protocol.Guard{}); err == nil || !strings.Contains(err.Error(), "unpack "+urlEscape+" into /tmp/w/opt") {
+		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, nil, protocol.Guard{}, nil); err == nil || !strings.Contains(err.Error(), "unpack "+urlEscape+" into /tmp/w/opt") {
 			t.Fatalf("apply of an archive with a link out of the directory = %v, want an unpack error", err)
 		}
 		want := []string{"download " + urlEscape + " (no record of an earlier download)", "unpack into /tmp/w/opt (owner admin, group root)", "remove its content: 4 files, 2 directories"}
@@ -149,7 +149,7 @@ func TestDownloadModule(t *testing.T) {
 		}
 		vm.MustRun(t, `[ "$(/tmp/w/opt/app/bin/tool)" = tool ] && [ ! -e /tmp/w/opt/out ] && [ "$(ls -A /tmp/w)" = opt ]`)
 		args = &module.Download{URL: urlTgz, SHA256: sha(tgz), Unpack: "/tmp/w/opt", Owner: "admin"}
-		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, nil, protocol.Guard{}); err != nil {
+		if _, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, nil, protocol.Guard{}, nil); err != nil {
 			t.Fatalf("apply: %v", err)
 		}
 		if got, err := s.Check(ctx, "download", args, &module.State{}); err != nil || got.Status != module.OK {
@@ -170,7 +170,7 @@ func TestDownloadModule(t *testing.T) {
 		s := vm.Session(t)
 		done := make(chan error, 1)
 		go func() {
-			_, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, nil, protocol.Guard{})
+			_, err := s.Apply(ctx, "download", args, &module.State{}, nil, nil, nil, protocol.Guard{}, nil)
 			done <- err
 		}()
 		vm.MustRun(t, "timeout 60 sh -c 'until [ -d /tmp/w/.winch-unpack-opt/app/d02 ]; do sleep 0.05; done' && pkill -KILL -f '^/var/lib/winch/bin/'")
@@ -178,7 +178,7 @@ func TestDownloadModule(t *testing.T) {
 			t.Fatal("apply with a killed helper succeeded")
 		}
 		vm.MustRun(t, `[ "$(/tmp/w/opt/app/bin/tool)" = tool ] && [ -d /tmp/w/.winch-unpack-opt ]`)
-		if _, err := vm.Session(t).Apply(ctx, "download", args, &module.State{}, nil, nil, nil, protocol.Guard{}); err != nil {
+		if _, err := vm.Session(t).Apply(ctx, "download", args, &module.State{}, nil, nil, nil, protocol.Guard{}, nil); err != nil {
 			t.Fatalf("apply after the killed unpack: %v", err)
 		}
 		vm.MustRun(t, `[ "$(/tmp/w/opt/app/bin/tool)" = many ] && [ ! -e /tmp/w/.winch-unpack-opt ] && [ "$(find /tmp/w/opt/app -type f | wc -l)" = 20001 ]`)

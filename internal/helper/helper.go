@@ -87,7 +87,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			downloads = downloadRecords(filepath.Join(dir, "downloads", project))
 			certbotHooks = records{dir: filepath.Join(dir, "certbot-hooks"), project: project, what: "pending certbot hooks"}
 			checks = records{dir: filepath.Join(dir, "checks"), project: project, what: "pending health gates and asserts"}
-			rb = &rollbacks{dir: filepath.Join(dir, "rollback"), project: project, self: self, downloads: downloads}
+			rb = &rollbacks{dir: filepath.Join(dir, "rollback"), project: project, self: self, downloads: downloads, masked: maskedRecords{dir: filepath.Join(dir, "masked", project)}}
 			if err == nil {
 				loginUser, err = module.LookupLogin(login.LoginUID)
 			}
@@ -449,6 +449,16 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		}
 	}
 	res, err := m.Check(ctx, &s.State, say)
+	var kept *string
+	if err == nil && (apply || res.Old != nil) {
+		kept, err = rb.masked.read(m)
+	}
+	if !apply {
+		res.Masked = kept
+	}
+	if err == nil && apply && res.Status == module.OK && s.Masked != nil {
+		err = rb.masked.keep(m, kept, *s.Masked)
+	}
 	// The apply of this step installs them, so a later check reads dpkg: the
 	// refresh can have replaced the versions that the check recorded.
 	if apply {
@@ -537,7 +547,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	var untested []string
 	for _, st := range s.Guard.SSHD {
-		for _, t := range module.Touches(m) {
+		for _, t := range rb.touches(m) {
 			line, _ := json.Marshal(untestedFile{Store: st, Path: t.Path})
 			untested = append(untested, string(line))
 		}
@@ -557,7 +567,14 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 		}
 	}
-	err = m.Apply(ctx, say)
+	// The record comes first, so that a crash in the write leaves a record that
+	// hides, not a secret that shows.
+	if s.Masked != nil {
+		err = rb.masked.keep(m, kept, *s.Masked)
+	}
+	if err == nil {
+		err = m.Apply(ctx, say)
+	}
 	if err == nil && socket {
 		err = module.RestartSSHSocket(ctx)
 	}
@@ -593,6 +610,12 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	if unpack {
 		return out, record(downloads, d.Record(), d.Unpack)
+	}
+	// After the write: a failure keeps the records of the step, and the next
+	// run sees the file as written. A line step cannot tell that the file has
+	// no secret left.
+	if _, isLine := m.(*module.Line); !isLine && s.Masked == nil && res.WritesContent() {
+		return out, rb.masked.remove(m)
 	}
 	return out, nil
 }

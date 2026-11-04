@@ -77,6 +77,9 @@ type Step struct {
 	// command fails, and removes it when the command exits 0.
 	Check *Check `json:"check,omitempty"`
 	Guard Guard  `json:"guard,omitzero"`
+	// Masked is the masked new content of a step whose content reads a
+	// secret. A step that writes content without it drops the record.
+	Masked *string `json:"masked,omitempty"`
 }
 
 // Guard tells the helper how to guard an apply against a lockout. The helper

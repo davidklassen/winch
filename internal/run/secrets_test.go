@@ -85,11 +85,98 @@ steps:
 	return p, filter
 }
 
+// spec: Variables/Secrets in output (file diffs)
+func TestSecretRecord(t *testing.T) {
+	p, _ := secretProject(t)
+	h := fakehost.New()
+	const path = "/etc/monit/conf.d/settings"
+	h.SetFile("web1", path, "old line\n")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if !strings.Contains(out.String(), "-(line hidden: may hold a secret)\n") {
+		t.Errorf("a file with no record:\n%s", out.String())
+	}
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+		t.Fatalf("apply: %s", errOut.String())
+	}
+	h.SetFile("web1", path, "set httpd port 2812\n  allow admin:old-pass\n# Old-Pass\n")
+	out.Reset()
+	plan = run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	plan.Write(plain(&out), plain(&errOut))
+	for _, want := range []string{"-  allow admin:(secret)\n", "+  allow admin:(secret) (secret value changed)\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("after an apply, the plan lacks %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// spec: Variables/Secrets in output (file diffs)
+func TestSecretRecordOfAPlainStep(t *testing.T) {
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/pw\n          content: \"pw=plain\\n\"\n",
+	})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Filter: secret.NewFilter()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/pw", "pw=old-secret\n")
+	h.SetMasked("web1", "/etc/pw", "pw=(secret)\n")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if s := out.String(); !strings.Contains(s, "-pw=(secret)\n") || !strings.Contains(s, "+pw=plain\n") || strings.Contains(s, "old-secret") {
+		t.Errorf("a variable made plain:\n%s", s)
+	}
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+		t.Fatalf("apply: %s", errOut.String())
+	}
+	h.SetFile("web1", "/etc/pw", "pw=other\n")
+	out.Reset()
+	plan = run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	plan.Write(plain(&out), plain(&errOut))
+	if s := out.String(); !strings.Contains(s, "-pw=other\n") {
+		t.Errorf("the record stays after a write without a secret:\n%s", s)
+	}
+}
+
+// spec: Variables/Secrets in output (file diffs)
+func TestSecretRecordOfAPlainLineStep(t *testing.T) {
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - line:\n          path: /etc/app.conf\n          line: workers 3\n          match: \"^workers \"\n      - line:\n          path: /etc/app.conf\n          line: pw open\n          match: \"^pw \"\n",
+	})
+	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Filter: secret.NewFilter()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fakehost.New()
+	h.SetResult("web1", "^workers ", module.Result{Status: module.Change, Action: module.Modify, Old: new("workers 2\n"), Masked: new("pw (secret)\n")})
+	h.SetResult("web1", "^pw ", module.Result{Status: module.Change, Action: module.Modify, Old: new("pw old-secret\n"), Masked: new("pw (secret)\n")})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	s := out.String()
+	for _, want := range []string{"-workers 2\n", "+workers 3\n", "-pw (secret)\n", "+pw open\n"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the plan lacks %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "old-secret") {
+		t.Errorf("the plan shows the old secret:\n%s", s)
+	}
+}
+
 // spec: Variables/Secrets in output; CLI/Output
 func TestSecrets(t *testing.T) {
 	p, _ := secretProject(t)
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/monit/conf.d/settings", "set httpd port 2812\n  allow admin:old-pass\n# Old-Pass\n")
+	h.SetMasked("web1", "/etc/monit/conf.d/settings", "set httpd port 2812\n  allow admin:(secret)\n# (secret)\n")
 	h.SetThen("web1", protocol.Then{Recipe: "monit", Module: "file", Mains: mains("/etc/monit/hunter2.key")})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
@@ -318,7 +405,7 @@ func TestPlanLine(t *testing.T) {
 	}
 	h := fakehost.New()
 	h.SetResult("web1", "^port ", module.Result{Status: module.Change, Action: module.Modify, Old: new("port 6379\n")})
-	h.SetResult("web1", "^requirepass ", module.Result{Status: module.Change, Action: module.Modify, Old: new("requirepass old-pass\n")})
+	h.SetResult("web1", "^requirepass ", module.Result{Status: module.Change, Action: module.Modify, Old: new("requirepass old-pass\n"), Masked: new("requirepass (secret)\n")})
 	h.SetResult("web1", "^save ", module.Result{Status: module.Change, Action: module.Modify, Old: new("save 900 1\nsave 300 10\n")})
 	h.SetResult("web1", "^maxmemory ", module.Result{Status: module.Change, Action: module.Modify, Old: new("")})
 	h.SetResult("web1", "^masterauth ", module.Result{Status: module.Change, Action: module.Modify, Old: new("")})

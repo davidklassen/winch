@@ -1,6 +1,7 @@
 package secret
 
 import (
+	"bytes"
 	"encoding/base64"
 	"reflect"
 	"slices"
@@ -252,8 +253,28 @@ func maskedDiff(t testing.TB, oldTpl, newTpl string, oldData, newData any) (stri
 	for _, s := range secrets(newData) {
 		f.Add(s)
 	}
-	d := string(Diff(render(t, oldTpl, variant(oldData, 0)), lines))
+	d := string(Diff(render(t, oldTpl, variant(oldData, 0)), oldRecord(t, oldTpl, oldData), lines, false))
 	return d, f.Text(d)
+}
+
+// oldRecord returns the record that winch kept when it wrote the template
+// with data, or nil when no line reads a secret.
+func oldRecord(t testing.TB, tpl string, data any) *string {
+	t.Helper()
+	return recordOf(render(t, tpl, variant(data, 0)), render(t, tpl, variant(data, 1)), render(t, tpl, variant(data, 2)))
+}
+
+// recordOf returns the record of a content with its placeholder results, or
+// nil when they do not differ.
+func recordOf(real, a, b []byte) *string {
+	if bytes.Equal(real, a) && bytes.Equal(real, b) {
+		return nil
+	}
+	lines, ok := Lines(real, a, b)
+	if !ok {
+		return new(Mark + "\n")
+	}
+	return new(Record(lines))
 }
 
 func secrets(data any) []string {
@@ -285,8 +306,6 @@ func TestMaskedDiff(t *testing.T) {
 		oldData, newData any
 		// want is the diff before the text filter.
 		want string
-		// shows is a value that the output holds: the known gap.
-		shows string
 	}{
 		{name: "rotate a password", oldTpl: monit, newTpl: monit, oldData: pw("oldpass123"), newData: pw("n3wPa55!"), want: `@@ -1,3 +1,3 @@
  set httpd unixsocket /run/monit.sock
@@ -302,20 +321,20 @@ func TestMaskedDiff(t *testing.T) {
 `},
 		{name: "rotate and change the same line", oldTpl: monit, newTpl: strings.Replace(monit, "allow monit:{{ .pw }}", "allow admin:{{ .pw }} read-only", 1), oldData: pw("oldpass123"), newData: pw("n3wPa55!"), want: `@@ -1,3 +1,3 @@
  set httpd unixsocket /run/monit.sock
--(line hidden: may hold a secret)
+-  allow monit:(secret)
 +  allow admin:(secret) read-only
  set ssl { verify: enable }
 `},
 		{name: "delete the secret line, same secret", oldTpl: monit, newTpl: strings.Replace(monit, "  allow monit:{{ .pw }}\n", "", 1), oldData: pw("same-pass"), newData: pw("same-pass"), want: `@@ -1,3 +1,2 @@
  set httpd unixsocket /run/monit.sock
--  allow monit:same-pass
+-  allow monit:(secret)
  set ssl { verify: enable }
 `},
 		{name: "delete the secret line and rotate", oldTpl: monit, newTpl: strings.Replace(monit, "  allow monit:{{ .pw }}\n", "", 1), oldData: pw("oldpass123"), newData: pw("n3wPa55!"), want: `@@ -1,3 +1,2 @@
  set httpd unixsocket /run/monit.sock
--  allow monit:oldpass123
+-  allow monit:(secret)
  set ssl { verify: enable }
-`, shows: "oldpass123"},
+`},
 		{name: "users: add a user and rotate a hash", oldTpl: users, newTpl: users,
 			oldData: map[string]any{"users": map[string]any{"alice": sec("$6$aaa$oldhash"), "bob": sec("$6$bbb$bobhash")}},
 			newData: map[string]any{"users": map[string]any{"alice": sec("$6$aaa$newhash"), "bob": sec("$6$bbb$bobhash"), "carol": sec("$6$ccc$carolhash")}},
@@ -331,15 +350,15 @@ func TestMaskedDiff(t *testing.T) {
 			want: `@@ -1,2 +1,2 @@
 +(secret)
  alice@example.com:(secret)
--bob@example.com:$6$bbb$bobhash
+-bob@example.com:(secret)
 `},
 		{name: "users: remove a user and the secret", oldTpl: users, newTpl: users,
 			oldData: map[string]any{"users": map[string]any{"alice": sec("$6$aaa$alicehash"), "bob": sec("$6$bbb$bobhash")}},
 			newData: map[string]any{"users": map[string]any{"alice": sec("$6$aaa$alicehash")}},
 			want: `@@ -1,2 +1,1 @@
  alice@example.com:(secret)
--bob@example.com:$6$bbb$bobhash
-`, shows: "$6$bbb$bobhash"},
+-bob@example.com:(secret)
+`},
 		{name: "upper and base64", oldTpl: "u {{ upper .pw }}\nb {{ b64 .pw }}\n", newTpl: "u {{ upper .pw }}\nb {{ b64 .pw }}\n", oldData: pw("oldpass123"), newData: pw("n3wPa55!"), want: `@@ -1,2 +1,2 @@
 -u (secret)
 -b (secret)
@@ -352,8 +371,8 @@ func TestMaskedDiff(t *testing.T) {
 `},
 		{name: "multi-line key, rotated", oldTpl: "{{ .pw }}", newTpl: "{{ .pw }}", oldData: pw(pemOld), newData: pw(pemNew), want: `@@ -1,4 +1,5 @@
  (secret)
--(line hidden: may hold a secret)
--(line hidden: may hold a secret)
+-(secret)
+-(secret)
 +(secret)
 +(secret)
 +(secret)
@@ -379,17 +398,17 @@ func TestMaskedDiff(t *testing.T) {
 `},
 		{name: "a plain value becomes secret with a new value", oldTpl: monit, newTpl: monit, oldData: plain("plainpass"), newData: pw("n3wPa55!"), want: `@@ -1,3 +1,3 @@
  set httpd unixsocket /run/monit.sock
--  allow monit:(secret)
-+  allow monit:(secret) (secret value changed)
+-(line hidden: may hold a secret)
++  allow monit:(secret)
  set ssl { verify: enable }
 `},
 		{name: "a plain value becomes secret with the same value", oldTpl: monit, newTpl: monit, oldData: plain("samepass"), newData: pw("samepass"), want: ""},
 		{name: "a secret becomes plain with a new value", oldTpl: monit, newTpl: monit, oldData: pw("oldsecret"), newData: plain("newplain"), want: `@@ -1,3 +1,3 @@
  set httpd unixsocket /run/monit.sock
--  allow monit:oldsecret
+-  allow monit:(secret)
 +  allow monit:newplain
  set ssl { verify: enable }
-`, shows: "oldsecret"},
+`},
 		{name: "add, change, and remove in one hunk", oldTpl: keys, newTpl: keys,
 			oldData: map[string]any{"m": map[string]any{"k1": sec("alpha-1"), "k2": sec("bravo-1"), "k3": sec("charlie-1")}},
 			newData: map[string]any{"m": map[string]any{"k1": sec("alpha-2"), "k2": sec("bravo-1"), "k4": sec("delta-1")}},
@@ -397,7 +416,7 @@ func TestMaskedDiff(t *testing.T) {
 -k1=(secret)
 +k1=(secret) (secret value changed)
  k2=(secret)
--(line hidden: may hold a secret)
+-k3=(secret)
 +k4=(secret)
 `},
 		{name: "a new file", oldTpl: "", newTpl: monit, oldData: nil, newData: pw("n3wPa55!"), want: `@@ -0,0 +1,3 @@
@@ -408,13 +427,13 @@ func TestMaskedDiff(t *testing.T) {
 		{name: "no secret in the file", oldTpl: "a\nb\n", newTpl: "a\nc\n", oldData: nil, newData: nil, want: "@@ -1,2 +1,2 @@\n a\n-b\n+c\n"},
 		{name: "two lines with the same secret, one changes its text", oldTpl: "a {{ .pw }}\nb {{ .pw }}\n", newTpl: "a {{ .pw }}\nc {{ .pw }}\n", oldData: pw("same-pass"), newData: pw("same-pass"), want: `@@ -1,2 +1,2 @@
  a (secret)
--(line hidden: may hold a secret)
+-b (secret)
 +c (secret)
 `},
 		{name: "repeated plain lines between secret lines", oldTpl: "PW={{ .pw }}\nc\nc\nPW={{ .pw }}\n", newTpl: "PW={{ .pw }}\nc\nc\nPW={{ .pw }}\n", oldData: pw("oldpass123"), newData: pw("n3wPa55!"), want: `@@ -1,4 +1,4 @@
 -PW=(secret)
--(line hidden: may hold a secret)
--(line hidden: may hold a secret)
+-c
+-c
 -PW=(secret)
 +PW=(secret) (secret value changed)
 +c
@@ -429,7 +448,7 @@ func TestMaskedDiff(t *testing.T) {
 `},
 		{name: "two secrets on a line, another plain text", oldTpl: "u {{ .u }} --host y --token {{ .t }}\n", newTpl: "u {{ .u }} --host x --token {{ .t }}\n",
 			oldData: map[string]any{"u": sec("alice"), "t": sec("old1")}, newData: map[string]any{"u": sec("alice"), "t": sec("old1")}, want: `@@ -1,1 +1,1 @@
--(line hidden: may hold a secret)
+-u (secret) --host y --token (secret)
 +u (secret) --host x --token (secret)
 `},
 		{name: "two secrets on a line, both rotated", oldTpl: "u {{ .u }} --host x --token {{ .t }}\n", newTpl: "u {{ .u }} --host x --token {{ .t }}\n",
@@ -450,10 +469,108 @@ func TestMaskedDiff(t *testing.T) {
 			}
 			for _, s := range append(secrets(tt.oldData), secrets(tt.newData)...) {
 				for _, line := range strings.Split(s, "\n") {
-					if utf8.RuneCountInString(line) >= 4 && line != Mark && line != tt.shows && strings.Contains(got, line) {
+					if utf8.RuneCountInString(line) >= 4 && line != Mark && strings.Contains(got, line) {
 						t.Errorf("the diff shows %q", line)
 					}
 				}
+			}
+		})
+	}
+}
+
+// spec: Variables/Secrets in output (file diffs)
+func TestMaskedDiffRecord(t *testing.T) {
+	const old = "workers = 2\npassword = OLDPASSWORD\nkeep\n"
+	const rec = "workers = 2\npassword = (secret)\nkeep\n"
+	secretLine := func(text, show string) Line { return Line{Text: text, Show: show, Secret: true} }
+	plain := func(text string) Line { return Line{Text: text, Show: text} }
+	keep := plain("keep\n")
+	tests := []struct {
+		name   string
+		old    string
+		record *string
+		lines  []Line
+		// showOther is set for a plain line step.
+		showOther bool
+		want      string
+	}{
+		{"a plain line of the record shows", old, new(rec), []Line{plain("workers = 3\n"), secretLine("password = NEWPASSWORD\n", "password = (secret)\n"), keep},
+			false, "@@ -1,3 +1,3 @@\n-workers = 2\n-password = (secret)\n+workers = 3\n+password = (secret) (secret value changed)\n keep\n"},
+		{"a secret line is dropped and the rest is plain", old, new(rec), []Line{plain("workers = 2\n"), keep},
+			false, "@@ -1,3 +1,2 @@\n workers = 2\n-password = (secret)\n keep\n"},
+		{"a variable is made plain", old, new(rec), []Line{plain("workers = 2\n"), plain("password = open\n"), keep},
+			false, "@@ -1,3 +1,3 @@\n workers = 2\n-password = (secret)\n+password = open\n keep\n"},
+		{"a line moves and changes its text", "c OLDPASSWORD\nkeep\n", new("c (secret)\nkeep\n"), []Line{keep, secretLine("d NEWPASSWORD\n", "d (secret)\n")},
+			false, "@@ -1,2 +1,2 @@\n-c (secret)\n keep\n+d (secret)\n"},
+		{"a line moves past a line in common while its secret changes", "c OLDPASSWORD\nkeep\n", new("c (secret)\nkeep\n"), []Line{keep, secretLine("c NEWPASSWORD\n", "c (secret)\n")},
+			false, "@@ -1,2 +1,2 @@\n-c (secret)\n keep\n+c (secret) (secret value changed)\n"},
+		{"a line moves with the same secret", "c SAMEPASSWORD\nkeep\n", new("c (secret)\nkeep\n"), []Line{keep, secretLine("c SAMEPASSWORD\n", "c (secret)\n")},
+			false, "@@ -1,2 +1,2 @@\n-c (secret)\n keep\n+c (secret)\n"},
+		{"a template without a last newline", "c OLDPASSWORD\nkeep\n", new("c (secret)\nkeep\n"), []Line{keep, secretLine("c NEWPASSWORD\n\\ No newline at end of file\n", "c (secret)\n\\ No newline at end of file\n")},
+			false, "@@ -1,2 +1,2 @@\n-c (secret)\n keep\n+c (secret) (secret value changed)\n\\ No newline at end of file\n"},
+		{"an old line without a last newline", "keep\nc OLDPASSWORD", new("keep\nc (secret)\n"), []Line{keep},
+			false, "@@ -1,2 +1,1 @@\n keep\n-c (secret)\n\\ No newline at end of file\n"},
+		{"a line that is not in the record is hidden", "workers = 9\nkeep\n", new(rec), []Line{plain("workers = 2\n"), keep},
+			false, "@@ -1,2 +1,2 @@\n-(line hidden: may hold a secret)\n+workers = 2\n keep\n"},
+		{"the fit with the most plain text wins", "listen 80\nkeep\n", new("(secret)\nlisten (secret)\nlisten 80\nkeep\n"), []Line{plain("listen 81\n"), keep},
+			false, "@@ -1,2 +1,2 @@\n-listen 80\n+listen 81\n keep\n"},
+		{"a line of a multi-line secret", "[i]\nKEY=OLDKEYVALUE\n[p]\nPSK=OLDPSKVALUE\n", new("(secret)\n(secret)\n(secret)\n(secret)\n"),
+			[]Line{{Text: "[i]\n", Show: "(secret)\n", Secret: true, Block: true}, {Text: "KEY=NEW\n", Show: "(secret)\n", Secret: true, Block: true}, {Text: "[p]\n", Show: "(secret)\n", Secret: true, Block: true}},
+			false, "@@ -1,4 +1,3 @@\n (secret)\n-(secret)\n+(secret)\n (secret)\n-(secret)\n"},
+		{"no record, a new secret", "workers = 2\nkeep\n", nil, []Line{secretLine("password = NEWPASSWORD\n", "password = (secret)\n"), keep},
+			false, "@@ -1,2 +1,2 @@\n-(line hidden: may hold a secret)\n+password = (secret)\n keep\n"},
+		{"a plain line step shows a line that fits no line of the record", "workers = 2\n", new("pw = (secret)\n"), []Line{plain("workers = 3\n")},
+			true, "@@ -1,1 +1,1 @@\n-workers = 2\n+workers = 3\n"},
+		{"a plain line step masks a line that fits the record", "pw = OLDPASSWORD\n", new("pw = (secret)\n"), []Line{plain("pw = open\n")},
+			true, "@@ -1,1 +1,1 @@\n-pw = (secret)\n+pw = open\n"},
+		{"a line step with a secret hides a line that fits no line of the record", "workers = 2\n", new("pw = (secret)\n"), []Line{secretLine("workers = NEWPASSWORD\n", "workers = (secret)\n")},
+			true, "@@ -1,1 +1,1 @@\n-(line hidden: may hold a secret)\n+workers = (secret)\n"},
+		{"no record, no secret", "workers = 2\nkeep\n", nil, []Line{plain("workers = 3\n"), keep},
+			false, "@@ -1,2 +1,2 @@\n-workers = 2\n+workers = 3\n keep\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := string(Diff([]byte(tt.old), tt.record, tt.lines, tt.showOther)); got != tt.want {
+				t.Errorf("diff\n%s\nwant\n%s", got, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Variables/Secrets in output (file diffs)
+func TestRecordAdd(t *testing.T) {
+	if got := RecordAdd(nil, "a\n"); got != "a\n" {
+		t.Errorf("RecordAdd to no record = %q", got)
+	}
+	if got := RecordAdd(new("a\nb\n"), "b\n"); got != "a\nb\n" {
+		t.Errorf("RecordAdd of a line that the record holds = %q", got)
+	}
+	if got := RecordAdd(new("a\n"), "b\n"); got != "a\nb\n" {
+		t.Errorf("RecordAdd = %q", got)
+	}
+}
+
+// spec: Variables/Secrets in output (file diffs)
+func TestRecord(t *testing.T) {
+	const a, b = "aaaaaaaa", "zzzzzzzzzzzz"
+	tests := []struct {
+		name          string
+		real, pa, pb  string
+		want, nowhere string
+	}{
+		{"a secret part", "x\npw=HUNTER\n", "x\npw=" + a + "\n", "x\npw=" + b + "\n", "x\npw=(secret)\n", "HUNTER"},
+		{"no last newline", "x\npw=HUNTER", "x\npw=" + a, "x\npw=" + b, "x\npw=(secret)\n", "HUNTER"},
+		{"a multi-line secret", "ONE\nTWO\nend\n", a + "\nend\n", b + "\nend\n", "(secret)\n(secret)\nend\n", "ONE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines, ok := Lines([]byte(tt.real), []byte(tt.pa), []byte(tt.pb))
+			if !ok {
+				t.Fatal("Lines: not ok")
+			}
+			got := Record(lines)
+			if got != tt.want || strings.Contains(got, tt.nowhere) {
+				t.Errorf("Record = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -470,7 +587,7 @@ func TestLinesHidden(t *testing.T) {
 		t.Errorf("Lines without a secret = %+v, %v", lines, ok)
 	}
 	old := []byte("a\nb\nc\n")
-	if got, want := string(Diff(old, lines)), string(diff.Diff(old, []byte("a\nb\n"))); got != want {
+	if got, want := string(Diff(old, nil, lines, false)), string(diff.Diff(old, []byte("a\nb\n"))); got != want {
 		t.Errorf("Diff without a secret = %q, want the plain diff %q", got, want)
 	}
 }
@@ -503,21 +620,29 @@ func FuzzMaskedDiff(f *testing.F) {
 		newData := map[string]any{"pw": sec(newPw)}
 		real := run(variant(newData, 0))
 		a, b := run(variant(newData, 1)), run(variant(newData, 2))
-		old := append(run(map[string]any{"pw": oldPw}), extra...)
-		if real == nil || a == nil || b == nil {
+		oldData := map[string]any{"pw": sec(oldPw)}
+		oldReal, oldA, oldB := run(variant(oldData, 0)), run(variant(oldData, 1)), run(variant(oldData, 2))
+		if real == nil || a == nil || b == nil || oldReal == nil || oldA == nil || oldB == nil {
 			return
 		}
 		lines, ok := Lines(real, a, b)
 		if !ok {
 			return
 		}
+		record := recordOf(oldReal, oldA, oldB)
+		if record != nil && strings.Contains(*record, oldPw) {
+			t.Errorf("template %q, old %q: the record shows the secret:\n%s", tpl, oldPw, *record)
+		}
 		fl := NewFilter()
 		fl.Add(newPw)
-		got := fl.Text(string(Diff(old, lines)))
-		for _, s := range []string{oldPw, newPw} {
-			if strings.Contains(got, s) {
-				t.Errorf("template %q, old %q, new %q: the diff shows %q:\n%s", tpl, oldPw, newPw, s, got)
-			}
+		raw := string(Diff(append(oldReal, extra...), record, lines, false))
+		// The filter knows only the new secret, and it can cut an old secret
+		// that holds the new one.
+		if strings.Contains(raw, oldPw) {
+			t.Errorf("template %q, old %q, new %q: the diff shows the old secret:\n%s", tpl, oldPw, newPw, raw)
+		}
+		if got := fl.Text(raw); strings.Contains(got, newPw) {
+			t.Errorf("template %q, old %q, new %q: the diff shows the new secret:\n%s", tpl, oldPw, newPw, got)
 		}
 	})
 }

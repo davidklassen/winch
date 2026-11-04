@@ -652,8 +652,8 @@ func (s *Session) Check(ctx context.Context, name string, m module.Module, st *m
 
 // Apply checks a step again, makes its changes, and updates st. It sends the
 // content only when the helper must write it.
-func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard) (module.Result, error) {
-	step := protocol.Step{Module: name, State: *st, Notify: notify, Then: then, Check: check, Guard: guard}
+func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard, masked *string) (module.Result, error) {
+	step := protocol.Step{Module: name, State: *st, Notify: notify, Then: then, Check: check, Guard: guard, Masked: masked}
 	res, err := s.step("apply", withoutContent(m), step, st)
 	if errors.Is(err, errNeedContent) {
 		return s.step("apply", m, step, st)

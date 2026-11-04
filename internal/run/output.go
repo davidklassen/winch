@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/davidklassen/winch/internal/color"
-	"github.com/davidklassen/winch/internal/diff"
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
@@ -432,19 +431,19 @@ func diffLines(p Planned) []string {
 		reason = res.OldReason
 	}
 	shown := st.Shown()
-	var d []byte
 	switch {
 	// The reason can come from the secret, also of the source of copy_from.
 	case shown.Hidden || reason != "" && shown.Lines != nil || reason == secret.Mark:
 		return []string{secret.Mark}
 	case reason != "":
 		return []string{"content (" + reason + ")"}
-	case shown.Lines != nil:
-		d = secret.Diff([]byte(*res.Old), shown.Lines)
-	default:
-		d = diff.Diff([]byte(*res.Old), text)
+	}
+	content := shown.Lines
+	if content == nil {
+		content = secret.Plain(text)
 	}
 	_, isLine := st.Args.(*module.Line)
+	d := secret.Diff([]byte(*res.Old), res.Masked, content, isLine)
 	var lines []string
 	for _, line := range strings.SplitAfter(p.hostText(string(d)), "\n") {
 		// The line numbers of a line step's hunk are not those of the file.
