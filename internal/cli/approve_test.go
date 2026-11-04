@@ -187,6 +187,63 @@ func TestExitCode(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (the rollback of an earlier run
+// is the first change of the host); CLI ("--exit-code")
+func TestDueRollbackOnlyThroughCLI(t *testing.T) {
+	dir := writeProject(t, motd)
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/motd", "hello\n")
+	h.SetFile("web2", "/etc/motd", "hello\n")
+	h.SetDue("web1", "put back /etc/nftables.conf")
+	if r := winch(t, dir, h, false, "", "plan", "site", "--exit-code"); r.code != exitChanges {
+		t.Errorf("plan --exit-code: exit %d, want %d, stdout %q", r.code, exitChanges, r.out)
+	}
+	r := winch(t, dir, h, false, "", "apply", "site")
+	if r.code != exitConfirm || !strings.Contains(r.out, "To apply, run: ") {
+		t.Errorf("apply without a terminal: exit %d, want %d, stdout %q", r.code, exitConfirm, r.out)
+	}
+	if r := winch(t, dir, h, true, "n\n", "apply", "site"); r.code != exitOK || !strings.Contains(r.err, "Nothing changed.") {
+		t.Errorf("apply answered no: exit %d, stderr %q", r.code, r.err)
+	}
+	if slices.Contains(h.Log["web1"], "due") {
+		t.Errorf("apply ran the rollback without a yes: log %q", h.Log["web1"])
+	}
+	r = winch(t, dir, h, false, "", "apply", "site", "--check", planHash(t, r.out))
+	if r.code != exitOK || !strings.Contains(r.out, "web1: ! rollback of an earlier run\n") {
+		t.Errorf("apply: exit %d, stdout %q", r.code, r.out)
+	}
+	if !slices.Contains(h.Log["web1"], "due") || h.Applies != 0 {
+		t.Errorf("apply: log %q, applies %d, want the rollback and no step", h.Log["web1"], h.Applies)
+	}
+}
+
+// spec: Running a pipeline/Apply; Running a pipeline/Lockout protection
+func TestHashCoversDueRollback(t *testing.T) {
+	dir := writeProject(t, motd)
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/motd", "hello\n")
+	h.SetFile("web2", "/etc/motd", "hello\n")
+	hash := planHash(t, winch(t, dir, h, false, "", "plan", "site").out)
+	h.SetDue("web1", "put back /etc/nftables.conf")
+	r := winch(t, dir, h, false, "", "apply", "site", "--check", hash)
+	if r.code != exitHash || slices.Contains(h.Log["web1"], "due") {
+		t.Errorf("exit %d, want %d, log %q", r.code, exitHash, h.Log["web1"])
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a failed host runs no rollback)
+func TestDueRollbackOfAFailedHostThroughCLI(t *testing.T) {
+	dir := writeProject(t, motd)
+	h := fakehost.New()
+	h.SetFile("web2", "/etc/motd", "hello\n")
+	h.SetDue("web1", "put back /etc/nftables.conf")
+	h.FailCheck("web1")
+	r := winch(t, dir, h, false, "", "apply", "site")
+	if r.code != exitFailed || strings.Contains(r.out, "To apply, run: ") {
+		t.Errorf("apply: exit %d, want %d, stdout %q", r.code, exitFailed, r.out)
+	}
+}
+
 // spec: Handlers; CLI ("--exit-code")
 func TestPendingHandlerOfALeftOutStage(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{

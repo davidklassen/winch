@@ -1522,11 +1522,9 @@ func handlerSlot(h *project.Handler, env *project.Env, in *project.Step, hr *hos
 
 // HasChanges reports whether a host that did not fail has changes.
 func (p *Plan) HasChanges() bool {
-	for _, sp := range p.Stages {
-		for _, hp := range sp.Hosts {
-			if p.Failed[hp.Host.Name] == nil && hp.changes() {
-				return true
-			}
+	for name := range p.changed() {
+		if p.Failed[name] == nil {
+			return true
 		}
 	}
 	return false
