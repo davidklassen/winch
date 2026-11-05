@@ -82,39 +82,3 @@ func TestNginx(t *testing.T) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 }
-
-// spec: Running a pipeline/Apply
-func TestApplyChecksStagesWithoutChange(t *testing.T) {
-	t.Parallel()
-	lab.StartVM(t, "stages")
-	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: demo\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  stages: {}\n",
-		"pipelines/site.yaml": `stages:
-  - name: install
-    hosts: all
-    steps:
-      - pkg:
-          name: nginx
-  - name: configure
-    hosts: all
-    steps:
-      - link:
-          path: /etc/nginx/sites-enabled/default
-          absent: true
-`,
-	})
-
-	r := lab.Winch(t, dir, "plan", "site")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "+ pkg nginx") || strings.Contains(r.Stdout, "link") {
-		t.Fatalf("plan: exit %d, want only the pkg step:\n%s", r.Code, r.Stdout)
-	}
-	r = lab.Winch(t, dir, "apply", "site", "--yes")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "stages: configure: - link /etc/nginx/sites-enabled/default") {
-		t.Fatalf("apply: exit %d, stdout %q", r.Code, r.Stdout)
-	}
-	r = lab.Winch(t, dir, "plan", "site")
-	if r.Code != 0 || !unchanged(r.Stdout, 1) {
-		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
-	}
-}

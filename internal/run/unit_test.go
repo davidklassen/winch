@@ -9,9 +9,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/module"
-	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/run"
-	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 // spec: Modules/service and unit
@@ -20,10 +18,8 @@ func TestUnitFromLoop(t *testing.T) {
 		"a.service": "[Service]\nType=oneshot\nExecStart=/bin/true\n",
 		"a.timer":   "[Timer]\nOnCalendar=daily\n[Install]\nWantedBy=timers.target\n",
 	}
-	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
-		"pipelines/site.yaml":   steps("      - recipe: web\n"),
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": steps("      - recipe: web\n"),
 		"recipes/web/recipe.yaml": `steps:
   - unit:
       name: !expr item
@@ -33,10 +29,6 @@ func TestUnitFromLoop(t *testing.T) {
 		"recipes/web/files/a.service": files["a.service"],
 		"recipes/web/files/a.timer":   files["a.timer"],
 	})
-	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	h := fakehost.New()
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	if err := plan.Failed["web1"]; err != nil {
@@ -72,10 +64,8 @@ func TestUnitComputedErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: test\n",
-				"inventories/test.yaml": "hosts:\n  web1: {}\n",
-				"pipelines/site.yaml":   steps("      - recipe: web\n"),
+			p := loadWeb1(t, map[string]string{
+				"pipelines/site.yaml": steps("      - recipe: web\n"),
 				"recipes/web/recipe.yaml": `steps:
   - unit:
       name: !expr item
@@ -83,10 +73,6 @@ func TestUnitComputedErrors(t *testing.T) {
     loop: [` + tt.item + `]
 `,
 			})
-			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-			if err != nil {
-				t.Fatal(err)
-			}
 			plan := run.MakePlan(context.Background(), p, fakehost.New().Connector(), run.Options{})
 			got := ""
 			if err := plan.Failed["web1"]; err != nil {
@@ -102,9 +88,7 @@ func TestUnitComputedErrors(t *testing.T) {
 // spec: Modules/service and unit
 func TestServiceGetsNewUnitFile(t *testing.T) {
 	const a, b, c = "[Service]\nExecStart=/a\n", "[Service]\nExecStart=/b\n", "[Service]\nExecStart=/c\n"
-	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+	p := loadWeb1(t, map[string]string{
 		"pipelines/site.yaml": `stages:
   - name: one
     hosts: all
@@ -147,10 +131,6 @@ func TestServiceGetsNewUnitFile(t *testing.T) {
 		"recipes/web/files/b@.service": b,
 		"recipes/web/files/c.service":  c,
 	})
-	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/systemd/system/c.service", c)
 	for _, n := range []string{"a", "b@one", "b@x.y", "c.service", "b"} {

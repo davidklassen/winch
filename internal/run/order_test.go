@@ -7,9 +7,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/module"
-	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/run"
-	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 // spec: Running a pipeline/Plan; Modules/user and group
@@ -63,15 +61,9 @@ func TestOrderUserAfterOwner(t *testing.T) {
 			if tt.pipeline != "" {
 				pl = tt.pipeline
 			}
-			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: test\n",
-				"inventories/test.yaml": "hosts:\n  web1: {}\n",
-				"pipelines/site.yaml":   pl,
+			p := loadWeb1(t, map[string]string{
+				"pipelines/site.yaml": pl,
 			})
-			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-			if err != nil {
-				t.Fatal(err)
-			}
 			h := fakehost.New()
 			if tt.setup != nil {
 				tt.setup(h)
@@ -338,9 +330,7 @@ var orderCases = []orderCase{
 
 // spec: Modules/repo
 func TestRepoGetsRemovedPaths(t *testing.T) {
-	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+	p := loadWeb1(t, map[string]string{
 		"pipelines/site.yaml": steps(`      - repo:
           name: a
           url: http://x.example/a
@@ -365,10 +355,6 @@ func TestRepoGetsRemovedPaths(t *testing.T) {
           components: [main]
 `),
 	})
-	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	h := fakehost.New()
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	if err := plan.Failed["web1"]; err != nil {
@@ -1351,11 +1337,7 @@ handlers:
 				files["recipes/web/files/app.service"] = "[Service]\nExecStart=/bin/sleep infinity\n"
 				files["recipes/web/files/other.service"] = "[Service]\nExecStart=/bin/true\n"
 			}
-			dir := vmtest.WriteProject(t, files)
-			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-			if err != nil {
-				t.Fatal(err)
-			}
+			p := loadWeb1(t, files)
 			h := fakehost.New()
 			h.SetResult("web1", "nginx", module.Result{Status: module.OK})
 			h.SetResult("web1", "nginx.service", module.Result{Status: module.OK})

@@ -333,15 +333,6 @@ type errLog []string
 
 func (e *errLog) Errorf(format string, args ...any) { *e = append(*e, fmt.Sprintf(format, args...)) }
 
-// spec: roadmap: Testing/VMs
-func TestFailOnWarnings(t *testing.T) {
-	var got errLog
-	failOnWarnings(&got, []string{"plan", "site"}, Result{Stderr: "inventories/test.yaml:4:14: warning: x\n"})
-	if want := (errLog{"winch plan site: unexpected warning: inventories/test.yaml:4:14: warning: x"}); !slices.Equal(got, want) {
-		t.Errorf("errors = %q, want %q", got, want)
-	}
-}
-
 func TestExpectedWarnings(t *testing.T) {
 	const warning = "recipes/app/recipe.yaml:4:5: warning: purge may remove generated files"
 	for _, tt := range []struct {
@@ -349,10 +340,12 @@ func TestExpectedWarnings(t *testing.T) {
 		want         []string
 		fail         bool
 	}{
+		{"none", "", nil, false},
 		{"expected", warning + "\n", []string{warning}, false},
 		{"missing", "", []string{warning}, true},
 		{"extra", warning + "\nrecipes/app/recipe.yaml:6:5: warning: other\n", []string{warning}, true},
 		{"different", "recipes/app/recipe.yaml:6:5: warning: other\n", []string{warning}, true},
+		{"unexpected", warning + "\n", nil, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var got errLog

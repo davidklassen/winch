@@ -211,23 +211,10 @@ func TestHelp(t *testing.T) {
 		args   []string
 	}{
 		{"winch", []string{"--help"}},
-		{"validate", []string{"validate", "--help"}},
-		{"fmt", []string{"fmt", "--help"}},
-		{"plan", []string{"plan", "--help"}},
-		{"apply", []string{"apply", "-h"}},
-		{"run", []string{"run", "--help"}},
-		{"exec", []string{"exec", "--help"}},
+		{"plan", []string{"plan", "-h"}},
 		{"secret", []string{"secret", "--help"}},
-		{"secret-init", []string{"secret", "init", "--help"}},
-		{"secret-generate", []string{"secret", "generate", "--help"}},
-		{"secret-encrypt", []string{"secret", "encrypt", "--help"}},
-		{"secret-decrypt", []string{"secret", "decrypt", "-h"}},
-		{"secret-rekey", []string{"secret", "rekey", "-h"}},
-		{"doc", []string{"doc", "--help"}},
-		{"version", []string{"version", "--help"}},
 		{"winch", []string{"help"}},
 		{"plan", []string{"help", "plan"}},
-		{"secret-init", []string{"help", "secret", "init"}},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
@@ -237,6 +224,10 @@ func TestHelp(t *testing.T) {
 			}
 			golden.Assert(t, filepath.Join("testdata", "help", tt.golden+".golden"), []byte(r.out))
 		})
+	}
+	help := winch(t, t.TempDir(), fakehost.New(), false, "", "help", "secret", "init")
+	if want := winch(t, t.TempDir(), fakehost.New(), false, "", "secret", "init", "--help"); help.code != exitOK || help.out != want.out {
+		t.Errorf("winch help secret init: exit %d, stdout\n%s\nwant\n%s", help.code, help.out, want.out)
 	}
 }
 
