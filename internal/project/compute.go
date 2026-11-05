@@ -51,10 +51,9 @@ type scope struct {
 	reads *[]varRead
 	// noItem is the reason that item is not defined, or "" when it is.
 	noItem string
-	// sealed is true where a !secret value is allowed: in a default.
-	sealed bool
-	// noMatch is the reason that match() is not allowed, or "" when it is.
-	noMatch string
+	// inDefault is true in a default: a !secret value is allowed there, and
+	// match() is not.
+	inDefault bool
 	// args is true in module arguments: a literal null fails there. The
 	// decoder would leave a pointer argument unset for it.
 	args bool
@@ -260,8 +259,8 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		if n.Value == "$env" {
 			c.fail(n, "$env is not allowed")
 		}
-		if n.Value == "match" && c.sc.noMatch != "" {
-			c.fail(n, c.sc.noMatch)
+		if n.Value == "match" && c.sc.inDefault {
+			c.fail(n, "a default cannot use match()")
 		}
 		if n.Value == "host" {
 			c.whole = append(c.whole, n)
@@ -524,7 +523,7 @@ func compileValue(n *yamlx.Node, sc scope) (*value, error) {
 	var walk func(n *yamlx.Node, name string)
 	walk = func(n *yamlx.Node, name string) {
 		switch {
-		case n.Tag == "!secret" && !sc.sealed:
+		case n.Tag == "!secret" && !sc.inDefault:
 			errs = append(errs, yamlx.Errorf(n.Pos, "%s!secret is allowed only in variable values; put it in a variable", prefix(name)))
 		case n.Tag == "!secret":
 		case n.Tag != "":

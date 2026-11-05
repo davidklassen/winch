@@ -354,16 +354,12 @@ func AddRecipient(dir, key string) (*RecipientEdit, error) {
 	if err != nil {
 		return nil, err
 	}
-	path, err := filepath.EvalSymlinks(projectPath(dir, file))
+	path, data, err := readProjectFile(dir, file)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("%w; run winch in the project directory", notFound(file))
+		return nil, fmt.Errorf("%w; run winch in the project directory", err)
 	}
 	if err != nil {
 		return nil, err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", file, err)
 	}
 	n, err := yamlx.Parse(file, data)
 	if err != nil {
@@ -476,10 +472,7 @@ func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, []st
 	count := 0
 	var errs []error
 	for _, file := range files {
-		path, err := filepath.EvalSymlinks(projectPath(dir, file))
-		if errors.Is(err, fs.ErrNotExist) {
-			return 0, nil, notFound(file)
-		}
+		path, data, err := readProjectFile(dir, file)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -487,10 +480,6 @@ func Rekey(ctx context.Context, dir string, identity secret.Identity) (int, []st
 			continue
 		}
 		done[path] = true
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return 0, nil, err
-		}
 		n, err := yamlx.Parse(file, data)
 		if err != nil {
 			return 0, nil, err
@@ -607,15 +596,7 @@ func replaceFile(path string, data []byte) error {
 // project files that is not a !secret, and the SHA-256 of each file by its
 // path. It calls plain with the text of each file.
 func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, map[string]string, error) {
-	invs, err := list(dir, "inventories")
-	if err != nil {
-		return nil, nil, err
-	}
-	pipelines, err := list(dir, "pipelines")
-	if err != nil {
-		return nil, nil, err
-	}
-	recipes, err := recipeFiles(dir)
+	invs, pipelines, recipes, err := projectFiles(dir)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -663,7 +644,7 @@ func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, map[s
 	sums := map[string]string{}
 	seen := map[string]bool{}
 	for _, file := range files {
-		path, err := filepath.EvalSymlinks(projectPath(dir, file))
+		path, data, err := readProjectFile(dir, file)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -671,10 +652,6 @@ func scanProject(dir, project string, plain func([]byte)) ([]*yamlx.Error, map[s
 			continue
 		}
 		seen[path] = true
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, nil, err
-		}
 		plain(data)
 		sum := sha256.Sum256(data)
 		sums[file] = hex.EncodeToString(sum[:])
@@ -1051,16 +1028,10 @@ func (l *loader) locate(prefix, keys []string) (place, error) {
 	pl.keys = slices.Concat(inFile, keys)
 	pl.above = prefix[:len(prefix)-len(inFile)]
 	var err error
-	pl.real, err = filepath.EvalSymlinks(projectPath(l.dir, pl.file))
-	if errors.Is(err, fs.ErrNotExist) {
-		return place{}, notFound(pl.file)
-	}
+	var data []byte
+	pl.real, data, err = readProjectFile(l.dir, pl.file)
 	if err != nil {
 		return place{}, err
-	}
-	data, err := os.ReadFile(pl.real)
-	if err != nil {
-		return place{}, fmt.Errorf("read %s: %w", pl.file, err)
 	}
 	if pl.root, err = yamlx.Parse(pl.file, data); err != nil {
 		return place{}, err

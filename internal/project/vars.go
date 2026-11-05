@@ -72,10 +72,9 @@ func (l *loader) declare(n *yamlx.Node, recipe string) []error {
 func (l *loader) compileDefaults() error {
 	var errs []error
 	sc := scope{
-		reads:   &l.reads,
-		noItem:  "a default cannot use item",
-		sealed:  true,
-		noMatch: "a default cannot use match()",
+		reads:     &l.reads,
+		noItem:    "a default cannot use item",
+		inDefault: true,
 	}
 	for _, v := range l.decls {
 		c, err := compileValue(v.node, sc)
@@ -384,7 +383,6 @@ func findTag(n *yamlx.Node) *yamlx.Node {
 // secrets. Expressions and templates read the variant n.
 type Env struct {
 	host  Host
-	short string
 	facts facts.Facts
 	vars  [3]map[string]any
 	// secret holds the names of the secret variables.
@@ -475,10 +473,11 @@ func (e *Env) templateData() map[string]any {
 }
 
 func (e *Env) exprEnv() exprEnv {
+	short, _, _ := strings.Cut(e.host.Name, ".")
 	return exprEnv{
 		Vars:  e.vars[e.n],
 		Facts: e.facts,
-		Host:  hostEnv{Name: e.host.Name, Short: e.short, Address: e.host.Address, Groups: e.host.Groups, Vars: e.hostVars()},
+		Host:  hostEnv{Name: e.host.Name, Short: short, Address: e.host.Address, Groups: e.host.Groups, Vars: e.hostVars()},
 		Item:  e.item[e.n],
 		Match: e.match,
 	}
@@ -544,7 +543,7 @@ func computedError(v any) error {
 	}
 	name, rest, _ := strings.Cut(rest, "\x00")
 	host, _, _ := strings.Cut(rest, "\x00")
-	return computedMessage(name, host)
+	return computedDefault{name, host}
 }
 
 // computedIn returns the error for the first marker of a computed default in
@@ -565,10 +564,6 @@ func computedIn(v any) error {
 		}
 	}
 	return computedError(v)
-}
-
-func computedMessage(name, host string) error {
-	return computedDefault{name, host}
 }
 
 // computedDefault is a read of a computed default of a host from match().
@@ -652,7 +647,7 @@ func (e *Env) render(t *template.Template) (string, error) {
 		return "", err
 	}
 	host, _, _ := strings.Cut(rest, "\x00")
-	return "", errors.New(strings.Replace(err.Error(), m[0], computedMessage(m[1], host).Error(), 1))
+	return "", errors.New(strings.Replace(err.Error(), m[0], computedDefault{m[1], host}.Error(), 1))
 }
 
 // Start returns the data of host h with facts f: it evaluates the defaults
@@ -661,8 +656,7 @@ func (e *Env) render(t *template.Template) (string, error) {
 // on h in the pipeline, also in later stages and in stages that the
 // selection leaves out.
 func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
-	short, _, _ := strings.Cut(h.Name, ".")
-	e := &Env{host: h, short: short, facts: f, secrets: p.secrets, runs: map[string]*Stage{}, filter: p.filter,
+	e := &Env{host: h, facts: f, secrets: p.secrets, runs: map[string]*Stage{}, filter: p.filter,
 		steps: map[*Step]*Env{}, inv: p.Inventory, peers: p.peers}
 	e.setHostValues()
 	for i := range p.Pipeline.Stages {
@@ -767,7 +761,7 @@ func (p *Project) stepEnv(e *Env, st *Step) (*Env, error) {
 	if err := p.evalDefaults(e, reads, st.Pos); err != nil {
 		return nil, err
 	}
-	se := &Env{host: e.host, short: e.short, facts: e.facts, secrets: e.secrets, runs: e.runs, filter: e.filter,
+	se := &Env{host: e.host, facts: e.facts, secrets: e.secrets, runs: e.runs, filter: e.filter,
 		parent: e, inv: e.inv, peers: e.peers}
 	se.setHostValues()
 	for _, v := range st.vars {
@@ -881,20 +875,13 @@ func (p *Project) evalValue(e *Env, v *Var) ([3]any, bool, error) {
 		}
 		return vals, hasSealed(val), nil
 	}
-	if !e.secrets {
-		node, err := v.computed.eval(e, "")
-		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
-			return vals, false, yamlx.Errorf(ye.Pos, "vars.%s: %s", v.Name, ye.Msg)
-		}
-		if err != nil {
-			return vals, false, err
-		}
-		val := yamlx.Value(node)
-		return [3]any{val, val, val}, false, nil
-	}
 	var errs [3]error
 	isSecret := false
 	for n := range vals {
+		if n > 0 && !e.secrets {
+			vals[n] = vals[0]
+			continue
+		}
 		node, err := v.computed.eval(e.variant(n), "")
 		if err != nil {
 			errs[n] = err
@@ -906,8 +893,10 @@ func (p *Project) evalValue(e *Env, v *Var) ([3]any, bool, error) {
 		}
 		vals[n] = unseal(val, n)
 	}
-	if errs[0] != nil {
-		err := maskError(errs[0], [2]error{errs[1], errs[2]})
+	if err := errs[0]; err != nil {
+		if e.secrets {
+			err = maskError(err, [2]error{errs[1], errs[2]})
+		}
 		if ye, ok := errors.AsType[*yamlx.Error](err); ok {
 			return vals, false, yamlx.Errorf(ye.Pos, "vars.%s: %s", v.Name, ye.Msg)
 		}

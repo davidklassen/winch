@@ -1165,6 +1165,12 @@ func TestAddRecipient(t *testing.T) {
 			}
 		})
 	}
+	t.Run("no project file", func(t *testing.T) {
+		_, err := AddRecipient(t.TempDir(), key)
+		if want := "winch.yaml does not exist; run winch in the project directory"; err == nil || err.Error() != want {
+			t.Errorf("err %v; want %q", err, want)
+		}
+	})
 	t.Run("a link", func(t *testing.T) {
 		dir := t.TempDir()
 		target := filepath.Join(t.TempDir(), "winch.yaml")

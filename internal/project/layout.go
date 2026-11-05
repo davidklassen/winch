@@ -152,14 +152,6 @@ func partNames(parts []part) []string {
 	return out
 }
 
-// only returns the name of the only inventory, or "".
-func (ly layout) only() string {
-	if len(ly.inventories) == 1 {
-		return ly.inventories[0].name
-	}
-	return ""
-}
-
 // inventory returns the inventory name.
 func (ly layout) inventory(name string) (part, error) {
 	if i := slices.IndexFunc(ly.inventories, func(p part) bool { return p.name == name }); i >= 0 {
