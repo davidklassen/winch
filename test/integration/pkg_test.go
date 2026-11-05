@@ -669,6 +669,7 @@ func TestPkgPlanRules(t *testing.T) {
 		"inventories/test.yaml":  "hosts:\n  pkgplan: {}\n",
 		"pipelines/install.yaml": pipeline(deps + gone),
 		"pipelines/remove.yaml":  pipeline(gone + deps),
+		"pipelines/chain.yaml":   pipeline("      - pkg:\n          name: winch-up-new\n" + deps),
 		"pipelines/late.yaml":    pipeline(reconf + answer),
 		"pipelines/early.yaml":   pipeline(answer + reconf),
 		// winch-conflict conflicts with hello.
@@ -702,6 +703,9 @@ func TestPkgPlanRules(t *testing.T) {
 	}
 
 	vm.MustRun(t, "apt-get update -q >/dev/null")
+	if r := lab.Winch(t, dir, "plan", "chain"); r.Code != 0 || !strings.Contains(r.Stdout, "install winch-up-deps") || strings.Contains(r.Stdout, "also install winch-up-new") {
+		t.Errorf("an install after the install of its dependency: exit %d:\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
 	fails("an install that pulls a removed package", "install", "s: pkg winch-up-new: s#1 pkg winch-up-deps also installs winch-up-new, which this step removes"+undo)
 	fails("a removed package that an install pulls", "remove", "s: pkg winch-up-deps: this step also installs winch-up-new, which s#1 pkg winch-up-new removes"+undo)
 	vm.MustRun(t, "DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-up-new >/dev/null")
