@@ -678,6 +678,8 @@ func TestPkgPlanRules(t *testing.T) {
 		"pipelines/unknown.yaml": pipeline("      - pkg:\n          name: [winch-uses-fragile, winch-nowhere]\n" + gone),
 		// winch-up-top depends on winch-up-deps.
 		"pipelines/top.yaml": pipeline(gone + "      - pkg:\n          name: winch-up-top\n"),
+		// winch-rec recommends winch-rec-dep, which depends on winch-up-new.
+		"pipelines/recommends.yaml": pipeline("      - pkg:\n          name: winch-rec\n" + gone + "      - pkg:\n          name: winch-stock\n"),
 		// winch-local depends on hello, and the package index does not know it.
 		"pipelines/cleanup.yaml": pipeline("      - pkg:\n          name: hello\n          absent: true\n      - pkg:\n          name: winch-local\n          absent: true\n"),
 	})
@@ -719,6 +721,7 @@ func TestPkgPlanRules(t *testing.T) {
 	}
 	plans("a removal after an install that replaces a removed package", "swap")
 	plans("a removal after an install with unknown dependencies", "unknown")
+	plans("an install after a removal that takes a package of an earlier install", "recommends")
 	vm.MustRun(t, "mkdir -p /tmp/winch-local/DEBIAN && printf 'Package: winch-local\\nVersion: 1\\nArchitecture: all\\nMaintainer: winch\\nDepends: hello\\nDescription: test\\n' >/tmp/winch-local/DEBIAN/control && dpkg-deb -b /tmp/winch-local /tmp/winch-local.deb >/dev/null && dpkg -i /tmp/winch-local.deb >/dev/null")
 	plans("a removal of a package that an earlier removal takes and the index does not know", "cleanup")
 	vm.MustRun(t, "DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-up-deps >/dev/null")

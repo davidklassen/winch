@@ -933,25 +933,38 @@ func (hr *hostRun) repo(st *project.Step, where string) error {
 
 // earlierPkgs gives a pkg step the packages that earlier absent pkg steps of
 // the host remove, and the packages that earlier install steps install or
-// upgrade. Both include the other packages that apt changes with them. An
-// install whose other packages are not known yet adds nothing: its packages
-// alone can miss their dependencies.
+// upgrade. Both include the other packages that apt changes with them. For a
+// package that several earlier steps change, the last one counts. An install
+// whose other packages are not known yet adds nothing: its packages alone can
+// miss their dependencies.
 func (hr *hostRun) earlierPkgs(st *project.Step) {
 	p, ok := st.Args.(*module.Pkg)
 	if !ok {
 		return
 	}
-	c := *p
+	installed := map[string]bool{}
 	for _, e := range hr.pkgs {
 		switch {
 		case e.pkg.Absent:
-			c.Removed = slices.Concat(c.Removed, e.pkg.Name, e.others)
+			for _, n := range slices.Concat(e.pkg.Name, e.others) {
+				installed[n] = false
+			}
 		case !e.unknown:
-			c.Installed = slices.Concat(c.Installed, e.installs, e.others)
+			for _, n := range slices.Concat(e.installs, e.others) {
+				installed[n] = true
+			}
+		}
+	}
+	c := *p
+	for n, in := range installed {
+		if in {
+			c.Installed = append(c.Installed, n)
+		} else {
+			c.Removed = append(c.Removed, n)
 		}
 	}
 	slices.Sort(c.Installed)
-	c.Installed = slices.Compact(c.Installed)
+	slices.Sort(c.Removed)
 	st.Args = &c
 }
 

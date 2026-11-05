@@ -1,0 +1,6 @@
+Package: winch-rec-dep
+Version: 1
+Architecture: all
+Maintainer: winch
+Depends: winch-up-new
+Description: test
