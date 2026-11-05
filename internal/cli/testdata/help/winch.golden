@@ -13,6 +13,9 @@ Examples:
 Usage:
   winch <command> [arguments] [flags]
 
+In every command, -- ends the flags: the words after it are arguments,
+also when they start with "-".
+
 Commands:
   validate  check the project without contacting a host
   fmt       format the project files

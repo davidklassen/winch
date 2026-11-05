@@ -139,6 +139,10 @@ var mainCommand = command{
 		{"make those changes after a question", "winch apply site --inventory test"},
 	},
 	usage: []string{"winch <command> [arguments] [flags]"},
+	description: []string{
+		`In every command, -- ends the flags: the words after it are arguments,
+also when they start with "-".`,
+	},
 	flags: []flagDoc{
 		{name: "--version", text: "version and platform, as winch version"},
 	},
@@ -339,6 +343,8 @@ shows its output. It makes no plan and asks no question.`,
 intersection, and "!" for exclusion.`,
 			`winch joins the words after -- with spaces and runs them through sh -c
 as root, in /, with stdin from /dev/null.`,
+			`When the project has secrets, exec needs the age key. It decrypts the
+secrets, so that its output hides them.`,
 			`Each host shows one block: the host name, then the output. Hosts with
 the same output and exit code share one block. A command that exits
 non-zero adds "exit status N" to its block. winch exits with code 1
