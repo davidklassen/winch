@@ -181,7 +181,7 @@ func TestFailedRecordStopsTheTimer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-	g := protocol.Guard{Recipe: "ssh", Save: true, Confirm: true}
+	g := protocol.Guard{Store: "ssh", Save: true, Confirm: true}
 	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "pw=one\n"), Guard: g, Masked: new("pw=(secret)\n")})
 	if !strings.Contains(r.Error, "the old files are back") {
 		t.Errorf("apply: error %q, want the rollback", r.Error)
@@ -327,7 +327,7 @@ func TestRollbackPutsBackTheMaskedRecord(t *testing.T) {
 	const rec = "pw=(secret)\n"
 	record := l.maskedPath(&module.File{Path: l.a})
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "pw=one\n"), Masked: new(rec)})
-	g := protocol.Guard{Recipe: "ssh", Save: true, Confirm: true}
+	g := protocol.Guard{Store: "ssh", Save: true, Confirm: true}
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "plain\n"), Guard: g})
 	if _, err := os.Lstat(record); !os.IsNotExist(err) {
 		t.Fatalf("the record stays after a write without a secret: %v", err)
@@ -350,7 +350,7 @@ func TestRollbackOfARotationPutsBackTheMaskedRecord(t *testing.T) {
 	const rec = "pw=(secret)\n"
 	record := l.maskedPath(&module.File{Path: l.a})
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "pw=one\n"), Masked: new(rec)})
-	g := protocol.Guard{Recipe: "ssh", Save: true, Confirm: true}
+	g := protocol.Guard{Store: "ssh", Save: true, Confirm: true}
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "workers=2\npw=two\n"), Guard: g, Masked: new("workers=2\npw=(secret)\n")})
 	if r := l.c.call(t, "rollback", nil); r.Error != "" {
 		t.Fatalf("rollback: %s", r.Error)
@@ -384,7 +384,7 @@ func TestPutBackUntestedPutsBackTheMaskedRecord(t *testing.T) {
 func TestDueRollbackDoesNotListTheMaskedRecord(t *testing.T) {
 	l := startLockout(t)
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "pw=one\n"), Masked: new("pw=(secret)\n")})
-	g := protocol.Guard{Recipe: "ssh", Save: true, Confirm: true}
+	g := protocol.Guard{Store: "ssh", Save: true, Confirm: true}
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "plain\n"), Guard: g})
 	for _, project := range []string{"acme", "other"} {
 		rb := &rollbacks{dir: filepath.Join(l.dir, "rollback"), project: project, masked: maskedRecords{dir: filepath.Join(l.dir, "masked", project)}, due: []string{l.job()}}

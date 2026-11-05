@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/davidklassen/winch/internal/module"
-	"github.com/davidklassen/winch/internal/protocol"
 )
 
 // job is a rollback timer: at Deadline, the timer process puts back Restore
@@ -75,9 +74,9 @@ func decodeJob(path string, data []byte) (job, error) {
 	return j, nil
 }
 
-// TimerTime is the time between the start of a rollback timer and the
+// timerTime is the time between the start of a rollback timer and the
 // rollback.
-const TimerTime = 60 * time.Second
+const timerTime = 60 * time.Second
 
 // rollbacks is the rollback store of a project: one directory per recipe or
 // stage, with an index of the saved paths and their tar files. It also holds
@@ -110,14 +109,6 @@ func (r *rollbacks) job() string { return filepath.Join(r.dir, "timer.json") }
 // result is the file where the timer process writes the error of its
 // rollback, empty after a rollback without an error.
 func result(job string) string { return job + ".result" }
-
-// scope returns the directory of the store of g.
-func (r *rollbacks) scope(g protocol.Guard) string {
-	if g.Recipe == "" {
-		return r.store(g.Pipeline + "\t" + g.Stage)
-	}
-	return r.store(g.Recipe)
-}
 
 // sshd holds the sshd files that the run changed after its last guarded
 // restart or reload of sshd, as untested lines, each with a store that keeps
@@ -378,9 +369,6 @@ const timerLock = 3
 // flock of the job passes to the process with its start, so no session sees a
 // started timer with a free lock.
 func (r *rollbacks) start(j job) error {
-	if r.self == "" {
-		return errors.New("the helper does not know its own binary to start the rollback timer")
-	}
 	j.Version = jobVersion
 	data, err := json.Marshal(j)
 	if err != nil {
@@ -426,8 +414,7 @@ func (r *rollbacks) spawnTimer() error {
 // confirm stops the timer. It fails when the timer ended first.
 func (r *rollbacks) confirm(ctx context.Context) error {
 	r.running = nil
-	done := r.job() + ".done"
-	if err := os.Rename(r.job(), done); err != nil {
+	if err := os.Remove(r.job()); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
@@ -436,7 +423,7 @@ func (r *rollbacks) confirm(ctx context.Context) error {
 		}
 		return errTimerFirst
 	}
-	return errors.Join(os.Remove(done), r.ended(ctx))
+	return r.ended(ctx)
 }
 
 var errTimerFirst = errors.New("the rollback timer ended first; the old files are back")

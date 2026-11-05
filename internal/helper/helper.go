@@ -80,14 +80,18 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "hello" && lock != nil:
 			err = errors.New("hello was already sent")
 		case req.Method == "hello":
-			var project string
-			lock, project, err = takeLock(ctx, req.Params, dir, self)
-			handlers = records{dir: filepath.Join(dir, "handlers"), project: project, what: "pending handlers"}
-			thens = records{dir: filepath.Join(dir, "then"), project: project, what: "pending then records"}
-			downloads = downloadRecords(filepath.Join(dir, "downloads", project))
-			certbotHooks = records{dir: filepath.Join(dir, "certbot-hooks"), project: project, what: "pending certbot hooks"}
-			checks = records{dir: filepath.Join(dir, "checks"), project: project, what: "pending health gates and asserts"}
-			rb = &rollbacks{dir: filepath.Join(dir, "rollback"), project: project, self: self, downloads: downloads, masked: maskedRecords{dir: filepath.Join(dir, "masked", project)}}
+			var h protocol.Hello
+			if err = json.Unmarshal(req.Params, &h); err != nil {
+				err = fmt.Errorf("decode hello: %w", err)
+			} else {
+				lock, err = takeLock(ctx, h, dir, self)
+			}
+			handlers = records{dir: filepath.Join(dir, "handlers"), project: h.Project, what: "pending handlers"}
+			thens = records{dir: filepath.Join(dir, "then"), project: h.Project, what: "pending then records"}
+			downloads = downloadRecords(filepath.Join(dir, "downloads", h.Project))
+			certbotHooks = records{dir: filepath.Join(dir, "certbot-hooks"), project: h.Project, what: "pending certbot hooks"}
+			checks = records{dir: filepath.Join(dir, "checks"), project: h.Project, what: "pending health gates and asserts"}
+			rb = &rollbacks{dir: filepath.Join(dir, "rollback"), project: h.Project, self: self, downloads: downloads, masked: maskedRecords{dir: filepath.Join(dir, "masked", h.Project)}}
 			if err == nil {
 				loginUser, err = module.LookupLogin(login.LoginUID)
 			}
@@ -101,7 +105,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			if err == nil {
 				err = rb.idle()
 			}
-			if err == nil && !resumed(req.Params) && len(rb.due) == 0 {
+			if err == nil && !h.Resume && len(rb.due) == 0 {
 				err = rb.clear(handlers)
 			}
 			if err != nil && lock != nil {
@@ -184,27 +188,23 @@ type lockRecord struct {
 	PID int `json:"pid"`
 }
 
-// takeLock takes the lock of the state directory, and returns it with the
-// project of the session. The returned lock is busy.
-func takeLock(ctx context.Context, params json.RawMessage, dir, self string) (_ *lockFile, project string, err error) {
-	var h protocol.Hello
-	if err := json.Unmarshal(params, &h); err != nil {
-		return nil, "", fmt.Errorf("decode hello: %w", err)
-	}
+// takeLock takes the lock of the state directory for the session of h. The
+// returned lock is busy.
+func takeLock(ctx context.Context, h protocol.Hello, dir, self string) (_ *lockFile, err error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, "", fmt.Errorf("create state directory: %w", err)
+		return nil, fmt.Errorf("create state directory: %w", err)
 	}
 	if err := checkTree(dir, uint32(os.Geteuid())); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
-		return nil, "", fmt.Errorf("open lock: %w", err)
+		return nil, fmt.Errorf("open lock: %w", err)
 	}
 	busy, err := os.Open(dir)
 	if err != nil {
 		f.Close()
-		return nil, "", fmt.Errorf("open lock: %w", err)
+		return nil, fmt.Errorf("open lock: %w", err)
 	}
 	l := &lockFile{f: f, busy: busy}
 	defer func() {
@@ -217,11 +217,11 @@ func takeLock(ctx context.Context, params json.RawMessage, dir, self string) (_ 
 	// an idle holder from starting a request until it ends.
 	idle, err := tryLock(busy)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	locked, err := tryLock(f)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	var held lockRecord
 	if !locked {
@@ -232,41 +232,41 @@ func takeLock(ctx context.Context, params json.RawMessage, dir, self string) (_ 
 	// below 2 signals a process group or init, not one helper.
 	if !locked && idle && held.PID > 1 && held.Run != "" && held.Run == h.Run {
 		if locked, err = takeOver(ctx, f, held.PID, module.KillDelay); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 	}
 	if !locked {
 		// The record is empty, or half written, until its holder writes it.
 		if held.Run == "" {
-			return nil, "", errors.New("locked by another run that is starting; run winch again to see which one")
+			return nil, errors.New("locked by another run that is starting; run winch again to see which one")
 		}
 		msg := fmt.Sprintf("locked by run %s (%s@%s, since %s", held.Run, held.User, held.Machine, held.Started.UTC().Format(time.RFC3339))
 		if held.PID <= 1 {
-			return nil, "", fmt.Errorf("%s); if that run is gone, end the process that holds %s", msg, f.Name())
+			return nil, fmt.Errorf("%s); if that run is gone, end the process that holds %s", msg, f.Name())
 		}
-		return nil, "", fmt.Errorf("%s, helper process %d); if that run is gone, end it with: sudo kill %d", msg, held.PID, held.PID)
+		return nil, fmt.Errorf("%s, helper process %d); if that run is gone, end it with: sudo kill %d", msg, held.PID, held.PID)
 	}
 	if err := l.mark(false); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	data, err := json.Marshal(lockRecord{Hello: h, PID: os.Getpid()})
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	// Write before truncate, so a reader never sees an empty file.
 	if _, err := f.WriteAt(data, 0); err != nil {
-		return nil, "", fmt.Errorf("write lock: %w", err)
+		return nil, fmt.Errorf("write lock: %w", err)
 	}
 	if err := f.Truncate(int64(len(data))); err != nil {
-		return nil, "", fmt.Errorf("write lock: %w", err)
+		return nil, fmt.Errorf("write lock: %w", err)
 	}
 	if err := deleteOld(filepath.Join(dir, "bin"), self); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if err := os.RemoveAll(filepath.Join(dir, module.FetchedDir)); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return l, h.Project, nil
+	return l, nil
 }
 
 // tryLock reports whether it took the flock of f.
@@ -544,13 +544,11 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 		}
 	}
+	var untested []string
 	for _, st := range s.Guard.SSHD {
 		if _, _, err := rb.save(rb.store(st), m); err != nil {
 			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 		}
-	}
-	var untested []string
-	for _, st := range s.Guard.SSHD {
 		for _, t := range rb.touches(m) {
 			line, _ := json.Marshal(untestedFile{Store: st, Path: t.Path})
 			untested = append(untested, string(line))
@@ -563,7 +561,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 	}
 	if s.Guard.Save || guard {
-		saved, all, err := rb.save(rb.scope(s.Guard), m)
+		saved, all, err := rb.save(rb.store(s.Guard.Store), m)
 		if err == nil && guard {
 			deadline, err = startTimer(rb, s.Guard, m, saved, all)
 		}
@@ -607,8 +605,8 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	// sshd now loads all its files: the access check tests them, and the
 	// rollback puts back those of the store.
 	sv, isService := m.(*module.Service)
-	if guard && s.Guard.LoadsSSHD && (!isService || sv.RunsAfter()) {
-		if err := rb.tested(rb.scope(s.Guard)); err != nil {
+	if s.Guard.LoadsSSHD && (!isService || sv.RunsAfter()) {
+		if err := rb.tested(rb.store(s.Guard.Store)); err != nil {
 			return out, err
 		}
 	}
@@ -641,18 +639,11 @@ func recordSSHOff(rb *rollbacks, m module.Module, changes []string) error {
 	return err
 }
 
-// resumed reports whether the params of hello are those of the connect
-// after a reboot.
-func resumed(params json.RawMessage) bool {
-	var h protocol.Hello
-	return json.Unmarshal(params, &h) == nil && h.Resume
-}
-
 // startTimer starts the rollback timer of the guarded step m. A step with
 // confirm_access puts back the whole store of its recipe or stage, and its
 // undo step; another guarded step puts back only what it saved.
 func startTimer(rb *rollbacks, g protocol.Guard, m module.Module, saved, all []module.Saved) (time.Time, error) {
-	j := job{Deadline: time.Now().Add(TimerTime), Restore: saved, Downloads: filepath.Join(rb.downloads.dir, rb.downloads.project)}
+	j := job{Deadline: time.Now().Add(timerTime), Restore: saved, Downloads: filepath.Join(rb.downloads.dir, rb.downloads.project)}
 	add := func(name string, step any) error {
 		args, err := json.Marshal(step)
 		j.Undo = append(j.Undo, undo{Module: name, Args: args})

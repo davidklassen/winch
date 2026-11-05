@@ -39,9 +39,6 @@ func (h records) read() ([]string, error) {
 	}
 	defer f.Close()
 	data, err := io.ReadAll(f)
-	if errors.Is(err, fs.ErrNotExist) {
-		return []string{}, nil
-	}
 	if err != nil {
 		return nil, fmt.Errorf("read the %s: %w", h.what, err)
 	}
