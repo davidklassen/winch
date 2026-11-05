@@ -6,9 +6,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/module"
-	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/run"
-	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 // spec: Modules/service and unit
@@ -55,15 +53,9 @@ func TestStartedBy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: test\n",
-				"inventories/test.yaml": "hosts:\n  web1: {}\n",
-				"pipelines/site.yaml":   "stages:\n" + tt.pipeline,
+			p := loadWeb1(t, map[string]string{
+				"pipelines/site.yaml": "stages:\n" + tt.pipeline,
 			})
-			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-			if err != nil {
-				t.Fatal(err)
-			}
 			h := fakehost.New()
 			h.SetResult("web1", "rpcbind", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"stop"}, StartedBy: []string{"rpcbind.socket"}})
 			h.SetResult("web1", "rpcbind.socket", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"disable", "stop"}})

@@ -18,7 +18,7 @@ import (
 
 func fakeSecret(t *testing.T, name string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata", "fake_secrets", name))
+	b, err := os.ReadFile(filepath.Join("..", "secret", "testdata", "fake_secrets", name))
 	if err != nil {
 		t.Fatalf("read fake secret: %v", err)
 	}

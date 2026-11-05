@@ -277,9 +277,6 @@ type Case struct {
 	// ErrAfterChange marks a failed apply that still reaches the wanted
 	// state, so the next check is ok.
 	ErrAfterChange bool
-	// SkipRecovery names the issue that blocks the recovery of the case. The
-	// case skips its recovery test.
-	SkipRecovery string
 	// After runs as root after apply, also after a failed one, and must
 	// exit 0.
 	After string
@@ -367,9 +364,6 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 // check after the failed apply is ok.
 func checkRecovery(t *testing.T, vm *VM, s *session.Session, name string, c Case) {
 	t.Helper()
-	if c.SkipRecovery != "" {
-		t.Skip(c.SkipRecovery)
-	}
 	if c.ErrAfterChange {
 		checkAgain(t, s, name, c)
 		return

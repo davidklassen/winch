@@ -3,6 +3,7 @@ package run_test
 import (
 	"bytes"
 	"context"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,8 +20,7 @@ import (
 
 func load(t *testing.T, web3 string) *project.Project {
 	t.Helper()
-	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
+	return loadWeb1(t, map[string]string{
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n  web3:\n    address: " + web3 + "\n",
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -37,7 +37,16 @@ func load(t *testing.T, web3 string) *project.Project {
           absent: true
 `,
 	})
-	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
+}
+
+func loadWeb1(t *testing.T, files map[string]string) *project.Project {
+	t.Helper()
+	all := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+	}
+	maps.Copy(all, files)
+	p, err := project.Load(t.Context(), vmtest.WriteProject(t, all), "", "site", nil, project.Keys{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,8 +163,7 @@ func TestHasChangesIgnoresFailedHosts(t *testing.T) {
 
 // spec: Modules/pkg; Running a pipeline/Plan
 func TestIndexRefreshOncePerRun(t *testing.T) {
-	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
+	p := loadWeb1(t, map[string]string{
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -172,10 +180,6 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
           name: jq
 `,
 	})
-	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	h := fakehost.New()
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
@@ -209,15 +213,9 @@ func TestUpgradeRefreshOncePerRun(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: test\n",
-				"inventories/test.yaml": "hosts:\n  web1: {}\n",
-				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.before + "      - upgrade:\n          mode: safe\n" + tt.after,
+			p := loadWeb1(t, map[string]string{
+				"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.before + "      - upgrade:\n          mode: safe\n" + tt.after,
 			})
-			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-			if err != nil {
-				t.Fatal(err)
-			}
 			h := fakehost.New()
 			h.SetResult("web1", "app", module.Result{Status: module.Change, Action: module.Create, Changes: []string{"refresh the index of source app"}})
 			h.SetResult("web1", "safe", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"upgrade curl 1 → 2"}})
@@ -235,10 +233,8 @@ func TestUpgradeRefreshOncePerRun(t *testing.T) {
 
 // spec: CLI/Output; Modules/file, dir, link
 func TestPlanContentReasons(t *testing.T) {
-	p := loadFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
-		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
 		"recipes/app/recipe.yaml": `steps:
   - file:
       path: /etc/latin1.conf
@@ -317,8 +313,7 @@ func TestPlanParents(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := loadFiles(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: test\n",
+			p := loadWeb1(t, map[string]string{
 				"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
 				"pipelines/site.yaml":   tt.pipeline,
 			})
@@ -340,9 +335,7 @@ func TestPlanParents(t *testing.T) {
 
 // spec: Running a pipeline/Apply
 func TestApplyChecksStagesWithoutChange(t *testing.T) {
-	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+	p := loadWeb1(t, map[string]string{
 		"pipelines/site.yaml": `stages:
   - name: install
     hosts: all
@@ -357,10 +350,6 @@ func TestApplyChecksStagesWithoutChange(t *testing.T) {
           absent: true
 `,
 	})
-	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	h := fakehost.New()
 	h.SetPkgFile("nginx", "/etc/nginx/sites-enabled/default", "server {}\n")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
@@ -420,15 +409,6 @@ steps:
       template: tools.tmpl
 `,
 	"recipes/tools/templates/tools.tmpl": "{{ if eq .host.name \"web2\" }}{{ index .host.groups 3 }}{{ end }}\n",
-}
-
-func loadFiles(t *testing.T, files map[string]string) *project.Project {
-	t.Helper()
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
 }
 
 // spec: CLI/Output; Steps; Recipes; Running a pipeline/Plan; Templates and expressions/When they run; Modules/file, dir, link
@@ -491,7 +471,7 @@ func TestPlanRecipes(t *testing.T) {
 					files[k] = v
 				}
 			}
-			plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{})
+			plan := run.MakePlan(context.Background(), loadWeb1(t, files), h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
 			plan.Write(plain(&out), plain(&errOut))
 			golden.Assert(t, filepath.Join("testdata", "plan", tt.name+".golden"),
@@ -527,7 +507,7 @@ func TestApplyRecipes(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(h)
 			}
-			p := loadFiles(t, recipes)
+			p := loadWeb1(t, recipes)
 			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 			var out, errOut bytes.Buffer
 			run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK()
@@ -590,7 +570,7 @@ steps:
 // spec: Templates and expressions/When they run; Steps; Running a pipeline/Plan; CLI/Output
 func TestPlanVars(t *testing.T) {
 	h := fakehost.New()
-	plan := run.MakePlan(context.Background(), loadFiles(t, varsFiles), h.Connector(), run.Options{})
+	plan := run.MakePlan(context.Background(), loadWeb1(t, varsFiles), h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
 	golden.Assert(t, filepath.Join("testdata", "plan", "vars.golden"),
@@ -620,10 +600,8 @@ func TestPlanVars(t *testing.T) {
 
 // spec: Running a pipeline/Plan; CLI/Output
 func TestPlanCopyFromAnEarlierFile(t *testing.T) {
-	p := loadFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
-		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
 		"recipes/app/recipe.yaml": `steps:
   - file:
       path: /etc/app/default.conf
@@ -655,10 +633,8 @@ handlers:
 
 // spec: Running a pipeline/Plan; CLI/Output
 func TestPlanCopyFromAnEarlierBinaryFile(t *testing.T) {
-	p := loadFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
-		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
 		"recipes/app/recipe.yaml": `steps:
   - file:
       path: /etc/app/blob

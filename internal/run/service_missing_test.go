@@ -9,7 +9,6 @@ import (
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/run"
-	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 // spec: Modules/service and unit
@@ -42,18 +41,13 @@ func TestMissingUnitNoteSelection(t *testing.T) {
 		{"unnotified removal handler", stage("services", "web1", stop+"      - recipe: unnotified\n"), "", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":                     "name: missing\ninventory: test\n",
+			p := loadWeb1(t, map[string]string{
 				"inventories/test.yaml":          "hosts:\n  web1: {}\n  web2: {}\n",
 				"pipelines/site.yaml":            "stages:\n" + tt.pipeline,
 				"recipes/cleanup/recipe.yaml":    "steps:\n  - file:\n      path: !expr item\n      absent: true\n    loop: [/etc/systemd/system/app.service]\n",
 				"recipes/notified/recipe.yaml":   "steps:\n  - file: {path: /tmp/notify, content: notify}\n    notify: cleanup\nhandlers:\n  cleanup:\n    - file: {path: /etc/systemd/system/app.service, absent: true}\n",
 				"recipes/unnotified/recipe.yaml": "steps:\n  - file: {path: /tmp/notify, content: notify}\nhandlers:\n  cleanup:\n    - file: {path: /etc/systemd/system/app.service, absent: true}\n",
 			})
-			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-			if err != nil {
-				t.Fatal(err)
-			}
 			if err := p.Select(project.Selection{Stages: tt.selection}); err != nil {
 				t.Fatal(err)
 			}

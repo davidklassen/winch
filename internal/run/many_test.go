@@ -18,22 +18,16 @@ import (
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
-	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 // manyProject has three hosts, and a pipeline with the stages in stages.
 func manyProject(t *testing.T, stages string) *project.Project {
 	t.Helper()
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":              "name: acme\ninventory: test\n",
+	return loadWeb1(t, map[string]string{
 		"inventories/test.yaml":   "hosts:\n  web1: {}\n  web2: {}\n  web3: {}\n",
 		"pipelines/site.yaml":     "stages:\n" + stages,
 		"recipes/app/recipe.yaml": manyRecipe,
-	}), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
+	})
 }
 
 const manyRecipe = `steps:
@@ -553,16 +547,10 @@ func TestStagesLeaveHandlerPending(t *testing.T) {
 
 // spec: Running a pipeline/Plan; CLI (--stages)
 func TestSkippedStageRequirement(t *testing.T) {
-	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":                 "name: acme\ninventory: test\n",
-		"inventories/test.yaml":      "hosts:\n  web1: {}\n",
+	p := loadWeb1(t, map[string]string{
 		"pipelines/site.yaml":        "stages:\n  - name: a\n    hosts: all\n    steps:\n      - recipe: ubuntu\n" + motdStage,
 		"recipes/ubuntu/recipe.yaml": "require:\n  - !expr 'facts.os.id == \"ubuntu\"'\nsteps: []\n",
 	})
-	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := p.Select(project.Selection{Stages: "base"}); err != nil {
 		t.Fatal(err)
 	}
@@ -768,8 +756,7 @@ func TestPlanIndependentOfFinishOrder(t *testing.T) {
 	plan := func(order []string) planOut {
 		var o planOut
 		synctest.Test(t, func(t *testing.T) {
-			p, err := project.Load(t.Context(), vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: acme\ninventory: test\n",
+			p := loadWeb1(t, map[string]string{
 				"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n  web3: {}\n  web4: {}\n  web5: {}\n",
 				"pipelines/site.yaml": "stages:\n" + motdStage + `  - name: app
     hosts: all
@@ -777,10 +764,7 @@ func TestPlanIndependentOfFinishOrder(t *testing.T) {
       - recipe: app
 `,
 				"recipes/app/recipe.yaml": manyRecipe,
-			}), "", "site", nil, project.Keys{})
-			if err != nil {
-				t.Fatal(err)
-			}
+			})
 			h := fakehost.New()
 			h.SetFile("web1", "/etc/motd", "old\n")
 			h.SetFile("web5", "/etc/motd", "hi\n")

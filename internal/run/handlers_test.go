@@ -475,10 +475,7 @@ func TestStageStepNotifiesEarlierRecipe(t *testing.T) {
           content: "hi\n"
         notify: nginx.reload
 `
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := loadWeb1(t, files)
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
@@ -500,9 +497,7 @@ func TestLateHandlersOfSeveralRecipes(t *testing.T) {
 			"  " + first + ":\n    - service:\n        name: " + first + "\n        restarted: true\n" +
 			"  " + second + ":\n    - service:\n        name: " + second + "\n        restarted: true\n"
 	}
-	p := loadFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+	p := loadWeb1(t, map[string]string{
 		"pipelines/site.yaml": `stages:
   - name: web
     hosts: all
@@ -542,10 +537,7 @@ func TestPendingThen(t *testing.T) {
           content: "hi\n"
         then: newaliases
 `
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := loadWeb1(t, files)
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetFile("web1", "/etc/motd", "hi\n")
@@ -630,10 +622,7 @@ func TestPendingThenOfAChangedStep(t *testing.T) {
 func TestPendingThenOfAHandlerStep(t *testing.T) {
 	files := maps.Clone(handlerFiles)
 	files["recipes/app/recipe.yaml"] += "      loop: [1, 2]\n      then: |\n        app-check\n        app-log\n"
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := loadWeb1(t, files)
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetPending("web1", "app.restart")
@@ -684,10 +673,7 @@ func TestCommandLines(t *testing.T) {
           postmap /etc/postfix/virtual
 `,
 	}
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := loadWeb1(t, files)
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/aliases", "a\n")
 	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/aliases")})
@@ -756,18 +742,13 @@ func TestFixedThenRuns(t *testing.T) {
 	}
 	h := fakehost.New()
 	h.FailCommand("web1", "postmapp /etc/postfix/virtual")
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := loadWeb1(t, files)
 	if ok, got := applyAll(t, p, h); ok {
 		t.Fatalf("apply succeeded with a failing then:\n%s", got)
 	}
 
 	files["pipelines/site.yaml"] = strings.Replace(files["pipelines/site.yaml"], "postmapp", "postmap", 1)
-	if p, err = project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{}); err != nil {
-		t.Fatal(err)
-	}
+	p = loadWeb1(t, files)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -802,7 +783,7 @@ func TestInsertedStepKeepsPendingThen(t *testing.T) {
 	h := fakehost.New()
 	h.FailCommand("web1", "postmap /etc/postfix/virtual")
 	h.SetFile("web1", "/etc/db.conf", "db\n")
-	p := loadFiles(t, files)
+	p := loadWeb1(t, files)
 	if ok, got := applyAll(t, p, h); ok {
 		t.Fatalf("apply succeeded with a failing then:\n%s", got)
 	}
@@ -813,7 +794,7 @@ func TestInsertedStepKeepsPendingThen(t *testing.T) {
           content: "db\n"
         then: systemctl restart db
 `, 1)
-	p = loadFiles(t, files)
+	p = loadWeb1(t, files)
 	h.Fix("web1 postmap /etc/postfix/virtual")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
@@ -852,10 +833,7 @@ handlers:
         restarted: true
 `,
 	}
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := loadWeb1(t, files)
 	h := fakehost.New()
 	h.SetResult("web1", "/opt/tool", module.Result{Status: module.OK})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
@@ -923,7 +901,7 @@ var stageHandlerFiles = map[string]string{
 func TestStageHandlers(t *testing.T) {
 	files := maps.Clone(stageHandlerFiles)
 	files["pipelines/deploy.yaml"] = "stages:\n  - name: web\n    hosts: all\n    steps: []\n    handlers:\n      reload:\n        - cmd:\n            command: deploy-reload\n"
-	p := loadFiles(t, files)
+	p := loadWeb1(t, files)
 	h := fakehost.New()
 	// A record of a stage of another pipeline stays.
 	h.SetPending("web1", "deploy\tweb\treload")
@@ -976,7 +954,7 @@ func TestStageHandlers(t *testing.T) {
 
 // spec: Handlers; Running a pipeline/Failures
 func TestStageHandlerStaysPending(t *testing.T) {
-	p := loadFiles(t, stageHandlerFiles)
+	p := loadWeb1(t, stageHandlerFiles)
 	h := fakehost.New()
 	for _, f := range []string{"a", "b", "c"} {
 		h.SetFile("web1", "/etc/app/"+f+".conf", f+"\n")
@@ -1034,7 +1012,7 @@ var stageHandlerVarFiles = map[string]string{
 
 // spec: Pipelines; Handlers; Steps (the place of a then)
 func TestStageHandlerStep(t *testing.T) {
-	p := loadFiles(t, stageHandlerVarFiles)
+	p := loadWeb1(t, stageHandlerVarFiles)
 	h := fakehost.New()
 	h.FailCommand("web1", "reindex")
 	if ok, got := applyAll(t, p, h); ok {
@@ -1052,7 +1030,7 @@ func TestStageHandlerStep(t *testing.T) {
 // spec: Handlers (a pending handler of a stage that --stages leaves out
 // stays recorded, and the plan shows a note for it)
 func TestStageHandlerOfASkippedStage(t *testing.T) {
-	p := loadFiles(t, stageHandlerVarFiles)
+	p := loadWeb1(t, stageHandlerVarFiles)
 	if err := p.Select(project.Selection{Stages: "db"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1187,7 +1165,7 @@ handlers:
 
 // spec: Handlers
 func TestPendingHandlerOfAFailedHost(t *testing.T) {
-	p := loadFiles(t, handlerFiles)
+	p := loadWeb1(t, handlerFiles)
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetPending("web1", "app.restart")
@@ -1218,10 +1196,7 @@ func TestPendingThenWithoutItsStep(t *testing.T) {
           content: "hi\n"
         then: newaliases
 `
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := loadWeb1(t, files)
 	h := fakehost.New()
 	present(h, "web1", "web2")
 	h.SetFile("web1", "/etc/motd", "hi\n")
@@ -1296,7 +1271,7 @@ func TestGoneThenScopes(t *testing.T) {
 			"web1: note: a pending then of a file step in recipe nginx matches no step and will not run\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := loadFiles(t, files)
+			p := loadWeb1(t, files)
 			if tc.stages != "" {
 				if err := p.Select(project.Selection{Stages: tc.stages}); err != nil {
 					t.Fatal(err)
@@ -1353,7 +1328,7 @@ func TestGoneRecordWithoutChange(t *testing.T) {
 				name = tc.name + " next to a change"
 			}
 			t.Run(name, func(t *testing.T) {
-				p := loadFiles(t, files)
+				p := loadWeb1(t, files)
 				h := fakehost.New()
 				h.SetFile("web1", "/etc/motd", "hi\n")
 				h.SetFile("web1", "/etc/app.conf", "app\n")
@@ -1456,7 +1431,7 @@ func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			all := maps.Clone(files)
 			maps.Copy(all, tc.files)
-			p := loadFiles(t, all)
+			p := loadWeb1(t, all)
 			if err := p.Select(project.Selection{Stages: "web"}); err != nil {
 				t.Fatal(err)
 			}
@@ -1516,8 +1491,7 @@ type records struct {
 
 // spec: Steps; Running a pipeline/Failures
 func TestGoneRecordOfFailedHostStays(t *testing.T) {
-	p := loadFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
+	p := loadWeb1(t, map[string]string{
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n",
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: \"hi\\n\"\n",
 	})
@@ -1542,10 +1516,8 @@ func TestGoneRecordOfFailedHostStays(t *testing.T) {
 
 // spec: Running a pipeline/Apply (Ctrl-C)
 func TestGoneRecordRemovalFails(t *testing.T) {
-	p := loadFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
-		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: \"hi\\n\"\n",
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: \"hi\\n\"\n",
 	})
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/motd", "hi\n")
@@ -1572,9 +1544,7 @@ func TestGoneRecordRemovalFails(t *testing.T) {
 
 // spec: Steps
 func TestPendingThenOfTwoLineSteps(t *testing.T) {
-	p := loadFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+	p := loadWeb1(t, map[string]string{
 		"pipelines/site.yaml": `stages:
   - name: ssh
     hosts: all
