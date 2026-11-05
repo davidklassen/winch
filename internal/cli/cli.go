@@ -23,6 +23,7 @@ import (
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
 	"github.com/davidklassen/winch/internal/secret"
+	"github.com/davidklassen/winch/internal/session"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -404,7 +405,7 @@ func (o *output) sessions(f *flags) (run.Connect, run.Options) {
 func failedCode(failed map[string]error) int {
 	code := exitOK
 	for _, err := range failed {
-		if errors.Is(err, run.ErrUnreachable) {
+		if errors.Is(err, session.ErrUnreachable) {
 			code = worst(code, exitUnreachable)
 		} else {
 			code = worst(code, exitFailed)

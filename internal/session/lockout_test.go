@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -369,6 +370,9 @@ func TestRebootRetry(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.stderr[strings.LastIndex(tt.stderr, "\n")+1:]) {
 				t.Errorf("Reboot = %v, want the failure of ssh", err)
+			}
+			if errors.Is(err, ErrUnreachable) {
+				t.Errorf("Reboot = %v is unreachable, want a failed step", err)
 			}
 			if _, err := os.Stat(failed + ".again"); err == nil {
 				t.Error("ssh started again after the failure")

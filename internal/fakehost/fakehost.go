@@ -428,7 +428,7 @@ func (h *Hosts) Connect(ctx context.Context, host project.Host, want *protocol.D
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if host.Address == "unreachable" || h.down[host.Name] {
-		return nil, run.MarkUnreachable(errors.New("ssh: connect to host " + host.Address + ": Connection refused"))
+		return nil, session.MarkUnreachable(errors.New("ssh: connect to host " + host.Address + ": Connection refused"))
 	}
 	if d := h.dest(host); want != nil && d != *want {
 		return nil, session.DestinationChanged(*want, d)

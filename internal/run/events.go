@@ -101,20 +101,10 @@ func writePlanned(e *Events, host string, stage *project.Stage, steps []Planned)
 			}
 			continue
 		}
-		ev.Step, ev.Module, ev.Status, ev.Action = label(p.Step), p.Step.Module, string(p.Result.Status), string(p.Result.Action)
+		ev.Step, ev.Module = label(p.Step), p.Step.Module
+		ev.result(p.Step, p.Result)
 		if p.Result.Status == module.Change {
-			ev.Link = secret.Printable(p.Result.Link)
-			for _, c := range p.Result.Changes {
-				ev.Changes = append(ev.Changes, secret.PrintableLines(c))
-			}
 			ev.Diff = diffLines(p)
-			shown := p.Step.Shown().Args
-			if v, ok := shown.(module.WithValidate); ok && p.Result.Validates {
-				ev.Validate = secret.PrintableLines(v.ValidateCommand())
-			}
-			if c, ok := shown.(*module.Cmd); ok {
-				ev.Unless = secret.PrintableLines(c.UnlessCommand())
-			}
 		}
 		if p.ThenRuns {
 			ev.Then, ev.ThenPending = secret.PrintableLines(p.Step.Shown().Then), p.PendingThen
