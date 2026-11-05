@@ -1116,6 +1116,14 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 		}
 	}
 	if st.Module == "file" {
+		if !slices.ContainsFunc(argsNode.Pairs, func(p yamlx.Pair) bool { return p.Key == "mode" }) {
+			names, pos := fileSources(st, args.(*module.File), argsNode)
+			for _, name := range names {
+				if r.executable(name) {
+					l.warnings = append(l.warnings, yamlx.Errorf(pos, `source: %s/files/%s is executable, but the step has no mode, so the host file gets 0644; set mode: "0755"`, r.Dir, name))
+				}
+			}
+		}
 		var tmplValues []string
 		for _, t := range r.fileTemplates(st, argsNode) {
 			st.tmplReads = append(st.tmplReads, t.reads...)
