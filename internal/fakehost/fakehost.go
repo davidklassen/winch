@@ -74,8 +74,10 @@ type Hosts struct {
 	OnCheck, OnApply func(host, main string)
 	// OnConnect runs before each connect, and OnExec in each exec.
 	OnConnect, OnExec func(host string)
-	// Batch lists the batch mode of each ConnectorFor call.
-	Batch []bool
+	// Batch lists the batch mode of each ConnectorFor call, and SSHConfig its
+	// SSH config file.
+	Batch     []bool
+	SSHConfig []string
 	// Users holds the login user of the last connect of each host.
 	Users map[string]string
 	// MaxOpen is the highest number of open connections.
@@ -483,11 +485,12 @@ func (h *Hosts) fails(m map[string]bool, host, path string) bool {
 	return m[host] || m[host+" "+path]
 }
 
-// ConnectorFor returns Connect as a run.Connect, records batch, and gives
-// the notes of SetNote to note.
-func (h *Hosts) ConnectorFor(batch bool, note func(run.Note)) run.Connect {
+// ConnectorFor returns Connect as a run.Connect, records sshConfig and batch,
+// and gives the notes of SetNote to note.
+func (h *Hosts) ConnectorFor(sshConfig string, batch bool, note func(run.Note)) run.Connect {
 	h.mu.Lock()
 	h.Batch = append(h.Batch, batch)
+	h.SSHConfig = append(h.SSHConfig, sshConfig)
 	h.note = note
 	h.mu.Unlock()
 	return h.Connector()

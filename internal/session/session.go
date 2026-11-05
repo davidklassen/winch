@@ -46,13 +46,16 @@ func (u unreachable) Unwrap() error { return u.error }
 type Config struct {
 	// Host is the inventory name and the ssh target. An Address that differs
 	// from it becomes the HostName.
-	Host     string
-	Address  string
-	User     string
-	Dir      string
-	Binaries []helperbin.Binary
-	Hello    protocol.Hello
-	Progress *color.Writer
+	Host    string
+	Address string
+	User    string
+	// SSHConfig is empty, or the absolute path of the SSH config file that
+	// ssh reads instead of ~/.ssh/config.
+	SSHConfig string
+	Dir       string
+	Binaries  []helperbin.Binary
+	Hello     protocol.Hello
+	Progress  *color.Writer
 	// Note takes the notes of the helper: facts about the host that need no
 	// fix. With warning, the text is a problem on the host to fix.
 	Note func(text string, warning bool)
@@ -289,9 +292,13 @@ func resolve(ctx context.Context, cfg Config) (resolved, error) {
 // The ssh of a ProxyJump hop gets none of the options, so a jump, the
 // ProxyJump that ssh resolves, becomes a ProxyCommand that passes them on.
 func argv(cfg Config, jump string) []string {
-	args := []string{"-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+	var args []string
+	if cfg.SSHConfig != "" {
+		args = []string{"-F", cfg.SSHConfig}
+	}
+	args = append(args, "-T", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
 		"-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "RemoteCommand=none", "-o", "PermitLocalCommand=no",
-		"-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
+		"-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no")
 	if cfg.Batch {
 		args = append(args, "-o", "BatchMode=yes")
 	}
@@ -319,7 +326,7 @@ func proxyCommand(opts []string, jump string) string {
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 	ssh := "ssh"
 	for _, o := range opts {
-		ssh += " " + quote(o)
+		ssh += " " + quote(double(o))
 	}
 	var cmd string
 	for hop := range strings.SplitSeq(jump, ",") {
@@ -425,6 +432,9 @@ func hint(cfg Config, err error) error {
 		return err
 	}
 	cmd := "ssh"
+	if cfg.SSHConfig != "" {
+		cmd += " -F " + shellWord(cfg.SSHConfig)
+	}
 	if cfg.Address != cfg.Host {
 		cmd += " -o " + shellWord("HostName="+strings.ReplaceAll(cfg.Address, "%", "%%"))
 	}

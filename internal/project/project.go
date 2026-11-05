@@ -27,7 +27,9 @@ import (
 )
 
 type Project struct {
-	Name      string
+	Name string
+	// SSHConfig is empty, or the absolute path of the ssh_config file.
+	SSHConfig string
 	Inventory *Inventory
 	Pipeline  *Pipeline
 	// others are the other pipelines of the project, and othersErr their load
@@ -60,6 +62,7 @@ type Config struct {
 	Inventory    string `yaml:"inventory" line:"default for --inventory" doc:"Default for --inventory. A project with more than one inventory and no default makes every run name its inventory with --inventory."`
 	InventoryPos yamlx.Pos
 	Recipients   []string    `yaml:"recipients" line:"age public keys" doc:"Age public keys. winch encrypts each secret for all of them. winch secret init adds a key."`
+	SSHConfig    string      `yaml:"ssh_config" line:"SSH config file for ssh -F" doc:"Path of an SSH config file, relative to the project directory. winch passes it to every ssh with -F, and ssh reads it instead of ~/.ssh/config. The file can have the line Include ~/.ssh/config. Run winch doc remote."`
 	Vars         *yamlx.Node `yaml:"vars" type:"map" line:"shared variable defaults" doc:"Shared variable defaults, by name. A default can be a !secret, an !expr, or a !tpl. Run winch doc variables."`
 	Inventories  *yamlx.Node `yaml:"inventories" type:"map" line:"inventories kept in winch.yaml" doc:"Inventories kept in winch.yaml, by name. The value of each is the content of an inventory file, as in inventories/<name>.yaml."`
 	Pipelines    *yamlx.Node `yaml:"pipelines" type:"map" line:"pipelines kept in winch.yaml" doc:"Pipelines kept in winch.yaml, by name. The value of each is the content of a pipeline file, as in pipelines/<name>.yaml."`
@@ -285,7 +288,13 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 	for _, v := range sets {
 		setNames[v.name] = true
 	}
-	return &Project{Name: cfg.Name, Inventory: invs[0], Pipeline: pl, others: others, othersErr: othersErr, lost: lost, Warnings: warnings, vars: l.order, defaults: l.vars, filter: keys.Filter, secrets: len(l.sealed) > 0,
+	sshConfig := cfg.SSHConfig
+	if sshConfig != "" && !filepath.IsAbs(sshConfig) {
+		if sshConfig, err = filepath.Abs(projectPath(dir, sshConfig)); err != nil {
+			return nil, fmt.Errorf("ssh_config: %w", err)
+		}
+	}
+	return &Project{Name: cfg.Name, SSHConfig: sshConfig, Inventory: invs[0], Pipeline: pl, others: others, othersErr: othersErr, lost: lost, Warnings: warnings, vars: l.order, defaults: l.vars, filter: keys.Filter, secrets: len(l.sealed) > 0,
 		set: setNames, peers: peerVars(invs[0], l.decls), sums: sums, setFlags: set}, nil
 }
 

@@ -57,8 +57,8 @@ func main() {
 		Asking:   &asking,
 		ColorOut: cli.UseColor(cli.IsTerminal(os.Stdout), os.Getenv),
 		ColorErr: cli.UseColor(cli.IsTerminal(os.Stderr), os.Getenv),
-		Connect: func(batch bool, note func(run.Note)) run.Connect {
-			return connect(sessions, stderr, display, batch, note)
+		Connect: func(sshConfig string, batch bool, note func(run.Note)) run.Connect {
+			return connect(sessions, stderr, display, sshConfig, batch, note)
 		},
 		Progress:  display,
 		Home:      home,
@@ -75,7 +75,7 @@ func main() {
 // connect opens sessions that live until sessions ends, not until the
 // context of the run ends: a session finishes its running step after the
 // first Ctrl-C.
-func connect(sessions context.Context, stderr *color.Writer, display *progress.Display, batch bool, note func(run.Note)) run.Connect {
+func connect(sessions context.Context, stderr *color.Writer, display *progress.Display, sshConfig string, batch bool, note func(run.Note)) run.Connect {
 	hello := protocol.Hello{Run: rand.Text()[:8], Started: time.Now().UTC()}
 	if u, err := user.Current(); err == nil {
 		hello.User = u.Username
@@ -83,7 +83,7 @@ func connect(sessions context.Context, stderr *color.Writer, display *progress.D
 	hello.Machine, _ = os.Hostname()
 	bins := helperbin.Binaries()
 	resolve := func(ctx context.Context, h project.Host) (run.Route, error) {
-		hostName, port, jump, err := session.Resolve(ctx, session.Config{Host: h.Name, Address: h.Address, User: h.User, Batch: batch})
+		hostName, port, jump, err := session.Resolve(ctx, session.Config{Host: h.Name, Address: h.Address, User: h.User, SSHConfig: sshConfig, Batch: batch})
 		if err != nil {
 			return run.Route{}, err
 		}
@@ -93,16 +93,17 @@ func connect(sessions context.Context, stderr *color.Writer, display *progress.D
 		hello := hello
 		hello.Project = proj
 		s, err := session.Open(sessions, session.Config{
-			Host:     h.Name,
-			Address:  h.Address,
-			User:     h.User,
-			Binaries: bins,
-			Hello:    hello,
-			Progress: stderr,
-			Note:     func(text string, warning bool) { note(run.Note{Host: h.Name, Text: text, Warning: warning}) },
-			Hold:     display.Hold,
-			Batch:    batch,
-			Want:     want,
+			Host:      h.Name,
+			Address:   h.Address,
+			User:      h.User,
+			SSHConfig: sshConfig,
+			Binaries:  bins,
+			Hello:     hello,
+			Progress:  stderr,
+			Note:      func(text string, warning bool) { note(run.Note{Host: h.Name, Text: text, Warning: warning}) },
+			Hold:      display.Hold,
+			Batch:     batch,
+			Want:      want,
 		})
 		if err != nil {
 			return nil, err
