@@ -1130,7 +1130,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 }
 
 // pathWarning returns a warning for the path of a step, or "": for a file or
-// a link that cron or sudo skip because its name has a ".", and for a download
+// a link that cron or sudo skip because of its name, and for a download
 // or a cmd creates path in a directory that the host empties.
 func pathWarning(m module.Module) string {
 	var p string
@@ -1145,17 +1145,29 @@ func pathWarning(m module.Module) string {
 	case *module.Cmd:
 		return tempWarning(m.Creates, "runs")
 	}
-	dir, name := path.Split(p)
-	switch {
-	case absent || !strings.Contains(name, "."):
-		return ""
-	case dir == "/etc/cron.d/":
-		return `cron skips a file in /etc/cron.d whose name has a "."`
-	case dir == "/etc/sudoers.d/":
-		return `sudo skips a file in /etc/sudoers.d whose name has a "."`
-	default:
+	if absent {
 		return ""
 	}
+	dir, name := path.Split(p)
+	switch dir {
+	case "/etc/cron.d/", "/etc/cron.hourly/", "/etc/cron.daily/", "/etc/cron.weekly/", "/etc/cron.monthly/":
+		if strings.ContainsFunc(name, notRunPartsChar) {
+			return "cron skips a file in " + path.Dir(p) + ` whose name has a character other than letters, digits, "_", and "-"`
+		}
+	case "/etc/sudoers.d/":
+		if strings.Contains(name, ".") || strings.HasSuffix(name, "~") {
+			return `sudo skips a file in /etc/sudoers.d whose name has a "." or ends in "~"`
+		}
+	}
+	return ""
+}
+
+func notRunPartsChar(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		return false
+	}
+	return true
 }
 
 // tempWarning returns a warning for a path under a directory that the host
