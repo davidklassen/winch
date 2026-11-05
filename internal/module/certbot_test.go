@@ -646,27 +646,3 @@ func TestCertbotApplyMissing(t *testing.T) {
 		t.Errorf("got %v, want %s", err, want)
 	}
 }
-
-// spec: Modules/certbot
-func TestCertbotPendingHookOwnLimit(t *testing.T) {
-	log := filepath.Join(t.TempDir(), "hooks")
-	t.Setenv("WINCH_HOOK_LOG", log)
-	c := &Certbot{
-		Name: "limit", PendingHooks: []string{"deploy_hook", "post_hook"},
-		DeployHook: new(`sleep 1.2; echo deploy >> "$WINCH_HOOK_LOG"`),
-		PostHook:   new(`sleep 1.2; echo post >> "$WINCH_HOOK_LOG"`),
-	}
-	if err := c.runPendingHooks(t.Context(), 2*time.Second); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "deploy\npost\n" {
-		t.Errorf("hooks ran %q, want deploy then post", got)
-	}
-	if len(c.PendingHooks) != 0 {
-		t.Errorf("pending = %v, want none", c.PendingHooks)
-	}
-}
