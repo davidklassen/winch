@@ -32,6 +32,9 @@ const (
 // stock fetches in a session.
 const FetchedDir = "apt/fetched"
 
+// ListsDir is the directory in the state directory of winch's package index.
+const ListsDir = "apt/lists"
+
 // hostContent is the content of a file step that comes from the host: a
 // file for copy_from, or the package archive for stock.
 type hostContent struct {

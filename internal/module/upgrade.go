@@ -3,7 +3,6 @@ package module
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"path"
 	"slices"
@@ -37,13 +36,11 @@ func (u *Upgrade) args() []string {
 
 // winchLists is winch's package index. Its refresh leaves apt's own index as
 // it is.
-const winchLists = aptDir + "/lists"
+const winchLists = "/var/lib/winch/" + ListsDir
 
 // winchIndex are the apt flags that read winch's index. Without binary
 // caches, apt writes no cache of that index into /var/cache/apt. apt fetches
-// as root: the user _apt cannot enter the state directory, and apt gives the
-// directories of the index to its sandbox user, which the check of the state
-// directory rejects.
+// as root: the user _apt cannot enter the state directory.
 var winchIndex = []string{"-o", "Dir::State::Lists=" + winchLists, "-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=", "-o", "APT::Sandbox::User=root"}
 
 // plannedIndex are the apt flags that read winch's index of the planned
@@ -72,46 +69,14 @@ func refreshWinchIndex(ctx context.Context, st *State) ([]string, error) {
 	if err := os.WriteFile(conf, []byte(noUpdateHooks), 0o600); err != nil {
 		return nil, fmt.Errorf("create the package index: %w", err)
 	}
-	_, updateErr := aptGet(ctx, slices.Concat([]string{"update", "-q", "--error-on=any", "-c", conf}, index)...)
-	// A failed refresh keeps the lists of the sources that apt fetched.
-	if err := copyLinks(winchLists); err != nil {
-		return nil, fmt.Errorf("copy the package index: %w", err)
-	}
-	if updateErr != nil {
+	if _, err := aptGet(ctx, slices.Concat([]string{"update", "-q", "--error-on=any", "-c", conf}, index)...); err != nil {
 		if st.Sources {
-			return nil, fmt.Errorf("refresh the index of the sources that the run will have: %w", updateErr)
+			return nil, fmt.Errorf("refresh the index of the sources that the run will have: %w", err)
 		}
-		return nil, updateErr
+		return nil, err
 	}
 	st.Refreshed = true
 	return index, nil
-}
-
-// copyLinks replaces each symbolic link in dir with a copy of its file. apt
-// 2.7 links the index of a file: source, and the check of the state
-// directory accepts only regular files.
-func copyLinks(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if e.Type()&fs.ModeSymlink == 0 {
-			continue
-		}
-		p := path.Join(dir, e.Name())
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		if err := os.Remove(p); err != nil {
-			return err
-		}
-		if err := os.WriteFile(p, b, 0o644); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (u *Upgrade) Check(ctx context.Context, st *State, say Say) (Result, error) {
