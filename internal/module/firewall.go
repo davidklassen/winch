@@ -21,9 +21,10 @@ type Firewall struct {
 	Allow  []Rule `yaml:"allow" json:"allow,omitempty" line:"accepted traffic; the host drops the rest" doc:"Accepted traffic; the host drops the rest. It always accepts established and related traffic, loopback, ICMP echo requests, the ICMPv6 types that IPv6 needs, and DHCP replies. It drops invalid packets."`
 	Absent bool   `yaml:"absent" json:"absent,omitempty" line:"remove the table, its file, and its unit" doc:"Remove the table, its file, and its unit."`
 	// What the check found to do.
-	data                                      []byte
-	writeFile, writeUnit, writeDropIn, enable bool
-	load, stop, reload, deleteTable           bool
+	data                            []byte
+	units                           []repoFile
+	writeFile, enable               bool
+	load, stop, reload, deleteTable bool
 }
 
 func (*Firewall) Noun() string { return "a firewall step" }
@@ -326,7 +327,7 @@ func loadedTable(ctx context.Context) (exists bool, comment string, err error) {
 	if _, err := exec.LookPath("nft"); err != nil {
 		return false, "", nil
 	}
-	out, err := run(ctx, nil, "nft", "-j", "list", "tables", "inet")
+	out, err := run(ctx, "nft", "-j", "list", "tables", "inet")
 	if err != nil {
 		return false, "", err
 	}
@@ -374,25 +375,21 @@ func (f *Firewall) Check(ctx context.Context, st *State, say Say) (Result, error
 	}
 	changes = append(changes, lines...)
 	f.writeFile = changes != nil
-	unit, lines, err := checkRepoFile(firewallUnitP, []byte(firewallUnitText))
-	if err != nil {
-		return Result{}, err
+	f.units = nil
+	for _, u := range [][2]string{{firewallUnitP, firewallUnitText}, {firewallDropIn, firewallDropInText}} {
+		file, lines, err := checkRepoFile(u[0], []byte(u[1]))
+		if err != nil {
+			return Result{}, err
+		}
+		if file.fi != nil && !bytes.Equal(file.old, file.content) {
+			lines = append([]string{"rewrite " + file.path}, lines...)
+		}
+		if lines != nil {
+			f.units = append(f.units, file)
+		}
+		changes = append(changes, lines...)
 	}
-	if unit.fi != nil && string(unit.old) != firewallUnitText {
-		lines = append([]string{"rewrite " + firewallUnitP}, lines...)
-	}
-	f.writeUnit = lines != nil
-	changes = append(changes, lines...)
-	dropIn, lines, err := checkRepoFile(firewallDropIn, []byte(firewallDropInText))
-	if err != nil {
-		return Result{}, err
-	}
-	if dropIn.fi != nil && string(dropIn.old) != firewallDropInText {
-		lines = append([]string{"rewrite " + firewallDropIn}, lines...)
-	}
-	f.writeDropIn = lines != nil
-	changes = append(changes, lines...)
-	if f.writeUnit || f.writeDropIn {
+	if f.units != nil {
 		changes = append(changes, "daemon-reload")
 	}
 	if _, err := os.Lstat(firewallWants); errors.Is(err, fs.ErrNotExist) {
@@ -439,7 +436,7 @@ func droppingTables(ctx context.Context) ([]string, error) {
 	if _, err := exec.LookPath("nft"); err != nil {
 		return nil, nil
 	}
-	out, err := run(ctx, nil, "nft", "-j", "list", "ruleset")
+	out, err := run(ctx, "nft", "-j", "list", "ruleset")
 	if err != nil {
 		return nil, err
 	}
@@ -527,7 +524,7 @@ func tableStale(ctx context.Context, id string) (bool, error) {
 
 // listTable returns the listing that nft makes of the table inet winch.
 func listTable(ctx context.Context) (string, error) {
-	return run(ctx, nil, "nft", "list", "table", "inet", "winch")
+	return run(ctx, "nft", "list", "table", "inet", "winch")
 }
 
 func (f *Firewall) checkAbsent(ctx context.Context) (Result, error) {
@@ -584,24 +581,19 @@ func (f *Firewall) Apply(ctx context.Context, _ Say) error {
 			return err
 		}
 	}
-	if f.writeUnit {
-		if err := writeRoot(firewallUnitP, []byte(firewallUnitText), 0, 0, 0o644); err != nil {
-			return err
-		}
-	}
-	if f.writeDropIn {
-		if err := writeRoot(firewallDropIn, []byte(firewallDropInText), 0, 0, 0o644); err != nil {
+	for _, u := range f.units {
+		if err := writeRoot(u.path, u.content, 0, 0, 0o644); err != nil {
 			return err
 		}
 	}
 	// systemctl enable reloads the units itself.
-	if (f.writeUnit || f.writeDropIn) && !f.enable {
-		if _, err := run(ctx, nil, "systemctl", "daemon-reload"); err != nil {
+	if f.units != nil && !f.enable {
+		if _, err := run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
 	if f.enable {
-		if _, err := run(ctx, nil, "systemctl", "enable", "--", FirewallUnit); err != nil {
+		if _, err := run(ctx, "systemctl", "enable", "--", FirewallUnit); err != nil {
 			return err
 		}
 	}
@@ -613,7 +605,7 @@ func (f *Firewall) Apply(ctx context.Context, _ Say) error {
 
 func (f *Firewall) applyAbsent(ctx context.Context) error {
 	if f.stop {
-		if _, err := run(ctx, nil, "systemctl", "stop", "--", FirewallUnit); err != nil {
+		if _, err := run(ctx, "systemctl", "stop", "--", FirewallUnit); err != nil {
 			return err
 		}
 	}
@@ -623,7 +615,7 @@ func (f *Firewall) applyAbsent(ctx context.Context) error {
 		}
 	}
 	if f.reload {
-		if _, err := run(ctx, nil, "systemctl", "daemon-reload"); err != nil {
+		if _, err := run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
@@ -653,7 +645,7 @@ func loadFirewall(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := run(ctx, nil, "nft", "-f", firewallFile); err != nil {
+	if _, err := run(ctx, "nft", "-f", firewallFile); err != nil {
 		return err
 	}
 	out, err := listTable(ctx)

@@ -186,7 +186,12 @@ func (d *Download) check() (Result, error) {
 	if !fi.Mode().IsRegular() {
 		return Result{}, fmt.Errorf("%s is %s, not a file", d.Path, kind(fi))
 	}
-	same, err := d.same(dir, name, fi)
+	r, err := openSame(dir, name, fi)
+	if err != nil {
+		return Result{}, err
+	}
+	defer r.Close()
+	same, err := d.same(r)
 	if err != nil {
 		return Result{}, err
 	}
@@ -268,12 +273,7 @@ func (d *Download) Record() string {
 }
 
 // same reports whether the file name in dir has the step's checksum.
-func (d *Download) same(dir *os.Root, name string, fi fs.FileInfo) (bool, error) {
-	r, err := openSame(dir, name, fi)
-	if err != nil {
-		return false, err
-	}
-	defer r.Close()
+func (d *Download) same(r io.Reader) (bool, error) {
 	sum, err := fileSHA(r)
 	return sum == d.SHA256, err
 }
@@ -301,16 +301,16 @@ func (d *Download) Apply(ctx context.Context, say Say) error {
 		return err
 	}
 	if exists && fi.Mode().IsRegular() {
-		same, err := d.same(dir, name, fi)
+		r, err := openSame(dir, name, fi)
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+		same, err := d.same(r)
 		if err != nil {
 			return err
 		}
 		if same {
-			r, err := openSame(dir, name, fi)
-			if err != nil {
-				return err
-			}
-			defer r.Close()
 			return pathError("set the owner, group, and mode of", d.Path, setAttrs(r, uid, gid, mode))
 		}
 	}
@@ -748,9 +748,7 @@ func (u unpacker) file(name string, r io.Reader, mode uint32) error {
 	if err := u.parents(name); err != nil {
 		return err
 	}
-	err := writeFile(u.root, name, r, u.uid, u.gid, mode, func(tmp string) error {
-		return u.root.Rename(tmp, name)
-	})
+	err := writeFile(u.root, name, r, u.uid, u.gid, mode, nil)
 	return pathError("write", path.Join(u.path, name), err)
 }
 

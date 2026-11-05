@@ -162,6 +162,6 @@ func (a accounts) primaryUsers(gid uint32) []string {
 }
 
 func (g *Group) Apply(ctx context.Context, _ Say) error {
-	_, err := run(ctx, nil, g.todo[0], g.todo[1:]...)
+	_, err := run(ctx, g.todo[0], g.todo[1:]...)
 	return err
 }

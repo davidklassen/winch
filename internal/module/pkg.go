@@ -182,7 +182,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 	}
 	// apt-mark showauto with no names lists every automatic package.
 	if len(inst) > 0 {
-		out, err := run(ctx, nil, "apt-mark", slices.Concat([]string{"showauto"}, noBinaryCache, inst)...)
+		out, err := run(ctx, "apt-mark", slices.Concat([]string{"showauto"}, noBinaryCache, inst)...)
 		if err != nil {
 			return Result{}, err
 		}
@@ -279,7 +279,7 @@ func showpkg(ctx context.Context, index, names []string) (providers map[string][
 	if len(names) == 0 {
 		return nil, nil, nil, nil
 	}
-	out, err := run(ctx, nil, "apt-cache", slices.Concat([]string{"showpkg"}, index, names)...)
+	out, err := run(ctx, "apt-cache", slices.Concat([]string{"showpkg"}, index, names)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -382,7 +382,7 @@ func candidateStanzas(ctx context.Context, index, names []string) (string, error
 	if len(show) == 0 {
 		return "", nil
 	}
-	return run(ctx, nil, "apt-cache", slices.Concat([]string{"show", "--no-all-versions"}, index, show)...)
+	return run(ctx, "apt-cache", slices.Concat([]string{"show", "--no-all-versions"}, index, show)...)
 }
 
 // writeStatus writes a copy of the dpkg status file with the candidates
@@ -567,7 +567,7 @@ func (p *Pkg) Apply(ctx context.Context, say Say) error {
 		if err := waitLocks(ctx, dpkgLocks, say.Progress); err != nil {
 			return err
 		}
-		if _, err := run(ctx, nil, "apt-mark", append([]string{"manual", "-o", aptLock}, p.auto...)...); err != nil {
+		if _, err := run(ctx, "apt-mark", append([]string{"manual", "-o", aptLock}, p.auto...)...); err != nil {
 			return err
 		}
 	}
@@ -672,7 +672,7 @@ const indexLock = "/var/lib/apt/lists/lock"
 // and dpkg while it reads, so it does not see the half-done packages of a
 // running apt.
 func readDpkg(ctx context.Context, progress func(string)) (map[string]dpkgPkg, error) {
-	native, err := run(ctx, nil, "dpkg", "--print-architecture")
+	native, err := run(ctx, "dpkg", "--print-architecture")
 	if err != nil {
 		return nil, err
 	}
@@ -693,7 +693,7 @@ func readDpkg(ctx context.Context, progress func(string)) (map[string]dpkgPkg, e
 			return nil, errors.New("dpkg was interrupted; run dpkg --configure -a")
 		}
 	}
-	out, err := run(ctx, nil, "dpkg-query", "-W", "-f=${Package}\t${Architecture}\t${db:Status-Abbrev}\t${Version}\n", "*")
+	out, err := run(ctx, "dpkg-query", "-W", "-f=${Package}\t${Architecture}\t${db:Status-Abbrev}\t${Version}\n", "*")
 	if err != nil {
 		return nil, err
 	}

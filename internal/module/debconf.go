@@ -125,7 +125,7 @@ func (d *Debconf) checkChoices(choices []string) error {
 
 func (d *Debconf) sayInstalled(ctx context.Context, say Say) error {
 	// dpkg-query fails for a package that dpkg does not know.
-	status, err := run(ctx, nil, "dpkg-query", "-W", "-f=${db:Status-Status}\n", d.Package)
+	status, err := run(ctx, "dpkg-query", "-W", "-f=${db:Status-Status}\n", d.Package)
 	if err != nil && !errors.As(err, new(*exec.ExitError)) {
 		return err
 	}

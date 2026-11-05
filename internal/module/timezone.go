@@ -16,6 +16,8 @@ import (
 
 type Timezone struct {
 	Name string `yaml:"name,required" json:"name" line:"zone name, such as Europe/Berlin" doc:"Zone name, such as Europe/Berlin."`
+	// writeFile is set when the check found /etc/timezone with another name.
+	writeFile bool
 }
 
 func (*Timezone) Noun() string { return "a timezone step" }
@@ -53,6 +55,7 @@ func (z *Timezone) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	case cur == "":
 		old = "unknown"
 	}
+	z.writeFile = false
 	var changes []string
 	switch {
 	case missing:
@@ -69,6 +72,7 @@ func (z *Timezone) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		if err := noFlagsAt(TimezoneFile); err != nil {
 			return Result{}, err
 		}
+		z.writeFile = true
 		changes = append(changes, TimezoneFile+" "+strings.TrimSpace(string(data))+" → "+z.Name)
 	}
 	if len(changes) == 0 {
@@ -139,16 +143,10 @@ func (z *Timezone) Apply(ctx context.Context, _ Say) error {
 	if missing {
 		return unknownZone(zoneinfo, z.Name)
 	}
-	if _, err := run(ctx, nil, "timedatectl", "set-timezone", "--", z.Name); err != nil {
+	if _, err := run(ctx, "timedatectl", "set-timezone", "--", z.Name); err != nil {
 		return err
 	}
-	data, err := os.ReadFile(TimezoneFile)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return nil
-	case err != nil:
-		return err
-	case strings.TrimSpace(string(data)) == z.Name:
+	if !z.writeFile {
 		return nil
 	}
 	return writeRoot(TimezoneFile, []byte(z.Name+"\n"), 0, 0, 0o644)

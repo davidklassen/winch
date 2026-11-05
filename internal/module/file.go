@@ -250,19 +250,14 @@ func attrs(owner, group yamlx.NameOrID, mode, defaultMode string) (string, strin
 }
 
 // ids returns the IDs of a user and a group that must exist.
-func ids(owner, group string) (uid, gid int, err error) {
-	uid, ok, err := lookupUser(owner)
-	if err != nil {
+func ids(owner, group string) (int, int, error) {
+	uid, gid, err := wantIDs(owner, group)
+	switch {
+	case err != nil:
 		return 0, 0, err
-	}
-	if !ok {
+	case uid == -1:
 		return 0, 0, fmt.Errorf("user %s does not exist", owner)
-	}
-	gid, ok, err = lookupGroup(group)
-	if err != nil {
-		return 0, 0, err
-	}
-	if !ok {
+	case gid == -1:
 		return 0, 0, fmt.Errorf("group %s does not exist", group)
 	}
 	return uid, gid, nil
@@ -950,7 +945,7 @@ func ParentChange(dir string) string {
 }
 
 // writeFile writes content to a temporary file in dir, and calls put to move
-// it to name.
+// it to name. A nil put renames it to name.
 func writeFile(dir *os.Root, name string, content io.Reader, uid, gid int, mode uint32, put func(tmp string) error) error {
 	tmpName := ".winch-" + rand.Text()
 	tmp, err := dir.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -973,6 +968,9 @@ func writeFile(dir *os.Root, name string, content io.Reader, uid, gid int, mode 
 	}
 	if err != nil {
 		return err
+	}
+	if put == nil {
+		return dir.Rename(tmpName, name)
 	}
 	return put(tmpName)
 }

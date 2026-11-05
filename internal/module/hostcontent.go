@@ -225,9 +225,11 @@ func stockSource(ctx context.Context, st *State, p string) (*hostContent, error)
 	if err != nil {
 		return nil, err
 	}
-	deb, err := upgradedFile(ctx, st, pkg, p, false)
+	var deb *debFile
 	if pkg == "" {
 		deb, err = shippedFile(ctx, st, p)
+	} else {
+		deb, err = upgradedFile(ctx, st, pkg, p, false)
 	}
 	if h.afterRefresh(err) {
 		return h, nil
@@ -251,7 +253,7 @@ func stockSource(ctx context.Context, st *State, p string) (*hostContent, error)
 		h.missing = fmt.Errorf("no installed package ships %s; install its package in an earlier pkg step, or use copy_from for a file that a package script makes", p)
 		return h, nil
 	}
-	out, err := run(ctx, nil, "dpkg-query", "-W", "-f=${Version}\t${Architecture}\t${db:Status-Abbrev}", pkg)
+	out, err := run(ctx, "dpkg-query", "-W", "-f=${Version}\t${Architecture}\t${db:Status-Abbrev}", pkg)
 	if err != nil {
 		return nil, err
 	}
@@ -340,16 +342,13 @@ func (st *State) packages() map[string]PlannedPkg {
 // nil when no such step changes pkg. With conffiles, a conffile that the host
 // changed or removed stays, as dpkg keeps it.
 func upgradedFile(ctx context.Context, st *State, pkg, p string, conffiles bool) (*debFile, error) {
-	if pkg == "" {
-		return nil, nil
-	}
 	name, _, _ := strings.Cut(pkg, ":")
 	pp, ok := st.packages()[name]
-	if pkg == "" || !ok {
+	if !ok {
 		return nil, nil
 	}
 	// A half-done package keeps its version.
-	installed, err := run(ctx, nil, "dpkg-query", "-W", "-f=${Version}", pkg)
+	installed, err := run(ctx, "dpkg-query", "-W", "-f=${Version}", pkg)
 	if err != nil || installed == pp.Version {
 		return nil, err
 	}
@@ -406,7 +405,7 @@ func fetchFile(ctx context.Context, pkg string, pp PlannedPkg, p string) (*debFi
 // keptConffile reports whether p is a conffile of the installed package pkg
 // that the host changed or removed.
 func keptConffile(ctx context.Context, pkg, p string) (bool, error) {
-	out, err := run(ctx, nil, "dpkg-query", "-W", "-f=${Conffiles}", pkg)
+	out, err := run(ctx, "dpkg-query", "-W", "-f=${Conffiles}", pkg)
 	if err != nil {
 		return false, err
 	}

@@ -422,6 +422,10 @@ func TestTouches(t *testing.T) {
 		want []Touch
 	}{
 		{&File{Path: "/etc/a"}, []Touch{{"/etc/a", true}}},
+		{&File{Path: "/etc/a", Absent: true}, []Touch{{"/etc/a", true}}},
+		{&Cmd{Command: "x", Creates: "/etc/a"}, nil},
+		{&Download{Path: "/usr/local/bin/x"}, []Touch{{"/usr/local/bin/x", true}}},
+		{&Repo{Name: "docker", Key: "https://example.com/key"}, []Touch{{"/etc/apt/sources.list.d/docker.sources", true}, {"/etc/apt/keyrings/docker.asc", true}}},
 		{d, []Touch{{"/etc/sudoers.d", false}, {"/etc/sudoers.d/90-cloud-init-users", true}}},
 		{&Dir{Path: "/srv/x", Absent: true}, []Touch{{"/srv/x", true}}},
 		{&Dir{Path: "/home", Recurse: true}, []Touch{{"/home", true}}},

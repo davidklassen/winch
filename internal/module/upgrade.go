@@ -41,7 +41,7 @@ const winchLists = "/var/lib/winch/" + ListsDir
 // winchIndex are the apt flags that read winch's index. Without binary
 // caches, apt writes no cache of that index into /var/cache/apt. apt fetches
 // as root: the user _apt cannot enter the state directory.
-var winchIndex = []string{"-o", "Dir::State::Lists=" + winchLists, "-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=", "-o", "APT::Sandbox::User=root"}
+var winchIndex = slices.Concat([]string{"-o", "Dir::State::Lists=" + winchLists}, noBinaryCache, []string{"-o", "APT::Sandbox::User=root"})
 
 // plannedIndex are the apt flags that read winch's index of the planned
 // sources. The refresh keeps the lists of the sources that the run changes,

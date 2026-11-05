@@ -109,7 +109,7 @@ func (u *Unit) Check(ctx context.Context, st *State, say Say) (Result, error) {
 		if strings.Contains(u.Name, "@") {
 			return res, nil
 		}
-		out, err := run(ctx, nil, "systemctl", "show", "--property=NeedDaemonReload", "--value", "--", u.Name)
+		out, err := run(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", "--", u.Name)
 		if err != nil {
 			return Result{}, err
 		}
@@ -126,6 +126,6 @@ func (u *Unit) Apply(ctx context.Context, say Say) error {
 	if err := u.File().Apply(ctx, say); err != nil {
 		return err
 	}
-	_, err := run(ctx, nil, "systemctl", "daemon-reload")
+	_, err := run(ctx, "systemctl", "daemon-reload")
 	return err
 }

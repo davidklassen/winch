@@ -89,15 +89,8 @@ func (u *User) Validate() error {
 	if err := checkID("uid", u.UID); err != nil {
 		return err
 	}
-	switch {
-	case numberRe.MatchString(string(u.Group)):
-		if err := checkID("group", yamlx.ID(u.Group)); err != nil {
-			return err
-		}
-	case u.Group != "":
-		if err := checkAccountName("group", "group", string(u.Group)); err != nil {
-			return err
-		}
+	if err := checkOwner("group", u.Group); err != nil {
+		return err
 	}
 	if u.Home != "" {
 		if err := checkAbs("home", u.Home); err != nil {
@@ -784,9 +777,9 @@ func (u *User) ownGroup(a accounts, gid uint32, group, owner string) bool {
 // nothing on the host.
 func sshdTest(ctx context.Context, args ...string) (string, error) {
 	if _, err := os.Stat("/run/sshd"); !errors.Is(err, fs.ErrNotExist) {
-		return run(ctx, nil, "/usr/sbin/sshd", args...)
+		return run(ctx, "/usr/sbin/sshd", args...)
 	}
-	out, err := run(ctx, nil, "unshare", append([]string{"--mount", "--propagation=private", "sh", "-c", `mount -t tmpfs -o mode=0755 winch /run && mkdir /run/sshd && exec /usr/sbin/sshd "$@"`, "sh"}, args...)...)
+	out, err := run(ctx, "unshare", append([]string{"--mount", "--propagation=private", "sh", "-c", `mount -t tmpfs -o mode=0755 winch /run && mkdir /run/sshd && exec /usr/sbin/sshd "$@"`, "sh"}, args...)...)
 	if err != nil {
 		return out, fmt.Errorf("sshd %s without /run/sshd: %w", args[0], err)
 	}
@@ -933,7 +926,7 @@ func (u *User) Apply(ctx context.Context, _ Say) error {
 		return fmt.Errorf("user %s does not exist; a user step with only add_groups does not create it", u.Name)
 	}
 	if u.account != nil {
-		if _, err := run(ctx, nil, u.account[0], u.account[1:]...); err != nil {
+		if _, err := run(ctx, u.account[0], u.account[1:]...); err != nil {
 			return err
 		}
 	}
@@ -1010,8 +1003,6 @@ func (u *User) writeKeys(e passwdEntry) error {
 			return err
 		}
 	}
-	err = writeFile(dir, "authorized_keys", bytes.NewReader(u.keyText()), int(e.uid), int(e.gid), 0o600, func(tmp string) error {
-		return dir.Rename(tmp, "authorized_keys")
-	})
+	err = writeFile(dir, "authorized_keys", bytes.NewReader(u.keyText()), int(e.uid), int(e.gid), 0o600, nil)
 	return pathError("write", keys, err)
 }
