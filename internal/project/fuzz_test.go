@@ -100,7 +100,7 @@ func FuzzCompile(f *testing.F) {
 		if loop {
 			sc = scope{reads: &[]varRead{}, args: true}
 		} else {
-			sc = scope{reads: &[]varRead{}, noItem: "a default cannot use item", sealed: true, noMatch: "a default cannot use match()"}
+			sc = scope{reads: &[]varRead{}, noItem: "a default cannot use item", inDefault: true}
 		}
 		tag := "!expr"
 		if tpl {

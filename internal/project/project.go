@@ -449,7 +449,11 @@ func (l *loader) noInventory() error {
 // inventories that loaded. When all is false, an inventory without hosts is an
 // error; winch validate passes a new project that has no hosts yet.
 func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setValue) ([]*Inventory, error) {
-	if name := cmp.Or(flag, cfg.Inventory, l.layout.only()); name != "" {
+	var only string
+	if len(l.layout.inventories) == 1 {
+		only = l.layout.inventories[0].name
+	}
+	if name := cmp.Or(flag, cfg.Inventory, only); name != "" {
 		p, err := l.layout.inventory(name)
 		if err != nil && flag == "" {
 			err = yamlx.Errorf(cfg.InventoryPos, "%s", err)
@@ -649,12 +653,38 @@ func parse(dir, file string) (*yamlx.Node, error) {
 	return yamlx.Parse(file, data)
 }
 
-// projectPath returns the path of file, which is absolute or relative to dir.
+// projectPath returns the path of file, which is relative to dir.
 func projectPath(dir, file string) string {
-	if filepath.IsAbs(file) {
-		return file
-	}
 	return filepath.Join(dir, file)
+}
+
+// readProjectFile returns the path of file after links, and its content.
+func readProjectFile(dir, file string) (string, []byte, error) {
+	real, err := filepath.EvalSymlinks(projectPath(dir, file))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil, notFound(file)
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	data, err := os.ReadFile(real)
+	if err != nil {
+		return "", nil, fmt.Errorf("read %s: %w", file, err)
+	}
+	return real, data, nil
+}
+
+func projectFiles(dir string) (invs, pipelines, recipes []string, err error) {
+	if invs, err = list(dir, "inventories"); err != nil {
+		return nil, nil, nil, err
+	}
+	if pipelines, err = list(dir, "pipelines"); err != nil {
+		return nil, nil, nil, err
+	}
+	if recipes, err = recipeFiles(dir); err != nil {
+		return nil, nil, nil, err
+	}
+	return invs, pipelines, recipes, nil
 }
 
 type notFound string
@@ -1059,24 +1089,11 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 			return Step{}, yamlx.Errorf(p.Value.Pos, "a step in a stage cannot use %s; use it in a recipe", p.Key)
 		}
 	}
-	if f, ok := args.(*module.File); ok {
-		var err error
-		if st.tmpl, err = r.content(f, st.loop != nil); err != nil {
-			return Step{}, err
-		}
+	warnings, err := st.fileData(args)
+	if err != nil {
+		return Step{}, err
 	}
-	if u, ok := args.(*module.Unit); ok {
-		if err := r.unitContent(u); err != nil {
-			return Step{}, err
-		}
-	}
-	if k, ok := args.(*module.Repo); ok {
-		warnings, err := r.key(k)
-		if err != nil {
-			return Step{}, err
-		}
-		l.warnings = append(l.warnings, warnings...)
-	}
+	l.warnings = append(l.warnings, warnings...)
 	if d, ok := args.(*module.Dir); ok {
 		if w := d.ModeWarning(); w != "" {
 			l.warnings = append(l.warnings, yamlx.Errorf(d.ModePos, "mode: %s", w))
@@ -1635,9 +1652,6 @@ func (st Step) eval(e *Env) ([]Step, error) {
 			ie = e.with(items)
 		}
 		s, args, err := st.instance(ie, yamlx.Decode)
-		if c, ok := err.(errContent); ok {
-			err = c.error
-		}
 		if err != nil {
 			return nil, err
 		}
@@ -1689,8 +1703,20 @@ func (st Step) thenFor(e *Env) (string, error) {
 	return thenText(n)
 }
 
-// errContent is the error of instance when only the content fails.
-type errContent struct{ error }
+// fileData sets the data of a file, unit, or repo step from its arguments m,
+// and the template of a file step. It returns the warnings of a repo key.
+func (st *Step) fileData(m module.Module) ([]*yamlx.Error, error) {
+	var err error
+	switch a := m.(type) {
+	case *module.File:
+		st.tmpl, err = st.in.content(a, st.loop != nil)
+	case *module.Unit:
+		err = st.in.unitContent(a)
+	case *module.Repo:
+		return st.in.key(a)
+	}
+	return nil, err
+}
 
 // instance returns the step with its arguments and content for e, and the
 // computed arguments as a value, or nil. When only the content fails, the
@@ -1708,20 +1734,8 @@ func (st Step) instance(e *Env, decode func(*yamlx.Node, any) error) (Step, any,
 			return Step{}, args, err
 		}
 		st.Args = m
-		if f, ok := m.(*module.File); ok {
-			if st.tmpl, err = st.in.content(f, st.loop != nil); err != nil {
-				return Step{}, args, err
-			}
-		}
-		if u, ok := m.(*module.Unit); ok {
-			if err := st.in.unitContent(u); err != nil {
-				return Step{}, args, err
-			}
-		}
-		if k, ok := m.(*module.Repo); ok {
-			if _, err := st.in.key(k); err != nil {
-				return Step{}, args, err
-			}
+		if _, err := st.fileData(m); err != nil {
+			return Step{}, args, err
 		}
 	}
 	if st.tmpl == nil {
@@ -1729,7 +1743,7 @@ func (st Step) instance(e *Env, decode func(*yamlx.Node, any) error) (Step, any,
 	}
 	out, err := e.render(st.tmpl)
 	if err != nil {
-		return st, args, errContent{templateError(st.tmpl.Name(), err)}
+		return st, args, templateError(st.tmpl.Name(), err)
 	}
 	f := *st.Args.(*module.File)
 	// Empty output is empty content, not missing content.

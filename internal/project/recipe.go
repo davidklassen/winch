@@ -112,8 +112,6 @@ type recipeFile struct {
 
 func (*recipeFile) Noun() string { return "a recipe" }
 
-var recipeNameRe = regexp.MustCompile(`^[a-z0-9_]+$`)
-
 // errReported is the error of a step that uses a recipe whose recipe.yaml
 // failed to load. That error was reported once.
 var errReported = errors.New("the recipe failed to load")
@@ -126,7 +124,7 @@ func (l *loader) readRecipes() error {
 		l.recipes[name] = nil
 		dir := "recipes/" + name
 		switch {
-		case recipeNameRe.MatchString(name):
+		case varNameRe.MatchString(name):
 		case p.node != nil:
 			errs = append(errs, yamlx.Errorf(p.pos, "recipe %q: a recipe name has only lowercase letters, digits, and _", name))
 			continue
@@ -274,12 +272,9 @@ func (r *Recipe) content(f *module.File, loops bool) (*template.Template, error)
 	case f.Content != nil:
 		f.Data = []byte(*f.Content)
 	case f.Source != "":
-		if err := module.CheckRelative("source", f.Source); err != nil {
-			return nil, yamlx.Errorf(f.SourcePos, "%v", err)
-		}
-		data, err := r.readFile("files", f.Source)
+		data, err := r.source(f.Source, f.SourcePos)
 		if err != nil {
-			return nil, yamlx.Errorf(f.SourcePos, "source: %v", err)
+			return nil, err
 		}
 		f.Data = data
 	case f.Template != "":
@@ -308,16 +303,25 @@ func (r *Recipe) unitContent(u *module.Unit) error {
 	case u.Content != nil:
 		u.Data = []byte(*u.Content)
 	case u.Source != "":
-		if err := module.CheckRelative("source", u.Source); err != nil {
-			return yamlx.Errorf(u.SourcePos, "%v", err)
-		}
-		data, err := r.readFile("files", u.Source)
+		data, err := r.source(u.Source, u.SourcePos)
 		if err != nil {
-			return yamlx.Errorf(u.SourcePos, "source: %v", err)
+			return err
 		}
 		u.Data = data
 	}
 	return nil
+}
+
+// source returns the content of the file name in the files of r.
+func (r *Recipe) source(name string, pos yamlx.Pos) ([]byte, error) {
+	if err := module.CheckRelative("source", name); err != nil {
+		return nil, yamlx.Errorf(pos, "%v", err)
+	}
+	data, err := r.readFile("files", name)
+	if err != nil {
+		return nil, yamlx.Errorf(pos, "source: %v", err)
+	}
+	return data, nil
 }
 
 // key sets the key data of a repo step of r from key_content or its key

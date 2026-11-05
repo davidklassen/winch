@@ -2,9 +2,6 @@ package project
 
 import (
 	"errors"
-	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -24,11 +21,7 @@ func Format(dir string) ([]string, error) {
 	var errs []error
 	done := map[string]bool{}
 	format := func(file string, steps []string) {
-		path, err := filepath.EvalSymlinks(projectPath(dir, file))
-		if errors.Is(err, fs.ErrNotExist) {
-			errs = append(errs, notFound(file))
-			return
-		}
+		path, data, err := readProjectFile(dir, file)
 		if err != nil {
 			errs = append(errs, err)
 			return
@@ -37,11 +30,6 @@ func Format(dir string) ([]string, error) {
 			return
 		}
 		done[path] = true
-		data, err := os.ReadFile(path)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("read %s: %w", file, err))
-			return
-		}
 		if _, err := yamlx.Parse(file, data); err != nil {
 			errs = append(errs, err)
 			return
@@ -62,15 +50,7 @@ func Format(dir string) ([]string, error) {
 		return nil, err
 	}
 	format(cfg.file, []string{"steps", "handlers.*", "pipelines.*.steps", "pipelines.*.handlers.*", "pipelines.*.stages.*.steps", "pipelines.*.stages.*.handlers.*", "recipes.*.steps", "recipes.*.handlers.*"})
-	invs, err := list(dir, "inventories")
-	if err != nil {
-		return nil, err
-	}
-	pipelines, err := list(dir, "pipelines")
-	if err != nil {
-		return nil, err
-	}
-	recipes, err := recipeFiles(dir)
+	invs, pipelines, recipes, err := projectFiles(dir)
 	if err != nil {
 		return nil, err
 	}

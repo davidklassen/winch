@@ -634,11 +634,13 @@ func evalOne(t *testing.T, vars, step string, files map[string]string) string {
 	if len(steps) == 0 {
 		return "no steps"
 	}
-	f, ok := steps[0].Args.(*module.File)
-	if !ok {
-		return "no error"
+	switch a := steps[0].Args.(type) {
+	case *module.File:
+		return string(a.Data)
+	case *module.Unit:
+		return string(a.Data)
 	}
-	return string(f.Data)
+	return "no error"
 }
 
 const valueVars = `  early: !expr 'vars.late + 1'
@@ -920,7 +922,10 @@ func TestEvalErrors(t *testing.T) {
 			files: map[string]string{"recipes/r/templates/t.tmpl": "{{ .item }}"},
 			want:  "load error: recipes/r/recipe.yaml:4:17: template: t.tmpl reads .item; item is defined only in a step with loop"},
 		{name: "computed unit content", step: "  - unit:\n      name: a.service\n      content: !tpl '{{ .vars.s }}'\n",
-			want: "no error"},
+			want: "yes"},
+		{name: "computed unit source", step: "  - unit:\n      name: !tpl '{{ .vars.s }}.service'\n      source: a.service\n",
+			files: map[string]string{"recipes/r/files/a.service": "[Unit]\n"},
+			want:  "[Unit]\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

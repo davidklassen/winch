@@ -21,27 +21,15 @@ import (
 // of the value of field X. A field of type *Node gets the node
 // as it is. After a struct decodes without errors, Decode calls its
 // Validate() error method when it has one.
-func Decode(n *Node, v any) error {
-	d := decoder{}
-	d.value(n, reflect.ValueOf(v).Elem(), "")
-	return errors.Join(d.errs...)
-}
+func Decode(n *Node, v any) error { return (&decoder{}).run(n, v) }
 
 // DecodeLazy is Decode for a value that can hold tagged scalars. It skips
 // them, counts their keys as set, and skips Validate for a struct that holds
 // one.
-func DecodeLazy(n *Node, v any) error {
-	d := decoder{lazy: true}
-	d.value(n, reflect.ValueOf(v).Elem(), "")
-	return errors.Join(d.errs...)
-}
+func DecodeLazy(n *Node, v any) error { return (&decoder{lazy: true}).run(n, v) }
 
 // DecodeUnchecked is Decode without the Validate calls.
-func DecodeUnchecked(n *Node, v any) error {
-	d := decoder{unchecked: true}
-	d.value(n, reflect.ValueOf(v).Elem(), "")
-	return errors.Join(d.errs...)
-}
+func DecodeUnchecked(n *Node, v any) error { return (&decoder{unchecked: true}).run(n, v) }
 
 var (
 	nodeType     = reflect.TypeFor[*Node]()
@@ -60,6 +48,11 @@ type decoder struct {
 	lazy      bool
 	unchecked bool
 	deferred  int
+}
+
+func (d *decoder) run(n *Node, v any) error {
+	d.value(n, reflect.ValueOf(v).Elem(), "")
+	return errors.Join(d.errs...)
 }
 
 func (d *decoder) errorf(pos Pos, name, format string, args ...any) {
