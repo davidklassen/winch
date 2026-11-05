@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.1
+
+### Fixed
+
+- A run with a `repo` or `upgrade` step no longer breaks a host whose
+  apt sources use `mirror+file:`, as Debian's cloud images do. In
+  v0.2.0, every later session on such a host failed with
+  `/var/lib/winch/apt/lists/auxfiles/... is not a directory or a regular
+  file`. On a host that has this error, v0.2.1 works with no change.
+
 ## v0.2.0
 
 ### Breaking changes
