@@ -37,10 +37,22 @@ func TestFirewallModule(t *testing.T) {
 	}
 	vm.MustRun(t, "[ ! -e /usr/sbin/nft.off ] || mv /usr/sbin/nft.off /usr/sbin/nft")
 
-	// Create.
+	// A first load that fails shows the error of nft.
+	project("")
+	if r := lab.Winch(t, dir, "apply", "--yes"); r.Code != 0 {
+		t.Fatalf("apply of nftables: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, "mv /usr/sbin/nft /usr/sbin/nft.real && printf '#!/bin/sh\\n[ \"$2\" != /etc/winch/firewall.nft ] || { echo \"nft: no nf_tables\" >&2; exit 1; }\\nexec /usr/sbin/nft.real \"$@\"\\n' > /usr/sbin/nft && chmod 755 /usr/sbin/nft")
 	project(firewall + "        - tcp: 22\n")
-	r := lab.Winch(t, dir, "plan")
-	if r.Code != 0 || strings.Contains(r.Stderr, "nft is missing") || !strings.Contains(r.Stdout, "+ firewall\n        add tcp 22\n        create directory /etc/winch") || !strings.Contains(r.Stdout, "create file /etc/systemd/system/nftables.service.d/winch.conf") || !strings.Contains(r.Stdout, "enable winch-firewall.service\n        load the rules\n\n") {
+	r := lab.Winch(t, dir, "apply", "--yes")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "nft: no nf_tables") || strings.Contains(r.Stderr, "the rollback failed") {
+		t.Fatalf("apply with a failed load: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, "mv /usr/sbin/nft.real /usr/sbin/nft")
+
+	// Create.
+	r = lab.Winch(t, dir, "plan")
+	if r.Code != 0 || strings.Contains(r.Stderr, "nft is missing") || !strings.Contains(r.Stdout, "+ firewall\n        add tcp 22\n        create directory /etc/winch") || !strings.Contains(r.Stdout, "create file /etc/systemd/system/nftables.service.d/winch.conf") || !strings.Contains(r.Stdout, "enable winch-firewall.service\n        load the rules\n        start winch-firewall.service\n\n") {
 		t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	if r := lab.Winch(t, dir, "apply", "--yes"); r.Code != 0 {
@@ -51,6 +63,9 @@ func TestFirewallModule(t *testing.T) {
 	}
 	if out := vm.MustRun(t, "systemctl is-enabled winch-firewall.service"); out != "enabled\n" {
 		t.Errorf("winch-firewall.service: %q", out)
+	}
+	if out := vm.MustRun(t, "systemctl is-active winch-firewall.service || true"); out != "active\n" {
+		t.Errorf("winch-firewall.service after apply: %q", out)
 	}
 	if r := lab.Winch(t, dir, "plan"); r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
