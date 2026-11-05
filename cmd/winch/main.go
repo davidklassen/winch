@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -105,9 +104,6 @@ func connect(sessions context.Context, stderr *color.Writer, display *progress.D
 			Batch:    batch,
 			Want:     want,
 		})
-		if errors.Is(err, session.ErrUnreachable) {
-			return nil, run.MarkUnreachable(err)
-		}
 		if err != nil {
 			return nil, err
 		}

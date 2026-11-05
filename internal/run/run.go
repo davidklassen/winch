@@ -397,7 +397,6 @@ type startedBy struct {
 	err  error
 }
 
-// close closes the session with the host, if one is open.
 func (hr *hostRun) close() error {
 	if hr.conn == nil {
 		return nil
@@ -437,31 +436,12 @@ func (p *Plan) rollsBack(host string) bool {
 	return p.Pending[host].Rollback != nil
 }
 
-// changed returns the hosts with changes in the plan.
-func (p *Plan) changed() map[string]bool {
-	hosts := map[string]bool{}
-	for name := range p.Pending {
-		if p.rollsBack(name) {
-			hosts[name] = true
-		}
-	}
-	for _, sp := range p.Stages {
-		for _, hp := range sp.Hosts {
-			if hp.changes() {
-				hosts[hp.Host.Name] = true
-			}
-		}
-	}
-	return hosts
-}
-
 // MakePlan checks every step on every host, stage by stage. The hosts of a
 // stage run at the same time. At the first contact with a host, it reads the
 // facts and starts the host's evaluation. A host that fails stops there.
 func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Options) *Plan {
 	plan := &Plan{Project: p.Name, pipeline: p.Pipeline.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}, Destinations: map[string]protocol.Destination{}, opts: opts,
 		sums: p.Sums(), set: p.SetFlags()}
-	inStages := map[string]bool{}
 	runs := map[string]*hostRun{}
 	open := func(h project.Host) (Conn, error) {
 		hr := runs[h.Name]
@@ -485,13 +465,12 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 		}
 	}
-	var running []project.Host
 	for _, h := range p.Inventory.Hosts {
 		if _, ok := last[h.Name]; ok {
-			running = append(running, h)
+			plan.Hosts = append(plan.Hosts, h)
 		}
 	}
-	maps.Copy(plan.Failed, sharedDestinations(context.WithoutCancel(ctx), running, connect.Resolve))
+	maps.Copy(plan.Failed, sharedDestinations(context.WithoutCancel(ctx), plan.Hosts, connect.Resolve))
 	for si := range p.Pipeline.Stages {
 		stage := &p.Pipeline.Stages[si]
 		if stage.Skipped {
@@ -499,7 +478,6 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		}
 		var hosts []project.Host
 		for _, h := range stage.Targets {
-			inStages[h.Name] = true
 			if plan.Failed[h.Name] != nil {
 				continue
 			}
@@ -566,13 +544,13 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		plan.Destinations[name] = hr.dest
 	}
 	plan.conns = map[string]Conn{}
-	changed := plan.changed()
+	kinds := plan.hostKinds()
 	var idle []string
 	for name, hr := range runs {
 		if hr.conn == nil {
 			continue
 		}
-		if plan.Failed[name] == nil && (changed[name] || plan.removes(name)) {
+		if plan.Failed[name] == nil && (kinds[name] != "" || plan.removes(name)) {
 			plan.conns[name] = hr.conn
 		} else {
 			idle = append(idle, name)
@@ -590,11 +568,6 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		})
 	}
 	wg.Wait()
-	for _, h := range p.Inventory.Hosts {
-		if inStages[h.Name] {
-			plan.Hosts = append(plan.Hosts, h)
-		}
-	}
 	plan.suppressMissingUnitFiles()
 	plan.sshdStores()
 	plan.Warnings = append(plan.sshdWarnings(), plan.publicWarnings()...)
@@ -1306,7 +1279,6 @@ func (hr *hostRun) newUnitFile(st *project.Step) {
 	st.Args = &c
 }
 
-// trackUnitFile records the unit file of a unit step that changes it.
 func (hr *hostRun) trackUnitFile(m module.Module, res module.Result) {
 	if u, ok := m.(*module.Unit); ok && res.Status == module.Change {
 		hr.unitFiles[u.Name] = u.Data
@@ -1348,7 +1320,6 @@ func (hr *hostRun) newText(st project.Step, res *module.Result) {
 // diff of it.
 type sourceText struct{ text, reason string }
 
-// trackRemoved records the path of an absent step.
 func (hr *hostRun) trackRemoved(m module.Module) {
 	switch m := m.(type) {
 	case *module.File:
@@ -1558,7 +1529,7 @@ func handlerSlot(h *project.Handler, env *project.Env, in *project.Step, hr *hos
 
 // HasChanges reports whether a host that did not fail has changes.
 func (p *Plan) HasChanges() bool {
-	for name := range p.changed() {
+	for name := range p.hostKinds() {
 		if p.Failed[name] == nil {
 			return true
 		}

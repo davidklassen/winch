@@ -866,8 +866,8 @@ func TestOpenRetryCancelled(t *testing.T) {
 	if s != nil {
 		s.Close()
 	}
-	if err == nil {
-		t.Error("Open succeeded after the context ended")
+	if err == nil || !errors.Is(err, ErrUnreachable) {
+		t.Errorf("Open = %v after the context ended, want the unreachable error of the first ssh", err)
 	}
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Errorf("Open ended after %s, want right after the context ended", elapsed)

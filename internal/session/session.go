@@ -28,13 +28,15 @@ import (
 
 const StateDir = "/var/lib/winch"
 
-// ErrUnreachable is the cause of a failed connect when ssh fails before the
+// ErrUnreachable is the cause of an Open error when ssh fails before the
 // script on the host starts: no route, a timeout, a host key, or a refused
 // login.
 var ErrUnreachable = errors.New("unreachable")
 
-// unreachable marks an error so that errors.Is finds ErrUnreachable. Its text
-// stays the same.
+// MarkUnreachable returns err, marked so that errors.Is finds ErrUnreachable.
+// Its text stays the same.
+func MarkUnreachable(err error) error { return unreachable{err} }
+
 type unreachable struct{ error }
 
 func (unreachable) Is(target error) bool { return target == ErrUnreachable }
@@ -74,13 +76,11 @@ type Config struct {
 
 // Session is one ssh process with the helper at the other end.
 type Session struct {
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	stdout   *bufio.Reader
-	stderr   *limitedBuffer
-	id       int
-	host     string
-	progress *color.Writer
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout *bufio.Reader
+	stderr *limitedBuffer
+	id     int
 	// cfg and ctx are those of Open: a check of the access and a reboot
 	// open more connections.
 	cfg        Config
@@ -169,9 +169,17 @@ func command(script string) string {
 // key does it log in again, and ssh may ask. ssh checks the host key before
 // the login, so after a new host key only Prompted tells about the login.
 func Open(ctx context.Context, cfg Config) (*Session, error) {
+	s, exit, err := connect(ctx, cfg)
+	if err != nil && exit.code == 255 && !exit.started {
+		return nil, MarkUnreachable(err)
+	}
+	return s, err
+}
+
+func connect(ctx context.Context, cfg Config) (*Session, sshExit, error) {
 	r, err := resolve(ctx, cfg)
 	if err != nil {
-		return nil, err
+		return nil, sshExit{}, err
 	}
 	batch := cfg
 	batch.Batch = true
@@ -179,7 +187,7 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	if !exit.started && Dropped(exit.code, exit.stderr, r.logLevel) {
 		select {
 		case <-ctx.Done():
-			return nil, err
+			return nil, exit, err
 		case <-time.After(cfg.retryDelay()):
 		}
 		s, exit, err = dial(ctx, batch, r.proxyJump)
@@ -188,17 +196,17 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 	// A changed host key is no question that ssh asks.
 	hostKey := strings.Contains(exit.stderr, "Host key verification failed.") && !strings.Contains(exit.stderr, "HAS CHANGED")
 	if err != nil && !cfg.Batch && (login || hostKey) {
-		s, _, err = dial(ctx, cfg, r.proxyJump)
+		s, exit, err = dial(ctx, cfg, r.proxyJump)
 	}
 	if err != nil {
-		return nil, err
+		return nil, exit, err
 	}
 	s.prompted, s.newHostKey = login, hostKey && !login
 	s.dest.HostName, s.dest.Port, s.dest.Jump = r.hostName, r.port, r.jump
 	if err := s.changed(cfg.Want); err != nil {
-		return nil, err
+		return nil, sshExit{}, err
 	}
-	return s, nil
+	return s, sshExit{}, nil
 }
 
 // changed ends s and returns an error when want is not nil and the
@@ -371,7 +379,7 @@ func dial(ctx context.Context, cfg Config, jump string) (*Session, sshExit, erro
 	if err != nil {
 		return nil, sshExit{}, err
 	}
-	s := &Session{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout), stderr: &limitedBuffer{max: 64 << 10}, host: cfg.Host, progress: cfg.Progress, cfg: cfg, ctx: ctx}
+	s := &Session{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout), stderr: &limitedBuffer{max: 64 << 10}, cfg: cfg, ctx: ctx}
 	cmd.Stderr = s.stderr
 	// A child of ssh, such as a ProxyCommand, can keep stderr open.
 	cmd.WaitDelay = 5 * time.Second
@@ -388,7 +396,7 @@ func dial(ctx context.Context, cfg Config, jump string) (*Session, sshExit, erro
 	if err != nil {
 		err = s.fail(err)
 		if s.cmd.ProcessState.ExitCode() == 255 {
-			err = unreachable{hint(cfg, err)}
+			err = hint(cfg, err)
 		}
 		return nil, s.exit(), err
 	}
@@ -611,7 +619,7 @@ func (s *Session) receive(result any) error {
 		case resp.Warning != "":
 			s.cfg.Note(text, true)
 		default:
-			fmt.Fprintf(s.progress, "%s: %s\n", s.host, secret.Printable(text))
+			fmt.Fprintf(s.cfg.Progress, "%s: %s\n", s.cfg.Host, secret.Printable(text))
 		}
 	}
 	if resp.NeedContent {

@@ -15,6 +15,7 @@ import (
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/secret"
+	"github.com/davidklassen/winch/internal/session"
 )
 
 // ErrInterrupted is the error of a host that an interrupt stopped before its
@@ -77,20 +78,6 @@ func (o *Outcome) OK() bool { return len(o.Failed) == 0 }
 
 func (o *Outcome) Unchanged() int { return o.Hosts - len(o.Changed) - len(o.Failed) }
 
-// ErrUnreachable is the cause of a connect error when winch could not reach
-// the host.
-var ErrUnreachable = errors.New("unreachable")
-
-// MarkUnreachable returns err, marked so that errors.Is finds ErrUnreachable.
-// Its text stays the same.
-func MarkUnreachable(err error) error { return unreachable{err} }
-
-type unreachable struct{ error }
-
-func (unreachable) Is(target error) bool { return target == ErrUnreachable }
-
-func (u unreachable) Unwrap() error { return u.error }
-
 // Text returns a reporter that prints one line per step that changes, and
 // the errors to errOut.
 func Text(out, errOut *color.Writer) Reporter { return text{out, errOut} }
@@ -100,7 +87,7 @@ type text struct{ out, errOut *color.Writer }
 func (t text) Step(ev StepEvent) {
 	var line color.Text
 	switch {
-	case ev.Address == rollbackEvent(ev.Host, nil).Address && ev.Status == "change":
+	case ev.Address == ev.Host+":rollback" && ev.Status == "change":
 		markLine(&line, ev.Host+": ", "!", " "+rollbackLabel+"\n")
 	case ev.Health != "" && ev.Status == "ok":
 		markLine(&line, ev.Host+": "+ev.Stage+": ", "*", " health:"+command(ev.Health, "    ")+"\n")
@@ -142,7 +129,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 	for name, err := range plan.Failed {
 		o.Failed[name] = err
 	}
-	toApply := plan.changed()
+	toApply := plan.hostKinds()
 	// dial takes the session of the plan, or opens a new one when the plan
 	// kept none or its session died during the question. It then removes the
 	// records of the host that the plan found gone.
@@ -163,7 +150,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			}
 		}
 		c.Mask(plan.hide(h.Name))
-		if toApply[h.Name] && c.Prompted(context.WithoutCancel(ctx)) {
+		if toApply[h.Name] != "" && c.Prompted(context.WithoutCancel(ctx)) {
 			c.Close() //nolint:errcheck // the host fails already
 			return nil, errors.New("the access check cannot log in without a prompt; add the key to the agent with ssh-add")
 		}
@@ -189,7 +176,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 	}
 	var remove []project.Host
 	for _, h := range plan.Hosts {
-		if !toApply[h.Name] && plan.removes(h.Name) {
+		if toApply[h.Name] == "" && plan.removes(h.Name) {
 			remove = append(remove, h)
 		}
 	}
@@ -240,7 +227,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 				stopped[name] = true
 				continue
 			}
-			if !toApply[name] || o.Failed[name] != nil {
+			if toApply[name] == "" || o.Failed[name] != nil {
 				continue
 			}
 			hps, hosts = append(hps, hp), append(hosts, hp.Host)
@@ -359,7 +346,7 @@ func (r *lockedReporter) Done(o *Outcome) {
 
 // hostStatus is the status of a host that failed with err.
 func hostStatus(err error) string {
-	if errors.Is(err, ErrUnreachable) {
+	if errors.Is(err, session.ErrUnreachable) {
 		return "unreachable"
 	}
 	return "failed"
@@ -393,7 +380,6 @@ type hostApply struct {
 	rollback []string
 }
 
-// close closes the session with the host, if one is open.
 func (a *hostApply) close() error {
 	if a.conn == nil {
 		return nil
@@ -513,8 +499,26 @@ func stepEvent(host string, stage *project.Stage, p Planned) StepEvent {
 	return ev
 }
 
-// scope is the recipe of an event, or its stage.
 func (ev StepEvent) scope() string { return cmp.Or(ev.Recipe, ev.Stage) }
+
+// result sets the status of ev and the fields of the result res of st.
+func (ev *StepEvent) result(st project.Step, res module.Result) {
+	ev.Status, ev.Action = string(res.Status), string(res.Action)
+	if res.Status != module.Change {
+		return
+	}
+	ev.Link = secret.Printable(res.Link)
+	for _, c := range res.Changes {
+		ev.Changes = append(ev.Changes, secret.PrintableLines(c))
+	}
+	shown := st.Shown().Args
+	if v, ok := shown.(module.WithValidate); ok && res.Validates {
+		ev.Validate = secret.PrintableLines(v.ValidateCommand())
+	}
+	if c, ok := shown.(*module.Cmd); ok {
+		ev.Unless = secret.PrintableLines(c.UnlessCommand())
+	}
+}
 
 // label is the label of the step of an event, with its handler.
 func (ev StepEvent) label() string {
@@ -746,18 +750,7 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 		res.Status, res.Action = module.Change, module.Modify
 	}
 	maskResult(p.Step, p.parts, &res)
-	ev.Status, ev.Action = string(res.Status), string(res.Action)
-	ev.Link = secret.Printable(res.Link)
-	for _, c := range res.Changes {
-		ev.Changes = append(ev.Changes, secret.PrintableLines(c))
-	}
-	shown := p.Step.Shown().Args
-	if v, ok := shown.(module.WithValidate); ok && res.Validates {
-		ev.Validate = secret.PrintableLines(v.ValidateCommand())
-	}
-	if c, ok := shown.(*module.Cmd); ok && res.Status == module.Change {
-		ev.Unless = secret.PrintableLines(c.UnlessCommand())
-	}
+	ev.result(p.Step, res)
 	a.rep.Step(ev)
 	if res.Status == module.Change {
 		// The helper records the notifies before the step changes anything.
