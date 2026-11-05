@@ -279,7 +279,7 @@ func (d *Download) same(r io.Reader) (bool, error) {
 	return sum == d.SHA256, err
 }
 
-func (d *Download) Apply(ctx context.Context, say Say) error {
+func (d *Download) Apply(ctx context.Context, _ Say) error {
 	owner, group, mode, err := attrs(d.Owner, d.Group, d.Mode, "0644")
 	if err != nil {
 		return err
@@ -289,7 +289,7 @@ func (d *Download) Apply(ctx context.Context, say Say) error {
 		return err
 	}
 	if d.Unpack != "" {
-		return pathError("unpack into", d.Unpack, d.applyUnpack(ctx, uid, gid, say.Progress))
+		return pathError("unpack into", d.Unpack, d.applyUnpack(ctx, uid, gid))
 	}
 	dir, missing, err := openParent(d.Path)
 	if err != nil {
@@ -327,7 +327,7 @@ func (d *Download) Apply(ctx context.Context, say Say) error {
 	}
 	defer sub.Remove(tmpName)
 	defer tmp.Close()
-	err = d.get(ctx, pathWriter{tmp, "write", d.Path}, say.Progress)
+	err = d.get(ctx, pathWriter{tmp, "write", d.Path})
 	if err == nil {
 		err = tmp.Chown(uid, gid)
 	}
@@ -348,7 +348,7 @@ func (d *Download) Apply(ctx context.Context, say Say) error {
 // directory with the owner uid and the group gid. The new directory takes the
 // mode of an existing unpack directory. It swaps the two directories and
 // removes the old tree.
-func (d *Download) applyUnpack(ctx context.Context, uid, gid int, progress func(string)) error {
+func (d *Download) applyUnpack(ctx context.Context, uid, gid int) error {
 	parent, missing, err := openParent(d.Unpack)
 	if err != nil {
 		return err
@@ -366,10 +366,9 @@ func (d *Download) applyUnpack(ctx context.Context, uid, gid int, progress func(
 	}
 	defer sub.Remove(tmpName)
 	defer tmp.Close()
-	if err := d.get(ctx, pathWriter{tmp, "unpack into", d.Unpack}, progress); err != nil {
+	if err := d.get(ctx, pathWriter{tmp, "unpack into", d.Unpack}); err != nil {
 		return err
 	}
-	progress("unpack into " + d.Unpack)
 	typ := d.archiveType()
 	if err := (unpacker{}).read(ctx, tmp, typ); err != nil {
 		return fmt.Errorf("unpack %s: %w", d.URL, err)
@@ -415,8 +414,7 @@ func (d *Download) applyUnpack(ctx context.Context, uid, gid int, progress func(
 }
 
 // get writes the body of the URL to w. It fails when the checksum differs.
-func (d *Download) get(ctx context.Context, w io.Writer, progress func(string)) error {
-	progress("download " + d.URL)
+func (d *Download) get(ctx context.Context, w io.Writer) error {
 	sum, err := fetch(ctx, d.URL, w, stallLimit)
 	if err != nil {
 		return fmt.Errorf("download %s: %w", d.URL, err)

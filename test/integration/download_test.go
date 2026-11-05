@@ -197,6 +197,31 @@ func TestDownloadModule(t *testing.T) {
 		}
 	})
 
+	t.Run("apply shows no line of its own for the download", func(t *testing.T) {
+		vm.MustRun(t, "rm -rf /opt/progress")
+		dir := vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: download-progress\ninventory: test\n",
+			"inventories/test.yaml": "hosts:\n  download:\n    address: 127.0.0.1\n",
+			"pipelines/site.yaml":   "stages:\n  - name: tools\n    hosts: all\n    steps:\n      - download:\n          url: " + url1 + "\n          sha256: " + sha(v1) + "\n          path: /opt/progress/f\n      - download:\n          url: " + urlTgz + "\n          sha256: " + sha(tgz) + "\n          unpack: /opt/progress/app\n",
+		})
+		r := lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 0 {
+			t.Fatalf("apply: exit %d, stderr %q", r.Code, r.Stderr)
+		}
+		lines := slices.Concat(strings.Split(r.Stdout, "\n"), strings.Split(r.Stderr, "\n"))
+		for _, step := range []string{"download: tools: + download /opt/progress/f", "download: tools: + download /opt/progress/app"} {
+			if !slices.Contains(lines, step) {
+				t.Errorf("apply output has no step line %q\nstdout:\n%s\nstderr:\n%s", step, r.Stdout, r.Stderr)
+			}
+		}
+		for _, l := range lines {
+			if strings.HasPrefix(l, "download: download ") || strings.HasPrefix(l, "download: unpack into ") {
+				t.Errorf("apply output has the progress line %q\nstdout:\n%s\nstderr:\n%s", l, r.Stdout, r.Stderr)
+			}
+		}
+		vm.MustRun(t, "rm -rf /opt/progress")
+	})
+
 	vmtest.RunCases(t, vm, "download", reset, []vmtest.Case{
 		{
 			Name:      "download",
