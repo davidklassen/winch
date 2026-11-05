@@ -305,7 +305,7 @@ func (f *File) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	want := attrLine(owner, group, mode) + userNote(owner, group)
+	want, owners := attrLine(owner, group, mode), missingOwners(owner, group)
 	var content []string
 	var srcSum string
 	wantSum := f.sum()
@@ -313,13 +313,13 @@ func (f *File) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 		content, srcSum, wantSum = []string{hc.line}, hc.sum, hc.sum
 		switch {
 		case !known && f.CopyFrom != "":
-			want = fmt.Sprintf("owner %s, group %s, mode from %s", owner, group, hc.from) + userNote(owner, group)
+			want = fmt.Sprintf("owner %s, group %s, mode from %s", owner, group, hc.from)
 		case !known:
-			want = "owner, group, and mode from " + hc.from
+			want, owners = "owner, group, and mode from "+hc.from, nil
 		}
 	}
 	st.plan(Planned{Path: p, Kind: "file", SHA256: wantSum, Mode: mode})
-	res := Result{Status: Change, Action: Modify, Old: new(""), SourceSHA256: srcSum, Validates: f.Validation != nil}
+	res := Result{Status: Change, Action: Modify, Old: new(""), SourceSHA256: srcSum, Validates: f.Validation != nil, Missing: owners}
 	switch {
 	case !exists:
 		res.Action, res.Changes = Create, slices.Concat(parentChanges(missing), content, []string{want})
@@ -366,6 +366,8 @@ func (f *File) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 		if changes, err = attrChanges(fi, owner, group, mode); err != nil {
 			return Result{}, err
 		}
+	} else {
+		res.Missing = owners
 	}
 	if len(changes) > 0 {
 		res.Status, res.Action = Change, Modify
@@ -1072,15 +1074,15 @@ func groupName(id uint32) string {
 	return s
 }
 
-// userNote marks an owner or group that does not exist yet. An earlier step
-// can create it.
-func userNote(owner, group string) string {
-	note := ""
+// missingOwners returns the owner and the group that do not exist yet, as
+// "user <name>" and "group <name>". An earlier step can create them.
+func missingOwners(owner, group string) []string {
+	var missing []string
 	if _, ok, err := lookupUser(owner); err == nil && !ok {
-		note += fmt.Sprintf("; user %s does not exist yet", owner)
+		missing = append(missing, "user "+owner)
 	}
 	if _, ok, err := lookupGroup(group); err == nil && !ok {
-		note += fmt.Sprintf("; group %s does not exist yet", group)
+		missing = append(missing, "group "+group)
 	}
-	return note
+	return missing
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/davidklassen/winch/internal/fakehost"
+	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/run"
 )
 
@@ -12,6 +13,13 @@ import (
 func TestCmdMissingNote(t *testing.T) {
 	const cmdUser = "      - cmd: {command: make install, user: deploy}\n"
 	const cmdDir = "      - cmd: {command: make install, dir: /srv/app}\n"
+	const pkgThenSteps = "      - pkg: {name: postgresql}\n      - cmd: {command: createdb app, user: postgres}\n" +
+		"      - file: {path: /etc/a, content: x, owner: postgres}\n      - file: {path: /etc/b, content: x, owner: postgres}\n"
+	missingOwner := func(h *fakehost.Hosts) {
+		for _, p := range []string{"/etc/a", "/etc/b"} {
+			h.SetResult("web1", p, module.Result{Status: module.Change, Action: module.Create, Changes: []string{"owner postgres, group root, mode 0644"}, Missing: []string{"user postgres"}})
+		}
+	}
 	for _, tt := range []struct {
 		name  string
 		steps string
@@ -28,6 +36,22 @@ func TestCmdMissingNote(t *testing.T) {
 		{"a cmd that does not run", "      - cmd: {command: make install, user: deploy, creates: /srv/made}\n", func(h *fakehost.Hosts) { h.SetFile("web1", "/srv/made", "") }, ""},
 		{"a user and a dir", "      - cmd: {command: make install, user: deploy, dir: /srv/app}\n", func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") },
 			"web1: warning: user deploy does not exist yet and no user step creates it\nweb1: warning: dir /srv/app does not exist yet and no dir step creates it\n"},
+		{"a user that an earlier pkg step can create", pkgThenSteps, missingOwner,
+			"web1: note: user postgres does not exist yet; a package that s#1 pkg postgresql installs can create it\n"},
+		{"a pkg step that installs nothing", pkgThenSteps, func(h *fakehost.Hosts) { missingOwner(h); h.SetPkg("web1", "postgresql") },
+			"web1: warning: user postgres does not exist yet and no user step creates it\n"},
+		{"a pkg step after the cmd", "      - cmd: {command: make install, user: deploy}\n      - pkg: {name: postgresql}\n", nil,
+			"web1: warning: user deploy does not exist yet and no user step creates it\n"},
+		{"a user after a second pkg step", "      - pkg: {name: postgresql}\n      - cmd: {command: createdb app, user: postgres}\n      - pkg: {name: nginx}\n      - file: {path: /etc/a, content: x, owner: postgres}\n", missingOwner,
+			"web1: note: user postgres does not exist yet; a package that s#1 pkg postgresql installs can create it\n"},
+		{"an owner that an earlier user step creates", "      - user: {name: postgres}\n      - file: {path: /etc/a, content: x, owner: postgres}\n", missingOwner, ""},
+		{"the group of a file", "      - file: {path: /etc/a, content: x, group: lgrp}\n", func(h *fakehost.Hosts) {
+			h.SetResult("web1", "/etc/a", module.Result{Status: module.Change, Action: module.Create, Missing: []string{"group lgrp"}})
+		}, "web1: warning: group lgrp does not exist yet and no group step creates it\n"},
+		{"the owner of a stock file", "      - file: {path: /etc/a, stock: true}\n", missingOwner,
+			"web1: warning: user postgres does not exist yet and no user step creates it\n"},
+		{"the owner of a file", "      - file: {path: /etc/a, content: x, owner: postgres}\n", missingOwner,
+			"web1: warning: user postgres does not exist yet and no user step creates it\n"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := loadWeb1(t, map[string]string{

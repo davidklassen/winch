@@ -211,6 +211,9 @@ type Planned struct {
 	// parts are the secret parts of the steps of the host. Text from the host
 	// of one step can hold a value that another step built from a secret.
 	parts []string
+	// missing are the notes on the users, groups, and dirs of the step that
+	// do not exist yet.
+	missing []Note
 	// SSHD is set on a step that changes sshd's config: the stores of the
 	// later steps of the host with confirm_access that restart or reload
 	// sshd.
@@ -280,8 +283,8 @@ type hostRun struct {
 	// "group <name>", or "dir <path>", that steps that run need.
 	needs map[string]need
 	// created are the users, groups, and directories, in the form of needs,
-	// that checked steps create.
-	created map[string]bool
+	// that checked steps create, and reported those that a note names.
+	created, reported map[string]bool
 	// units are the units that service steps name.
 	units map[string]bool
 	// startedBy are the errors for units that start a unit that a service
@@ -483,7 +486,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]need{}, created: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}, texts: map[string]sourceText{}}
+				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]need{}, created: map[string]bool{}, reported: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}, texts: map[string]sourceText{}}
 			}
 		}
 		steps := make([][]Planned, len(hosts))
@@ -716,6 +719,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		hr.trackRemoved(p.Step.Args)
 		hr.trackUnitFile(p.Step.Args, steps[i].Result)
 		hr.dropCreated(&steps[i].Result)
+		steps[i].missing = hr.missingNotes(h.Name, steps[i].Step, steps[i].Result.Missing)
 		if err := hr.order(p.Step, steps[i].Result, where); err != nil {
 			return nil, err
 		}
@@ -865,19 +869,48 @@ func (hr *hostRun) order(st project.Step, res module.Result, where string) error
 	return nil
 }
 
-// dropCreated keeps in the missing user and dir of a cmd only those that no
-// earlier step creates, and in the missing tools only those whose package no
-// earlier pkg step installs.
+// dropCreated keeps in the missing users, groups, and dirs only those that no
+// earlier step creates or reports, and in the missing tools only those whose
+// package no earlier pkg step installs.
 func (hr *hostRun) dropCreated(res *module.Result) {
 	res.Missing = slices.DeleteFunc(res.Missing, func(n string) bool {
 		d, ok := strings.CutPrefix(n, "dir ")
-		return hr.created[n] || ok && hr.dirs[d]
+		return hr.created[n] || hr.reported[n] || ok && hr.dirs[d]
 	})
 	res.MissingTools = slices.DeleteFunc(res.MissingTools, func(t module.Tool) bool {
 		return slices.ContainsFunc(hr.pkgs, func(e pkgStep) bool {
 			return !e.pkg.Absent && (slices.Contains(e.pkg.Name, t.Package) || slices.Contains(e.others, t.Package))
 		})
 	})
+}
+
+// missingNotes returns the notes on the missing users, groups, and dirs of
+// step st on host. A package that an earlier pkg step installs can create
+// them; without such a step, each is a warning.
+func (hr *hostRun) missingNotes(host string, st project.Step, missing []string) []Note {
+	installer := ""
+	for _, e := range hr.pkgs {
+		if !e.pkg.Absent && len(e.installs) > 0 {
+			installer = e.where
+		}
+	}
+	needs, shown := needsOf(st.Args), needsOf(st.Shown().Args)
+	var notes []Note
+	for _, m := range missing {
+		hr.reported[m] = true
+		kind, _, _ := strings.Cut(m, " ")
+		// The owner of a stock file comes from its package, not from the step.
+		what := st.HostText(m, hr.parts)
+		if i := slices.Index(needs, m); i >= 0 {
+			what = shown[i]
+		}
+		if installer != "" {
+			notes = append(notes, Note{host, fmt.Sprintf("%s does not exist yet; a package that %s installs can create it", what, installer), false})
+		} else {
+			notes = append(notes, Note{host, fmt.Sprintf("%s does not exist yet and no %s step creates it", what, kind), true})
+		}
+	}
+	return notes
 }
 
 // repo fails a repo step whose source an earlier repo step of the host has.

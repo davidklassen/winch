@@ -519,6 +519,10 @@ func TestSecretCmdMissing(t *testing.T) {
 	}{
 		{"a missing user", cmdUser, func(*fakehost.Hosts) {}, "web1: warning: user u-(secret) does not exist yet and no user step creates it\n"},
 		{"a missing dir", cmdDir, noDir, "web1: warning: dir /srv/(secret) does not exist yet and no dir step creates it\n"},
+		{"a missing owner from the host", cmdDir + "      - file: {path: /etc/a, stock: true}\n", func(h *fakehost.Hosts) {
+			h.SetUser("web1", "u-hunter2")
+			h.SetResult("web1", "/etc/a", module.Result{Status: module.Change, Action: module.Create, Missing: []string{"user ter2"}})
+		}, "web1: warning: user (secret) does not exist yet and no user step creates it\n"},
 		{"a user that a later step creates", cmdUser + "      - user:\n          name: !expr '\"u-\" + vars.pw'\n", func(*fakehost.Hosts) {},
 			"this step creates user u-(secret), which an earlier step needs: s#1 cmd make install; move this step before it\n"},
 		{"a dir that a later step creates", cmdDir + "      - dir:\n          path: !expr '\"/srv/\" + trimPrefix(vars.pw, \"hun\")'\n          owner: !expr '\"u-\" + vars.pw'\n", noDir,

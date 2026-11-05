@@ -134,7 +134,7 @@ func (d *Dir) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	want := attrLine(owner, group, mode) + userNote(owner, group)
+	want, owners := attrLine(owner, group, mode), missingOwners(owner, group)
 	link := ""
 	at, atName := dir, name
 	if exists && fi.Mode()&fs.ModeSymlink != 0 && !d.Replace {
@@ -153,16 +153,16 @@ func (d *Dir) Check(ctx context.Context, st *State, _ Say) (Result, error) {
 	}
 	switch {
 	case !exists:
-		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), want)}, nil
+		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), want), Missing: owners}, nil
 	case fi.Mode()&fs.ModeSymlink != 0:
 		target, _ := dir.Readlink(name)
-		return Result{Status: Change, Action: Modify, Changes: []string{"replace the symbolic link to " + secret.Printable(target), want}}, nil
+		return Result{Status: Change, Action: Modify, Changes: []string{"replace the symbolic link to " + secret.Printable(target), want}, Missing: owners}, nil
 	case fi.Mode().IsRegular():
 		line, err := checkReplace(dir, name, d.Path, fi, d.Replace)
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{Status: Change, Action: Modify, Changes: []string{line, want}}, nil
+		return Result{Status: Change, Action: Modify, Changes: []string{line, want}, Missing: owners}, nil
 	case !fi.IsDir():
 		return Result{}, fmt.Errorf("%s is %s, not a directory", d.Path, kind(fi))
 	}

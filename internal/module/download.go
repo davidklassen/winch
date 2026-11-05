@@ -180,8 +180,8 @@ func (d *Download) check() (Result, error) {
 	}
 	if !exists {
 		d.fetch = true
-		changes := append(parentChanges(missing), "download "+d.URL, attrLine(owner, group, mode)+userNote(owner, group))
-		return Result{Status: Change, Action: Create, Changes: changes}, nil
+		changes := append(parentChanges(missing), "download "+d.URL, attrLine(owner, group, mode))
+		return Result{Status: Change, Action: Create, Changes: changes, Missing: missingOwners(owner, group)}, nil
 	}
 	if !fi.Mode().IsRegular() {
 		return Result{}, fmt.Errorf("%s is %s, not a file", d.Path, kind(fi))
@@ -229,11 +229,12 @@ func (d *Download) checkUnpack(owner, group string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	unpack := "unpack into " + d.Unpack + " (owner " + owner + ", group " + group + userNote(owner, group) + ")"
+	unpack := "unpack into " + d.Unpack + " (owner " + owner + ", group " + group + ")"
+	owners := missingOwners(owner, group)
 	switch {
 	case !exists:
 		d.fetch = true
-		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), "download "+d.URL, unpack)}, nil
+		return Result{Status: Change, Action: Create, Changes: append(parentChanges(missing), "download "+d.URL, unpack), Missing: owners}, nil
 	case !fi.IsDir():
 		return Result{}, fmt.Errorf("%s is %s, not a directory", d.Unpack, kind(fi))
 	}
@@ -262,7 +263,7 @@ func (d *Download) checkUnpack(owner, group string) (Result, error) {
 	if d.Recorded == "" {
 		changes = append(changes, "remove its content: "+t.counts())
 	}
-	return Result{Status: Change, Action: Modify, Changes: changes}, nil
+	return Result{Status: Change, Action: Modify, Changes: changes, Missing: owners}, nil
 }
 
 // Record is what the helper records after a successful unpack:

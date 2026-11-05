@@ -64,7 +64,8 @@ type Result struct {
 	// MissingUnitFiles are the paths of a missing service unit file. A
 	// selected removal of any of these paths suppresses the plan's note.
 	MissingUnitFiles []string `json:"missing_unit_files,omitempty"`
-	// Missing are the user and the dir of a cmd that runs, as "user <name>"
+	// Missing are the user and the dir of a cmd that runs, and the owner and
+	// the group of a step that sets them, as "user <name>", "group <name>",
 	// or "dir <path>", that do not exist on the host.
 	Missing []string `json:"missing,omitempty"`
 	// MissingTools are the programs and files that the step needs and the
