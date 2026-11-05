@@ -27,7 +27,7 @@ type Pkg struct {
 	// run sets them.
 	Removed []string `json:"removed,omitempty"`
 	// Installed are the packages that earlier steps of the host install or
-	// upgrade. The run sets them for an absent step.
+	// upgrade. The run sets them.
 	Installed []string `json:"installed,omitempty"`
 
 	// Check sets these for Apply.

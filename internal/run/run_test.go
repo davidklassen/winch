@@ -196,6 +196,24 @@ func TestIndexRefreshOncePerRun(t *testing.T) {
 	}
 }
 
+// spec: Modules/pkg; Running a pipeline/Plan
+func TestPkgInstallAfterInstall(t *testing.T) {
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": steps("      - pkg:\n          name: nftables\n      - pkg:\n          name: docker.io\n"),
+	})
+	h := fakehost.New()
+	h.SetPkgDeps("docker.io", "nftables", "containerd")
+	plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+	if err := plan.Failed["web1"]; err != nil {
+		t.Fatal(err)
+	}
+	got := plan.Stages[0].Hosts[0].Steps[1].Result.Changes
+	want := []string{"install docker.io", "also install containerd"}
+	if !slices.Equal(got, want) {
+		t.Errorf("changes = %q, want %q", got, want)
+	}
+}
+
 // spec: Modules/upgrade
 func TestUpgradeRefreshOncePerRun(t *testing.T) {
 	repo := "      - repo:\n          name: app\n          url: https://apt.example.com\n          suite: stable\n          components: main\n"
