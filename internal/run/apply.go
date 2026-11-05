@@ -87,7 +87,7 @@ type text struct{ out, errOut *color.Writer }
 func (t text) Step(ev StepEvent) {
 	var line color.Text
 	switch {
-	case ev.Address == ev.Host+":rollback" && ev.Status == "change":
+	case ev.Address == rollbackEvent(ev.Host, nil).Address && ev.Status == "change":
 		markLine(&line, ev.Host+": ", "!", " "+rollbackLabel+"\n")
 	case ev.Health != "" && ev.Status == "ok":
 		markLine(&line, ev.Host+": "+ev.Stage+": ", "*", " health:"+command(ev.Health, "    ")+"\n")
