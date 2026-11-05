@@ -739,7 +739,11 @@ func TestHabitHints(t *testing.T) {
 		name, step string
 		files      map[string]string
 		want       string
-		fix        string
+		// fix is the step that follows the hint, with fixVars and
+		// fixFiles.
+		fix      string
+		fixVars  string
+		fixFiles map[string]string
 	}{
 		{
 			name: "expression function in a template",
@@ -748,10 +752,12 @@ func TestHabitHints(t *testing.T) {
 			fix:  "  - file:\n      path: /a\n      content: !expr 'json(keys(vars.m))'\n",
 		},
 		{
-			name:  "expression function in a template file",
-			step:  "  - file:\n      path: /a\n      template: a.tmpl\n",
-			files: map[string]string{"recipes/r/templates/a.tmpl": "{{ filter .vars.l }}\n"},
-			want:  `load error: recipes/r/templates/a.tmpl:1:1: function "filter" not defined; filter is an expression function: use !expr`,
+			name:     "expression function in a template file",
+			step:     "  - file:\n      path: /a\n      template: a.tmpl\n",
+			files:    map[string]string{"recipes/r/templates/a.tmpl": "{{ filter .vars.l }}\n"},
+			want:     `load error: recipes/r/templates/a.tmpl:1:1: function "filter" not defined; filter is an expression function: compute it in a variable with !expr, and read that variable in the template`,
+			fixVars:  "  ks: !expr keys(vars.m)\n",
+			fixFiles: map[string]string{"recipes/r/templates/a.tmpl": "{{ join .vars.ks \",\" }}\n"},
 		},
 		{
 			name: "now in a template",
@@ -798,10 +804,14 @@ func TestHabitHints(t *testing.T) {
 			if got := evalOne(t, vars, tt.step, tt.files); got != tt.want {
 				t.Errorf("got  %q\nwant %q", got, tt.want)
 			}
-			if tt.fix == "" {
+			if tt.fix == "" && tt.fixFiles == nil {
 				return
 			}
-			if got := evalOne(t, vars, tt.fix, nil); strings.Contains(got, "error: ") {
+			step := tt.fix
+			if step == "" {
+				step = tt.step
+			}
+			if got := evalOne(t, vars+tt.fixVars, step, tt.fixFiles); strings.Contains(got, "error: ") {
 				t.Errorf("the fix gives %q", got)
 			}
 		})

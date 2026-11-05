@@ -38,7 +38,12 @@ type tmplFile struct {
 func parseTemplate(file string, text []byte, sc scope) (*tmplFile, error) {
 	t, err := template.New(file).Option("missingkey=error").Funcs(funcs).Parse(string(text))
 	if err != nil {
-		return nil, templateError(file, err)
+		hint := exprFuncHint(err, "compute it in a variable with !expr, and read that variable in the template")
+		err = templateError(file, err)
+		if ye, ok := err.(*yamlx.Error); ok {
+			ye.Msg += hint
+		}
+		return nil, err
 	}
 	c := nameCheck{sc: sc, at: func(off int) yamlx.Pos {
 		before := string(text[:off])
@@ -58,7 +63,7 @@ func parseInline(pos yamlx.Pos, text string, sc scope) (*tmplFile, error) {
 	if err != nil {
 		// A parse error names the template, which is the position here.
 		msg := strings.ReplaceAll(templateMessage(pos.String(), err), pos.String()+":", "line ")
-		return nil, yamlx.Errorf(pos, "%s", msg)
+		return nil, yamlx.Errorf(pos, "%s%s", msg, exprFuncHint(err, "use !expr"))
 	}
 	c := nameCheck{sc: sc, at: func(int) yamlx.Pos { return pos }}
 	c.check(t, pos.String())
@@ -564,7 +569,16 @@ func toJSON(v any) (string, error) {
 	return jsonEscapes.Replace(strings.TrimSuffix(b.String(), "\n")), nil
 }
 
-var undefinedFuncRe = regexp.MustCompile(`^function "(\w+)" not defined$`)
+var undefinedFuncRe = regexp.MustCompile(`: function "(\w+)" not defined$`)
+
+// exprFuncHint is the hint for a parse error of a template that calls an
+// expression function, with fix as the way to use it, or "".
+func exprFuncHint(err error, fix string) string {
+	if f := undefinedFuncRe.FindStringSubmatch(err.Error()); f != nil && isExprFunc(f[1]) {
+		return fmt.Sprintf("; %s is an expression function: %s", f[1], fix)
+	}
+	return ""
+}
 
 var templateErrRe = regexp.MustCompile(`(?s)^(\d+)(?::(\d+))?: (?:executing "(?:[^"\\]|\\.)*" at <(.*?)>: )?(.*)$`)
 
@@ -585,9 +599,6 @@ func parseTemplateError(name string, err error) (line, col int, msg string, ok b
 	msg = m[4]
 	if m[3] != "" {
 		msg = m[3] + ": " + msg
-	}
-	if f := undefinedFuncRe.FindStringSubmatch(msg); f != nil && isExprFunc(f[1]) {
-		msg += fmt.Sprintf("; %s is an expression function: use !expr", f[1])
 	}
 	return line, col, msg, true
 }
