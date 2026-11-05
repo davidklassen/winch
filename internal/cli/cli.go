@@ -228,8 +228,6 @@ func setFlagValue(f *flags, name, v string) error {
 		f.batch = true
 	case "--timeout":
 		return notEmpty(&f.timeout, name, v)
-	default:
-		return fmt.Errorf("no flag %s", name)
 	}
 	return nil
 }

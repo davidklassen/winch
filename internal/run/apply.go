@@ -702,11 +702,11 @@ func (a *hostApply) afterStart(st project.Step, record string) project.Step {
 // confirm_access handler that the step notifies on the host, and in each
 // store of p.SSHD.
 func guard(stage *project.Stage, p Planned) protocol.Guard {
-	g := protocol.Guard{Confirm: p.Step.ConfirmAccess}
+	g := protocol.Guard{Store: ownStore(stage, p).name(), Confirm: p.Step.ConfirmAccess}
 	if p.In != nil {
-		g.Recipe, g.Save = p.In.Recipe.Name, p.In.Recipe.ConfirmsAccess()
+		g.Save = p.In.Recipe.ConfirmsAccess()
 	} else {
-		g.Pipeline, g.Stage, g.Save = stage.Pipeline, stage.Name, stage.ConfirmsAccess()
+		g.Save = stage.ConfirmsAccess()
 	}
 	for _, h := range p.Step.Notify {
 		if h.ConfirmsAccess() && slices.Contains(p.Notify, h.Record()) {

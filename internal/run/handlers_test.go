@@ -959,10 +959,10 @@ func TestStageHandlers(t *testing.T) {
 		t.Errorf("pending = %q, want %q", got, want)
 	}
 	guards := map[string]protocol.Guard{
-		"web1 /etc/app/a.conf": {Pipeline: "site", Stage: "web", Save: true, Handlers: []string{"site\tweb\treload"}},
-		"web1 app":             {Pipeline: "site", Stage: "web", Save: true, Confirm: true},
-		"web1 /etc/other.conf": {Pipeline: "site", Stage: "other"},
-		"web1 other-reload":    {Pipeline: "site", Stage: "other"},
+		"web1 /etc/app/a.conf": {Store: "site\tweb", Save: true, Handlers: []string{"site\tweb\treload"}},
+		"web1 app":             {Store: "site\tweb", Save: true, Confirm: true},
+		"web1 /etc/other.conf": {Store: "site\tother"},
+		"web1 other-reload":    {Store: "site\tother"},
 	}
 	for k, g := range guards {
 		if !reflect.DeepEqual(h.Guards[k], g) {

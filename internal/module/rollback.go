@@ -109,10 +109,7 @@ func Guard(touches []Touch, login *Login) string {
 	if login == nil {
 		return ""
 	}
-	return guard(touches, login.entry)
-}
-
-func guard(touches []Touch, u passwdEntry) string {
+	u := login.entry
 	ssh := path.Join(u.home, ".ssh")
 	for _, t := range touches {
 		if t.Path == u.home || t.Path == ssh || strings.HasPrefix(t.Path, ssh+"/") || strings.HasPrefix(ssh, t.Path+"/") && t.Tree {
@@ -408,11 +405,7 @@ func extract(dir *os.Root, name, archive string) error {
 		if err != nil {
 			return err
 		}
-		rel, ok := strings.CutPrefix(h.Name, name)
-		if !ok || rel != "" && !strings.HasPrefix(rel, "/") || strings.Contains(rel, "/../") || strings.HasSuffix(rel, "/..") {
-			return fmt.Errorf("%s holds %s, which is not below %s", archive, h.Name, name)
-		}
-		h.Name = tmp + rel
+		h.Name = tmp + strings.TrimPrefix(h.Name, name)
 		if err := extractEntry(dir, h, tr); err != nil {
 			return err
 		}

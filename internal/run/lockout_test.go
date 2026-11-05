@@ -95,11 +95,11 @@ func TestConfirmAccess(t *testing.T) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
 	want := map[string]protocol.Guard{
-		"web1 /etc/ssh/sshd_config.d/local.conf": {Recipe: "ssh", Save: true, Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}},
-		"web1 ssh":                               {Recipe: "ssh", Save: true, Confirm: true, LoadsSSHD: true},
-		"web1 /etc/motd":                         {Pipeline: "site", Stage: "base"},
-		"web1 /etc/nftables.conf":                {Pipeline: "site", Stage: "firewall", Save: true},
-		"web1 nftables":                          {Pipeline: "site", Stage: "firewall", Save: true, Confirm: true},
+		"web1 /etc/ssh/sshd_config.d/local.conf": {Store: "ssh", Save: true, Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}},
+		"web1 ssh":                               {Store: "ssh", Save: true, Confirm: true, LoadsSSHD: true},
+		"web1 /etc/motd":                         {Store: "site\tbase"},
+		"web1 /etc/nftables.conf":                {Store: "site\tfirewall", Save: true},
+		"web1 nftables":                          {Store: "site\tfirewall", Save: true, Confirm: true},
 	}
 	for k, g := range want {
 		if !reflect.DeepEqual(h.Guards[k], g) {
@@ -143,7 +143,7 @@ func TestGuardedResult(t *testing.T) {
 	if want := []string{"access", "confirm", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
-	if g := h.Guards["web1 mail"]; !reflect.DeepEqual(g, protocol.Guard{Pipeline: "site", Stage: "base"}) {
+	if g := h.Guards["web1 mail"]; !reflect.DeepEqual(g, protocol.Guard{Store: "site\tbase"}) {
 		t.Errorf("guard %+v: the step has no confirm_access", g)
 	}
 }
@@ -375,8 +375,8 @@ func TestConfirmAccessAcrossRecipes(t *testing.T) {
 		t.Fatalf("apply failed: %v", o.Failed)
 	}
 	want := map[string]protocol.Guard{
-		"/etc/ssh/sshd_config.d/hardening.conf": {Recipe: "hardening", Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}},
-		"/etc/ssh/sshd_config.d/stage.conf":     {Pipeline: "site", Stage: "base", Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}},
+		"/etc/ssh/sshd_config.d/hardening.conf": {Store: "hardening", Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}},
+		"/etc/ssh/sshd_config.d/stage.conf":     {Store: "site\tbase", Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}},
 	}
 	for path, w := range want {
 		if g := h.Guards["web1 "+path]; !reflect.DeepEqual(g, w) {
@@ -423,8 +423,8 @@ func TestConfirmAccessOwnAndNotifiedStores(t *testing.T) {
 		name, steps string
 		want        protocol.Guard
 	}{
-		{"both recipes run", "      - recipe: ssh\n      - recipe: nftables\n", protocol.Guard{Recipe: "ssh", Save: true, Handlers: []string{"nftables.reload", "nftables.restart"}}},
-		{"nftables does not run", "      - recipe: ssh\n      - recipe: nftables\n        when: !expr host.name == \"db1\"\n", protocol.Guard{Recipe: "ssh", Save: true}},
+		{"both recipes run", "      - recipe: ssh\n      - recipe: nftables\n", protocol.Guard{Store: "ssh", Save: true, Handlers: []string{"nftables.reload", "nftables.restart"}}},
+		{"nftables does not run", "      - recipe: ssh\n      - recipe: nftables\n        when: !expr host.name == \"db1\"\n", protocol.Guard{Store: "ssh", Save: true}},
 	} {
 		h := fakehost.New()
 		p := loadWeb1(t, map[string]string{
@@ -990,23 +990,23 @@ func TestSSHDStores(t *testing.T) {
 		recipes        map[string]string
 		want           protocol.Guard
 	}{
-		{"handler of a later recipe", both, map[string]string{"ssh": ssh(reload)}, protocol.Guard{Recipe: "hardening", SSHD: []string{"ssh"}}},
-		{"restart of sshd.service", both, map[string]string{"ssh": ssh("        name: sshd.service\n        restarted: true\n      confirm_access: true\n")}, protocol.Guard{Recipe: "hardening", SSHD: []string{"ssh"}}},
+		{"handler of a later recipe", both, map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}},
+		{"restart of sshd.service", both, map[string]string{"ssh": ssh("        name: sshd.service\n        restarted: true\n      confirm_access: true\n")}, protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}},
 		{"handler in a later stage", "  - name: base\n    hosts: all\n    steps:\n      - recipe: hardening\n  - name: ssh\n    hosts: all\n    steps:\n      - recipe: ssh\n",
-			map[string]string{"ssh": ssh(reload)}, protocol.Guard{Recipe: "hardening", SSHD: []string{"ssh"}}},
+			map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}},
 		{"handler of a stage", "  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: " + dropIn + "\n          content: hi\n  - name: ssh\n    hosts: all\n" + stageHandler,
-			nil, protocol.Guard{Pipeline: "site", Stage: "base", SSHD: []string{"site\tssh"}}},
-		{"two later stores", both + "  - name: late\n    hosts: all\n" + stageHandler, map[string]string{"ssh": ssh(reload)}, protocol.Guard{Recipe: "hardening", SSHD: []string{"site\tlate", "ssh"}}},
+			nil, protocol.Guard{Store: "site\tbase", SSHD: []string{"site\tssh"}}},
+		{"two later stores", both + "  - name: late\n    hosts: all\n" + stageHandler, map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: "hardening", SSHD: []string{"site\tlate", "ssh"}}},
 		{"handler before the change", "  - name: base\n    hosts: all\n    steps:\n      - recipe: ssh\n      - recipe: hardening\n",
-			map[string]string{"ssh": ssh(reload)}, protocol.Guard{Recipe: "hardening"}},
-		{"handler without confirm_access", both, map[string]string{"ssh": ssh("        name: ssh\n        reloaded: true\n")}, protocol.Guard{Recipe: "hardening"}},
-		{"handler that does not run", both, map[string]string{"ssh": strings.Replace(ssh(reload), "content: hi", "content: same", 1)}, protocol.Guard{Recipe: "hardening"}},
-		{"handler of another unit", both, map[string]string{"ssh": ssh("        name: nginx\n        reloaded: true\n      confirm_access: true\n")}, protocol.Guard{Recipe: "hardening"}},
+			map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: "hardening"}},
+		{"handler without confirm_access", both, map[string]string{"ssh": ssh("        name: ssh\n        reloaded: true\n")}, protocol.Guard{Store: "hardening"}},
+		{"handler that does not run", both, map[string]string{"ssh": strings.Replace(ssh(reload), "content: hi", "content: same", 1)}, protocol.Guard{Store: "hardening"}},
+		{"handler of another unit", both, map[string]string{"ssh": ssh("        name: nginx\n        reloaded: true\n      confirm_access: true\n")}, protocol.Guard{Store: "hardening"}},
 		{"handler of the same recipe", "  - name: base\n    hosts: all\n    steps:\n      - recipe: hardening\n",
-			map[string]string{"hardening": hardening + "  - file:\n      path: /etc/motd\n      content: hi\n    notify: reload\nhandlers:\n  reload:\n    - service:\n" + reload}, protocol.Guard{Recipe: "hardening", Save: true, SSHD: []string{"hardening"}}},
-		{"notified handler", both, map[string]string{"hardening": hardening + "    notify: ssh.reload\n", "ssh": ssh(reload)}, protocol.Guard{Recipe: "hardening", Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}}},
-		{"guarded start of ssh.socket", both, map[string]string{"ssh": "steps:\n  - service:\n      name: ssh.socket\n      running: true\n    confirm_access: true\n"}, protocol.Guard{Recipe: "hardening", SSHD: []string{"ssh"}}},
-		{"guarded restart of ssh.socket", both, map[string]string{"ssh": ssh("        name: ssh.socket\n        restarted: true\n      confirm_access: true\n")}, protocol.Guard{Recipe: "hardening", SSHD: []string{"ssh"}}},
+			map[string]string{"hardening": hardening + "  - file:\n      path: /etc/motd\n      content: hi\n    notify: reload\nhandlers:\n  reload:\n    - service:\n" + reload}, protocol.Guard{Store: "hardening", Save: true, SSHD: []string{"hardening"}}},
+		{"notified handler", both, map[string]string{"hardening": hardening + "    notify: ssh.reload\n", "ssh": ssh(reload)}, protocol.Guard{Store: "hardening", Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}}},
+		{"guarded start of ssh.socket", both, map[string]string{"ssh": "steps:\n  - service:\n      name: ssh.socket\n      running: true\n    confirm_access: true\n"}, protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}},
+		{"guarded restart of ssh.socket", both, map[string]string{"ssh": ssh("        name: ssh.socket\n        restarted: true\n      confirm_access: true\n")}, protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}},
 	} {
 		files := map[string]string{"pipelines/site.yaml": "stages:\n" + tt.pipeline, "recipes/hardening/recipe.yaml": hardening}
 		for name, r := range tt.recipes {
