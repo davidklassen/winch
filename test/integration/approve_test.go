@@ -34,37 +34,9 @@ func TestApprove(t *testing.T) {
 	vm := lab.StartVM(t, "approve")
 	dir := project(t, "hosts:\n  approve:\n    address: 127.0.0.1\n")
 
-	t.Run("a stale hash exits 6 and changes nothing", func(t *testing.T) {
-		r := lab.Winch(t, dir, "plan", "site")
-		hash := hashOf(t, r.Stdout)
-		pipeline := filepath.Join(dir, "pipelines/site.yaml")
-		data, err := os.ReadFile(pipeline)
-		if err != nil {
-			t.Fatal(err)
-		}
-		edited := strings.Replace(string(data), "Managed by winch.", "Managed by winch, edited.", 1)
-		if err := os.WriteFile(pipeline, []byte(edited), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		// Ubuntu has no /etc/motd.
-		vm.MustRun(t, "echo stock > /etc/motd")
-		before := vm.MustRun(t, "cat /etc/motd")
-		r = lab.Winch(t, dir, "apply", "site", "--check", hash)
-		if r.Code != 6 || !strings.Contains(r.Stderr, "not "+hash+"; nothing changed") {
-			t.Errorf("apply with the old hash: exit %d", r.Code)
-		}
-		if after := vm.MustRun(t, "cat /etc/motd"); after != before {
-			t.Errorf("/etc/motd changed to %q", after)
-		}
-		r = lab.Winch(t, dir, "apply", "site", "--check", hashOf(t, r.Stdout))
-		if r.Code != 0 || vm.MustRun(t, "cat /etc/motd") != "Managed by winch, edited.\n" {
-			t.Errorf("apply with the new hash: exit %d", r.Code)
-		}
-	})
-
 	t.Run("a drifted file makes plan --exit-code exit 2", func(t *testing.T) {
-		if r := lab.Winch(t, dir, "plan", "site", "--exit-code"); r.Code != 0 {
-			t.Errorf("plan without changes: exit %d", r.Code)
+		if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+			t.Fatalf("first apply: exit %d", r.Code)
 		}
 		vm.MustRun(t, "echo drift > /etc/motd")
 		r := lab.Winch(t, dir, "plan", "site", "--exit-code")

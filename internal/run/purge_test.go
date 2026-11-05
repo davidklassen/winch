@@ -11,7 +11,6 @@ import (
 	"github.com/davidklassen/winch/internal/module"
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/run"
-	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 var purgeFiles = map[string]string{
@@ -62,7 +61,7 @@ handlers:
 // spec: Modules/file, dir, link (dir purge: a step for this host in any
 // pipeline of the project; a stage that --stages leaves out counts)
 func TestPurgeKeep(t *testing.T) {
-	p := loadFiles(t, purgeFiles)
+	p := loadWeb1(t, purgeFiles)
 	if err := p.Select(project.Selection{Stages: "base"}); err != nil {
 		t.Fatal(err)
 	}
@@ -84,9 +83,7 @@ func TestPurgeKeep(t *testing.T) {
 // spec: Modules/file, dir, link (dir purge keeps a download unpack directory
 // with everything in it)
 func TestPurgeKeepUnpack(t *testing.T) {
-	p := loadFiles(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+	p := loadWeb1(t, map[string]string{
 		"pipelines/site.yaml": `stages:
   - name: base
     hosts: all
@@ -120,14 +117,9 @@ func TestPurgeKeepUnpack(t *testing.T) {
 
 // spec: CLI/JSON output
 func TestAppliedChanges(t *testing.T) {
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
-		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - dir:\n          path: /etc/nginx/conf.d\n          purge: true\n",
-	}), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - dir:\n          path: /etc/nginx/conf.d\n          purge: true\n",
+	})
 	h := fakehost.New()
 	h.SetResult("web1", "/etc/nginx/conf.d", module.Result{Status: module.Change, Action: module.Modify,
 		Changes: []string{"remove file /etc/nginx/conf.d/old.conf"}})

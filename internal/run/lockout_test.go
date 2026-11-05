@@ -17,24 +17,7 @@ import (
 	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
-	"github.com/davidklassen/winch/internal/vmtest"
 )
-
-func loadWeb1(t *testing.T, files map[string]string) *project.Project {
-	t.Helper()
-	all := map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
-		"inventories/test.yaml": "hosts:\n  web1: {}\n",
-	}
-	for k, v := range files {
-		all[k] = v
-	}
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, all), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
-}
 
 const sshRecipe = `steps:
   - file:

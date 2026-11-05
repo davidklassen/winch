@@ -51,7 +51,7 @@ var cmdFiles = map[string]string{
 func TestPlanCmd(t *testing.T) {
 	h := fakehost.New()
 	h.SetUser("web2", "www-data")
-	plan := run.MakePlan(context.Background(), loadFiles(t, cmdFiles), h.Connector(), run.Options{})
+	plan := run.MakePlan(context.Background(), loadWeb1(t, cmdFiles), h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
 	golden.Assert(t, filepath.Join("testdata", "plan", "cmd.golden"), output(&out, &errOut))
@@ -64,7 +64,7 @@ func TestPlanCmd(t *testing.T) {
 func TestApplyCmd(t *testing.T) {
 	h := fakehost.New()
 	h.SetUser("web2", "www-data")
-	plan := run.MakePlan(context.Background(), loadFiles(t, cmdFiles), h.Connector(), run.Options{})
+	plan := run.MakePlan(context.Background(), loadWeb1(t, cmdFiles), h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
 	if !o.OK() {
@@ -112,7 +112,7 @@ handlers:
 `,
 	}
 	h := fakehost.New()
-	p := loadFiles(t, files)
+	p := loadWeb1(t, files)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -155,7 +155,7 @@ func TestPendingThenOfCmdCounts(t *testing.T) {
 			h := fakehost.New()
 			sum := sha256.Sum256([]byte(tt.record))
 			h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "cmd", Mains: []string{hex.EncodeToString(sum[:])}})
-			plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{})
+			plan := run.MakePlan(context.Background(), loadWeb1(t, files), h.Connector(), run.Options{})
 			change, _, unknown, _ := plan.Counts()
 			if tt.pending && (change != 1 || unknown != 0) {
 				t.Errorf("counts: %d to change, %d unknown; want a pending then to count as a change", change, unknown)
@@ -175,7 +175,7 @@ func TestApplyOnlyUnknown(t *testing.T) {
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: uptime\n",
 	}
 	h := fakehost.New()
-	if ok, got := applyAll(t, loadFiles(t, files), h); !ok || !slices.Equal(h.Log["web1"], []string{"cmd uptime", "access"}) {
+	if ok, got := applyAll(t, loadWeb1(t, files), h); !ok || !slices.Equal(h.Log["web1"], []string{"cmd uptime", "access"}) {
 		t.Errorf("apply ran %q:\n%s", h.Log["web1"], got)
 	}
 }
@@ -202,7 +202,7 @@ func TestAssertFails(t *testing.T) {
 	}
 	h := fakehost.New()
 	h.FailCommand("web1", "probe 25")
-	ok, got := applyAll(t, loadFiles(t, files), h)
+	ok, got := applyAll(t, loadWeb1(t, files), h)
 	if ok {
 		t.Fatal("apply passed")
 	}
@@ -225,7 +225,7 @@ func TestAssertOnly(t *testing.T) {
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - assert:\n          command: probe\n          message: x\n",
 	}
 	h := fakehost.New()
-	p := loadFiles(t, files)
+	p := loadWeb1(t, files)
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	if plan.HasChanges() {
 		t.Error("a plan with only an assert has changes")
@@ -298,7 +298,7 @@ func TestPlanShowsCommands(t *testing.T) {
 		"pre_hook true ... →\nsystemctl stop nginx\nsleep 1",
 	}})
 	p := &progress{calls: map[string][]string{}}
-	plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{Progress: p})
+	plan := run.MakePlan(context.Background(), loadWeb1(t, files), h.Connector(), run.Options{Progress: p})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
 	out.WriteString("json:\n")
@@ -318,7 +318,7 @@ func TestPlanShowsCommands(t *testing.T) {
 	out.Reset()
 	h = fakehost.New()
 	h.SetFile("web1", "/etc/issue", "Debian\n")
-	plan = run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{})
+	plan = run.MakePlan(context.Background(), loadWeb1(t, files), h.Connector(), run.Options{})
 	if !run.Apply(context.Background(), plan, h.Connector(), run.NewEvents(plain(&out), func() time.Time { return time.Time{} })).OK() {
 		t.Fatal(errOut.String())
 	}
@@ -339,7 +339,7 @@ func TestThenRecordOfCmd(t *testing.T) {
 	}
 	h := fakehost.New()
 	h.FailCommand("web1", "echo done")
-	if ok, got := applyAll(t, loadFiles(t, files), h); ok {
+	if ok, got := applyAll(t, loadWeb1(t, files), h); ok {
 		t.Fatalf("apply passed:\n%s", got)
 	}
 	sum := sha256.Sum256([]byte("true\nnotify --token abc"))
@@ -374,7 +374,7 @@ func TestPlanShowsUnless(t *testing.T) {
 	h := fakehost.New()
 	h.FailCommand("web1", "test -x /usr/local/bin/app")
 	h.FailCommand("web1", "app status\napp check\n")
-	plan := run.MakePlan(context.Background(), loadFiles(t, files), h.Connector(), run.Options{})
+	plan := run.MakePlan(context.Background(), loadWeb1(t, files), h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
 	want := "    ~ cmd make install\n        unless: test -x /usr/local/bin/app\n" +
@@ -411,7 +411,7 @@ func TestPendingAssert(t *testing.T) {
 		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/motd\n          content: \"hi\\n\"\n      - assert:\n          command: probe 25\n          message: outbound port 25 is blocked\n",
 	}
 	h := fakehost.New()
-	p := loadFiles(t, files)
+	p := loadWeb1(t, files)
 	h.FailCommand("web1", "probe 25")
 	if ok, got := applyAll(t, p, h); ok {
 		t.Fatalf("the first apply passed:\n%s", got)
@@ -445,7 +445,7 @@ func TestGoneChecks(t *testing.T) {
 	}
 	h := fakehost.New()
 	h.FailCommand("web1", "probe 25")
-	if ok, got := applyAll(t, loadFiles(t, files), h); ok {
+	if ok, got := applyAll(t, loadWeb1(t, files), h); ok {
 		t.Fatalf("the first apply passed:\n%s", got)
 	}
 	want := []protocol.Check{{Pipeline: "site", Stage: "base"}, {Pipeline: "site", Stage: "base", Step: 2}}
@@ -453,7 +453,7 @@ func TestGoneChecks(t *testing.T) {
 		t.Fatalf("records %v, want %v", got, want)
 	}
 	files["pipelines/site.yaml"] = "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/issue\n          content: \"hi\\n\"\n"
-	if ok, got := applyAll(t, loadFiles(t, files), h); !ok {
+	if ok, got := applyAll(t, loadWeb1(t, files), h); !ok {
 		t.Fatalf("apply failed:\n%s", got)
 	}
 	if got := h.ChecksOf("web1"); len(got) != 0 {
@@ -480,7 +480,7 @@ handlers:
 `,
 	}
 	h := fakehost.New()
-	p := loadFiles(t, files)
+	p := loadWeb1(t, files)
 	h.FailCommand("web1", "probe")
 	if ok, got := applyAll(t, p, h); ok {
 		t.Fatalf("the first apply passed:\n%s", got)

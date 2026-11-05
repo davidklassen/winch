@@ -60,7 +60,7 @@ func TestProgress(t *testing.T) {
 		h := fakehost.New()
 		p := &progress{calls: map[string][]string{}}
 		opts := run.Options{Serial: serial, Progress: p}
-		plan := run.MakePlan(context.Background(), loadFiles(t, progressFiles), h.Connector(), opts)
+		plan := run.MakePlan(context.Background(), loadWeb1(t, progressFiles), h.Connector(), opts)
 		var out, errOut bytes.Buffer
 		if o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))); !o.OK() {
 			t.Fatalf("apply failed: %s", errOut.String())

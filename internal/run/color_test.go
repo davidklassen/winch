@@ -14,7 +14,6 @@ import (
 	"github.com/davidklassen/winch/internal/protocol"
 	"github.com/davidklassen/winch/internal/run"
 	"github.com/davidklassen/winch/internal/secret"
-	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 var codes = regexp.MustCompile("\x1b\\[[0-9;]*m")
@@ -39,8 +38,7 @@ func colored(t *testing.T, filter *secret.Filter, format func(out, errOut *bytes
 
 func colorProject(t *testing.T) *project.Project {
 	t.Helper()
-	dir := vmtest.WriteProject(t, map[string]string{
-		"winch.yaml":            "name: acme\ninventory: test\n",
+	return loadWeb1(t, map[string]string{
 		"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\n  web3: {}\n",
 		"pipelines/site.yaml": `stages:
   - name: web
@@ -67,11 +65,6 @@ handlers:
         reloaded: true
 `,
 	})
-	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
 }
 
 // colorHosts returns hosts for colorProject: web1 and web2 have changes,

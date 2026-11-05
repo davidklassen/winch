@@ -6,9 +6,7 @@ import (
 
 	"github.com/davidklassen/winch/internal/fakehost"
 	"github.com/davidklassen/winch/internal/module"
-	"github.com/davidklassen/winch/internal/project"
 	"github.com/davidklassen/winch/internal/run"
-	"github.com/davidklassen/winch/internal/vmtest"
 )
 
 // spec: Modules/firewall
@@ -28,15 +26,9 @@ func TestToolMissingNote(t *testing.T) {
 		{"an earlier pkg step that removes it", "      - pkg: {name: nftables, absent: true}\n" + firewall, func(h *fakehost.Hosts) { h.SetPkg("web1", "nftables") }, note},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := vmtest.WriteProject(t, map[string]string{
-				"winch.yaml":            "name: missing\ninventory: test\n",
-				"inventories/test.yaml": "hosts:\n  web1: {}\n",
-				"pipelines/site.yaml":   steps(tt.steps),
+			p := loadWeb1(t, map[string]string{
+				"pipelines/site.yaml": steps(tt.steps),
 			})
-			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{})
-			if err != nil {
-				t.Fatal(err)
-			}
 			h := fakehost.New()
 			h.SetResult("web1", "", module.Result{Status: module.Change, Action: module.Create, Changes: []string{"load the rules"},
 				MissingTools: []module.Tool{{Name: "nft", Package: "nftables"}}})

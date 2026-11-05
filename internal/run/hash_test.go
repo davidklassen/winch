@@ -92,10 +92,7 @@ func replaceWWW(files int) module.Result {
 // planHash plans the project of files on hosts that setup prepares.
 func planHash(t *testing.T, files map[string]string, setup func(h *fakehost.Hosts)) *run.Plan {
 	t.Helper()
-	p, err := project.Load(t.Context(), vmtest.WriteProject(t, files), "", "site", nil, project.Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := loadWeb1(t, files)
 	h := fakehost.New()
 	for _, host := range []string{"web1", "web2"} {
 		h.SetResult(host, "/srv/old", removeOld(2))

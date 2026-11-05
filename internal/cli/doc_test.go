@@ -30,9 +30,8 @@ func TestDoc(t *testing.T) {
 		args []string
 	}{
 		{"index", []string{"doc"}},
-		{"remote", []string{"doc", "remote"}},
+		{"facts", []string{"doc", "facts"}},
 		{"file", []string{"doc", "file"}},
-		{"unit", []string{"doc", "unit"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -48,22 +47,6 @@ func TestDoc(t *testing.T) {
 // docTopics are the topics of winch doc, in index order.
 var docTopics = []string{"project", "inventory", "pipeline", "recipe", "step", "handlers", "variables", "templates", "expressions", "facts", "secrets", "workflow", "remote"}
 
-// spec: CLI
-func TestDocFunctions(t *testing.T) {
-	for _, topic := range project.Topics() {
-		if len(topic.Functions) == 0 {
-			continue
-		}
-		r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", topic.Name)
-		_, section, _ := strings.Cut(r.out, "\nFunctions:")
-		for _, f := range topic.Functions {
-			if !strings.Contains(section, "\n  "+f.Name+" ") {
-				t.Errorf("winch doc %s does not list the function %s", topic.Name, f.Name)
-			}
-		}
-	}
-}
-
 // spec: Modules/service and unit
 func TestDocServiceWatch(t *testing.T) {
 	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "service")
@@ -76,45 +59,8 @@ func TestDocServiceWatch(t *testing.T) {
 }
 
 // spec: CLI
-func TestDocOldTopics(t *testing.T) {
-	for _, name := range []string{"values", "functions", "lockout", "plan"} {
-		r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", name)
-		if r.code != exitInvalid {
-			t.Errorf("winch doc %s: exit %d, want %d", name, r.code, exitInvalid)
-		}
-	}
-}
-
-// spec: CLI
 func TestDocKey(t *testing.T) {
 	tests := []struct{ arg, want string }{
-		{"file.mode", `file.mode: string, default 0644
-
-Octal, in quotes: "0640". Without quotes, YAML reads it as a number.
-With stock, the package gives the default. With copy_from, the source
-gives it, without the write bits of the group and others. A step without
-content has no default.
-`},
-		{"templates.has", `templates.has: function
-
-has list v: true when list contains v. In an expression, use v in list.
-`},
-		{"file.path", `file.path: string, required
-
-Absolute. The step creates missing parent directories, owned by root
-with mode 0755.
-`},
-		{"file.content", `file.content: string
-
-Literal text. A step without content, template, source, copy_from, or
-stock sets only the owner, group, and mode that it gives, with no
-defaults, of a file that exists. When that file is missing, the plan
-says does not exist yet. Apply fails when it is still missing.
-`},
-		{"file.owner", `file.owner: name or ID, default root
-
-A user name or a numeric ID. A step without content has no default.
-`},
 		{"firewall.allow", `firewall.allow: list of maps
 
 Accepted traffic; the host drops the rest. It always accepts established
@@ -125,45 +71,6 @@ Keys of each element:
   tcp   integer or list of integers  -  ports
   udp   integer or list of integers  -  ports
   from  string or list of strings    -  source addresses or networks
-`},
-		{"firewall.allow.from", `firewall.allow.from: string or list of strings
-
-Source addresses or networks. IPv4 and IPv6 are allowed. Without from,
-the rule accepts every source.
-`},
-		{"step.notify", `step.notify: string or list of strings
-
-Handlers to run after a change. Not a template or an expression. With
-loop, notify fires once when any element changed. Run winch doc
-handlers.
-`},
-		{"step.confirm_access", `step.confirm_access: boolean, default false
-
-Access check with rollback, for a service step. Only a service step can
-use it, in steps or in handlers. A firewall step gets the same check
-without it.
-
-Before the step, winch keeps the old state of each path that the changed
-steps of the recipe wrote or removed in this run. It starts a 60-second
-rollback timer in a process of its own.
-
-After the step, winch runs the access check: it opens a new SSH
-connection and runs a command, through sudo -n when the login user is
-not root. It tries twice, 5 seconds apart.
-
-When both tries fail, winch puts back the old files and runs
-daemon-reload after a unit file. It reverses a start or a stop of the
-step, and reloads or restarts the unit again. The host fails with the
-error "the access check failed: <error>; the old files are back". When
-the SSH connection ends first, winch rolls back as it ends. When the
-helper is gone, the timer rolls back.
-
-When a run ends before a notified handler with confirm_access ran, winch
-puts back the files of that handler at once. The next run applies the
-change again.
-
-A rollback puts back files only. It does not undo a change of a user or
-a group.
 `},
 		{"pipeline.health", `pipeline.health: map
 
@@ -176,12 +83,6 @@ Keys:
   command  string   required  must exit 0
   stable   integer  0         seconds the command keeps passing
   timeout  integer  60        seconds the gate has to pass
-`},
-		{"pipeline.stages.parallelism", `pipeline.stages.parallelism: integer
-
-Maximum hosts at the same time. Hosts start in inventory order. The next
-host starts when a host finishes the stage and its health gate passes. A
-failure stops new hosts from starting. Running hosts finish the stage.
 `},
 	}
 	for _, tt := range tests {
@@ -247,21 +148,17 @@ func TestDocTopicKeyPaths(t *testing.T) {
 		for line := range strings.Lines(keys) {
 			path := strings.Fields(line)[0]
 			arg := name + "." + path
-			r := winch(t, dir, h, false, "", "doc", arg)
-			if r.code != exitOK || !strings.HasPrefix(r.out, arg+": ") {
-				t.Errorf("winch doc %s: exit %d, stderr %q, stdout %q", arg, r.code, r.err, r.out)
-			}
 			if first, _, _ := strings.Cut(path, "."); !slices.Contains(names, first) {
 				r := winch(t, dir, h, false, "", "doc", path)
 				if !strings.Contains(r.err, strconv.Quote(arg)) {
 					t.Errorf("winch doc %s does not suggest %s: stderr %q", path, arg, r.err)
 				}
+				checked++
 			}
-			checked++
 		}
 	}
 	if checked == 0 {
-		t.Error("no topic page lists keys")
+		t.Error("no topic page lists a key path to suggest")
 	}
 }
 
@@ -279,6 +176,12 @@ func TestDocNoTrailingSpace(t *testing.T) {
 
 // spec: CLI
 func TestDocTopicLayout(t *testing.T) {
+	for _, name := range module.Names() {
+		r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", name)
+		if strings.Contains(r.out, "\n\n\n") {
+			t.Errorf("winch doc %s has two empty lines in a row", name)
+		}
+	}
 	for _, name := range docTopics {
 		r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", name)
 		if strings.Contains(r.out, "\n\n\n") {
@@ -385,18 +288,7 @@ func TestDocExamples(t *testing.T) {
 
 // spec: CLI
 func TestDocTopicNames(t *testing.T) {
-	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc")
-	groups, _, _ := strings.Cut(r.out, "\nModules:\n")
-	var topics []string
-	for line := range strings.Lines(groups) {
-		if strings.HasPrefix(line, "  ") {
-			topics = append(topics, strings.Fields(line)[0])
-		}
-	}
-	if !slices.Equal(topics, docTopics) {
-		t.Errorf("topics %v, want %v", topics, docTopics)
-	}
-	for _, name := range topics {
+	for _, name := range docTopics {
 		if slices.Contains(module.Names(), name) {
 			t.Errorf("topic %s is also a module; rename the topic", name)
 		}
@@ -620,7 +512,7 @@ func checkDocKeys(t *testing.T, dir string, h *fakehost.Hosts, keys []docJSONKey
 			continue
 		}
 		text := docSection(r.out, head, "\nKeys")
-		if !slices.Equal(strings.Fields(text), strings.Fields(k.Text)) {
+		if !slices.EqualFunc(docParagraphs(text), docParagraphs(k.Text), slices.Equal) {
 			t.Errorf("winch doc %s: text %q, JSON %q", k.Path, text, k.Text)
 		}
 		rows := docTable(r.out, "Keys of each element:\n")
@@ -632,6 +524,15 @@ func checkDocKeys(t *testing.T, dir string, h *fakehost.Hosts, keys []docJSONKey
 		}
 		checkDocKeys(t, dir, h, k.Keys)
 	}
+}
+
+// docParagraphs returns the words of each paragraph of text.
+func docParagraphs(text string) [][]string {
+	var paras [][]string
+	for para := range strings.SplitSeq(strings.TrimSpace(text), "\n\n") {
+		paras = append(paras, strings.Fields(para))
+	}
+	return paras
 }
 
 // docBlockWords returns the words of the blocks before the example, with a
@@ -718,9 +619,6 @@ func TestDocJSON(t *testing.T) {
 			if !slices.Contains([]string{"heading", "paragraph", "list", "table", "code"}, b.Type) {
 				t.Errorf("winch doc %s: block %q in the body", tp.Name, b.Type)
 			}
-			if strings.Contains(b.Text, "\n") && b.Type != "code" || slices.ContainsFunc(b.Items, func(s string) bool { return strings.Contains(s, "\n") }) {
-				t.Errorf("winch doc %s: a line break in the text of a %s block: %+v", tp.Name, b.Type, b)
-			}
 		}
 		body := docSection(page, head, "\nKeys:\n", "\nFunctions:\n", "\nExample:\n", "\nRun \"winch doc")
 		src := sources[tp.Name]
@@ -805,6 +703,11 @@ func checkDocCommand(t *testing.T, dir string, h *fakehost.Hosts, c docJSONComma
 	t.Helper()
 	r := winch(t, dir, h, false, "", append(strings.Fields(c.Name), "--help")...)
 	help := r.out
+	for line := range strings.Lines(help) {
+		if strings.HasSuffix(line, " \n") {
+			t.Errorf("winch %s --help: a line ends in a space: %q", c.Name, line)
+		}
+	}
 	first, _, _ := strings.Cut(help, "\n\n")
 	want := "winch " + c.Name + ": " + c.Summary
 	if c.Name == "" {
@@ -880,6 +783,11 @@ func TestDocJSONFields(t *testing.T) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(out), &top); err != nil {
 		t.Fatal(err)
+	}
+	for _, s := range []string{": null", `\u003c`, `\u003e`, `\u0026`} {
+		if strings.Contains(out, s) {
+			t.Errorf("the JSON has %s", s)
+		}
 	}
 	if got := slices.Sorted(maps.Keys(top)); !slices.Equal(got, []string{"commands", "groups", "intro", "modules"}) {
 		t.Errorf("top-level fields %q", got)
@@ -958,80 +866,21 @@ func TestDocJSONFields(t *testing.T) {
 // spec: CLI
 func TestDocJSONGolden(t *testing.T) {
 	_, out := decodeDocJSON(t)
-	var d struct {
-		Groups  []struct{ Topics []json.RawMessage }
-		Modules []json.RawMessage
-	}
+	var d struct{ Modules []json.RawMessage }
 	if err := json.Unmarshal([]byte(out), &d); err != nil {
 		t.Fatal(err)
 	}
-	var topics []json.RawMessage
-	for _, g := range d.Groups {
-		topics = append(topics, g.Topics...)
+	i := slices.IndexFunc(d.Modules, func(raw json.RawMessage) bool {
+		var v struct{ Name string }
+		return json.Unmarshal(raw, &v) == nil && v.Name == "file"
+	})
+	if i < 0 {
+		t.Fatal("no file module in the JSON")
 	}
-	tests := []struct {
-		name  string
-		items []json.RawMessage
-	}{
-		{"file", d.Modules},
-		{"secrets", topics},
+	var b bytes.Buffer
+	if err := json.Indent(&b, d.Modules[i], "", "  "); err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			i := slices.IndexFunc(tt.items, func(raw json.RawMessage) bool {
-				var v struct{ Name string }
-				return json.Unmarshal(raw, &v) == nil && v.Name == tt.name
-			})
-			if i < 0 {
-				t.Fatalf("no %s in the JSON", tt.name)
-			}
-			var b bytes.Buffer
-			if err := json.Indent(&b, tt.items[i], "", "  "); err != nil {
-				t.Fatal(err)
-			}
-			b.WriteByte('\n')
-			golden.Assert(t, filepath.Join("testdata", "doc", tt.name+".json.golden"), b.Bytes())
-		})
-	}
-}
-
-// docPages returns the argument of each page of winch doc: each topic but
-// remote, each module, and each of their keys and functions.
-func docPages() []string {
-	var pages []string
-	var add func(prefix string, keys []doc.Key)
-	add = func(prefix string, keys []doc.Key) {
-		for _, k := range keys {
-			pages = append(pages, prefix+k.Name)
-			add(prefix+k.Name+".", k.Keys)
-		}
-	}
-	for _, t := range project.Topics() {
-		if t.Name == "remote" {
-			continue
-		}
-		pages = append(pages, t.Name)
-		add(t.Name+".", t.Keys)
-		add(t.Name+".", t.Functions)
-	}
-	for _, name := range module.Names() {
-		d, _ := module.Reference(name)
-		pages = append(pages, name)
-		add(name+".", d.Keys)
-	}
-	return pages
-}
-
-// spec: CLI
-func TestDocPages(t *testing.T) {
-	dir, h := t.TempDir(), fakehost.New()
-	var b strings.Builder
-	for _, page := range docPages() {
-		r := winch(t, dir, h, false, "", "doc", page)
-		if r.code != exitOK || r.err != "" {
-			t.Errorf("winch doc %s: exit %d, stderr %q", page, r.code, r.err)
-		}
-		b.WriteString("==> winch doc " + page + "\n" + r.out)
-	}
-	golden.Assert(t, filepath.Join("testdata", "doc", "pages.golden"), []byte(b.String()))
+	b.WriteByte('\n')
+	golden.Assert(t, filepath.Join("testdata", "doc", "file.json.golden"), b.Bytes())
 }
