@@ -191,14 +191,8 @@ func (p *Plan) Notes() []Note {
 					s := module.Service{Name: step.Step.Shown().Args.Main()}
 					add(host.Host.Name, s.Unit()+" does not exist", false)
 				}
-				for _, m := range step.Result.Missing {
-					kind, _, _ := strings.Cut(m, " ")
-					c := step.Step.Shown().Args.(*module.Cmd)
-					shown := c.Dir
-					if kind == "user" {
-						shown = c.User
-					}
-					add(host.Host.Name, fmt.Sprintf("%s %s does not exist yet and no %s step creates it", kind, shown, kind), true)
+				for _, n := range step.missing {
+					add(n.Host, n.Text, n.Warning)
 				}
 				for _, t := range step.Result.MissingTools {
 					add(host.Host.Name, fmt.Sprintf("%s is missing; install the package %s in an earlier pkg step", t.Name, t.Package), true)

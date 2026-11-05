@@ -109,7 +109,7 @@ func TestDirModule(t *testing.T) {
 		{
 			Name:         "owner that does not exist yet",
 			Args:         &module.Dir{Path: "/tmp/w/d", Owner: "later"},
-			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{`owner later, group root, mode 0755; user later does not exist yet`}},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{`owner later, group root, mode 0755`}, Missing: []string{"user later"}},
 			WantApplyErr: `user later does not exist`,
 			Fix:          "useradd later",
 		},

@@ -228,12 +228,13 @@ func (h *Hosts) SetResult(host, name string, res module.Result) {
 }
 
 // result returns a copy of the result that SetResult stored for key. The run
-// masks changes and drops missing tools in place, which must not change the
-// stored result. The caller holds mu.
+// masks changes and drops missing tools and missing users in place, which
+// must not change the stored result. The caller holds mu.
 func (h *Hosts) result(key string) (module.Result, bool) {
 	res, ok := h.results[key]
 	res.Changes = slices.Clone(res.Changes)
 	res.MissingTools = slices.Clone(res.MissingTools)
+	res.Missing = slices.Clone(res.Missing)
 	return res, ok
 }
 
@@ -707,7 +708,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		return module.Result{}, errors.New("permission denied")
 	}
 	c.hosts.mu.Lock()
-	res, ok := c.hosts.results[c.host+" "+f.Path]
+	res, ok := c.hosts.result(c.host + " " + f.Path)
 	c.hosts.mu.Unlock()
 	if ok {
 		return res, nil

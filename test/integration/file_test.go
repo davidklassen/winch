@@ -17,7 +17,7 @@ func TestFileModule(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "file")
 	attrs := "owner root, group root, mode 0644"
-	reset := "userdel later 2>/dev/null\n[ ! -d /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w && mkdir /tmp/w"
+	reset := "userdel later 2>/dev/null\ngroupdel lgrp 2>/dev/null\n[ ! -d /tmp/w ] || find /tmp/w \\( -type f -o -type d \\) -exec chattr -ia {} +\nrm -rf /tmp/w && mkdir /tmp/w"
 	vmtest.RunCases(t, vm, "file", reset, []vmtest.Case{
 		{
 			Name:      "create",
@@ -264,6 +264,13 @@ func TestFileModule(t *testing.T) {
 			Setup:   `ln -s /tmp/w/nothing /tmp/w/link`,
 			Args:    &module.File{Path: "/tmp/w/link/x", Data: []byte("x\n")},
 			WantErr: "/tmp/w/link is a symbolic link to a missing target",
+		},
+		{
+			Name:         "a new file with an owner and a group that do not exist yet",
+			Args:         &module.File{Path: "/tmp/w/f", Data: []byte("x\n"), Owner: "later", Group: "lgrp"},
+			Want:         module.Result{Status: module.Change, Action: module.Create, Changes: []string{"owner later, group lgrp, mode 0644"}, Missing: []string{"user later", "group lgrp"}, Old: new("")},
+			WantApplyErr: `user later does not exist`,
+			Fix:          "useradd later && groupadd lgrp",
 		},
 		{
 			Name:         "owner that does not exist yet",
