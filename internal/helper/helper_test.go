@@ -464,6 +464,36 @@ func TestCheckTree(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, "rollback/timer.json is not a directory or a regular file"},
+		{"a symbolic link in apt's package lists", me, func(t *testing.T, dir string) {
+			mkdir(t, filepath.Join(dir, "apt", "lists", "auxfiles"))
+			if err := os.Symlink("/etc/apt/mirrors/debian.list", filepath.Join(dir, "apt", "lists", "auxfiles", "debian.list")); err != nil {
+				t.Fatal(err)
+			}
+		}, ""},
+		{"a directory in apt's package lists that others can write", me, func(t *testing.T, dir string) {
+			mkdir(t, filepath.Join(dir, "apt", "lists", "auxfiles"))
+			if err := os.Chmod(filepath.Join(dir, "apt", "lists", "auxfiles"), 0o707); err != nil {
+				t.Fatal(err)
+			}
+		}, "apt/lists/auxfiles is not owned by root, or the group or others can write it"},
+		{"apt's package lists that the group can write", me, func(t *testing.T, dir string) {
+			mkdir(t, filepath.Join(dir, "apt", "lists"))
+			if err := os.Chmod(filepath.Join(dir, "apt", "lists"), 0o770); err != nil {
+				t.Fatal(err)
+			}
+		}, "apt/lists is not owned by root, or the group or others can write it"},
+		{"a symbolic link at apt's package lists", me, func(t *testing.T, dir string) {
+			mkdir(t, filepath.Join(dir, "apt"))
+			if err := os.Symlink("/var/lib/apt/lists", filepath.Join(dir, "apt", "lists")); err != nil {
+				t.Fatal(err)
+			}
+		}, "apt/lists is not a directory or a regular file"},
+		{"a symbolic link elsewhere in apt", me, func(t *testing.T, dir string) {
+			mkdir(t, filepath.Join(dir, "apt", "planned"))
+			if err := os.Symlink("/etc/apt/sources.list", filepath.Join(dir, "apt", "planned", "sources.list")); err != nil {
+				t.Fatal(err)
+			}
+		}, "apt/planned/sources.list is not a directory or a regular file"},
 		{"a pipe", me, func(t *testing.T, dir string) {
 			if err := syscall.Mkfifo(filepath.Join(dir, "lock"), 0o600); err != nil {
 				t.Fatal(err)

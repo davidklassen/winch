@@ -335,8 +335,11 @@ func (l *lockFile) close() {
 // checkTree fails on the first entry under dir that is not a directory or a
 // regular file of owner, or that the group or others can write. A user who
 // once owned dir can have left records and rollback jobs, which the helper
-// runs as root. The start script checks dir itself.
+// runs as root. The start script checks dir itself. In winch's package index,
+// a symbolic link of owner passes: apt links the index of a file: or
+// mirror+file: source. The mode of a link has no meaning.
 func checkTree(dir string, owner uint32) error {
+	lists := filepath.Join(dir, module.ListsDir) + string(filepath.Separator)
 	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if p == dir {
 			return err
@@ -353,10 +356,11 @@ func checkTree(dir string, owner uint32) error {
 			return err
 		}
 		st, ok := info.Sys().(*syscall.Stat_t)
-		if !info.IsDir() && !info.Mode().IsRegular() {
+		link := info.Mode()&fs.ModeSymlink != 0 && strings.HasPrefix(p, lists)
+		if !info.IsDir() && !info.Mode().IsRegular() && !link {
 			return fmt.Errorf("%s is not a directory or a regular file", p)
 		}
-		if !ok || st.Uid != owner || info.Mode().Perm()&0o022 != 0 {
+		if !ok || st.Uid != owner || !link && info.Mode().Perm()&0o022 != 0 {
 			return fmt.Errorf("%s is not owned by root, or the group or others can write it", p)
 		}
 		return nil

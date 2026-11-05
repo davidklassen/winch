@@ -223,7 +223,7 @@ func TestUpgradeFileSource(t *testing.T) {
 	if r := upgrade(); r.Code != 5 || !strings.Contains(r.Stdout, "upgrade winch-signed 0 → 3") {
 		t.Fatalf("run after the failed refresh: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
-	vm.MustRun(t, "ls /var/lib/winch/apt/lists/_srv_old_* >/dev/null && [ -z \"$(find /var/lib/winch/apt/lists ! -type f ! -type d)\" ]")
+	vm.MustRun(t, "ls /var/lib/winch/apt/lists/_srv_old_* >/dev/null")
 }
 
 // spec: CLI (winch run); CLI/Prompts; Modules/service and unit

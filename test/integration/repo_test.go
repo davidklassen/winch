@@ -295,6 +295,46 @@ func TestRepoAfterAbsentStep(t *testing.T) {
 	}
 }
 
+// spec: Remote execution/Helper; Modules/repo; Modules/pkg
+func TestMirrorSource(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "mirror")
+	// Debian's cloud images list their mirrors in a file, as here.
+	vm.MustRun(t, "mkdir -p /etc/apt/mirrors && echo http://10.0.2.100/test/ > /etc/apt/mirrors/winch-test.list && "+
+		"sed -i 's|^URIs: .*|URIs: mirror+file:///etc/apt/mirrors/winch-test.list|' /etc/apt/sources.list.d/winch-test.sources")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  mirror: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: apt\n    hosts: all\n    steps:\n      - recipe: signed\n",
+		"recipes/signed/recipe.yaml": `steps:
+  - repo:
+      name: winch-signed
+      url: ` + signedURL + `
+      suite: ` + osRelease().codename + `
+      components: [main]
+      key: signed.asc
+  - pkg:
+      name: winch-signed
+`,
+		"recipes/signed/files/signed.asc": string(vmtest.RepoKey),
+	})
+	// Each plan refreshes winch's index with the planned sources.
+	for i := range 2 {
+		if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 || !strings.Contains(r.Stdout, "+ pkg winch-signed") {
+			t.Fatalf("plan %d: exit %d, stdout %q, stderr %q", i+1, r.Code, r.Stdout, r.Stderr)
+		}
+	}
+	vm.MustRun(t, "[ -L /var/lib/winch/apt/lists/auxfiles/_etc_apt_mirrors_winch-test.list ]")
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, "dpkg -s winch-signed >/dev/null")
+	vm.MustRun(t, "chown -h nobody /var/lib/winch/apt/lists/auxfiles/_etc_apt_mirrors_winch-test.list")
+	if r := lab.Winch(t, dir, "plan", "site"); r.Code == 0 || !strings.Contains(r.Stderr, "/var/lib/winch/apt/lists/auxfiles/_etc_apt_mirrors_winch-test.list is not owned by root") {
+		t.Fatalf("plan with a link of another user: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+}
+
 // oldSigned serves version 0 of winch-signed, which depends on winch-up-new,
 // from a local file: source. The lab's signed source has version 1, which
 // does not.
