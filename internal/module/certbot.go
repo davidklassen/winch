@@ -404,8 +404,6 @@ func (c *Certbot) HooksToRun() []string {
 }
 
 func (c *Certbot) Apply(ctx context.Context, _ Say) error {
-	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, noResult(commandLimit))
-	defer cancel()
 	if !c.issue {
 		var errs []error
 		for _, hook := range slices.Clone(c.PendingHooks) {
@@ -426,6 +424,8 @@ func (c *Certbot) Apply(ctx context.Context, _ Say) error {
 		}
 		return errors.Join(errs...)
 	}
+	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, noResult(commandLimit))
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "certbot", c.args()...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
