@@ -18,7 +18,7 @@ import (
 )
 
 type Firewall struct {
-	Allow  []Rule `yaml:"allow" json:"allow,omitempty" line:"accepted traffic; the host drops the rest" doc:"Accepted traffic; the host drops the rest. It always accepts established and related traffic, loopback, ICMP echo requests, the ICMPv6 types that IPv6 needs, and DHCP replies. It drops invalid packets."`
+	Allow  []Rule `yaml:"allow" json:"allow,omitempty" line:"accepted traffic to the host; the host drops the rest" doc:"Accepted traffic to the host; the host drops the rest. It always accepts established and related traffic, loopback, ICMP echo requests, the ICMPv6 types that IPv6 needs, and DHCP replies. It drops invalid packets."`
 	Absent bool   `yaml:"absent" json:"absent,omitempty" line:"remove the table, its file, and its unit" doc:"Remove the table, its file, and its unit."`
 	// What the check found to do.
 	data                            []byte

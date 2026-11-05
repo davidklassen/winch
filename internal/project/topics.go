@@ -77,7 +77,7 @@ var templateFunctions = []doc.Key{
 	{Name: "println", Text: "println args: the arguments as text, with spaces between them and a newline at the end."},
 	{Name: "quote", Text: "quote s: s in single quotes for sh, each ' as '\\''. A value goes into a command as it is. Quote a value that must stay one word: then: !tpl \"postmap {{ quote .vars.map }}\"."},
 	{Name: "slice", Text: "slice x i j: the part of the string or the list x from the index i up to j. In an expression, use x[i:j]."},
-	{Name: "sqlquote", Text: "sqlquote s: s as a MariaDB string literal: in single quotes, each ' as '', each \\ as \\\\. For PostgreSQL, write E before it. It assumes the default SQL mode, without NO_BACKSLASH_ESCAPES, and a UTF-8 client."},
+	{Name: "sqlquote", Text: "sqlquote s: s as a string literal for MariaDB, or for PostgreSQL with E before it: in single quotes, each ' as '', each \\ as \\\\. It assumes the default SQL mode, without NO_BACKSLASH_ESCAPES, and a UTF-8 client."},
 	{Name: "title", Text: "title s: s with the first letter of each word in upper case."},
 	{Name: "urlquery", Text: "urlquery s: s escaped for the query of a URL."},
 }
@@ -143,7 +143,7 @@ var expressionFunctions = []doc.Key{
 	{Name: "sortBy", Text: "sortBy(list, pred), or sortBy(list, pred, \"desc\"): the elements in the order of the results of pred: sortBy(vars.users, .uid)."},
 	{Name: "split", Text: "split(s, sep), or split(s, sep, n): the parts of s between each sep. With n, at most n parts."},
 	{Name: "splitAfter", Text: "splitAfter(s, sep), or splitAfter(s, sep, n): the parts of s after each sep, each with sep at its end."},
-	{Name: "sqlquote", Text: "sqlquote(s): s as a MariaDB string literal: in single quotes, each ' as '', each \\ as \\\\. For PostgreSQL, write E before it. It assumes the default SQL mode, without NO_BACKSLASH_ESCAPES, and a UTF-8 client."},
+	{Name: "sqlquote", Text: "sqlquote(s): s as a string literal for MariaDB, or for PostgreSQL with E before it: in single quotes, each ' as '', each \\ as \\\\. It assumes the default SQL mode, without NO_BACKSLASH_ESCAPES, and a UTF-8 client."},
 	{Name: "string", Text: "string(v): v as text: string(8080) is \"8080\"."},
 	{Name: "sum", Text: "sum(list), or sum(list, pred): the sum of the numbers, or of the results of pred."},
 	{Name: "take", Text: "take(list, n): the first n elements."},

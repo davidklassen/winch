@@ -23,7 +23,7 @@ type OS struct {
 	ID       string `json:"id" expr:"id" yaml:"id" line:"distribution, such as debian or ubuntu" doc:"Distribution, such as debian or ubuntu."`
 	Version  string `json:"version" expr:"version" yaml:"version" line:"release number, such as 13 or 24.04" doc:"Release number, such as 13 or 24.04. It is a string: compare it with a string, such as \"13\"."`
 	Codename string `json:"codename" expr:"codename" yaml:"codename" line:"release code name, such as trixie or noble" doc:"Release code name, such as trixie or noble."`
-	Arch     string `json:"arch" expr:"arch" yaml:"arch" line:"CPU architecture" doc:"CPU architecture: amd64 or arm64."`
+	Arch     string `json:"arch" expr:"arch" yaml:"arch" line:"CPU architecture: amd64 or arm64" doc:"CPU architecture: amd64 or arm64."`
 }
 
 // Read reads the facts from the first os-release file in paths that exists.
