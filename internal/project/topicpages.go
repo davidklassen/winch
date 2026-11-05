@@ -692,6 +692,15 @@ hosts:
 # winch logs in to 192.0.2.10 on port 2222 as admin,
 # with the key ~/.ssh/acme_ed25519.
 `),
+		doc.Paragraph(`ssh_config in winch.yaml names another SSH config file, relative to the project directory. winch passes it with -F to every ssh it runs: the sessions, the access checks, and each hop of a ProxyJump. ssh then reads this file instead of ~/.ssh/config. Use it for the SSH config that a tool such as Lima or Vagrant writes. To keep ~/.ssh/config, include it:`),
+		doc.Code(`# winch.yaml
+name: acme
+ssh_config: ssh_config
+
+# ssh_config
+Include ~/.ssh/config
+Include ~/.lima/default/ssh.config
+`),
 		doc.Paragraph(`winch also passes these options. They win over the SSH config:`),
 		doc.Table([][]string{
 			{"ConnectTimeout=15 ServerAliveInterval=15 ServerAliveCountMax=3", "a host that does not answer fails and does not hang the run"},

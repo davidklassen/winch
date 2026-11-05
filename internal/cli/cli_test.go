@@ -585,9 +585,9 @@ curl -fsSL https://winchstack.app/install.sh | sh
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
-			connect := func(bool, func(run.Note)) run.Connect {
+			connect := func(string, bool, func(run.Note)) run.Connect {
 				t.Error("winch contacted a host")
-				return fakehost.New().ConnectorFor(false, nil)
+				return fakehost.New().ConnectorFor("", false, nil)
 			}
 			var out, errOut bytes.Buffer
 			code := Main(context.Background(), tt.args, Env{
@@ -652,4 +652,25 @@ func mains(args ...string) []string {
 		hs = append(hs, hex.EncodeToString(h[:]))
 	}
 	return hs
+}
+
+// spec: Project layout (ssh_config)
+func TestSSHConfig(t *testing.T) {
+	for _, value := range []string{"", "ssh/config"} {
+		dir := writeProject(t, motd)
+		want := ""
+		if value != "" {
+			if err := os.WriteFile(filepath.Join(dir, "winch.yaml"), []byte("name: acme\ninventory: test\nssh_config: "+value+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			want = filepath.Join(dir, value)
+		}
+		for _, args := range [][]string{{"plan", "site"}, {"apply", "site", "--yes"}, {"run", "web1", "pkg", "name=htop", "--yes"}, {"exec", "web1", "--", "true"}} {
+			h := fakehost.New()
+			r := winch(t, dir, h, false, "", args...)
+			if r.code != exitOK || !slices.Equal(h.SSHConfig, []string{want}) {
+				t.Errorf("ssh_config %q: winch %s: exit %d, SSH config %q, want %q; stderr %q", value, strings.Join(args, " "), r.code, h.SSHConfig, want, r.err)
+			}
+		}
+	}
 }

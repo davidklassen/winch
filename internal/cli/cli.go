@@ -57,9 +57,10 @@ type Env struct {
 	Terminal bool
 	// ColorOut and ColorErr turn on color on stdout and stderr.
 	ColorOut, ColorErr bool
-	// Connect returns the function that opens sessions. With batch, ssh asks
-	// no questions. The sessions give the notes of the hosts to note.
-	Connect func(batch bool, note func(run.Note)) run.Connect
+	// Connect returns the function that opens sessions. ssh reads sshConfig,
+	// or ~/.ssh/config when it is empty. With batch, ssh asks no questions.
+	// The sessions give the notes of the hosts to note.
+	Connect func(sshConfig string, batch bool, note func(run.Note)) run.Connect
 	// Progress is nil, or shows the busy hosts.
 	Progress run.Progress
 	// Home is the home directory, or empty when it is not known.
@@ -395,9 +396,9 @@ func (o *output) loadWith(f *flags, load func(project.Keys) (*project.Project, e
 // sessions returns the function that opens sessions, and the options of the
 // run. ssh asks questions only when winch can ask its own: then the sessions
 // start one at a time.
-func (o *output) sessions(f *flags) (run.Connect, run.Options) {
+func (o *output) sessions(f *flags, sshConfig string) (run.Connect, run.Options) {
 	serial := o.env.Terminal && !f.batch
-	return o.env.Connect(!serial, o.note), run.Options{Serial: serial, Progress: o.env.Progress}
+	return o.env.Connect(sshConfig, !serial, o.note), run.Options{Serial: serial, Progress: o.env.Progress}
 }
 
 // failedCode is the exit code of the failed hosts: 1 when one failed, 4
@@ -420,7 +421,7 @@ func plan(ctx context.Context, env Env, f *flags, args []string) int {
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
-	connect, opts := o.sessions(f)
+	connect, opts := o.sessions(f, p.SSHConfig)
 	pl := run.MakePlan(ctx, p, connect, opts)
 	o.plan(pl)
 	code := failedCode(pl.Failed)
@@ -456,7 +457,7 @@ func checkHash(o *output, f *flags) bool {
 // and its arguments, for the command that applies the plan.
 func (o *output) apply(ctx context.Context, f *flags, p *project.Project, words []string) int {
 	env := o.env
-	connect, opts := o.sessions(f)
+	connect, opts := o.sessions(f, p.SSHConfig)
 	opts.Keep = true
 	pl := run.MakePlan(ctx, p, connect, opts)
 	defer pl.Close()
@@ -537,7 +538,7 @@ func execCommand(ctx context.Context, env Env, f *flags, args []string) int {
 	if !ok {
 		return o.end(exitInvalid, summary{})
 	}
-	connect, opts := o.sessions(f)
+	connect, opts := o.sessions(f, p.SSHConfig)
 	results := run.Exec(ctx, p.Name, p.Pipeline.Stages[0].Targets, protocol.Exec{Command: f.command, Timeout: timeout}, connect, opts)
 	if o.ev != nil {
 		o.ev.Exec(results)

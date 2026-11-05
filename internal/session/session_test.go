@@ -1191,3 +1191,64 @@ func TestProxyCommand(t *testing.T) {
 		}
 	}
 }
+
+// spec: Project layout (ssh_config); Remote execution/Sessions
+func TestSSHConfig(t *testing.T) {
+	const path = "/p/my ssh%config"
+	for _, sshConfig := range []string{"", path} {
+		t.Run("ssh_config="+sshConfig, func(t *testing.T) {
+			fakeBin(t, "aarch64", "0", goodSudo)
+			t.Setenv("SSH_G", "hostname 192.0.2.10\nport 22\nproxyjump hop")
+			dir := t.TempDir()
+			gArgs, sshArgs := filepath.Join(dir, "g-args"), filepath.Join(dir, "args")
+			t.Setenv("SSH_G_ARGS", gArgs)
+			t.Setenv("SSH_ARGS", sshArgs)
+			cfg := Config{
+				Host: "web1", Address: "web1", SSHConfig: sshConfig, Dir: stateDir,
+				Binaries: []helperbin.Binary{helperbin.New("arm64", []byte("#!/bin/sh\nread line\necho '{\"id\":1,\"result\":{}}'\ncat >/dev/null\n"))},
+				Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
+			}
+			s, err := Open(context.Background(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			read := func(file string) string {
+				t.Helper()
+				data, err := os.ReadFile(file)
+				if err != nil {
+					t.Fatal(err)
+				}
+				os.Remove(file)
+				return "\n" + string(data)
+			}
+			check := func(name, args string) {
+				t.Helper()
+				options, _, _ := strings.Cut(args, "\n--\n")
+				if got := strings.Contains(options+"\n", "\n-F\n"+path+"\n"); got != (sshConfig != "") {
+					t.Errorf("%s: -F %s in the options before -- of %q is %v", name, path, args, got)
+				}
+			}
+			proxy := `'-F' '/p/my ssh%%config'`
+			session := read(sshArgs)
+			check("ssh -G", read(gArgs))
+			check("the session", session)
+			if got := strings.Contains(session, "ProxyCommand=ssh "+proxy+" "); got != (sshConfig != "") {
+				t.Errorf("the ProxyCommand: %s in %q is %v", proxy, session, got)
+			}
+			if err := s.Access(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			check("ssh -G of the access check", read(gArgs))
+			check("the access check", read(sshArgs))
+			cfg.Batch = true
+			want := "accept the host key once with: ssh web1)"
+			if sshConfig != "" {
+				want = "accept the host key once with: ssh -F '/p/my ssh%config' web1)"
+			}
+			if err := hint(cfg, errors.New("Host key verification failed.")); !strings.HasSuffix(err.Error(), want) {
+				t.Errorf("hint = %v, want the end %q", err, want)
+			}
+		})
+	}
+}

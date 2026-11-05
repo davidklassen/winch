@@ -801,7 +801,7 @@ func TestSecretStepMask(t *testing.T) {
 			tt.host(h)
 			var out, errOut bytes.Buffer
 			w, ew := plain(&out), plain(&errOut)
-			plan := run.MakePlan(t.Context(), p, h.ConnectorFor(false, func(n run.Note) { run.WriteNote(ew, n) }), run.Options{})
+			plan := run.MakePlan(t.Context(), p, h.ConnectorFor("", false, func(n run.Note) { run.WriteNote(ew, n) }), run.Options{})
 			plan.Write(w, ew)
 			if all := out.String() + errOut.String(); !strings.Contains(all, tt.want) || strings.Contains(all, tt.not) {
 				t.Errorf("output = %q, want %q and no %q", all, tt.want, tt.not)
@@ -809,7 +809,7 @@ func TestSecretStepMask(t *testing.T) {
 			// A note during apply passes the mask too.
 			out.Reset()
 			errOut.Reset()
-			run.Apply(t.Context(), plan, h.ConnectorFor(false, func(n run.Note) { run.WriteNote(ew, n) }), run.Text(w, ew))
+			run.Apply(t.Context(), plan, h.ConnectorFor("", false, func(n run.Note) { run.WriteNote(ew, n) }), run.Text(w, ew))
 			if all := out.String() + errOut.String(); strings.Contains(all, tt.not) {
 				t.Errorf("apply output = %q, want no %q", all, tt.not)
 			}
@@ -1006,7 +1006,7 @@ func TestSecretHostTextOutsideStep(t *testing.T) {
 	var out, errOut bytes.Buffer
 	w, ew := plain(&out), plain(&errOut)
 	var shown []string
-	connect := h.ConnectorFor(false, func(n run.Note) {
+	connect := h.ConnectorFor("", false, func(n run.Note) {
 		shown = append(shown, n.Text)
 		run.WriteNote(ew, n)
 	})
@@ -1096,7 +1096,7 @@ func TestSecretErrorsOutsideStep(t *testing.T) {
 			tt.plan(h)
 			var out, errOut bytes.Buffer
 			w, ew := plain(&out), plain(&errOut)
-			connect := h.ConnectorFor(false, func(n run.Note) { run.WriteNote(ew, n) })
+			connect := h.ConnectorFor("", false, func(n run.Note) { run.WriteNote(ew, n) })
 			plan := run.MakePlan(t.Context(), p, connect, run.Options{Keep: tt.keep})
 			plan.Write(w, ew)
 			if tt.apply != nil {

@@ -993,3 +993,38 @@ func TestSourceLinkOutOfRecipe(t *testing.T) {
 		t.Errorf("a source link out of the recipe: %v", err)
 	}
 }
+
+// spec: Project layout (ssh_config)
+func TestSSHConfig(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "ssh_config")
+	tests := []struct {
+		value, want string
+		// inDir is true when want is relative to the project directory.
+		inDir bool
+	}{
+		{"", "", false},
+		{"ssh/config", "ssh/config", true},
+		{abs, abs, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			winchYAML := "name: acme\ninventory: test\n"
+			if tt.value != "" {
+				winchYAML += "ssh_config: " + tt.value + "\n"
+			}
+			dir := writeProject(t, map[string]string{"winch.yaml": winchYAML})
+			t.Chdir(dir)
+			p, err := Load(t.Context(), ".", "", "site", nil, Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tt.want
+			if tt.inDir {
+				want = filepath.Join(dir, want)
+			}
+			if p.SSHConfig != want {
+				t.Errorf("SSHConfig = %q, want %q", p.SSHConfig, want)
+			}
+		})
+	}
+}

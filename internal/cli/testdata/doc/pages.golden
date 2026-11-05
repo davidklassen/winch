@@ -73,6 +73,7 @@ Keys:
   name         string                 required  letters, digits, ., _, and -
   inventory    string                 -         default for --inventory
   recipients   list of strings        -         age public keys
+  ssh_config   string                 -         SSH config file for ssh -F
   vars         map                    -         shared variable defaults
   inventories  map                    -         inventories kept in winch.yaml
   pipelines    map                    -         pipelines kept in winch.yaml
@@ -100,6 +101,13 @@ project.recipients: list of strings
 
 Age public keys. winch encrypts each secret for all of them. winch
 secret init adds a key.
+==> winch doc project.ssh_config
+project.ssh_config: string
+
+Path of an SSH config file, relative to the project directory. winch
+passes it to every ssh with -F, and ssh reads it instead of
+~/.ssh/config. The file can have the line Include ~/.ssh/config. Run
+winch doc remote.
 ==> winch doc project.vars
 project.vars: map
 
