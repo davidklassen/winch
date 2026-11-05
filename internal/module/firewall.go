@@ -404,6 +404,9 @@ func (f *Firewall) Check(ctx context.Context, st *State, say Say) (Result, error
 	if f.load {
 		changes = append(changes, "load the rules")
 	}
+	if f.enable {
+		changes = append(changes, "start "+FirewallUnit)
+	}
 	if changes == nil {
 		return Result{Status: OK}, nil
 	}
@@ -597,8 +600,17 @@ func (f *Firewall) Apply(ctx context.Context, _ Say) error {
 			return err
 		}
 	}
+	// The load comes before the start, so a failed load shows the error of
+	// nft and not the one of systemd.
 	if f.load {
-		return loadFirewall(ctx)
+		if err := loadFirewall(ctx); err != nil {
+			return err
+		}
+	}
+	if f.enable {
+		if _, err := run(ctx, "systemctl", "start", "--", FirewallUnit); err != nil {
+			return err
+		}
 	}
 	return nil
 }
