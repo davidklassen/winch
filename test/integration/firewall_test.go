@@ -51,7 +51,6 @@ func TestFirewallModule(t *testing.T) {
 	vm.MustRun(t, "mv /usr/sbin/nft.real /usr/sbin/nft")
 
 	// Create.
-	project(firewall + "        - tcp: 22\n")
 	r = lab.Winch(t, dir, "plan")
 	if r.Code != 0 || strings.Contains(r.Stderr, "nft is missing") || !strings.Contains(r.Stdout, "+ firewall\n        add tcp 22\n        create directory /etc/winch") || !strings.Contains(r.Stdout, "create file /etc/systemd/system/nftables.service.d/winch.conf") || !strings.Contains(r.Stdout, "enable winch-firewall.service\n        load the rules\n        start winch-firewall.service\n\n") {
 		t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
