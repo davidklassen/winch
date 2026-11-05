@@ -202,6 +202,17 @@ func TestLookupNumericID(t *testing.T) {
 	}
 }
 
+func TestIDsMissing(t *testing.T) {
+	for _, tt := range []struct{ owner, group, want string }{
+		{"winch-no-such-user", "0", "user winch-no-such-user does not exist"},
+		{"0", "winch-no-such-group", "group winch-no-such-group does not exist"},
+	} {
+		if _, _, err := ids(tt.owner, tt.group); err == nil || err.Error() != tt.want {
+			t.Errorf("ids(%q, %q) = %v, want %q", tt.owner, tt.group, err, tt.want)
+		}
+	}
+}
+
 // spec: Modules/file, dir, link
 func TestCheckNamesSpecialKind(t *testing.T) {
 	fifo := filepath.Join(t.TempDir(), "p")

@@ -34,8 +34,8 @@ func Seconds(d time.Duration) string {
 
 // run runs a command and returns its output. On a failure, the error holds
 // the end of the output.
-func run(ctx context.Context, env []string, name string, args ...string) (string, error) {
-	return runLimited(ctx, commandLimit, KillDelay, env, "", name, args...)
+func run(ctx context.Context, name string, args ...string) (string, error) {
+	return runLimited(ctx, commandLimit, KillDelay, nil, "", name, args...)
 }
 
 // runInput is run with stdin from input.

@@ -70,7 +70,7 @@ func (h *Hostname) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 }
 
 func (h *Hostname) Apply(ctx context.Context, _ Say) error {
-	_, err := run(ctx, nil, "hostnamectl", "set-hostname", "--", h.Name)
+	_, err := run(ctx, "hostnamectl", "set-hostname", "--", h.Name)
 	return err
 }
 

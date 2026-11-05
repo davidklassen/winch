@@ -108,7 +108,7 @@ func (s *Service) Validate() error {
 }
 
 func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,FragmentPath,DropInPaths,NeedDaemonReload,Type,RemainAfterExit,TriggeredBy", "--", s.Name)
+	out, err := run(ctx, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,FragmentPath,DropInPaths,NeedDaemonReload,Type,RemainAfterExit,TriggeredBy", "--", s.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -272,7 +272,7 @@ func (s *Service) missingFiles(ctx context.Context, u unitState) ([]string, erro
 	case u.fragment != "":
 		paths = []string{u.fragment}
 	case u.load == "not-found":
-		out, err := run(ctx, nil, "systemctl", "show", "--property=UnitPath", "--value")
+		out, err := run(ctx, "systemctl", "show", "--property=UnitPath", "--value")
 		if err != nil {
 			return nil, err
 		}
@@ -299,7 +299,7 @@ func (s *Service) missingFiles(ctx context.Context, u unitState) ([]string, erro
 
 // activeOrEnabled returns the units that are active or enabled.
 func activeOrEnabled(ctx context.Context, units []string) ([]string, error) {
-	out, err := run(ctx, nil, "systemctl", append([]string{"show", "--property=Id,LoadState,ActiveState,UnitFileState", "--"}, units...)...)
+	out, err := run(ctx, "systemctl", append([]string{"show", "--property=Id,LoadState,ActiveState,UnitFileState", "--"}, units...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +395,7 @@ func (s *Service) Apply(ctx context.Context, _ Say) error {
 				}
 			}
 		}
-		_, err := run(ctx, nil, "systemctl", args...)
+		_, err := run(ctx, "systemctl", args...)
 		switch {
 		case err == nil && starts && (c == "start" || s.up):
 			if err := checkStarted(ctx, s.Unit(), action, c == "try-reload-or-restart"); err != nil {
@@ -431,7 +431,7 @@ func jobFailed(ctx context.Context, unit, action string, err error) error {
 // systemd cannot block a start that winch needs. A unit that systemd has not
 // loaded has no counter, and systemctl fails on it.
 func resetFailed(ctx context.Context, unit string) error {
-	_, err := run(ctx, nil, "systemctl", "reset-failed", "--", unit)
+	_, err := run(ctx, "systemctl", "reset-failed", "--", unit)
 	if err != nil && strings.Contains(err.Error(), " not loaded.") {
 		return nil
 	}
@@ -543,7 +543,7 @@ func shellWord(s string) string {
 
 // withJournal adds the last 10 lines of the journal of unit to err.
 func withJournal(ctx context.Context, unit string, err error) error {
-	journal, jerr := run(ctx, nil, "journalctl", "--unit="+unit, "-n", "10", "--no-pager", "-o", "cat")
+	journal, jerr := run(ctx, "journalctl", "--unit="+unit, "-n", "10", "--no-pager", "-o", "cat")
 	if jerr != nil {
 		return errors.Join(err, jerr)
 	}
@@ -714,7 +714,7 @@ func (u unitState) restarting() bool {
 // showUnit returns the load, active, and sub state of unit, its invocation,
 // which changes with each start, its type, and whether it can reload.
 func showUnit(ctx context.Context, unit string) (unitState, error) {
-	out, err := run(ctx, nil, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,InvocationID,Type,CanReload", "--", unit)
+	out, err := run(ctx, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,InvocationID,Type,CanReload", "--", unit)
 	if err != nil {
 		return unitState{}, err
 	}

@@ -28,21 +28,7 @@ type Touch struct {
 // needs: the entries that purge removes, and the home of the keys of a user.
 func Touches(m Module) []Touch {
 	switch m := m.(type) {
-	case *File:
-		return []Touch{{m.Path, true}}
-	case *Link:
-		return []Touch{{m.Path, true}}
-	case *Line:
-		return []Touch{{m.Path, true}}
-	case *Unit:
-		return []Touch{{m.Path(), true}}
-	case *Repo, *Certbot:
-		var out []Touch
-		for _, p := range m.(Writer).Writes() {
-			out = append(out, Touch{p, true})
-		}
-		return out
-	case *Download:
+	case *File, *Link, *Line:
 		return []Touch{{m.Main(), true}}
 	case *Dir:
 		if m.Absent {
@@ -63,13 +49,17 @@ func Touches(m Module) []Touch {
 			out = append(out, Touch{path.Join(m.keyHome, ".ssh"), false}, Touch{path.Join(m.keyHome, ".ssh", "authorized_keys"), true})
 		}
 		return out
-	case *Hostname:
-		return []Touch{{hostnameFile, true}}
-	case *Timezone:
-		return []Touch{{localtime, true}, {TimezoneFile, true}}
 	case *Firewall:
 		var out []Touch
 		for _, p := range firewallPaths {
+			out = append(out, Touch{p, true})
+		}
+		return out
+	case *Cmd:
+		return nil
+	case Writer:
+		var out []Touch
+		for _, p := range m.Writes() {
 			out = append(out, Touch{p, true})
 		}
 		return out
@@ -282,7 +272,7 @@ func Restore(ctx context.Context, saved []Saved) error {
 		errs = append(errs, err)
 	}
 	if l.reload {
-		if _, err := run(ctx, nil, "systemctl", "daemon-reload"); err != nil {
+		if _, err := run(ctx, "systemctl", "daemon-reload"); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -447,9 +437,7 @@ func extractEntry(dir *os.Root, h *tar.Header, r io.Reader) error {
 		}
 		return dir.Lchown(h.Name, h.Uid, h.Gid)
 	case tar.TypeReg:
-		err := writeFile(dir, h.Name, r, h.Uid, h.Gid, uint32(h.Mode), func(tmp string) error {
-			return dir.Rename(tmp, h.Name)
-		})
+		err := writeFile(dir, h.Name, r, h.Uid, h.Gid, uint32(h.Mode), nil)
 		if err != nil {
 			return err
 		}
@@ -546,7 +534,7 @@ func sshSocketUp(ctx context.Context) (bool, error) {
 
 // RestartSSHSocket makes ssh.socket listen as sshd's config says.
 func RestartSSHSocket(ctx context.Context) error {
-	if _, err := run(ctx, nil, "systemctl", "daemon-reload"); err != nil {
+	if _, err := run(ctx, "systemctl", "daemon-reload"); err != nil {
 		return err
 	}
 	return restartSSHSocket(ctx)
@@ -557,10 +545,10 @@ func restartSSHSocket(ctx context.Context) error {
 	// row, such as a change and its rollback, reach the start limit of
 	// ssh.service, 5 starts in 10 seconds. Then ssh.socket fails and closes
 	// every port. reset-failed resets the counter.
-	if _, err := run(ctx, nil, "systemctl", "reset-failed", "ssh.service", "ssh.socket"); err != nil {
+	if _, err := run(ctx, "systemctl", "reset-failed", "ssh.service", "ssh.socket"); err != nil {
 		return err
 	}
-	_, err := run(ctx, nil, "systemctl", "restart", "ssh.socket")
+	_, err := run(ctx, "systemctl", "restart", "ssh.socket")
 	return err
 }
 

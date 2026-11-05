@@ -521,9 +521,9 @@ func (r *Repo) Apply(ctx context.Context, say Say) error {
 
 // update refreshes the index of this source only.
 func (r *Repo) update(ctx context.Context) error {
-	_, err := aptGet(ctx, "update", "-q", "--error-on=any",
-		"-o", "Dir::Etc::SourceList="+r.SourcePath(), "-o", "Dir::Etc::SourceParts=-",
-		"-o", "APT::Get::List-Cleanup=0", "-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=")
+	_, err := aptGet(ctx, slices.Concat([]string{"update", "-q", "--error-on=any",
+		"-o", "Dir::Etc::SourceList=" + r.SourcePath(), "-o", "Dir::Etc::SourceParts=-",
+		"-o", "APT::Get::List-Cleanup=0"}, noBinaryCache)...)
 	return err
 }
 
@@ -565,16 +565,14 @@ func writeRoot(p string, content []byte, uid, gid int, mode uint32) error {
 		defer sub.Close()
 		dir = sub
 	}
-	err = writeFile(dir, path.Base(p), bytes.NewReader(content), uid, gid, mode, func(tmp string) error {
-		return dir.Rename(tmp, path.Base(p))
-	})
+	err = writeFile(dir, path.Base(p), bytes.NewReader(content), uid, gid, mode, nil)
 	return pathError("write", p, err)
 }
 
 // removed reports whether an earlier step removes p or a parent of p.
 func (r *Repo) removed(p string) bool {
 	for _, d := range r.Removed {
-		if p == d || strings.HasPrefix(p, strings.TrimSuffix(d, "/")+"/") {
+		if p == d || below(p, d) {
 			return true
 		}
 	}
