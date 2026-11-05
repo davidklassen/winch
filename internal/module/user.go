@@ -31,7 +31,7 @@ type User struct {
 	Shell          string         `yaml:"shell" json:"shell,omitempty" line:"login shell" doc:"Login shell. The default counts only when the step creates the user. A system user gets /usr/sbin/nologin." default:"/bin/sh"`
 	Groups         *[]string      `yaml:"groups" json:"groups,omitempty" line:"exact supplementary groups" doc:"Exact supplementary groups. A step has groups or add_groups."`
 	AddGroups      *[]string      `yaml:"add_groups" json:"add_groups,omitempty" line:"groups to join, keeping the others" doc:"Groups to join, keeping the others. A step with only name and add_groups does not create the user: apply fails when the user does not exist."`
-	Password       string         `yaml:"password" json:"password,omitempty" line:"crypt hash, usually a !secret" doc:"Crypt hash, usually a !secret, such as one from mkpasswd -m yescrypt. ! or * alone locks the password. Without password, the password of a new user is locked."`
+	Password       string         `yaml:"password" json:"password,omitempty" line:"crypt hash, usually a !secret" doc:"Crypt hash, usually a !secret, such as one from mkpasswd -m yescrypt or openssl passwd -6. ! or * alone locks the password. Without password, the password of a new user is locked."`
 	Comment        string         `yaml:"comment" json:"comment,omitempty" line:"full name or description" doc:"Full name or description."`
 	AuthorizedKeys *[]string      `yaml:"authorized_keys" json:"authorized_keys,omitempty" line:"exact SSH keys of the user" doc:"Exact SSH keys of the user, in ~/.ssh/authorized_keys."`
 	Absent         bool           `yaml:"absent" json:"absent,omitempty" line:"remove the user; the home stays" doc:"Remove the user; the home stays."`
@@ -69,7 +69,7 @@ var hashRe = regexp.MustCompile(`^(!?\$[0-9a-z]+\$[./0-9A-Za-z$=,+-]+|!|\*)$`)
 // An earlier error then shows in the same way in all evaluations.
 func checkHash(pw string) error {
 	if pw != "" && !hashRe.MatchString(pw) {
-		return &yamlx.FieldError{At: "password", Msg: `password is not a crypt hash, such as one from mkpasswd -m yescrypt, or "!" or "*"`}
+		return &yamlx.FieldError{At: "password", Msg: `password is not a crypt hash, such as one from mkpasswd -m yescrypt or openssl passwd -6, or "!" or "*"`}
 	}
 	return nil
 }

@@ -338,7 +338,7 @@ shows its output. It makes no plan and asks no question.`,
 			`A host pattern is a group or a host, with "," for union, "&" for
 intersection, and "!" for exclusion.`,
 			`winch joins the words after -- with spaces and runs them through sh -c
-as root, in /.`,
+as root, in /, with stdin from /dev/null.`,
 			`Each host shows one block: the host name, then the output. Hosts with
 the same output and exit code share one block. A command that exits
 non-zero adds "exit status N" to its block. winch exits with code 1

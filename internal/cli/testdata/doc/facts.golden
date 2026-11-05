@@ -35,7 +35,7 @@ Keys:
   os.id            string   -  distribution, such as debian or ubuntu
   os.version       string   -  release number, such as 13 or 24.04
   os.codename      string   -  release code name, such as trixie or noble
-  os.arch          string   -  CPU architecture
+  os.arch          string   -  CPU architecture: amd64 or arm64
   reboot_required  boolean  -  pending reboot
 
 Run "winch doc facts.<key>" for the full text of a key.
