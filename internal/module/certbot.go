@@ -404,28 +404,11 @@ func (c *Certbot) HooksToRun() []string {
 }
 
 func (c *Certbot) Apply(ctx context.Context, _ Say) error {
+	if !c.issue {
+		return c.runPendingHooks(ctx, commandLimit)
+	}
 	ctx, cancel := context.WithTimeoutCause(ctx, commandLimit, noResult(commandLimit))
 	defer cancel()
-	if !c.issue {
-		var errs []error
-		for _, hook := range slices.Clone(c.PendingHooks) {
-			command := c.DeployHook
-			var env []string
-			if hook == "post_hook" {
-				command = c.PostHook
-			} else {
-				env = []string{"RENEWED_LINEAGE=" + path.Join(letsencrypt, "live", c.Name), "RENEWED_DOMAINS=" + strings.Join(c.Domains, " ")}
-			}
-			if command != nil {
-				if err := shellLimit(ctx, *command, "/", env, nil, commandLimit, KillDelay, ""); err != nil {
-					errs = append(errs, fmt.Errorf("%s: %w", hook, err))
-					continue
-				}
-			}
-			c.PendingHooks = slices.DeleteFunc(c.PendingHooks, func(h string) bool { return h == hook })
-		}
-		return errors.Join(errs...)
-	}
 	cmd := exec.CommandContext(ctx, "certbot", c.args()...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
@@ -447,6 +430,28 @@ func (c *Certbot) Apply(ctx context.Context, _ Say) error {
 		return failure("certbot certonly", err, output)
 	}
 	return hookFailure(output)
+}
+
+// runPendingHooks runs the pending hooks, each with the time limit limit.
+func (c *Certbot) runPendingHooks(ctx context.Context, limit time.Duration) error {
+	var errs []error
+	for _, hook := range slices.Clone(c.PendingHooks) {
+		command := c.DeployHook
+		var env []string
+		if hook == "post_hook" {
+			command = c.PostHook
+		} else {
+			env = []string{"RENEWED_LINEAGE=" + path.Join(letsencrypt, "live", c.Name), "RENEWED_DOMAINS=" + strings.Join(c.Domains, " ")}
+		}
+		if command != nil {
+			if err := shellLimit(ctx, *command, "/", env, nil, limit, KillDelay, ""); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", hook, err))
+				continue
+			}
+		}
+		c.PendingHooks = slices.DeleteFunc(c.PendingHooks, func(h string) bool { return h == hook })
+	}
+	return errors.Join(errs...)
 }
 
 // pendingHooks returns the hooks that are pending after certbot ran with the
