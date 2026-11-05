@@ -7,7 +7,6 @@
 package diff
 
 import (
-	"bytes"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,57 +15,6 @@ import (
 // A pair is a pair of values tracked for both the x and y side of a diff.
 // It is typically a pair of line indexes.
 type pair struct{ x, y int }
-
-// Diff returns an anchored diff of the two texts old and new
-// in the “unified diff” format, without the file header. If old and new are identical,
-// Diff returns a nil slice (no output).
-//
-// Unix diff implementations typically look for a diff with
-// the smallest number of lines inserted and removed,
-// which can in the worst case take time quadratic in the
-// number of lines in the texts. As a result, many implementations
-// either can be made to run for a long time or cut off the search
-// after a predetermined amount of work.
-//
-// In contrast, this implementation looks for a diff with the
-// smallest number of “unique” lines inserted and removed,
-// where unique means a line that appears just once in both old and new.
-// We call this an “anchored diff” because the unique lines anchor
-// the chosen matching regions. An anchored diff is usually clearer
-// than a standard diff, because the algorithm does not try to
-// reuse unrelated blank lines or closing braces.
-// The algorithm also guarantees to run in O(n log n) time
-// instead of the standard O(n²) time.
-//
-// Some systems call this approach a “patience diff,” named for
-// the “patience sorting” algorithm, itself named for a solitaire card game.
-// We avoid that name for two reasons. First, the name has been used
-// for a few different variants of the algorithm, so it is imprecise.
-// Second, the name is frequently interpreted as meaning that you have
-// to wait longer (to be patient) for the diff, meaning that it is a slower algorithm,
-// when in fact the algorithm is faster than the standard one.
-func Diff(old, new []byte) []byte {
-	if bytes.Equal(old, new) {
-		return nil
-	}
-	x := Lines(old)
-	y := Lines(new)
-	var out bytes.Buffer
-	for _, h := range Hunks(x, y) {
-		out.WriteString(h.Header())
-		for _, op := range h.Ops {
-			switch op.Kind {
-			case ' ':
-				out.WriteString(" " + x[op.X])
-			case '-':
-				out.WriteString("-" + x[op.X])
-			default:
-				out.WriteString("+" + y[op.Y])
-			}
-		}
-	}
-	return out.Bytes()
-}
 
 // Op is one line of a hunk: ' ' for a line of both texts, '-' for a line of
 // x only, and '+' for a line of y only. X and Y are the indexes of the line.
@@ -89,6 +37,31 @@ func (h Hunk) Header() string {
 
 // Hunks returns the chunks of the anchored diff of the lines x and y, with
 // three lines of context.
+//
+// Unix diff implementations typically look for a diff with
+// the smallest number of lines inserted and removed,
+// which can in the worst case take time quadratic in the
+// number of lines in the texts. As a result, many implementations
+// either can be made to run for a long time or cut off the search
+// after a predetermined amount of work.
+//
+// In contrast, this implementation looks for a diff with the
+// smallest number of “unique” lines inserted and removed,
+// where unique means a line that appears just once in both x and y.
+// We call this an “anchored diff” because the unique lines anchor
+// the chosen matching regions. An anchored diff is usually clearer
+// than a standard diff, because the algorithm does not try to
+// reuse unrelated blank lines or closing braces.
+// The algorithm also guarantees to run in O(n log n) time
+// instead of the standard O(n²) time.
+//
+// Some systems call this approach a “patience diff,” named for
+// the “patience sorting” algorithm, itself named for a solitaire card game.
+// We avoid that name for two reasons. First, the name has been used
+// for a few different variants of the algorithm, so it is imprecise.
+// Second, the name is frequently interpreted as meaning that you have
+// to wait longer (to be patient) for the diff, meaning that it is a slower algorithm,
+// when in fact the algorithm is faster than the standard one.
 func Hunks(x, y []string) []Hunk {
 	var out []Hunk
 

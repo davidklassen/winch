@@ -21,7 +21,6 @@ import (
 	"filippo.io/age"
 )
 
-// ParseRecipients parses age public keys.
 func ParseRecipients(keys []string) ([]age.Recipient, error) {
 	var out []age.Recipient
 	for _, k := range keys {
@@ -220,28 +219,22 @@ func PublicKeys(ids []age.Identity) []string {
 // WriteKey writes k to the file Path in the format of age-keygen. It fails
 // when the file exists.
 func (id Identity) WriteKey(k *age.X25519Identity) error {
-	if err := writeKey(id.Path, k); err != nil {
+	if err := os.MkdirAll(filepath.Dir(id.Path), 0o700); err != nil {
 		return fmt.Errorf("make the age key: %w", err)
 	}
-	return nil
-}
-
-func writeKey(path string, k *age.X25519Identity) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := os.OpenFile(id.Path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return err
+		return fmt.Errorf("make the age key: %w", err)
 	}
 	_, err = fmt.Fprintf(f, "# created: %s\n# public key: %s\n%s\n", time.Now().Format(time.RFC3339), k.Recipient(), k)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
-		os.Remove(path)
+		os.Remove(id.Path)
+		return fmt.Errorf("make the age key: %w", err)
 	}
-	return err
+	return nil
 }
 
 const ageHeader = "age-encryption.org/v1\n"

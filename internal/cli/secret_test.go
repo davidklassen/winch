@@ -845,6 +845,18 @@ func TestSecretInit(t *testing.T) {
 		}
 	})
 
+	t.Run("the key directory cannot be made", func(t *testing.T) {
+		dir := vmtest.WriteProject(t, map[string]string{"winch.yaml": "name: acme\n"})
+		home := t.TempDir()
+		if err := os.Chmod(home, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		r := winchWith(t, dir, home, "", "", fakehost.New(), false, "", "secret", "init")
+		if r.code != exitInvalid || r.out != "" || !strings.Contains(r.err, "make the age key") {
+			t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+		}
+	})
+
 	t.Run("no project", func(t *testing.T) {
 		home := t.TempDir()
 		r := winchWith(t, t.TempDir(), home, "", "", fakehost.New(), false, "", "secret", "init")

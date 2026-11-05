@@ -9,8 +9,6 @@ import (
 	"testing"
 	"text/template"
 	"unicode/utf8"
-
-	"github.com/davidklassen/winch/internal/diff"
 )
 
 // spec: Variables/Secrets in output (two evaluations)
@@ -254,7 +252,7 @@ func maskedDiff(t testing.TB, oldTpl, newTpl string, oldData, newData any) (stri
 		f.Add(s)
 	}
 	d := string(Diff(render(t, oldTpl, variant(oldData, 0)), oldRecord(t, oldTpl, oldData), lines, false))
-	return d, f.Text(d)
+	return d, f.Parts([]string{d})[0]
 }
 
 // oldRecord returns the record that winch kept when it wrote the template
@@ -587,7 +585,7 @@ func TestLinesHidden(t *testing.T) {
 		t.Errorf("Lines without a secret = %+v, %v", lines, ok)
 	}
 	old := []byte("a\nb\nc\n")
-	if got, want := string(Diff(old, nil, lines, false)), string(diff.Diff(old, []byte("a\nb\n"))); got != want {
+	if got, want := string(Diff(old, nil, lines, false)), "@@ -1,3 +1,2 @@\n a\n b\n-c\n"; got != want {
 		t.Errorf("Diff without a secret = %q, want the plain diff %q", got, want)
 	}
 }
@@ -641,7 +639,7 @@ func FuzzMaskedDiff(f *testing.F) {
 		if strings.Contains(raw, oldPw) {
 			t.Errorf("template %q, old %q, new %q: the diff shows the old secret:\n%s", tpl, oldPw, newPw, raw)
 		}
-		if got := fl.Text(raw); strings.Contains(got, newPw) {
+		if got := fl.Parts([]string{raw})[0]; strings.Contains(got, newPw) {
 			t.Errorf("template %q, old %q, new %q: the diff shows the new secret:\n%s", tpl, oldPw, newPw, got)
 		}
 	})

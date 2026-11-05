@@ -314,7 +314,7 @@ func TestSecretFilterValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := "hunter2 HUNTER2 user:hunter2 $6$aaa$alicehash winch-yaml-token plain-bob"
-	if got, want := keys.Filter.Text(in), "(secret) HUNTER2 user:(secret) (secret) (secret) plain-bob"; got != want {
+	if got, want := keys.Filter.Parts([]string{in})[0], "(secret) HUNTER2 user:(secret) (secret) (secret) plain-bob"; got != want {
 		t.Errorf("filter: %q, want %q", got, want)
 	}
 	if got, want := steps[0].HostText(in, steps[0].Parts), "(secret) (secret) user:(secret) $6$aaa$alicehash winch-yaml-token plain-bob"; got != want {
@@ -340,7 +340,7 @@ steps:
 		t.Fatal(err)
 	}
 	in := "[Interface]\n[Peer]\nPrivateKey = wg-private-key-1\nEndpoint = vpn.example.com:51820"
-	if got, want := keys.Filter.Text(in), "[Interface]\n[Peer]\n(secret)\n(secret)"; got != want {
+	if got, want := keys.Filter.Parts([]string{in})[0], "[Interface]\n[Peer]\n(secret)\n(secret)"; got != want {
 		t.Errorf("filter: %q, want %q", got, want)
 	}
 }
@@ -1596,7 +1596,7 @@ func TestSecretStepMaskNames(t *testing.T) {
 			if got := steps[0].HostText(in, steps[0].Parts); got != want {
 				t.Errorf("step mask: %q, want %q", got, want)
 			}
-			if got := keys.Filter.Text(in); got != in {
+			if got := keys.Filter.Parts([]string{in})[0]; got != in {
 				t.Errorf("filter: %q, want %q", got, in)
 			}
 		})
