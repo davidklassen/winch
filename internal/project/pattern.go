@@ -93,5 +93,14 @@ func (inv *Inventory) named(name string) (map[string]bool, error) {
 	for _, h := range inv.Hosts {
 		names = append(names, h.Name)
 	}
-	return nil, fmt.Errorf("unknown host or group %q in %s%s", name, inv.File, yamlx.Suggest(name, names))
+	var hint string
+	switch {
+	case strings.ContainsAny(name, "*?"):
+		hint = "; host patterns have no wildcards; name the hosts or use a group"
+	case strings.Contains(name, ":") && !slices.ContainsFunc(strings.Split(name, ":"), func(part string) bool { return !slices.Contains(names, part) }):
+		hint = "; join names with , not :"
+	default:
+		hint = yamlx.Suggest(name, names)
+	}
+	return nil, fmt.Errorf("unknown host or group %q in %s%s", name, inv.File, hint)
 }

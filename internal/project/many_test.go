@@ -93,6 +93,32 @@ func TestPattern(t *testing.T) {
 	}
 }
 
+// spec: Inventory/Host patterns; CLI/Messages
+func TestPatternHints(t *testing.T) {
+	p, err := Load(t.Context(), writeProject(t, manyProject), "", "site", nil, Keys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct{ pattern, want string }{
+		{"web*", `unknown host or group "web*" in inventories/test.yaml; host patterns have no wildcards; name the hosts or use a group`},
+		{"web?", `unknown host or group "web?" in inventories/test.yaml; host patterns have no wildcards; name the hosts or use a group`},
+		{"web:db", `unknown host or group "web:db" in inventories/test.yaml; join names with , not :`},
+		{"web:prod:db1", `unknown host or group "web:prod:db1" in inventories/test.yaml; join names with , not :`},
+		// The hint holds only when the parts are names: , is no fix here.
+		{"web:!db", `unknown host or group "web:!db" in inventories/test.yaml`},
+		{"web:&prod", `unknown host or group "web:" in inventories/test.yaml; did you mean "web"?`},
+		{"web[0:2]", `unknown host or group "web[0:2]" in inventories/test.yaml; did you mean "web2"?`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.pattern, func(t *testing.T) {
+			_, err := p.Inventory.Match(tt.pattern)
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("error = %v\nwant    %s", err, tt.want)
+			}
+		})
+	}
+}
+
 // spec: Inventory/Host patterns; Pipelines
 func TestStagePattern(t *testing.T) {
 	p, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{

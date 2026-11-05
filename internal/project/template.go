@@ -564,6 +564,8 @@ func toJSON(v any) (string, error) {
 	return jsonEscapes.Replace(strings.TrimSuffix(b.String(), "\n")), nil
 }
 
+var undefinedFuncRe = regexp.MustCompile(`^function "(\w+)" not defined$`)
+
 var templateErrRe = regexp.MustCompile(`(?s)^(\d+)(?::(\d+))?: (?:executing "(?:[^"\\]|\\.)*" at <(.*?)>: )?(.*)$`)
 
 // parseTemplateError splits an error of the template package for the template
@@ -583,6 +585,9 @@ func parseTemplateError(name string, err error) (line, col int, msg string, ok b
 	msg = m[4]
 	if m[3] != "" {
 		msg = m[3] + ": " + msg
+	}
+	if f := undefinedFuncRe.FindStringSubmatch(msg); f != nil && isExprFunc(f[1]) {
+		msg += fmt.Sprintf("; %s is an expression function: use !expr", f[1])
 	}
 	return line, col, msg, true
 }
