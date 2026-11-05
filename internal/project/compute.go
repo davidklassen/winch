@@ -10,9 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"unicode/utf8"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
+	"github.com/expr-lang/expr/builtin"
 	"github.com/expr-lang/expr/file"
 	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
@@ -122,6 +124,15 @@ var exprOptions = []expr.Option{
 	expr.Function("json", func(args ...any) (any, error) {
 		return toJSON(args[0])
 	}, toJSON),
+}
+
+// noExprFuncs are the builtins of expr that exprOptions and exprCheck take
+// away.
+var noExprFuncs = []string{"now", "toJSON"}
+
+func isExprFunc(name string) bool {
+	_, ok := builtin.Index[name]
+	return name == "match" || ok && !slices.Contains(noExprFuncs, name)
 }
 
 // readFunc checks the value of a member read. Its name cannot be written in
@@ -356,6 +367,9 @@ var (
 	// runMismatchRe is the same error when the expression runs.
 	runMismatchRe  = regexp.MustCompile(`^invalid operation: (\S+) (\S+) (\S+)$`)
 	expectedBoolRe = regexp.MustCompile(`^expected bool, but got (\S+)$`)
+	// predicateKeyRe is the text before a ":" that ends a map key at the
+	// start of a predicate in braces, which expr does not read as a map.
+	predicateKeyRe = regexp.MustCompile(`\{\s*([\pL\pN_$]+|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|` + "`[^`]*`" + `)\s*$`)
 	// typeWords name the types of expr in messages.
 	typeWords  = map[string]string{"string": "a string", "int": "a number", "int64": "a number", "float": "a number", "float64": "a number", "bool": "a boolean", "array": "a list", "map": "a map", "nil": "null"}
 	exprNames  = []string{"vars", "facts", "host", "item", "match"}
@@ -396,6 +410,8 @@ func exprMessage(err error, src string, names []string) string {
 		msg = mismatch(src, fe.From, m[1], typeWords[m[2]], typeWords[m[3]])
 	} else if m := runMismatchRe.FindStringSubmatch(msg); m != nil && typeWords[m[1]] != "" && typeWords[m[3]] != "" {
 		msg = mismatch(src, fe.From, m[2], typeWords[m[1]], typeWords[m[3]])
+	} else if msg == `unexpected token Operator(":")` && fe.From <= utf8.RuneCountInString(src) && predicateKeyRe.MatchString(string([]rune(src)[:fe.From])) {
+		msg += "; put a map in parentheses: map(list, ({key: .x}))"
 	}
 	return msg + fe.Snippet
 }

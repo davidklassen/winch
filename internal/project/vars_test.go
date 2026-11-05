@@ -733,6 +733,91 @@ func TestExprTypeError(t *testing.T) {
 	}
 }
 
+// spec: CLI/Messages; Templates and expressions
+func TestHabitHints(t *testing.T) {
+	tests := []struct {
+		name, step string
+		files      map[string]string
+		want       string
+		// fix is the step that follows the hint, with fixVars and
+		// fixFiles.
+		fix      string
+		fixVars  string
+		fixFiles map[string]string
+	}{
+		{
+			name: "expression function in a template",
+			step: "  - file:\n      path: /a\n      content: !tpl \"{{ keys .vars.m }}\"\n",
+			want: `load error: recipes/r/recipe.yaml:4:16: function "keys" not defined; keys is an expression function: use !expr`,
+			fix:  "  - file:\n      path: /a\n      content: !expr 'json(keys(vars.m))'\n",
+		},
+		{
+			name:     "expression function in a template file",
+			step:     "  - file:\n      path: /a\n      template: a.tmpl\n",
+			files:    map[string]string{"recipes/r/templates/a.tmpl": "{{ filter .vars.l }}\n"},
+			want:     `load error: recipes/r/templates/a.tmpl:1:1: function "filter" not defined; filter is an expression function: compute it in a variable with !expr, and read that variable in the template`,
+			fixVars:  "  ks: !expr keys(vars.m)\n",
+			fixFiles: map[string]string{"recipes/r/templates/a.tmpl": "{{ join .vars.ks \",\" }}\n"},
+		},
+		{
+			name: "now in a template",
+			step: "  - file:\n      path: /a\n      content: !tpl \"{{ now }}\"\n",
+			want: `load error: recipes/r/recipe.yaml:4:16: function "now" not defined`,
+		},
+		{
+			name: "toJSON in a template",
+			step: "  - file:\n      path: /a\n      content: !tpl \"{{ toJSON .vars.m }}\"\n",
+			want: `load error: recipes/r/recipe.yaml:4:16: function "toJSON" not defined`,
+		},
+		{
+			name: "match in a template",
+			step: "  - file:\n      path: /a\n      content: !tpl \"{{ match \\\"all\\\" }}\"\n",
+			want: `load error: recipes/r/recipe.yaml:4:16: function "match" not defined; match is an expression function: use !expr`,
+		},
+		{
+			name: "colon that is not after a map key",
+			step: "  - file:\n      path: /a\n      content: !expr 'vars.a : 1'\n",
+			want: "load error: recipes/r/recipe.yaml:4:16: unexpected token Operator(\":\")\n | vars.a : 1\n | .......^",
+		},
+		{
+			name: "map literal with a non-ASCII key",
+			step: "  - file:\n      path: /a\n      content: !expr 'json(map(vars.l, {größe: .a}))'\n",
+			want: "load error: recipes/r/recipe.yaml:4:16: unexpected token Operator(\":\"); put a map in parentheses: map(list, ({key: .x}))\n | json(map(vars.l, {größe: .a}))\n | .......................^",
+			fix:  "  - file:\n      path: /a\n      content: !expr 'json(map(vars.l, ({größe: .a})))'\n",
+		},
+		{
+			name: "map literal with a backtick key",
+			step: "  - file:\n      path: /a\n      content: !expr 'json(map(vars.l, {`k`: .a}))'\n",
+			want: "load error: recipes/r/recipe.yaml:4:16: unexpected token Operator(\":\"); put a map in parentheses: map(list, ({key: .x}))\n | json(map(vars.l, {`k`: .a}))\n | .....................^",
+			fix:  "  - file:\n      path: /a\n      content: !expr 'json(map(vars.l, ({`k`: .a})))'\n",
+		},
+		{
+			name: "map literal in a predicate",
+			step: "  - file:\n      path: /a\n      content: !expr 'json(map(vars.l, {name: .a}))'\n",
+			want: "load error: recipes/r/recipe.yaml:4:16: unexpected token Operator(\":\"); put a map in parentheses: map(list, ({key: .x}))\n | json(map(vars.l, {name: .a}))\n | ......................^",
+			fix:  "  - file:\n      path: /a\n      content: !expr 'json(map(vars.l, ({name: .a})))'\n",
+		},
+	}
+	const vars = "  m: {b: 1}\n  l: [{a: x}]\n"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := evalOne(t, vars, tt.step, tt.files); got != tt.want {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+			if tt.fix == "" && tt.fixFiles == nil {
+				return
+			}
+			step := tt.fix
+			if step == "" {
+				step = tt.step
+			}
+			if got := evalOne(t, vars+tt.fixVars, step, tt.fixFiles); strings.Contains(got, "error: ") {
+				t.Errorf("the fix gives %q", got)
+			}
+		})
+	}
+}
+
 // spec: Templates and expressions/Template functions
 func TestSQLQuote(t *testing.T) {
 	tests := []struct{ value, want string }{
