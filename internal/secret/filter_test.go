@@ -124,8 +124,8 @@ func TestFilter(t *testing.T) {
 			for _, v := range tt.values {
 				f.Add(v)
 			}
-			if got := f.Text(tt.in); got != tt.want {
-				t.Errorf("Text(%q)\n got %q\nwant %q", tt.in, got, tt.want)
+			if got := f.Parts([]string{tt.in})[0]; got != tt.want {
+				t.Errorf("Parts(%q)\n got %q\nwant %q", tt.in, got, tt.want)
 			}
 		})
 	}
@@ -158,8 +158,8 @@ func TestFilterPlainLines(t *testing.T) {
 			f := NewFilter()
 			f.Plain([]byte(tt.plain))
 			f.Add(tt.value)
-			if got := f.Text(tt.in); got != tt.want {
-				t.Errorf("Text(%q)\n got %q\nwant %q", tt.in, got, tt.want)
+			if got := f.Parts([]string{tt.in})[0]; got != tt.want {
+				t.Errorf("Parts(%q)\n got %q\nwant %q", tt.in, got, tt.want)
 			}
 		})
 	}
@@ -174,8 +174,8 @@ func TestFilterManyValues(t *testing.T) {
 		f.Add(v)
 		values = append(values, v)
 		for _, old := range values {
-			if got := f.Text("x " + old + " y"); got != "x (secret) y" {
-				t.Fatalf("after %d values, Text(%q) = %q", i+1, old, got)
+			if got := f.Parts([]string{"x " + old + " y"})[0]; got != "x (secret) y" {
+				t.Fatalf("after %d values, Parts(%q) = %q", i+1, old, got)
 			}
 		}
 	}
@@ -241,8 +241,8 @@ func TestFilterParts(t *testing.T) {
 			if fmt.Sprintf("%q", got) != fmt.Sprintf("%q", tt.want) {
 				t.Errorf("Parts(%q) = %q, want %q", tt.parts, got, tt.want)
 			}
-			if j := strings.Join(got, ""); j != f.Text(strings.Join(tt.parts, "")) {
-				t.Errorf("joined parts %q differ from Text", j)
+			if j := strings.Join(got, ""); j != f.Parts([]string{strings.Join(tt.parts, "")})[0] {
+				t.Errorf("joined parts %q differ from the filtered whole", j)
 			}
 		})
 	}
@@ -273,7 +273,7 @@ func FuzzFilterParts(f *testing.F) {
 		}
 		parts = append(parts, s[last:])
 		joined := strings.Join(fl.Parts(parts), "")
-		if text := fl.Text(s); joined != text {
+		if text := fl.Parts([]string{s})[0]; joined != text {
 			t.Errorf("value %q in parts %q: the parts give %q, the whole text %q", value, parts, joined, text)
 		}
 		if out := strings.ReplaceAll(joined, Mark, "\x00"); strings.Contains(out, v) {

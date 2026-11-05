@@ -695,7 +695,7 @@ func TestMatchSecret(t *testing.T) {
 	if !slices.Equal(shown, want) {
 		t.Errorf("shown lines = %q, want %q", shown, want)
 	}
-	if got := keys.Filter.Text("peer-token-b"); got != secret.Mark {
+	if got := keys.Filter.Parts([]string{"peer-token-b"})[0]; got != secret.Mark {
 		t.Errorf("filter: %q", got)
 	}
 }

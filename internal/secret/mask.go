@@ -316,7 +316,7 @@ func RecordAdd(record *string, line string) string {
 }
 
 // Diff returns the diff of old, the content on the host, to the new lines,
-// in the format of diff.Diff. A removed line shows as the line of record that
+// in the unified diff format without the file header. A removed line shows as the line of record that
 // it fits. A removed line that fits none is hidden when a new line holds a
 // secret or when there is a record. With showOther, a record does not hide it:
 // a line step changes one line, and the record holds no plain line that this

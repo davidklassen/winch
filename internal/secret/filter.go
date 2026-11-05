@@ -88,15 +88,10 @@ func forms(exact string) []string {
 	return out
 }
 
-// Text returns s with each match replaced by Mark. Overlapping and adjacent
-// matches give one Mark. A newline stays, and a match inside a Mark of s
-// does not count.
-func (f *Filter) Text(s string) string {
-	return f.Parts([]string{s})[0]
-}
-
 // Parts filters the text that parts make together, and returns it in the
-// same parts. A Mark shows in the part where its match starts.
+// same parts. Each match becomes Mark. Overlapping and adjacent matches give
+// one Mark. A newline stays, and a match inside a Mark of the text does not
+// count. A Mark shows in the part where its match starts.
 func (f *Filter) Parts(parts []string) []string {
 	s := strings.Join(parts, "")
 	f.mu.Lock()
@@ -116,7 +111,7 @@ func (f *Filter) Parts(parts []string) []string {
 	return split(s, marked, parts)
 }
 
-// Hide returns s with each of parts as Mark, like Filter.Text: in the forms
+// Hide returns s with each of parts as Mark, like Filter.Parts: in the forms
 // that Filter.Add knows, and in its Go-quoted form. It skips no part for its
 // length.
 func Hide(s string, parts []string) string {

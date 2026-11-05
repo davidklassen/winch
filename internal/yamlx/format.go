@@ -128,7 +128,7 @@ func (l *layout) block(n *yaml.Node, target int) {
 			line := k.Line - 1
 			s := start{col: l.col(line, k.Column), target: target}
 			l.starts[line] = append(l.starts[line], s)
-			l.value(n.Content[i+1], line, s)
+			l.value(n.Content[i+1], s)
 		}
 		return
 	}
@@ -140,7 +140,7 @@ func (l *layout) block(n *yaml.Node, target int) {
 		}
 		s := start{col: col, target: target, dash: true, inline: line == item.Line-1}
 		l.starts[line] = append(l.starts[line], s)
-		l.value(item, line, s)
+		l.value(item, s)
 	}
 }
 
@@ -170,8 +170,8 @@ func (l *layout) dash(item *yaml.Node) (int, int, bool) {
 	return 0, 0, false
 }
 
-// value records the layout of the value of owner, a start on line.
-func (l *layout) value(n *yaml.Node, line int, owner start) {
+// value records the layout of the value of owner.
+func (l *layout) value(n *yaml.Node, owner start) {
 	switch {
 	case isBlock(n):
 		l.block(n, owner.target+2)
@@ -392,9 +392,7 @@ func order(lines []string, steps []string, rank func(string) int) ([]string, err
 	// Later steps first, so the line numbers of earlier steps stay.
 	slices.SortFunc(maps, func(a, b *yaml.Node) int { return b.Line - a.Line })
 	for _, m := range maps {
-		if lines, err = l.orderStep(lines, m, rank); err != nil {
-			return nil, err
-		}
+		lines = l.orderStep(lines, m, rank)
 	}
 	return lines, nil
 }
@@ -425,7 +423,7 @@ func find(n *yaml.Node, path []string) []*yaml.Node {
 
 // orderStep sorts the keys of the step map m. Each key takes along the lines
 // of its value and the comment lines right above it.
-func (l *layout) orderStep(lines []string, m *yaml.Node, rank func(string) int) ([]string, error) {
+func (l *layout) orderStep(lines []string, m *yaml.Node, rank func(string) int) []string {
 	type chunk struct {
 		rank  int
 		lines []string
@@ -439,7 +437,7 @@ func (l *layout) orderStep(lines []string, m *yaml.Node, rank func(string) int) 
 		ranks = append(ranks, rank(m.Content[i].Value))
 	}
 	if slices.IsSorted(ranks) {
-		return lines, nil
+		return lines
 	}
 	col := l.col(keys[0], m.Content[0].Column)
 	begin := make([]int, len(keys))
@@ -490,7 +488,7 @@ func (l *layout) orderStep(lines []string, m *yaml.Node, rank func(string) int) 
 	for _, c := range chunks {
 		out = append(out, c.lines...)
 	}
-	return append(out, lines[end:]...), nil
+	return append(out, lines[end:]...)
 }
 
 // sameFile reports whether b holds the values of the tree root, with the same
