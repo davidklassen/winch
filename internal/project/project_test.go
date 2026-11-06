@@ -769,10 +769,18 @@ func TestLoadDirModeWarning(t *testing.T) {
 // spec: Modules/file, dir, link
 func TestLoadSkippedNameWarning(t *testing.T) {
 	for _, tt := range []struct{ name, step, want string }{
-		{"cron file", "file:\n          path: /etc/cron.d/backup.sh\n          content: x", `pipelines/site.yaml:6:17: path: cron skips a file in /etc/cron.d whose name has a "."`},
-		{"sudoers link", "link:\n          path: /etc/sudoers.d/admin.conf\n          target: /srv/admin", `pipelines/site.yaml:6:17: path: sudo skips a file in /etc/sudoers.d whose name has a "."`},
-		{"no dot", "file:\n          path: /etc/sudoers.d/admin\n          content: x", ""},
-		{"other directory", "file:\n          path: /etc/cron.daily/a.sh\n          content: x", ""},
+		{"cron file", "file:\n          path: /etc/cron.d/backup.sh\n          content: x", `pipelines/site.yaml:6:17: path: cron skips a file in /etc/cron.d whose name has a character other than letters, digits, "_", and "-"`},
+		{"sudoers link", "link:\n          path: /etc/sudoers.d/admin.conf\n          target: /srv/admin", `pipelines/site.yaml:6:17: path: sudo skips a file in /etc/sudoers.d whose name has a "." or ends in "~"`},
+		{"sudoers plain", "file:\n          path: /etc/sudoers.d/admin\n          content: x", ""},
+		{"run-parts file", "file:\n          path: /etc/cron.daily/backup.sh\n          content: x", `pipelines/site.yaml:6:17: path: cron skips a file in /etc/cron.daily whose name has a character other than letters, digits, "_", and "-"`},
+		{"cron.d plus", "file:\n          path: /etc/cron.d/a+b\n          content: x", `pipelines/site.yaml:6:17: path: cron skips a file in /etc/cron.d whose name has a character other than letters, digits, "_", and "-"`},
+		{"hourly", "file:\n          path: /etc/cron.hourly/a.sh\n          content: x", `pipelines/site.yaml:6:17: path: cron skips a file in /etc/cron.hourly whose name has a character other than letters, digits, "_", and "-"`},
+		{"monthly link", "link:\n          path: /etc/cron.monthly/a.sh\n          target: /srv/a.sh", `pipelines/site.yaml:6:17: path: cron skips a file in /etc/cron.monthly whose name has a character other than letters, digits, "_", and "-"`},
+		{"non-ASCII letter", "file:\n          path: /etc/cron.daily/backupé\n          content: x", `pipelines/site.yaml:6:17: path: cron skips a file in /etc/cron.daily whose name has a character other than letters, digits, "_", and "-"`},
+		{"run-parts name", "file:\n          path: /etc/cron.weekly/Backup_2-x\n          content: x", ""},
+		{"sudoers backup", "file:\n          path: /etc/sudoers.d/x~\n          content: x", `pipelines/site.yaml:6:17: path: sudo skips a file in /etc/sudoers.d whose name has a "." or ends in "~"`},
+		{"sudoers plus", "file:\n          path: /etc/sudoers.d/a+b\n          content: x", ""},
+		{"other directory", "file:\n          path: /etc/cron.yearly/a.sh\n          content: x", ""},
 		{"subdirectory", "file:\n          path: /etc/cron.d/a/b.sh\n          content: x", ""},
 		{"absent", "file:\n          path: /etc/cron.d/a.sh\n          absent: true", ""},
 		{"computed path", "file:\n          path: !expr '\"/etc/cron.d/a.sh\"'\n          content: x", ""},
