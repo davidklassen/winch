@@ -1,5 +1,56 @@
 # Changelog
 
+## v0.3.0
+
+### Added
+
+- `ssh_config` in `winch.yaml` names an SSH config file, relative to the
+  project directory, such as the one that Lima or Vagrant writes. winch
+  passes it to every `ssh` it runs, with `-F`, so ssh reads that file
+  instead of `~/.ssh/config`. `~` in the path is not expanded.
+- Load warnings:
+  - a `source` file with an execute bit, in a step without `mode`: the
+    host file gets `0644`. Set `mode: "0755"`;
+  - a file in `/etc/cron.d/` or `/etc/cron.daily/` and the like whose
+    name has a character other than letters, digits, `_`, and `-`, such
+    as `backup.sh`: cron skips it. A file in `/etc/sudoers.d/` whose
+    name has a `.` or ends in `~`: sudo skips it.
+- Errors give a hint for habits from other tools:
+  - a template that calls an expression function, such as `keys`;
+  - a host pattern with `*` or `?`: host patterns have no wildcards;
+  - a host pattern with `:`: join names with `,`;
+  - a map literal in an expression: put it in parentheses, as in
+    `map(list, ({key: .x}))`.
+
+### Fixed
+
+- A `firewall` step that enables `winch-firewall.service` also starts
+  it. Before, the rules were loaded, but the unit was `inactive` until
+  the next boot.
+- The plan of a `pkg` step simulates with the earlier `pkg` steps of
+  the run, in order. It no longer lists a package that an earlier step
+  installs under "also install", and a package that one step installs
+  and a later step removes counts as removed.
+- The warning for a user that does not exist yet names the earlier
+  `pkg` step whose package can create it, such as `postgres` from
+  `postgresql`. It shows once per host and user, not again in each file
+  step with that owner.
+- Each pending certbot `deploy_hook` and `post_hook` has its own time
+  limit. Before, a slow first hook left the next one less time.
+- Apply no longer prints `download <url>` and `unpack into <dir>` lines
+  of their own. The step line shows the download.
+- `winch doc`:
+  - the firewall page says that a port Docker publishes stays open, and
+    to publish on `127.0.0.1` when only a local proxy reaches the
+    container;
+  - `user.password` names `openssl passwd -6`;
+  - `sqlquote` says that it is for PostgreSQL, with `E` before the
+    quote;
+  - `facts.os.arch` lists `amd64` and `arm64`;
+  - `winch exec --help` says that stdin is `/dev/null`;
+  - the pages state more checks and warnings, such as the warning for
+    a `then` command that restarts sshd after a change of its config.
+
 ## v0.2.1
 
 ### Fixed
