@@ -767,6 +767,65 @@ func TestLoadDirModeWarning(t *testing.T) {
 }
 
 // spec: Modules/file, dir, link
+func TestLoadExecutableSourceWarning(t *testing.T) {
+	const want = `recipes/r/recipe.yaml:4:15: source: recipes/r/files/backup.sh is executable, but the step has no mode, so the host file gets 0644; set mode: "0755"`
+	for _, tt := range []struct {
+		name, source, mode, loop string
+		perm                     os.FileMode
+		want                     string
+	}{
+		{"executable", "backup.sh", "", "", 0o755, want},
+		{"owner executes", "backup.sh", "", "", 0o744, want},
+		{"group executes", "backup.sh", "", "", 0o654, want},
+		{"others execute", "backup.sh", "", "", 0o645, want},
+		{"executable with mode", "backup.sh", `"0755"`, "", 0o755, ""},
+		{"executable with mode 0644", "backup.sh", `"0644"`, "", 0o755, ""},
+		{"executable with computed mode", "backup.sh", `!expr '"0755"'`, "", 0o755, ""},
+		{"not executable", "backup.sh", "", "", 0o644, ""},
+		{"computed source in a literal loop", "!expr item", "", "[backup.sh]", 0o755, want},
+		{"computed source in a literal loop, not executable", "!expr item", "", "[backup.sh]", 0o644, ""},
+		{"computed source in a computed loop", "!expr item", "", `!expr '["backup.sh"]'`, 0o755, ""},
+		{"computed source names a directory", "!expr item", "", "[bin]", 0o644, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			step := "  - file:\n      path: /usr/local/bin/backup.sh\n      source: " + tt.source + "\n"
+			if tt.mode != "" {
+				step += "      mode: " + tt.mode + "\n"
+			}
+			if tt.loop != "" {
+				step += "    loop: " + tt.loop + "\n"
+			}
+			dir := writeProject(t, map[string]string{
+				"pipelines/site.yaml":       stage("      - recipe: r\n"),
+				"recipes/r/recipe.yaml":     recipe(step),
+				"recipes/r/files/backup.sh": "#!/bin/sh\n",
+				"recipes/r/files/bin/x":     "x",
+			})
+			if err := os.Chmod(filepath.Join(dir, "recipes/r/files/backup.sh"), tt.perm); err != nil {
+				t.Fatal(err)
+			}
+			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			warnings, err := Validate(dir, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for what, ws := range map[string][]*yamlx.Error{"Load": p.Warnings, "Validate": warnings} {
+				var got string
+				if len(ws) > 0 {
+					got = ws[0].Error()
+				}
+				if len(ws) > 1 || got != tt.want {
+					t.Errorf("%s warnings = %v, want %q", what, ws, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// spec: Modules/file, dir, link
 func TestLoadSkippedNameWarning(t *testing.T) {
 	for _, tt := range []struct{ name, step, want string }{
 		{"cron file", "file:\n          path: /etc/cron.d/backup.sh\n          content: x", `pipelines/site.yaml:6:17: path: cron skips a file in /etc/cron.d whose name has a character other than letters, digits, "_", and "-"`},

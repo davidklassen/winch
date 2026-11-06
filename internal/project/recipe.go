@@ -385,6 +385,25 @@ func (r *Recipe) fileTemplates(st Step, n *yamlx.Node) []*tmplFile {
 	return out
 }
 
+// fileSources returns the source names of the file step st with the
+// arguments f and n, and the position of source. A computed name gives the
+// names of a literal loop when it reads only item, else none.
+func fileSources(st Step, f *module.File, n *yamlx.Node) ([]string, yamlx.Pos) {
+	i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "source" })
+	if i < 0 {
+		return nil, yamlx.Pos{}
+	}
+	v := n.Pairs[i].Value
+	if v.Tag == "" {
+		return []string{f.Source}, v.Pos
+	}
+	if c := st.args.computed[v]; st.loop != nil && !c.data {
+		names, _ := loopNames(st.loop, c)
+		return names, v.Pos
+	}
+	return nil, v.Pos
+}
+
 // loopNames returns the value of c for each item of loop, when the loop is a
 // literal list.
 func loopNames(loop *value, c *computed) ([]string, bool) {
@@ -431,6 +450,18 @@ func (r *Recipe) readFile(sub, name string) ([]byte, error) {
 		return nil, readError(file, err)
 	}
 	return data, nil
+}
+
+// executable reports whether the file name in the files of r has an execute
+// bit.
+func (r *Recipe) executable(name string) bool {
+	f, err := os.OpenInRoot(filepath.Join(r.root, "files"), name)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	return err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0
 }
 
 func readError(file string, err error) error {
