@@ -377,12 +377,11 @@ func (u *User) checkNew(a accounts) (Result, string, string, error) {
 		args = append(args, "-r")
 	}
 	home, shell := u.Home, u.Shell
-	noneMade := u.System && u.Home == ""
-	switch {
-	case noneMade:
-		home = noHome
-	case home == "":
+	if home == "" {
 		home = "/home/" + u.Name
+		if u.System {
+			home = noHome
+		}
 	}
 	if shell == "" {
 		shell = "/bin/sh"
@@ -391,7 +390,7 @@ func (u *User) checkNew(a accounts) (Result, string, string, error) {
 		}
 	}
 	args = append(args, "-d", home)
-	if noneMade {
+	if home == noHome {
 		changes = append(changes, "home "+noHome+" (not created)")
 		args = append(args, "-M")
 	} else {

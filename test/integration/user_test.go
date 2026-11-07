@@ -97,6 +97,12 @@ wtbob wtgrp 700" ]`,
 			After: `[ "$(getent passwd wtsvc | cut -d: -f6,7)" = /nonexistent:/usr/sbin/nologin ] && [ "$(id -u wtsvc)" -lt 1000 ] && [ ! -e /nonexistent ]`,
 		},
 		{
+			Name:  "a system user with home /nonexistent",
+			Args:  &module.User{Name: "wtsvc", System: true, Home: "/nonexistent"},
+			Want:  create("group wtsvc (new)", "system user", "home /nonexistent (not created)", "shell /usr/sbin/nologin"),
+			After: `[ "$(getent passwd wtsvc | cut -d: -f6)" = /nonexistent ] && [ ! -e /nonexistent ]`,
+		},
+		{
 			Name:  "a system user with home",
 			Args:  &module.User{Name: "wtsvc", System: true, Home: "/var/lib/wtsvc"},
 			Want:  create("group wtsvc (new)", "system user", "home /var/lib/wtsvc (owner wtsvc, group wtsvc, mode 0700)", "shell /usr/sbin/nologin"),
