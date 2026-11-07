@@ -19,9 +19,12 @@ func (l *Link) Writes() []string { return present(l.Absent, l.Path) }
 
 func (l *Line) Writes() []string { return present(l.Absent, l.Path) }
 
-func (u *Unit) Writes() []string { return []string{u.Path()} }
+func (u *Unit) Writes() []string { return present(u.Absent, u.Path()) }
 
 func (r *Repo) Writes() []string {
+	if r.Absent {
+		return nil
+	}
 	out := []string{r.SourcePath()}
 	if r.Key != "" || r.KeyData != nil {
 		out = append(out, r.keyPath())
@@ -88,6 +91,9 @@ func Owns(m Module) []Owned {
 		}
 		return []Owned{{Path: m.Path, Owner: cmp.Or(string(m.Owner), "root"), Group: cmp.Or(string(m.Group), "root")}}
 	case *Unit:
+		if m.Absent {
+			return nil
+		}
 		return Owns(m.File())
 	case *Repo, *Firewall:
 		var out []Owned

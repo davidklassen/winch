@@ -46,6 +46,14 @@ func TestStartedBy(t *testing.T) {
           name: stopped
           running: false
 `), "s: service stopped: rpcbind.socket starts stopped.service; add a service step that stops and disables rpcbind.socket"},
+		{"a unit step removes the unit", stage("s", `      - unit:
+          name: rpcbind.service
+          absent: true
+`), "s: unit rpcbind.service: rpcbind.socket starts rpcbind.service; add a service step that stops and disables rpcbind.socket"},
+		{"a unit step removes the socket", stage("s", stop+`      - unit:
+          name: rpcbind.socket
+          absent: true
+`), ""},
 		{"a step for another unit", stage("s", stop+`      - service:
           name: rpcbind.timer
           running: false
@@ -60,6 +68,7 @@ func TestStartedBy(t *testing.T) {
 			h.SetResult("web1", "rpcbind", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"stop"}, StartedBy: []string{"rpcbind.socket"}})
 			h.SetResult("web1", "rpcbind.socket", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"disable", "stop"}})
 			h.SetResult("web1", "rpcbind.timer", module.Result{Status: module.OK})
+			h.SetResult("web1", "rpcbind.service", module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"stop rpcbind.service"}, StartedBy: []string{"rpcbind.socket"}})
 			h.SetResult("web1", "nfs", module.Result{Status: module.OK, StartedBy: []string{"nfs.socket", "nfs.path"}})
 			h.SetResult("web1", "stopped", module.Result{Status: module.OK, StartedBy: []string{"rpcbind.socket"}})
 			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})

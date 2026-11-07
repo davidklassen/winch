@@ -569,6 +569,14 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		return module.Result{}, fmt.Errorf("fakehost: the call got an ended context: %w", ctx.Err())
 	}
 	if u, ok := m.(*module.Unit); ok {
+		if u.Absent {
+			c.hosts.mu.Lock()
+			res, ok := c.hosts.result(c.host + " " + u.Name)
+			c.hosts.mu.Unlock()
+			if ok {
+				return res, nil
+			}
+		}
 		res, err := c.Check(ctx, name, u.File(), st)
 		if res.Status == module.Change {
 			res.Changes = append(res.Changes, "daemon-reload")

@@ -366,6 +366,33 @@ func TestRepoGetsRemovedPaths(t *testing.T) {
 	}
 }
 
+// spec: Modules/repo
+func TestRepoAbsentRemovesPaths(t *testing.T) {
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": steps(`      - repo:
+          name: old
+          absent: true
+      - repo:
+          name: older
+          absent: true
+      - repo:
+          name: b
+          url: http://x.example/b
+          suite: trixie
+          components: [main]
+`),
+	})
+	h := fakehost.New()
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	if err := plan.Failed["web1"]; err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{nil, {"/etc/apt/sources.list.d/old.sources"}, {"/etc/apt/sources.list.d/old.sources", "/etc/apt/sources.list.d/older.sources"}}
+	if !reflect.DeepEqual(h.RepoRemoved, want) {
+		t.Errorf("removed paths = %q, want %q", h.RepoRemoved, want)
+	}
+}
+
 // spec: Running a pipeline/Plan
 func TestPlanSameThing(t *testing.T) {
 	tests := []struct {
@@ -622,6 +649,35 @@ handlers:
       name: app@.service
       source: app.service
 `, "web: unit app@.service: s#1 service app@a uses app@.service before this step writes it; move this step before it"},
+		{"a service step that starts a unit that a later unit step removes", steps(`      - service:
+          name: app
+          running: true
+      - unit:
+          name: app.service
+          absent: true
+`), "", "s: unit app.service: s#1 service app starts or enables app.service, which this step removes"},
+		{"a service step that enables a unit that an earlier unit step removes", steps(`      - unit:
+          name: app.service
+          absent: true
+      - service:
+          name: app
+          enabled: true
+`), "", "s: service app: s#1 unit app.service removes app.service, which this step starts or enables"},
+		{"a service step that starts an instance of a removed template", steps(`      - unit:
+          name: app@.service
+          absent: true
+      - service:
+          name: app@a
+          running: true
+`), "", "s: service app@a: s#1 unit app@.service removes app@.service, which this step starts or enables"},
+		{"a service step that stops a removed unit", steps(`      - service:
+          name: app
+          running: false
+          enabled: false
+      - unit:
+          name: app.service
+          absent: true
+`), "", ""},
 		{"a dir removed and a file in it", steps(`      - dir:
           path: /etc/nginx/conf.d
           absent: true

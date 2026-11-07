@@ -34,6 +34,7 @@ func TestMissingUnitNoteSelection(t *testing.T) {
 		{"same name outside unit path", stage("services", "web1", stop+strings.ReplaceAll(remove, "/etc/systemd/system", "/tmp")), "", true},
 		{"file is written", stage("services", "web1", stop+strings.ReplaceAll(remove, "absent: true", "content: unit")), "", true},
 		{"link removal", stage("services", "web1", stop+strings.ReplaceAll(remove, "file:", "link:")), "", false},
+		{"unit removal", stage("services", "web1", stop+"      - unit: {name: app.service, absent: true}\n"), "", false},
 		{"parent removal is not explicit", stage("services", "web1", stop+"      - dir: {path: /etc/systemd/system, absent: true}\n"), "", true},
 		{"recipe loop removal", stage("services", "web1", stop+"      - recipe: cleanup\n"), "", false},
 		{"skipped recipe", stage("services", "web1", stop+"      - recipe: cleanup\n        when: !expr false\n"), "", true},

@@ -57,7 +57,16 @@ func Touches(m Module) []Touch {
 		return out
 	case *Cmd:
 		return nil
+	case *Unit:
+		out := []Touch{{m.Path(), true}}
+		for _, l := range m.links {
+			out = append(out, Touch{l, true})
+		}
+		return out
 	case Writer:
+		if r, ok := m.(*Repo); ok && r.Absent {
+			return []Touch{{r.SourcePath(), true}, {r.keyPath(), true}}
+		}
 		var out []Touch
 		for _, p := range m.Writes() {
 			out = append(out, Touch{p, true})

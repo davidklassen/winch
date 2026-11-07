@@ -332,3 +332,126 @@ func TestUnitChangesKind(t *testing.T) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 }
+
+const unitInstall = "[Service]\nExecStart=/bin/sleep infinity\n[Install]\nWantedBy=multi-user.target\n"
+
+// spec: Modules/service and unit
+func TestUnitAbsent(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "unit-absent")
+	const (
+		path     = "/etc/systemd/system/winch-x.service"
+		template = "/etc/systemd/system/winch-x@.service"
+		gone     = `test -z "$(find /etc/systemd/system -name 'winch-x*')" && test -z "$(systemctl list-unit-files --no-legend 'winch-x*')"`
+	)
+	reset := `systemctl stop 'winch-x*' 2>/dev/null
+find /etc/systemd/system -name 'winch-x*' -delete
+systemctl disable winch-x 2>/dev/null
+rm -f /usr/lib/systemd/system/winch-x.service
+systemctl daemon-reload`
+	write := func(p, content string) string {
+		return "printf '%s' '" + content + "' > " + p + "\nsystemctl daemon-reload\n"
+	}
+	vmtest.RunCases(t, vm, "unit", reset, []vmtest.Case{
+		{
+			Name:      "a running and enabled unit",
+			Setup:     write(path, unitInstall) + "systemctl enable --now winch-x",
+			Args:      &module.Unit{Name: "winch-x.service", Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"stop winch-x.service", "disable winch-x.service", "remove " + path, "daemon-reload"}},
+			Unchanged: "systemctl is-active -q winch-x && systemctl is-enabled -q winch-x && test -f " + path,
+			After:     "! systemctl is-active -q winch-x && " + gone,
+		},
+		{
+			Name: "no unit",
+			Args: &module.Unit{Name: "winch-x.service", Absent: true},
+			Want: module.Result{Status: module.OK},
+		},
+		{
+			Name:      "a template with a running and an enabled instance",
+			Setup:     write(template, unitInstall) + "systemctl start winch-x@a && systemctl enable winch-x@b",
+			Args:      &module.Unit{Name: "winch-x@.service", Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"stop winch-x@a.service", "disable winch-x@b.service", "remove " + template, "daemon-reload"}},
+			Unchanged: "systemctl is-active -q winch-x@a && test -f " + template,
+			After:     "! systemctl is-active -q winch-x@a && " + gone,
+		},
+		{
+			Name:      "a link from systemctl link",
+			Setup:     "printf '%s' '" + unitInstall + "' > /root/winch-x.service && systemctl link /root/winch-x.service",
+			Args:      &module.Unit{Name: "winch-x.service", Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove " + path, "daemon-reload"}},
+			Unchanged: "test -L " + path,
+			After:     gone + " && test -f /root/winch-x.service",
+		},
+		{
+			Name:      "a unit that a timer starts",
+			Setup:     write(path, "[Service]\nType=oneshot\nExecStart=/bin/true\n") + write("/etc/systemd/system/winch-x.timer", "[Timer]\nOnCalendar=daily\n[Install]\nWantedBy=timers.target\n") + "systemctl enable --now winch-x.timer",
+			Args:      &module.Unit{Name: "winch-x.service", Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove " + path, "daemon-reload"}, StartedBy: []string{"winch-x.timer"}},
+			Unchanged: "test -f " + path,
+			After:     "test ! -e " + path,
+		},
+		{
+			Name:      "another unit file of the same name",
+			Setup:     write("/usr/lib/systemd/system/winch-x.service", unitInstall) + write(path, unitInstall),
+			Args:      &module.Unit{Name: "winch-x.service", Absent: true},
+			WantErr:   "winch-x.service also has the unit file /usr/lib/systemd/system/winch-x.service; remove " + path + " with a file step to use it",
+			Unchanged: "test -f " + path,
+		},
+		{
+			Name:      "only a unit file of a package",
+			Setup:     write("/usr/lib/systemd/system/winch-x.service", unitInstall) + "systemctl enable winch-x",
+			Args:      &module.Unit{Name: "winch-x.service", Absent: true},
+			WantErr:   "winch-x.service has the unit file /usr/lib/systemd/system/winch-x.service and none in /etc/systemd/system; remove this step",
+			Unchanged: "systemctl is-enabled -q winch-x",
+		},
+	})
+}
+
+// spec: Modules/service and unit
+func TestUnitAbsentTimer(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "unit-timer")
+	project := func(recipe string) string {
+		return vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":              "name: units\ninventory: test\n",
+			"inventories/test.yaml":   "hosts:\n  unit-timer: {}\n",
+			"pipelines/site.yaml":     "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: app\n",
+			"recipes/app/recipe.yaml": recipe,
+		})
+	}
+	write := project(`steps:
+  - unit:
+      name: winch-t.service
+      content: "[Service]\nType=oneshot\nExecStart=/bin/true\n"
+  - unit:
+      name: winch-t.timer
+      content: "[Timer]\nOnCalendar=daily\n[Install]\nWantedBy=timers.target\n"
+  - service:
+      name: winch-t.timer
+      running: true
+      enabled: true
+`)
+	if r := lab.Winch(t, write, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, "systemctl is-active -q winch-t.timer && systemctl is-enabled -q winch-t.timer")
+	remove := project(`steps:
+  - unit:
+      name: winch-t.service
+      absent: true
+  - unit:
+      name: winch-t.timer
+      absent: true
+`)
+	r := lab.Winch(t, remove, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "- unit winch-t.timer") || !strings.Contains(r.Stdout, "stop winch-t.timer") || !strings.Contains(r.Stdout, "disable winch-t.timer") {
+		t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	if r := lab.Winch(t, remove, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply of the removal: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, `! systemctl is-active -q winch-t.timer && test -z "$(find /etc/systemd/system -name 'winch-t*')" && test -z "$(systemctl list-unit-files --no-legend 'winch-t*')"`)
+	if r := lab.Winch(t, remove, "plan", "site"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+}

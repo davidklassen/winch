@@ -49,7 +49,14 @@ func TestRepoValidate(t *testing.T) {
 		{"key outside files", "name: a\n" + base + "key: ../rspamd.asc\n", `t.yaml:5:6: key: must be a clean relative path, such as "a/b.conf"`},
 		{"absolute key", "name: a\n" + base + "key: /etc/rspamd.asc\n", `t.yaml:5:6: key: must be a clean relative path, such as "a/b.conf"`},
 		{"unknown key", "name: a\n" + base + "keyring: x\n", `t.yaml:5:1: unknown key "keyring"`},
-		{"absent", "name: a\n" + base + "absent: true\n", `t.yaml:5:1: unknown key "absent"`},
+		{"no suite", "name: a\nurl: https://example.com/apt\ncomponents: [main]\n", `t.yaml:1:1: a repo step needs suite`},
+		{"absent", "name: a\nabsent: true\n", ""},
+		{"absent with url", "name: a\nurl: https://example.com/apt\nabsent: true\n", `t.yaml:2:6: url: not with absent: true`},
+		{"absent with suite", "name: a\nsuite: trixie\nabsent: true\n", `t.yaml:2:8: suite: not with absent: true`},
+		{"absent with components", "name: a\ncomponents: [main]\nabsent: true\n", `t.yaml:2:13: components: not with absent: true`},
+		{"absent with key", "name: a\nkey: keys/a.asc\nabsent: true\n", `t.yaml:2:6: key: not with absent: true`},
+		{"absent with key_content", "name: a\nkey_content: x\nabsent: true\n", `t.yaml:2:14: key_content: not with absent: true`},
+		{"absent with a bad name", "name: a/b\nabsent: true\n", `t.yaml:1:7: name: "a/b" is not a source name; a name has letters, digits, _, -, and ., and does not start with .`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Repo{}, tt.yaml, tt.want) })
@@ -594,6 +601,23 @@ func TestRepoCheckOwnFile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ""
 			if err := r.checkOwnFile([]byte(tt.old)); err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("checkOwnFile = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	absent := &Repo{Name: "debian", Absent: true}
+	for _, tt := range []struct{ name, old, want string }{
+		{"absent: one deb entry", own, ""},
+		{"absent: empty", "", ""},
+		{"absent: two entries", own + "\n" + strings.Replace(own, "deb.debian.org", "x.example", 1), p + " holds deb http://x.example/debian trixie, which is not this step's source; move it to another file"},
+		{"absent: a deb-src entry", strings.Replace(own, "Types: deb", "Types: deb deb-src", 1), p + " holds deb-src http://deb.debian.org/debian trixie, which is not this step's source; move it to another file"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ""
+			if err := absent.checkOwnFile([]byte(tt.old)); err != nil {
 				got = err.Error()
 			}
 			if got != tt.want {
