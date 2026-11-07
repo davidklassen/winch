@@ -839,6 +839,52 @@ func TestSecretBranchValue(t *testing.T) {
 	}
 }
 
+// spec: Variables/Secrets; Templates and expressions/Data
+func TestSecretOfOtherHost(t *testing.T) {
+	tests := []struct {
+		name, vars, stepVars string
+		secret               bool
+	}{
+		{"an expression default", `  app_set: !expr 'match("db1")[0].vars.pw != ""'` + "\n", "", true},
+		{"a template default", `  app_set: !tpl '{{ range .hosts }}{{ if eq .name "db1" }}{{ ne .vars.pw "" }}{{ end }}{{ end }}'` + "\n", "", true},
+		{"a secret default of the other host", "  app_pw_set: !expr 'vars.pw != \"\"'\n  app_set: !expr 'match(\"db1\")[0].vars.app_pw_set != nil'\n", "", true},
+		{"a value of a recipe step", "  app_set: x\n", "        vars:\n          app_set: !expr 'match(\"db1\")[0].vars.pw != \"\"'\n", true},
+		{"a plain variable", "  app_name: x\n  app_set: !expr 'match(\"db1\")[0].vars.app_name != \"\"'\n", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			identity, recipient := ageKey(t)
+			text, err := secret.Encrypt("hunter2", []age.Recipient{recipient})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
+				"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: plain-pw\n  db1:\n    vars:\n      pw: !secret " + text + "\n",
+				"pipelines/site.yaml":   "stages:\n  - name: s\n    hosts: web1\n    steps:\n      - recipe: app\n" + tt.stepVars,
+				"recipes/app/recipe.yaml": "vars:\n" + tt.vars + "steps:\n  - dir:\n      path: !tpl \"/srv/{{ .vars.app_set }}\"\n" +
+					"  - dir:\n      path: /srv/pw\n    when: !expr 'vars.pw != \"\"'\n",
+			})
+			filter := secret.NewFilter()
+			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: filter})
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := fakehost.New()
+			h.RemoveDir("web1", "/srv/true")
+			plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+			var out, errOut, events bytes.Buffer
+			plan.Write(color.NewWriter(&out, filter.Parts, false), color.NewWriter(&errOut, filter.Parts, false))
+			plan.WriteJSON(run.NewEvents(color.NewWriter(&events, filter.Parts, false), func() time.Time { return time.Time{} }))
+			for _, got := range []string{out.String(), events.String()} {
+				if strings.Contains(got, "/srv/(secret)") != tt.secret || strings.Contains(got, "/srv/true") == tt.secret {
+					t.Errorf("output = %q, want the path secret: %v%s", got, tt.secret, errOut.String())
+				}
+			}
+		})
+	}
+}
+
 // spec: Variables/Secrets in output (text filter)
 func TestSecretPartsOfHost(t *testing.T) {
 	// The steps that read no secret are in the stage before the steps that
