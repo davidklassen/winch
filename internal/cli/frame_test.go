@@ -42,7 +42,7 @@ func TestFrame(t *testing.T) {
 		{name: "project-error", pipeline: "stages:\n  - name: base\n    hosts: all\n    steps:\n      - fiel: {}\n", args: []string{"validate"}},
 		{name: "command-line-error", pipeline: motd, args: []string{"run", "web1"}},
 		{name: "host-error-lines", pipeline: assertStep, setup: func(h *fakehost.Hosts) {
-			h.FailCommand("web1", "probe")
+			h.FailCommandWith("web1", "probe", "nc: port 25: Connection refused")
 		}, args: []string{"apply", "site", "--yes"}},
 		{name: "note", pipeline: firewallStep, setup: func(h *fakehost.Hosts) {
 			h.SetNote("web1", "/etc/motd", "the certificate a expires on 2026-11-20; certbot renew --dry-run --cert-name a shows why certbot does not renew it", true)

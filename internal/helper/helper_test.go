@@ -1071,8 +1071,8 @@ func TestApplyDeferred(t *testing.T) {
 		t.Errorf("apply did not run the command: %v", err)
 	}
 	args, _ = json.Marshal(module.Assert{Command: "exit 1", Message: "the port is blocked"})
-	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args}); r.Error != "the port is blocked" {
-		t.Errorf("a failing assert: error %q, want the message", r.Error)
+	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args}); r.Error != "the port is blocked: exit status 1" {
+		t.Errorf("a failing assert: error %q, want the message and the exit status", r.Error)
 	}
 }
 
@@ -1172,7 +1172,7 @@ func TestChecksRunAgain(t *testing.T) {
 		}
 		return p.Checks
 	}
-	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args, Check: &assert}); r.Error != "closed" {
+	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args, Check: &assert}); r.Error != "closed: exit status 1" {
 		t.Fatalf("failing assert: error %q", r.Error)
 	}
 	if r := c.call(t, "pend", gate); r.Error != "" {

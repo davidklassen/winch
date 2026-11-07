@@ -214,7 +214,7 @@ func TestAssertModule(t *testing.T) {
 			Name:         "a failing assert",
 			Args:         &module.Assert{Command: "test -e /root/ran", Message: "the marker is missing"},
 			Want:         module.Result{Status: module.OK, Deferred: true},
-			WantApplyErr: "the marker is missing",
+			WantApplyErr: "the marker is missing: exit status 1",
 			Fix:          "touch /root/ran",
 			NoConverge:   true,
 		},
@@ -222,7 +222,7 @@ func TestAssertModule(t *testing.T) {
 			Name:         "an assert that sh cannot find",
 			Args:         &module.Assert{Command: "winch-tool", Message: "the tool is missing"},
 			Want:         module.Result{Status: module.OK, Deferred: true},
-			WantApplyErr: "the tool is missing: winch-tool: exit status 127: sh: 1: eval: winch-tool: not found",
+			WantApplyErr: "the tool is missing: exit status 127: sh: 1: eval: winch-tool: not found",
 			Fix:          "printf '#!/bin/sh\\n' > /usr/local/bin/winch-tool && chmod +x /usr/local/bin/winch-tool",
 			NoConverge:   true,
 		},
@@ -348,7 +348,7 @@ func TestCmdPipeline(t *testing.T) {
 	}
 
 	r = lab.Winch(t, dir, "apply", "gate", "--yes")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "cmdpipe: gate: failed: assert test -e /root/open: the gate is closed\n") {
+	if r.Code != 1 || !strings.Contains(r.Stderr, "cmdpipe: gate: failed: assert test -e /root/open: the gate is closed: exit status 1\n") {
 		t.Errorf("a failing assert: exit %d, stderr %q", r.Code, r.Stderr)
 	}
 	if out := vm.MustRun(t, "test -e /root/gate && echo gate; test -e /root/after && echo after; true"); out != "gate\n" {

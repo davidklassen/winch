@@ -14,7 +14,7 @@ func TestProjectCommandFailure(t *testing.T) {
 	vm := lab.StartVM(t, "command-failure")
 	cases := []struct{ name, steps, health, want string }{
 		{"cmd", "      - cmd:\n          command: |\n            false\n            true\n", "", "exit status 1"},
-		{"assert", "      - assert:\n          command: |\n            false\n            true\n          message: first check failed\n", "", "first check failed"},
+		{"assert", "      - assert:\n          command: |\n            false\n            true\n          message: first check failed\n", "", "first check failed: exit status 1"},
 		{"then", "      - file:\n          path: /root/command-file\n          content: new\n        then: |\n          false\n          true\n", "", "exit status 1"},
 		{"validate-file", "      - file:\n          path: /root/command-file\n          content: new\n          validate: |\n            false\n            true\n", "", "exit status 1"},
 		{"validate-line", "      - line:\n          path: /root/command-file\n          line: new\n          match: ^new$\n          validate: |\n            false\n            true\n", "", "exit status 1"},
