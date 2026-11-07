@@ -268,7 +268,8 @@ func execLimit(ctx context.Context, command string, limit, killDelay time.Durati
 	}
 	res := ExecResult{Output: tail}
 	if len(tail) > shown {
-		res.Output = "(output cut to the last 1 MiB)\n" + tail[len(tail)-shown:]
+		_, kept, _ := strings.Cut(tail, "\n")
+		res.Output = "(output cut to the last 1 MiB)\n" + kept
 	}
 	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		res.ExitCode = exit.ExitCode()
