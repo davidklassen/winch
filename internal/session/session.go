@@ -689,9 +689,19 @@ var accessCommand = command("env echo " + accessMarker)
 // Access opens a new SSH connection to the host and runs a command that needs the login and sudo.
 // Like the session start, it fails when the login prints to stdout.
 func (s *Session) Access(ctx context.Context) error {
+	// A second Ctrl-C ends s.ctx and with it the check.
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(s.ctx, cancel)()
 	cfg := s.cfg
 	cfg.Batch, cfg.Want = true, &s.dest
 	r, err := resolve(ctx, cfg)
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
 	if err != nil {
 		return err
 	}
@@ -707,6 +717,9 @@ func (s *Session) Access(ctx context.Context) error {
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = 5 * time.Second
 	err = cmd.Run()
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
 	msg := strings.TrimSpace(stderr.String())
 	extra, ok := strings.CutSuffix(stdout.String(), accessMarker+"\n")
 	extra = strings.TrimSpace(extra)

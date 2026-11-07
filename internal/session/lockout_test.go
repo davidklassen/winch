@@ -21,7 +21,7 @@ import (
 // a marker; through sudo -n for a login user other than root, in the form of
 // the session start)
 func TestAccess(t *testing.T) {
-	s := &Session{cfg: Config{Host: "web1", Address: "192.0.2.1", User: "admin", Batch: true}}
+	s := &Session{cfg: Config{Host: "web1", Address: "192.0.2.1", User: "admin", Batch: true}, ctx: context.Background()}
 	tests := []struct {
 		name, uid, sudo string
 		wantSudo        string
@@ -78,7 +78,7 @@ func TestAccessDestinationChanged(t *testing.T) {
 			t.Setenv("SSH_G", tt.sshG)
 			argsFile := filepath.Join(t.TempDir(), "args")
 			t.Setenv("SSH_ARGS", argsFile)
-			s := &Session{cfg: Config{Host: "web1", Address: "web1", Batch: true}, dest: tt.dest}
+			s := &Session{cfg: Config{Host: "web1", Address: "web1", Batch: true}, ctx: context.Background(), dest: tt.dest}
 			err := s.Access(context.Background())
 			switch {
 			case tt.wantErr == "" && err != nil:
@@ -381,13 +381,49 @@ func TestRebootRetry(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (a second Ctrl-C, which ends
+// the sessions, skips the access check after the run)
+func TestAccessEndsWithTheSession(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	argsFile := filepath.Join(t.TempDir(), "args")
+	t.Setenv("SSH_ARGS", argsFile)
+	ended, end := context.WithCancel(context.Background())
+	end()
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}, ctx: ended}
+	if err := s.Access(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Errorf("Access after the session ended = %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(argsFile); err == nil {
+		t.Error("the access check logged in after the session ended")
+	}
+
+	for _, tt := range []struct{ name, env, value string }{
+		{"during ssh -G", "SSH_SIGNAL", "STOP"},
+		{"during the login", "SSH_CHILD", "sleep 15 >/dev/null 2>&1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.env, tt.value)
+			ending, end := context.WithCancel(context.Background())
+			s := &Session{cfg: Config{Host: "web1", Address: "web1"}, ctx: ending}
+			time.AfterFunc(time.Second, end)
+			start := time.Now()
+			if err := s.Access(context.Background()); !errors.Is(err, context.Canceled) {
+				t.Errorf("Access when the session ends = %v, want context.Canceled", err)
+			}
+			if d := time.Since(start); d > 10*time.Second {
+				t.Errorf("Access ended %v after the session", d)
+			}
+		})
+	}
+}
+
 // spec: Remote execution/Sessions (the access check of lockout protection
 // always uses BatchMode=yes)
 func TestAccessWithoutBatch(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)
 	argsFile := filepath.Join(t.TempDir(), "args")
 	t.Setenv("SSH_ARGS", argsFile)
-	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}, ctx: context.Background()}
 	if err := s.Access(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +435,7 @@ func TestAccessWithoutBatch(t *testing.T) {
 // spec: Running a pipeline/Lockout protection (the check passes when stdout
 // holds only the marker)
 func TestAccessLoginShellText(t *testing.T) {
-	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}, ctx: context.Background()}
 	for _, uid := range []string{"0", "1000"} {
 		t.Run(uid, func(t *testing.T) {
 			fakeBin(t, "aarch64", uid, goodSudo)
@@ -417,7 +453,7 @@ func TestAccessLoginShellText(t *testing.T) {
 // unable to resolve host, does not fail the check)
 func TestAccessStderr(t *testing.T) {
 	fakeBin(t, "aarch64", "1000", "#!/bin/sh\necho 'sudo: unable to resolve host web1' >&2\nshift\nexec \"$@\"\n")
-	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}, ctx: context.Background()}
 	if err := s.Access(context.Background()); err != nil {
 		t.Errorf("Access = %v", err)
 	}
@@ -430,7 +466,7 @@ func TestAccessRefusalOnStdout(t *testing.T) {
 	t.Setenv("SSH_FAIL_ONCE", filepath.Join(t.TempDir(), "failed"))
 	t.Setenv("SSH_FAIL_OUT", "This account is currently not available.")
 	t.Setenv("SSH_FAIL_CODE", "1")
-	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}, ctx: context.Background()}
 	err := s.Access(context.Background())
 	if want := "the login did not run winch's command; a command= line in authorized_keys or a nologin shell prints this: This account is currently not available."; err == nil || err.Error() != want {
 		t.Errorf("Access = %v, want %q", err, want)
@@ -440,7 +476,7 @@ func TestAccessRefusalOnStdout(t *testing.T) {
 // spec: CLI/Messages (a message names a fix only when the fix works)
 func TestAccessForcedCommand(t *testing.T) {
 	fakeBin(t, "aarch64", "1000", "#!/bin/sh\necho 'Please login as the user \"debian\" rather than the user \"root\".'\n")
-	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}, ctx: context.Background()}
 	err := s.Access(context.Background())
 	want := `the login did not run winch's command; a command= line in authorized_keys or a nologin shell prints this: Please login as the user "debian" rather than the user "root".`
 	if err == nil || err.Error() != want {
@@ -452,7 +488,7 @@ func TestAccessForcedCommand(t *testing.T) {
 // run the command, such as ForceCommand internal-sftp, fails the check)
 func TestAccessNoOutput(t *testing.T) {
 	fakeBin(t, "aarch64", "1000", "#!/bin/sh\nexit 0\n")
-	s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+	s := &Session{cfg: Config{Host: "web1", Address: "web1"}, ctx: context.Background()}
 	err := s.Access(context.Background())
 	if want := "the login did not run winch's command"; err == nil || err.Error() != want {
 		t.Errorf("Access = %v, want %q", err, want)
@@ -479,7 +515,7 @@ func TestAccessBatchHint(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeBin(t, "aarch64", "0", goodSudo)
 			failOnce(t, "", tt.stderr, tt.code)
-			s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+			s := &Session{cfg: Config{Host: "web1", Address: "web1"}, ctx: context.Background()}
 			if err := s.Access(context.Background()); err == nil || err.Error() != tt.want {
 				t.Errorf("Access = %v, want %q", err, tt.want)
 			}

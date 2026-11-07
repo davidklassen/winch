@@ -924,7 +924,7 @@ func TestSSHIgnoresInterrupt(t *testing.T) {
 			if _, err := open(t, stateDir, []helperbin.Binary{fakeHelper("arm64")}); err == nil || err.Error() != "ran arm64" {
 				t.Errorf("error = %v, want the helper to run", err)
 			}
-			s := &Session{cfg: Config{Host: "web1", Address: "web1"}}
+			s := &Session{cfg: Config{Host: "web1", Address: "web1"}, ctx: context.Background()}
 			if err := s.Access(context.Background()); err != nil {
 				t.Errorf("Access = %v", err)
 			}
