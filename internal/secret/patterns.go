@@ -17,7 +17,8 @@ var (
 	// keyBlock is a whole block for the load warning, with its body.
 	keyBlock = regexp.MustCompile(`(?s)` + beginKey + `(.*?)` + endKey)
 	// sealed is the text of a !secret value in a project file.
-	sealed = regexp.MustCompile(`!secret[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s,\]}]+)`)
+	sealed            = regexp.MustCompile(`!secret[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s,\]}]+)`)
+	formatPlaceholder = regexp.MustCompile(`^(?:\{\w*\}|%s|%\(\w+\)s)$`)
 )
 
 // pattern is a kind of token. The load warning skips a match for which skip
@@ -40,7 +41,7 @@ var patterns = []pattern{
 	{"an age key", regexp.MustCompile(`\bAGE-SECRET-KEY-1[0-9A-Z]{58}\b`), nil},
 	{"a Slack webhook URL", regexp.MustCompile(`https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/+]{40,}`), nil},
 	{"a password in a URL", regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#@:"<>]*:([^\s/?#"<>]+)@`), func(m string) bool {
-		return strings.HasPrefix(m, "$") || strings.Contains(m, "{{")
+		return strings.HasPrefix(m, "$") || strings.Contains(m, "{{") || formatPlaceholder.MatchString(m)
 	}},
 }
 
