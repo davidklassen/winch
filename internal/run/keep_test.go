@@ -64,6 +64,9 @@ func TestApplyKeepsPlanSessions(t *testing.T) {
 				if _, ok := h.File("web1", "/etc/motd"); ok {
 					t.Error("web1 /etc/motd was written")
 				}
+				if err := o.Failed["web2"]; err == nil || err.Error() != "not started: web1 failed in stage base" {
+					t.Errorf("web2 error = %v", err)
+				}
 			} else if !o.OK() {
 				t.Fatalf("apply failed: %v\n%s", o.Failed, errOut.String())
 			} else if c, _ := h.File("web1", "/etc/motd"); c != "hello\nworld\n" {
@@ -72,8 +75,9 @@ func TestApplyKeepsPlanSessions(t *testing.T) {
 			if c, _ := h.File("web2", "/etc/motd"); c != "hello\nworld\n" {
 				t.Errorf("web2 /etc/motd = %q", c)
 			}
-			if _, ok := h.File("web2", "/etc/issue"); ok {
-				t.Error("web2 /etc/issue exists")
+			// The failure of web1 in stage base stops stage cleanup.
+			if _, ok := h.File("web2", "/etc/issue"); ok != (tt.fail != "") {
+				t.Errorf("web2 /etc/issue exists: %v, want %v", ok, tt.fail != "")
 			}
 			if got := h.ChecksOf("web3"); len(got) != 0 {
 				t.Errorf("web3 records = %v, want none", got)

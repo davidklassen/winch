@@ -118,7 +118,7 @@ var pipelineTopic = doc.Topic{
 		doc.Heading("Steps of a stage"),
 		doc.Paragraph(`A step in a stage can use a module directly. It cannot use template, source, or the key of repo: those read the files of a recipe.`),
 		doc.Heading("Failures"),
-		doc.Paragraph(`A failed host takes no part in later stages. The other hosts go on. A new run is the resume: steps that already succeeded check as ok.`),
+		doc.Paragraph(`When a host fails, the other running hosts of the stage finish it. A failure in a stage, also in a step, a health gate, or the plan, stops the pipeline after that stage. A host that failed in the plan takes no part in any stage, so its failure counts at the first stage that matches it. No later stage starts, and each of its hosts with a change in the plan fails, such as with "not started: etcd1 failed in stage etcd". To run the later stages without a failed host, leave it out with --hosts. A new run is the resume: steps that already succeeded check as ok.`),
 		doc.Example(`# pipelines/site.yaml
 stages:
   - name: base
