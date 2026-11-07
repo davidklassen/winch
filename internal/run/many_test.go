@@ -804,18 +804,25 @@ func TestParallelismFirstHostsStart(t *testing.T) {
 func TestParallelismUnreachableFirstHost(t *testing.T) {
 	for name, serial := range map[string]bool{"batch": false, "serial": true} {
 		t.Run(name, func(t *testing.T) {
-			p := manyProject(t, strings.Replace(motdStage, "    hosts: all\n", "    hosts: all\n    parallelism: 2\n", 1))
-			h := fakehost.New()
-			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: serial})
-			h.SetUnreachable("web1")
-			var out, errOut bytes.Buffer
-			o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
-			if _, ok := h.File("web2", "/etc/motd"); !ok || o.Failed["web2"] != nil {
-				t.Errorf("web2 did not finish the stage: %v", o.Failed["web2"])
-			}
-			if err := o.Failed["web3"]; err == nil || err.Error() != "not started: web1 failed in stage base" {
-				t.Errorf("web3: error %v", err)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				p := manyProject(t, strings.Replace(motdStage, "    hosts: all\n", "    hosts: all\n    parallelism: 2\n", 1))
+				h := fakehost.New()
+				plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: serial})
+				h.SetUnreachable("web1")
+				h.OnApply = func(host, main string) {
+					if host == "web2" {
+						synctest.Wait()
+					}
+				}
+				var out, errOut bytes.Buffer
+				o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+				if _, ok := h.File("web2", "/etc/motd"); !ok || o.Failed["web2"] != nil {
+					t.Errorf("web2 did not finish the stage: %v", o.Failed["web2"])
+				}
+				if err := o.Failed["web3"]; err == nil || err.Error() != "not started: web1 failed in stage base" {
+					t.Errorf("web3: error %v", err)
+				}
+			})
 		})
 	}
 }
