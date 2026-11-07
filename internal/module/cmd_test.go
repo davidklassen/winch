@@ -180,6 +180,29 @@ func TestCmdUnless(t *testing.T) {
 }
 
 // spec: Modules/cmd
+func TestCmdUnlessStderr(t *testing.T) {
+	tests := []struct{ name, unless, want string }{
+		{"stderr", "echo out; echo a >&2; echo b >&2; echo c >&2; echo d >&2; exit 1", "b\nc\nd"},
+		{"one line", `echo 'role "root" does not exist' >&2; exit 2`, `role "root" does not exist`},
+		{"only stdout", "echo out; exit 1", ""},
+		{"no output", "exit 1", ""},
+		{"exit 0", "echo a >&2", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Cmd{Command: "true", Unless: &tt.unless}
+			got, err := c.Check(t.Context(), &State{}, Silent{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Stderr != tt.want {
+				t.Errorf("stderr = %q, want %q", got.Stderr, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Modules/cmd
 func TestCmdUnlessDir(t *testing.T) {
 	dir := t.TempDir()
 	real, err := filepath.EvalSymlinks(dir)
