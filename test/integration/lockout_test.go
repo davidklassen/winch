@@ -959,6 +959,51 @@ func TestLockoutPAM(t *testing.T) {
 	}
 }
 
+// spec: Modules/cmd (changes); Running a pipeline/Lockout protection (a cmd
+// whose changes names /etc/pam.d)
+func TestLockoutCmdChanges(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "pam-cmd")
+	project := func(command, changes string) string {
+		return vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: demo\ninventory: test\n",
+			"inventories/test.yaml": "hosts:\n  pam-cmd: {}\n",
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - cmd:
+          command: ` + command + changes + "\n",
+		})
+	}
+	breaks := "mkdir /etc/winch-test; touch /etc/pam.d/winch-test; echo 'account requisite pam_deny.so' > /etc/pam.d/common-account"
+	state := "find /etc/pam.d /etc/winch-test -printf '%p %y %u %g %m\\n' 2>&1 | sort; find /etc/pam.d -type f -exec sha256sum {} + | sort"
+	before := vm.MustRun(t, state)
+	for _, tt := range []struct{ name, command, want string }{
+		{"the command passes", breaks, "/etc/pam.d/common-account: the access check failed: "},
+		{"the command fails", breaks + "; exit 3", "exit status 3; the access check failed: "},
+	} {
+		dir := project(tt.command, "\n          changes: [/etc/pam.d, /etc/winch-test]")
+		r := lab.Winch(t, dir, "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "changes the PAM rules, which every login reads") {
+			t.Fatalf("%s: plan: exit %d\n%s", tt.name, r.Code, r.Stdout)
+		}
+		r = lab.Winch(t, dir, "apply", "site", "--yes")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "pam-cmd: base: failed: cmd ") || !strings.Contains(r.Stderr, tt.want) ||
+			!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
+			t.Fatalf("%s: apply: exit %d\n%s", tt.name, r.Code, r.Stderr)
+		}
+		if got := vm.MustRun(t, state); got != before {
+			t.Errorf("%s: /etc/pam.d after the rollback:\n%s\nwant\n%s", tt.name, got, before)
+		}
+	}
+
+	r := lab.Winch(t, project(breaks, ""), "apply", "site", "--yes")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "pam-cmd: the access check after the run failed: ") || strings.Contains(r.Stderr, "pam-cmd: base: failed:") {
+		t.Errorf("without changes: apply: exit %d\n%s", r.Code, r.Stderr)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (the access check after the
 // run)
 func TestLockoutAfterRun(t *testing.T) {

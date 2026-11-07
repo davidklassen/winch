@@ -113,6 +113,37 @@ func TestAccessFails(t *testing.T) {
 	}
 }
 
+// spec: Modules/cmd (apply runs the access check after the command, also when
+// it fails; a failed check puts back the saved paths)
+func TestFailedGuardedCmd(t *testing.T) {
+	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: pam-auth-update\n          changes: [/etc/pam.d]\n"})
+	for _, tt := range []struct {
+		name   string
+		access bool
+		log    []string
+		want   string
+	}{
+		{"the check passes", true, []string{"cmd pam-auth-update", "access", "confirm"}, "web1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1\n"},
+		{"the check fails", false, []string{"cmd pam-auth-update", "access", "rollback"}, "web1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1; the access check failed: ssh: connect to host web1 port 22: Connection timed out; the old files are back\n"},
+	} {
+		h := fakehost.New()
+		h.FailCommand("web1", "pam-auth-update")
+		if !tt.access {
+			h.FailAccess("web1")
+		}
+		out, o := applyWeb1(t, p, h)
+		if o.OK() {
+			t.Fatalf("%s: apply succeeded after a failed command", tt.name)
+		}
+		if got := h.Log["web1"]; len(got) < len(tt.log) || !slices.Equal(got[:len(tt.log)], tt.log) {
+			t.Errorf("%s: log %q, want it to start with %q", tt.name, got, tt.log)
+		}
+		if !strings.Contains(out, tt.want) {
+			t.Errorf("%s: output:\n%s\nwant %q", tt.name, out, tt.want)
+		}
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (a user step that changes the
 // keys of the login user gets the same protection)
 func TestGuardedResult(t *testing.T) {
@@ -766,6 +797,7 @@ handlers:
       path: /etc/ssh/sshd_config.d/local.conf
       content: "UsePAM no\n"
 `, "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"cmd whose changes names sshd's config", "steps:\n  - cmd:\n      command: sed -i s/yes/no/ /etc/ssh/sshd_config\n      changes: [/etc/pam.d, /etc/ssh/sshd_config]\n", "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
 		{"drop-in with a confirm_access reload", recipe("/etc/ssh/sshd_config.d/local.conf", "ssh\n        reloaded: true\n      confirm_access: true"), "", "", nil, ""},
 		{"confirm_access reload not notified", `steps:
   - file:

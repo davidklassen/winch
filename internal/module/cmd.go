@@ -17,12 +17,13 @@ import (
 )
 
 type Cmd struct {
-	Command string  `yaml:"command,required" json:"command" line:"shell script" doc:"Shell script. It runs through sh -e as root, in /, with stdin from /dev/null. A script of several lines stops at its first failed line. Without creates or unless, the check result is unknown."`
-	Creates string  `yaml:"creates" json:"creates,omitempty" line:"path that marks the work as done" doc:"Path that marks the work as done. The step is ok when the path exists. When the command exits 0 and the path is still missing, the step fails. The path has no glob characters. A step has at most one of creates and unless."`
-	Unless  *string `yaml:"unless" json:"unless,omitempty" line:"check command as user, in dir; exit 0 skips the step" doc:"Check command; exit 0 skips the step. It runs at the check as user, with the user's home as HOME, in dir, with the timeout of the step. A dir that does not exist yet checks as change. When it fails and writes to stderr, the plan shows its last 3 lines. A step has at most one of creates and unless."`
-	User    string  `yaml:"user" json:"user,omitempty" line:"account that runs command and unless" doc:"Account that runs command and unless. Its home is HOME. The step starts no login session: PAM does not run, so the login umask and limits of the account do not apply, and the umask is 022." default:"root"`
-	Dir     string  `yaml:"dir" json:"dir,omitempty" line:"working directory, also for unless" doc:"Working directory, also for unless." default:"/"`
-	Timeout *int    `yaml:"timeout" json:"timeout,omitempty" line:"limit in seconds, also for unless" doc:"Limit in seconds, also for unless. After it, winch stops the command and the step fails." default:"600"`
+	Command string   `yaml:"command,required" json:"command" line:"shell script" doc:"Shell script. It runs through sh -e as root, in /, with stdin from /dev/null. A script of several lines stops at its first failed line. Without creates or unless, the check result is unknown."`
+	Creates string   `yaml:"creates" json:"creates,omitempty" line:"path that marks the work as done" doc:"Path that marks the work as done. The step is ok when the path exists. When the command exits 0 and the path is still missing, the step fails. The path has no glob characters. A step has at most one of creates and unless."`
+	Unless  *string  `yaml:"unless" json:"unless,omitempty" line:"check command as user, in dir; exit 0 skips the step" doc:"Check command; exit 0 skips the step. It runs at the check as user, with the user's home as HOME, in dir, with the timeout of the step. A dir that does not exist yet checks as change. When it fails and writes to stderr, the plan shows its last 3 lines. A step has at most one of creates and unless."`
+	User    string   `yaml:"user" json:"user,omitempty" line:"account that runs command and unless" doc:"Account that runs command and unless. Its home is HOME. The step starts no login session: PAM does not run, so the login umask and limits of the account do not apply, and the umask is 022." default:"root"`
+	Dir     string   `yaml:"dir" json:"dir,omitempty" line:"working directory, also for unless" doc:"Working directory, also for unless." default:"/"`
+	Timeout *int     `yaml:"timeout" json:"timeout,omitempty" line:"limit in seconds, also for unless" doc:"Limit in seconds, also for unless. After it, winch stops the command and the step fails." default:"600"`
+	Changes []string `yaml:"changes" json:"changes,omitempty" line:"paths the command changes, for the access check" doc:"Absolute paths that the command changes, such as [/etc/pam.d] for pam-auth-update. One of them is a path that the access check covers: /etc/pam.d, /etc/sudoers, /etc/sudoers.d, or a path in them. The sudo rules count only when the login user is not root. The step then gets the rollback of confirm_access: the plan marks it, and apply keeps the old state of each listed path before the command, a file or a directory with its tree. After the command, also when it fails, winch runs the access check. When the check fails, winch puts the listed paths back. A path outside the covered paths only adds to what winch keeps. The paths have no glob characters."`
 }
 
 func (*Cmd) Noun() string { return "a cmd step" }
@@ -63,6 +64,19 @@ func (c *Cmd) Validate() error {
 		if err := checkAbs("dir", c.Dir); err != nil {
 			return err
 		}
+	}
+	for _, p := range c.Changes {
+		if err := checkAbs("changes", p); err != nil {
+			return err
+		}
+		if i := strings.IndexAny(p, "*?["); i >= 0 {
+			return &yamlx.FieldError{Field: "changes", Msg: fmt.Sprintf("%q is not allowed; list each path", p[i:i+1])}
+		}
+	}
+	// The home of the login user differs by host, so only the PAM and the
+	// sudo rules count here.
+	if c.Changes != nil && !slices.ContainsFunc(c.Changes, func(p string) bool { return pamPath(p) || sudoersPath(p) }) {
+		return &yamlx.FieldError{At: "changes", Msg: "changes protects only paths that the access check covers"}
 	}
 	if c.User != "" {
 		return checkAccountName("user", "user", c.User)

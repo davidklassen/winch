@@ -745,10 +745,19 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	a.conn.Mask(p.hostText)
 	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, p.Check, g, p.Step.MaskedContent())
 	a.conn.Mask(a.hide)
+	if res.Failed != "" {
+		err = errors.New(res.Failed)
+	}
 	err = maskError(err, p.hostText)
 	// The access check error is text of winch around host errors.
-	if err == nil && res.Timer != 0 {
-		err = maskError(a.confirm(ctx, res.Timer), a.hide)
+	if res.Timer != 0 {
+		cerr := maskError(a.confirm(ctx, res.Timer), a.hide)
+		switch {
+		case err == nil:
+			err = cerr
+		case cerr != nil:
+			err = fmt.Errorf("%w; %w", err, cerr)
+		}
 	}
 	if r, ok := p.Step.Args.(*module.Reboot); ok && err == nil && res.Status == module.Change {
 		ev.Note, err = a.reboot(ctx, r)

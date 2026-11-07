@@ -84,6 +84,9 @@ type Result struct {
 	// Timer is set by an apply that started the rollback timer: the time
 	// that the timer has left.
 	Timer time.Duration `json:"timer,omitempty"`
+	// Failed is the error of a guarded cmd whose command failed. The timer
+	// runs on, so that the access check decides whether the paths go back.
+	Failed string `json:"failed,omitempty"`
 	// SourceSHA256 is the hash of the content that copy_from or stock
 	// reads on the host, so the plan hash covers it.
 	SourceSHA256 string `json:"source_sha256,omitempty"`

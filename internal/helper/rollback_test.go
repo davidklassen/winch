@@ -803,6 +803,80 @@ func TestFailedGuardedApplyRollsBack(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (a cmd whose changes names a
+// covered path); Modules/cmd
+func TestCmdChangesGetsTheMark(t *testing.T) {
+	c := start(t, t.TempDir(), "")
+	c.call(t, "hello", hello("r1"))
+	args, _ := json.Marshal(module.Cmd{Command: "pam-auth-update --enable faillock", Changes: []string{"/etc/pam.d"}})
+	r := c.call(t, "check", protocol.Step{Module: "cmd", Args: args})
+	if r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	var res protocol.StepResult
+	if err := json.Unmarshal(r.Result, &res); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"changes the PAM rules, which every login reads"}; res.Status != module.Unknown || !res.Guard || !slices.Equal(res.Changes, want) {
+		t.Errorf("result = %+v, want unknown with the guard and %q", res.Result, want)
+	}
+}
+
+// spec: Modules/cmd (apply runs the access check after the command, also when
+// it fails)
+func TestFailedCmdKeepsTheTimer(t *testing.T) {
+	l := startLockout(t)
+	args, _ := json.Marshal(module.Cmd{Command: "echo new > " + l.b + "; exit 3", Changes: []string{l.b}})
+	g := protocol.Guard{Store: "app", Confirm: true}
+	r := l.c.call(t, "apply", protocol.Step{Module: "cmd", Args: args, Guard: g, Notify: []string{"app.restart"}, Then: &protocol.Then{Recipe: "app", Module: "cmd", Mains: []string{"1"}}})
+	if r.Error != "" {
+		t.Fatalf("apply error %q, want a result with the failure", r.Error)
+	}
+	var res protocol.StepResult
+	if err := json.Unmarshal(r.Result, &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Failed != "exit status 3" || res.Timer <= 0 {
+		t.Errorf("result = %+v, want the failure and the timer", res.Result)
+	}
+	if content(t, l.b) != "new\n" {
+		t.Errorf("b = %q before the access check, want new", content(t, l.b))
+	}
+	if p := pendingAll(t, l.c); len(p.Handlers) != 0 || len(p.Then) != 0 {
+		t.Errorf("records of the failed step: %+v, want none", p)
+	}
+	if r := l.c.call(t, "rollback", nil); r.Error != "" {
+		t.Fatalf("rollback: %s", r.Error)
+	}
+	if content(t, l.b) != "old\n" {
+		t.Errorf("b = %q after the rollback, want old", content(t, l.b))
+	}
+}
+
+// spec: Modules/cmd (changes names a covered path; the access check after a
+// failed command passes)
+func TestFailedCmdWithChangesConfirms(t *testing.T) {
+	l := startLockout(t)
+	args, _ := json.Marshal(module.Cmd{Command: "exit 3", Changes: []string{"/etc/pam.d"}})
+	r := l.c.call(t, "apply", protocol.Step{Module: "cmd", Args: args, Guard: protocol.Guard{Store: "app"}})
+	if r.Error != "" {
+		t.Fatalf("apply error %q, want a result with the failure", r.Error)
+	}
+	var res protocol.StepResult
+	if err := json.Unmarshal(r.Result, &res); err != nil {
+		t.Fatal(err)
+	}
+	if !res.Guard || res.Failed != "exit status 3" || res.Timer <= 0 {
+		t.Errorf("result = %+v, want the guard, the failure, and the timer", res.Result)
+	}
+	if r := l.c.call(t, "confirm", nil); r.Error != "" {
+		t.Fatalf("confirm: %s", r.Error)
+	}
+	if _, err := os.Lstat(l.job()); !os.IsNotExist(err) {
+		t.Errorf("the timer job stays after confirm: %v", err)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (a step saves in the store of
 // its own recipe and in that of each recipe whose confirm_access handler it
 // notifies)

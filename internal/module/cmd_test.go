@@ -41,6 +41,18 @@ func TestCmdValidate(t *testing.T) {
 		{"empty unless", "command: x\nunless: \"\"\n", `t.yaml:2:9: unless: is empty`},
 		{"creates and unless", "command: x\ncreates: /x\nunless: \"true\"\n", `t.yaml:3:9: a cmd step has at most one of creates and unless`},
 		{"unknown key", "command: x\ncreate: /x\n", `t.yaml:2:1: unknown key "create"; did you mean "creates"?`},
+		{"changes", "command: pam-auth-update --enable faillock\nchanges: [/etc/pam.d]\n", ""},
+		{"changes with a PAM file", "command: x\nchanges: [/etc/pam.d/common-auth]\n", ""},
+		{"changes with sudo rules", "command: x\nchanges: [/etc/sudoers, /etc/sudoers.d]\n", ""},
+		{"changes with another path", "command: authselect select sssd\nchanges: [/etc/pam.d, /etc/authselect]\n", ""},
+		{"changes without a covered path", "command: x\nchanges: [/etc/authselect]\n", `t.yaml:2:10: changes protects only paths that the access check covers`},
+		{"changes with a parent of the PAM rules", "command: x\nchanges: [/etc]\n", `t.yaml:2:10: changes protects only paths that the access check covers`},
+		{"changes with the PAM prefix", "command: x\nchanges: [/etc/pam.d.bak]\n", `t.yaml:2:10: changes protects only paths that the access check covers`},
+		{"empty changes", "command: x\nchanges: []\n", `t.yaml:2:10: changes protects only paths that the access check covers`},
+		{"relative changes", "command: x\nchanges: [/etc/pam.d, pam.d]\n", `t.yaml:2:10: changes: must be an absolute path`},
+		{"changes with *", "command: x\nchanges: [/etc/pam.d/*]\n", `t.yaml:2:10: changes: "*" is not allowed; list each path`},
+		{"changes with ?", "command: x\nchanges: [\"/etc/pam.d/su?\"]\n", `t.yaml:2:10: changes: "?" is not allowed; list each path`},
+		{"changes with [", "command: x\nchanges: [\"/etc/pam.d/[ab]\"]\n", `t.yaml:2:10: changes: "[" is not allowed; list each path`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Cmd{}, tt.yaml, tt.want) })
