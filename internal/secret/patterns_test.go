@@ -38,6 +38,8 @@ func TestScan(t *testing.T) {
 		{"url password with a dollar", fake("url_password_dollar.txt"), []Finding{{15, "a password in a URL"}}},
 		{"url password from a template", "repo: https://deploy:{{vars.pw}}@git.example.com\n", nil},
 		{"url password from a shell variable", "a: https://deploy:$PW@h\nb: https://deploy:${PW}@h\n", nil},
+		{"url password from format placeholders", "a: \"amqp://{}:{}@127.0.0.1:5672/{}\".format(u, p, v)\nb: amqp://u:{0}@h\nc: amqp://u:{pw}@h\nd: amqp://u:%s@h\ne: amqp://u:%(pw)s@h\n", nil},
+		{"url password next to a placeholder", "a: " + fake("url_password_placeholder.txt") + "\n", []Finding{{12, "a password in a URL"}}},
 		{"url without a password", "repo: https://deploy@git.example.com\nweb: https://h:8443/a@b\n", nil},
 		{"after a secret value", "pw: !secret YWdl\nid: " + fake("aws.txt") + "\n", []Finding{{21, "an AWS access key ID"}}},
 	}
