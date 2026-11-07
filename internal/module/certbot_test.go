@@ -436,6 +436,12 @@ func TestHookFailure(t *testing.T) {
 	if err := hookFailure(failed); err == nil || err.Error() != want {
 		t.Errorf("got %v\nwant %s", err, want)
 	}
+	trace := " " + strings.ReplaceAll(seqLines(30), "\n", "\n ")
+	long := "Hook 'deploy-hook' reported error code 1\nHook 'deploy-hook' ran with error output:\n" + trace + "\n\nSuccessfully received certificate.\n"
+	want = "a hook failed:\nHook 'deploy-hook' reported error code 1\nHook 'deploy-hook' ran with error output:\n" + trace
+	if err := hookFailure(long); err == nil || err.Error() != want {
+		t.Errorf("got %v\nwant %s", err, want)
+	}
 }
 
 // spec: Modules/certbot (pending hooks)

@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,7 +34,7 @@ func TestShell(t *testing.T) {
 		{"runs in /", `[ "$(pwd)" = / ]`, ""},
 		{"a background child keeps the output open", "sleep 15 &", ""},
 		{"a script of several lines", "true\nfalse\ntrue\n", "true ...: exit status 1"},
-		{"failure", "seq 20; echo 'the cause' >&2; exit 3", "seq 20; echo 'the cause' >&2; exit 3: exit status 3: 12\n13\n14\n15\n16\n17\n18\n19\n20\nthe cause"},
+		{"failure", "echo 'the cause' >&2; seq 30; exit 3", "echo 'the cause' >&2; seq 30; exit 3: exit status 3: the cause\n" + seqLines(30)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -45,6 +46,50 @@ func TestShell(t *testing.T) {
 				t.Errorf("error = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func seqLines(n int) string {
+	var lines []string
+	for i := 1; i <= n; i++ {
+		lines = append(lines, strconv.Itoa(i))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// spec: Modules (every command on the host)
+func TestShellLongOutput(t *testing.T) {
+	t.Parallel()
+	const cut = "(output cut to the last 64 KiB)\n"
+	xs := func(n int) string { return "head -c " + strconv.Itoa(n) + " /dev/zero | tr '\\0' x" }
+	tests := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{"64 KiB", xs(64<<10-1) + "; echo; exit 1", strings.Repeat("x", 64<<10-1)},
+		{"one byte more", "echo; " + xs(64<<10-1) + "; echo; exit 1", cut + strings.Repeat("x", 64<<10-1)},
+		{"the cut drops the rest of its line", "echo first; " + xs(70000) + "; echo; echo last; exit 1", cut + "last"},
+		{"a last line longer than 64 KiB", xs(70000) + "; exit 1", strings.TrimSuffix(cut, "\n")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ShellLimit(t.Context(), tt.command, commandLimit, time.Second)
+			if err == nil {
+				t.Fatal("error = nil")
+			}
+			if _, got, _ := strings.Cut(err.Error(), "exit status 1: "); got != tt.want {
+				t.Errorf("output = %.80q ... (%d bytes), want %.80q ... (%d bytes)", got, len(got), tt.want, len(tt.want))
+			}
+		})
+	}
+	full := seqLines(40000)
+	err := ShellLimit(t.Context(), "seq 40000; exit 1", commandLimit, time.Second)
+	_, got, _ := strings.Cut(fmt.Sprint(err), "exit status 1: ")
+	kept, ok := strings.CutPrefix(got, cut)
+	if !ok || !strings.HasSuffix(full, "\n"+kept) || len(kept) < 64<<10-10 || len(kept) > 64<<10 {
+		t.Errorf("output = %.80q (%d bytes), want the cut line, then the whole lines of the last 64 KiB", got, len(got))
 	}
 }
 
@@ -118,7 +163,7 @@ func TestTimeLimit(t *testing.T) {
 				"echo $! > " + dir + "/pid; wait"
 			start := time.Now()
 			err := tt.run(t.Context(), command)
-			if err == nil || !strings.HasSuffix(err.Error(), "stopped after 1s: 12\n13\n14\n15\n16\n17\n18\n19\n20\nwaiting") {
+			if err == nil || !strings.HasSuffix(err.Error(), "stopped after 1s: "+seqLines(20)+"\nwaiting") {
 				t.Fatalf("error = %v, want the time limit", err)
 			}
 			if d := time.Since(start); d < 2*time.Second || d >= time.Second+KillDelay {
@@ -172,8 +217,8 @@ func TestTailBuffer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if string(b.tail()) != "cdef" || !b.cut {
-		t.Errorf("tail = %q, cut %v, want cdef, cut", b.tail(), b.cut)
+	if string(b.tail()) != "cdef" {
+		t.Errorf("tail = %q, want cdef", b.tail())
 	}
 }
 

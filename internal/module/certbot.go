@@ -488,7 +488,7 @@ func hookFailure(out string) error {
 	if !failed {
 		return nil
 	}
-	return errors.New("a hook failed:\n" + strings.Join(lines[max(0, len(lines)-10):], "\n"))
+	return errors.New("a hook failed:\n" + shownOutput(strings.Join(lines, "\n")))
 }
 
 func failedCertbotHook(line string) string {
