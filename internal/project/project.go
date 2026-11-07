@@ -1189,7 +1189,7 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 		var tmplValues []string
 		for _, t := range r.fileTemplates(st, argsNode) {
 			st.tmplReads = append(st.tmplReads, t.reads...)
-			tmplValues = append(tmplValues, t.values...)
+			tmplValues = slices.Concat(tmplValues, t.values, t.peerReads)
 		}
 		st.open = openContent(st, args.(*module.File), argsNode, tmplValues)
 	}
@@ -1251,8 +1251,8 @@ func tempWarning(p, verb string) string {
 	return ""
 }
 
-// openContent returns the content reads of the file step st when its mode
-// lets others read the file, or nil.
+// openContent returns the content reads of the file step st, also of other
+// hosts, when its mode lets others read the file, or nil.
 func openContent(st Step, f *module.File, n *yamlx.Node, tmplValues []string) *readsAt {
 	if f.Absent || !f.OthersRead() {
 		return nil
@@ -1269,13 +1269,14 @@ func openContent(st Step, f *module.File, n *yamlx.Node, tmplValues []string) *r
 		case p.Key == "mode":
 			pos = p.Value.Pos
 		case p.Key == "content" && st.args != nil && st.args.computed[p.Value] != nil:
-			reads = st.args.computed[p.Value].values
+			c := st.args.computed[p.Value]
+			reads = slices.Concat(c.values, c.peerReads)
 			computed = true
 		}
 	}
 	reads = slices.Concat(reads, tmplValues)
 	if computed && st.loop != nil {
-		reads = append(reads, st.loop.values()...)
+		reads = slices.Concat(reads, st.loop.values(), st.loop.peerReads())
 	}
 	if len(reads) == 0 {
 		return nil
@@ -1309,8 +1310,9 @@ func hookReads(st Step, n *yamlx.Node) []readsAt {
 // each certbot hook that reads a secret variable. The steps
 // are those of the stages of pls and of every recipe. A variable is secret
 // when a value or a default holds a !secret, or when a default or a value of
-// a recipe step reads a secret variable. A read of a field of the elements of
-// a variable is secret when that field holds a secret in an element.
+// a recipe step reads a secret variable, also of another host. A read of a
+// field of the elements of a variable is secret when that field holds a
+// secret in an element.
 func (l *loader) secretChecks(invs []*Inventory, pls []*Pipeline) ([]*yamlx.Error, error) {
 	// whole is true for a secret variable whose secrets are not all in
 	// fields of its elements. fields are the secret fields of each secret
@@ -1368,7 +1370,7 @@ func (l *loader) secretChecks(invs []*Inventory, pls []*Pipeline) ([]*yamlx.Erro
 	for changed := true; changed; {
 		changed = false
 		for _, v := range vars {
-			if !whole[v.Name] && v.computed != nil && slices.ContainsFunc(v.computed.values(), isSecret) {
+			if !whole[v.Name] && v.computed != nil && (slices.ContainsFunc(v.computed.values(), isSecret) || slices.ContainsFunc(v.computed.peerReads(), isSecret)) {
 				whole[v.Name], changed = true, true
 			}
 		}

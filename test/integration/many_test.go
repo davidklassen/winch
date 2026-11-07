@@ -121,6 +121,7 @@ handlers:
   - file:
       path: /etc/peers
       template: peers.tmpl
+      mode: "0600"
   - file:
       path: /etc/peers-token
       content: !tpl "{{ .vars.peers_token }}\n"

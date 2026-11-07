@@ -521,12 +521,26 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 		"recipes/r/templates/https.conf.tmpl":  "x\n",
 		"recipes/r/templates/secret.conf.tmpl": "{{ .vars.line }}\n",
 	}
+	db1 := func(v string) map[string]string {
+		return map[string]string{
+			"inventories/test.yaml": strings.Replace(base["inventories/test.yaml"], "groups:\n", "  db1:\n    address: 192.0.2.2\n    vars:\n      "+v+"\ngroups:\n", 1),
+		}
+	}
+	peer := db1("dbpw: {{secret:db-secret}}")
 	for _, tt := range []struct {
 		name, file string
 		files      map[string]string
 		want       string
 	}{
 		{"no mode", `content: !tpl "pw={{ .vars.pw }}"`, nil, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"other host's secret", `content: !expr 'match("db1")[0].vars.dbpw'`, peer, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"other host's secret with 0600", "content: !expr 'match(\"db1\")[0].vars.dbpw'\n      mode: \"0600\"", peer, ""},
+		{"other host's plain variable", `content: !expr 'match("db1")[0].vars.dbpw'`, db1("dbpw: plain"), ""},
+		{"inline template reads other host's secret", `content: !tpl '{{ (index (match "db1") 0).vars.dbpw }}'`, peer, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads other hosts' secret", "template: t.tmpl", with(peer, map[string]string{"recipes/r/templates/t.tmpl": "{{ range .hosts }}{{ .vars.dbpw }}{{ end }}\n"}), "recipes/r/recipe.yaml:2:5: " + msg},
+		{"default reads other host's secret", "content: !expr vars.r_peer\nvars:\n  r_peer: !expr 'match(\"db1\")[0].vars.dbpw'", peer, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"loop reads other host's secret", "content: !expr item\n    loop: !expr '[match(\"db1\")[0].vars.dbpw]'", peer, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"loop over other hosts reads a secret", "content: !expr item.vars.dbpw\n    loop: !expr 'match(\"db1\")'", peer, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"0644", "content: !tpl \"pw={{ .vars.pw }}\"\n      mode: \"0644\"", nil, "recipes/r/recipe.yaml:5:13: " + msg},
 		{"0604", "content: !tpl \"pw={{ .vars.pw }}\"\n      mode: \"0604\"", nil, "recipes/r/recipe.yaml:5:13: " + msg},
 		{"0640", "content: !tpl \"pw={{ .vars.pw }}\"\n      mode: \"0640\"", nil, ""},
