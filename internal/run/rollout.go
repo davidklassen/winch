@@ -14,13 +14,14 @@ import (
 // the sessions itself, one at a time; else each host opens its own. With a
 // limit, a failure keeps the hosts that did not start from starting. A host
 // with an error in failed fails at its start, before the next host starts.
+// The first limit hosts start together: only such a host stops them.
 // After an interrupt, no host starts. A host is idle when its work ends.
 // rollout returns the error of each host.
 func rollout(ctx context.Context, stage string, hosts []project.Host, limit int, failed map[string]error, opts Options,
 	open func(project.Host) (Conn, error), work func(i int, c Conn) error) []error {
 	errs := make([]error, len(hosts))
 	var mu sync.Mutex
-	first := ""
+	first, planned := "", ""
 	fail := func(i int, err error) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -39,9 +40,12 @@ func rollout(ctx context.Context, stage string, hosts []project.Host, limit int,
 			errs[i] = ErrInterrupted
 			continue
 		}
-		mu.Lock()
-		stop := first
-		mu.Unlock()
+		stop := planned
+		if i >= limit {
+			mu.Lock()
+			stop = first
+			mu.Unlock()
+		}
 		switch {
 		case ctx.Err() != nil:
 			errs[i] = ErrInterrupted
@@ -53,6 +57,7 @@ func rollout(ctx context.Context, stage string, hosts []project.Host, limit int,
 			continue
 		case failed[h.Name] != nil:
 			fail(i, failed[h.Name])
+			planned = cmp.Or(planned, h.Name)
 			release()
 			continue
 		}
