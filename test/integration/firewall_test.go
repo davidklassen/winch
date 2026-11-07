@@ -366,3 +366,47 @@ func TestFirewallDHCPv6Reply(t *testing.T) {
 		}
 	}
 }
+
+// tcpConnect listens on port 7777 of the host and connects to it over a veth
+// pair from the network namespace src. It prints "received", or "dropped"
+// when the connection times out; another error fails.
+const tcpConnect = `import socket, subprocess
+l = socket.socket()
+l.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+l.bind(("10.42.0.1", 7777))
+l.listen()
+send = """import socket
+try:
+    socket.create_connection(("10.42.0.1", 7777), timeout=2)
+    print("received")
+except socket.timeout:
+    print("dropped")
+"""
+subprocess.run(["ip", "netns", "exec", "src", "python3", "-c", send], check=True)
+`
+
+// spec: Modules/firewall (a rule with only from)
+func TestFirewallOnlyFrom(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "fwfrom")
+	vm.MustRun(t, "ip netns add src && ip link add fv0 type veth peer name fv1 && ip link set fv1 netns src && "+
+		"ip addr add 10.42.0.1/24 dev fv0 && ip link set fv0 up && "+
+		"ip netns exec src sh -c 'ip addr add 10.42.0.2/24 dev fv1 && ip link set fv1 up'")
+	vm.MustRun(t, "cat > /root/connect.py <<'EOF'\n"+tcpConnect+"EOF")
+	dir := vmtest.WriteProject(t, map[string]string{})
+	for _, tt := range []struct{ rules, plan, want string }{
+		{"        - tcp: 22\n        - from: 192.168.0.0/16\n", "add from 192.168.0.0/16\n", "dropped\n"},
+		{"        - tcp: 22\n        - from: 10.42.0.0/16\n", "add from 10.42.0.0/16\n        remove from 192.168.0.0/16\n", "received\n"},
+	} {
+		data := "name: fw\nhosts:\n  fwfrom: {}\nsteps:\n  - pkg:\n      name: nftables\n  - firewall:\n      allow:\n" + tt.rules
+		if err := os.WriteFile(filepath.Join(dir, "winch.yaml"), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if r := lab.Winch(t, dir, "apply", "--yes"); r.Code != 0 || !strings.Contains(r.Stdout, tt.plan) {
+			t.Fatalf("apply of %q: exit %d, stdout %q, stderr %q", tt.rules, r.Code, r.Stdout, r.Stderr)
+		}
+		if got := vm.MustRun(t, "python3 /root/connect.py"); got != tt.want {
+			t.Errorf("connection with the rules %q: %q, want %q", tt.rules, got, tt.want)
+		}
+	}
+}

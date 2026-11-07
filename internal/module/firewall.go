@@ -18,7 +18,7 @@ import (
 )
 
 type Firewall struct {
-	Allow  []Rule `yaml:"allow" json:"allow,omitempty" line:"accepted traffic to the host; the host drops the rest" doc:"Accepted traffic to the host; the host drops the rest. It always accepts established and related traffic, loopback, ICMP echo requests, the ICMPv6 types that IPv6 needs, and DHCP replies. It drops invalid packets."`
+	Allow  []Rule `yaml:"allow" json:"allow,omitempty" line:"accepted traffic to the host; the host drops the rest" doc:"Accepted traffic to the host; the host drops the rest. A rule has tcp, udp, or both, and optional from. Without from, a rule accepts every source. A rule with only from accepts every port and protocol from those sources. The table always accepts established and related traffic, loopback, ICMP echo requests, the ICMPv6 types that IPv6 needs, and DHCP replies. It drops invalid packets."`
 	Absent bool   `yaml:"absent" json:"absent,omitempty" line:"remove the table, its file, and its unit" doc:"Remove the table, its file, and its unit."`
 	// What the check found to do.
 	data                            []byte
@@ -30,10 +30,10 @@ type Firewall struct {
 func (*Firewall) Noun() string { return "a firewall step" }
 
 // Rule accepts traffic to its ports from the sources in From, or from every
-// source.
+// source. A rule without ports accepts every port and protocol from From.
 type Rule struct {
-	TCP  yamlx.Ints    `yaml:"tcp" json:"tcp,omitempty" line:"ports" doc:"Ports. A rule has tcp or udp."`
-	UDP  yamlx.Ints    `yaml:"udp" json:"udp,omitempty" line:"ports" doc:"Ports. A rule has tcp or udp."`
+	TCP  yamlx.Ints    `yaml:"tcp" json:"tcp,omitempty" line:"ports" doc:"Ports. A rule has tcp, udp, or both."`
+	UDP  yamlx.Ints    `yaml:"udp" json:"udp,omitempty" line:"ports" doc:"Ports. A rule has tcp, udp, or both."`
 	From yamlx.Strings `yaml:"from" json:"from,omitempty" line:"source addresses or networks" doc:"Source addresses or networks. IPv4 and IPv6 are allowed. Without from, the rule accepts every source."`
 }
 
@@ -89,22 +89,20 @@ func (f *Firewall) Validate() error {
 }
 
 func (r *Rule) Validate() error {
-	switch {
-	case r.TCP != nil && r.UDP != nil:
-		return &yamlx.FieldError{At: "udp", Msg: "a rule has at most one of tcp and udp"}
-	case r.TCP == nil && r.UDP == nil:
-		return errors.New("a rule needs tcp or udp")
+	if r.TCP == nil && r.UDP == nil && r.From == nil {
+		return errors.New("a rule needs tcp, udp, or from")
 	}
-	proto, ports := r.ports()
-	if len(ports) == 0 {
-		return &yamlx.FieldError{Field: proto, Msg: "needs a port"}
-	}
-	for i, p := range ports {
-		if p < 1 || p > 65535 {
-			return &yamlx.FieldError{Field: proto, Msg: fmt.Sprintf("port %d is not between 1 and 65535", p)}
+	for _, pp := range r.protocols() {
+		if len(pp.ports) == 0 {
+			return &yamlx.FieldError{Field: pp.name, Msg: "needs a port"}
 		}
-		if slices.Contains(ports[:i], p) {
-			return &yamlx.FieldError{Field: proto, Msg: fmt.Sprintf("port %d is in the list twice", p)}
+		for i, p := range pp.ports {
+			if p < 1 || p > 65535 {
+				return &yamlx.FieldError{Field: pp.name, Msg: fmt.Sprintf("port %d is not between 1 and 65535", p)}
+			}
+			if slices.Contains(pp.ports[:i], p) {
+				return &yamlx.FieldError{Field: pp.name, Msg: fmt.Sprintf("port %d is in the list twice", p)}
+			}
 		}
 	}
 	if r.From != nil && len(r.From) == 0 {
@@ -124,11 +122,22 @@ func (r *Rule) Validate() error {
 	return nil
 }
 
-func (r *Rule) ports() (string, []int) {
+type protocolPorts struct {
+	name  string
+	ports []int
+}
+
+// protocols returns the protocols of the rule with their ports. A rule with
+// only From has none.
+func (r *Rule) protocols() []protocolPorts {
+	var out []protocolPorts
 	if r.TCP != nil {
-		return "tcp", r.TCP
+		out = append(out, protocolPorts{"tcp", r.TCP})
 	}
-	return "udp", r.UDP
+	if r.UDP != nil {
+		out = append(out, protocolPorts{"udp", r.UDP})
+	}
+	return out
 }
 
 // parseSource returns an address of From as a prefix of its full length.
@@ -172,18 +181,25 @@ func (r *Rule) sources() []netip.Prefix {
 	return out
 }
 
-// text is the rule as the plan shows it: tcp 5432 from 10.0.0.0/8.
+// text is the rule as the plan shows it: tcp 5432 and udp 53 from
+// 10.0.0.0/8, or from 10.42.0.0/16.
 func (r *Rule) text() string {
-	proto, ports := r.ports()
-	s := proto + " " + strings.Join(portTexts(ports), ", ")
-	if r.From == nil {
-		return s
+	var protocols []string
+	for _, pp := range r.protocols() {
+		protocols = append(protocols, pp.name+" "+strings.Join(portTexts(pp.ports), ", "))
 	}
-	var from []string
-	for _, p := range r.sources() {
-		from = append(from, sourceText(p))
+	var parts []string
+	if protocols != nil {
+		parts = append(parts, strings.Join(protocols, " and "))
 	}
-	return s + " from " + strings.Join(from, ", ")
+	if r.From != nil {
+		var from []string
+		for _, p := range r.sources() {
+			from = append(from, sourceText(p))
+		}
+		parts = append(parts, "from "+strings.Join(from, ", "))
+	}
+	return strings.Join(parts, " ")
 }
 
 func portTexts(ports []int) []string {
@@ -226,25 +242,35 @@ func (f *Firewall) render(id string) []byte {
 		udp sport 547 udp dport 546 accept
 `)
 	for _, r := range f.Allow {
-		proto, ports := r.ports()
-		match := proto + " dport " + set(portTexts(ports)) + " accept\n"
-		if r.From == nil {
-			b.WriteString("\t\t" + match)
-			continue
+		var matches []string
+		for _, pp := range r.protocols() {
+			matches = append(matches, pp.name+" dport "+set(portTexts(pp.ports))+" ")
 		}
-		var v4, v6 []string
-		for _, p := range r.sources() {
-			if p.Addr().Is4() {
-				v4 = append(v4, sourceText(p))
-			} else {
-				v6 = append(v6, sourceText(p))
+		if matches == nil {
+			matches = []string{""}
+		}
+		sources := []string{""}
+		if r.From != nil {
+			var v4, v6 []string
+			for _, p := range r.sources() {
+				if p.Addr().Is4() {
+					v4 = append(v4, sourceText(p))
+				} else {
+					v6 = append(v6, sourceText(p))
+				}
+			}
+			sources = nil
+			if v4 != nil {
+				sources = append(sources, "ip saddr "+set(v4)+" ")
+			}
+			if v6 != nil {
+				sources = append(sources, "ip6 saddr "+set(v6)+" ")
 			}
 		}
-		if v4 != nil {
-			b.WriteString("\t\tip saddr " + set(v4) + " " + match)
-		}
-		if v6 != nil {
-			b.WriteString("\t\tip6 saddr " + set(v6) + " " + match)
+		for _, m := range matches {
+			for _, src := range sources {
+				b.WriteString("\t\t" + src + m + "accept\n")
+			}
 		}
 	}
 	b.WriteString("\t}\n}\n")
@@ -282,13 +308,16 @@ func (f *Firewall) checkSSH(conn string) error {
 	}
 	fix := fmt.Sprintf("add a rule with tcp: %d", port)
 	for _, r := range f.Allow {
-		if !slices.Contains(r.TCP, port) {
+		hasPort := slices.Contains(r.TCP, port)
+		if !hasPort && (r.TCP != nil || r.UDP != nil) {
 			continue
 		}
 		if r.From == nil || slices.ContainsFunc(r.sources(), func(p netip.Prefix) bool { return p.Contains(client) }) {
 			return nil
 		}
-		fix = fmt.Sprintf("add %s to from in the rule with tcp: %d", client, port)
+		if hasPort {
+			fix = fmt.Sprintf("add %s to from in the rule with tcp: %d", client, port)
+		}
 	}
 	return fmt.Errorf("no rule accepts TCP port %d from %s, the address that winch connects from; %s", port, client, fix)
 }
