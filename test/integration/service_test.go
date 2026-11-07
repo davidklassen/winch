@@ -155,6 +155,32 @@ WantedBy=multi-user.target
 U
 systemctl daemon-reload`
 
+// runtimeNoInstall adds a unit without [Install] that a link in /run enables,
+// as a generator does.
+const runtimeNoInstall = `printf '[Service]\nExecStart=/bin/sleep infinity\n' > /etc/systemd/system/winch-rtnoinstall.service
+mkdir -p /run/systemd/system/multi-user.target.wants
+ln -sf /etc/systemd/system/winch-rtnoinstall.service /run/systemd/system/multi-user.target.wants/
+systemctl daemon-reload && systemctl is-enabled winch-rtnoinstall | grep -qx enabled-runtime`
+
+// initScript adds an init script with rc links, from which systemd generates
+// winch-sysv.service.
+const initScript = `cat > /etc/init.d/winch-sysv <<'U'
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          winch-sysv
+# Required-Start:    $remote_fs
+# Required-Stop:     $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+### END INIT INFO
+exit 0
+U
+chmod 755 /etc/init.d/winch-sysv
+for l in 2 3 4 5; do mkdir -p /etc/rc$l.d && ln -sf ../init.d/winch-sysv /etc/rc$l.d/S01winch-sysv; done
+systemctl daemon-reload && systemctl show -P UnitFileState winch-sysv | grep -qx generated`
+
+const initScriptErr = `winch-sysv.service comes from the init script /etc/init.d/winch-sysv, whose rc links start it at boot; remove enabled`
+
 // enableSSH enables ssh.service. Ubuntu enables only ssh.socket, which
 // starts ssh.service.
 const enableSSH = "systemctl enable -q ssh"
@@ -720,6 +746,31 @@ systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
 			Setup:   `systemctl link /opt/winch/winch-noinstall.service && systemctl is-enabled winch-noinstall | grep -qx linked`,
 			Args:    &module.Service{Name: "winch-noinstall", Enabled: new(true)},
 			WantErr: `winch-noinstall.service has no [Install] section with WantedBy, RequiredBy, UpheldBy, or Alias; enabled: true cannot enable it`,
+		},
+		{
+			Name:    "enable a runtime-enabled unit without an [Install] section fails",
+			Setup:   runtimeNoInstall,
+			Args:    &module.Service{Name: "winch-rtnoinstall", Enabled: new(true)},
+			WantErr: `winch-rtnoinstall.service has no [Install] section with WantedBy, RequiredBy, UpheldBy, or Alias; enabled: true cannot enable it`,
+		},
+		{
+			Name:    "enable a unit from an init script fails",
+			Setup:   initScript,
+			Args:    &module.Service{Name: "winch-sysv", Enabled: new(true)},
+			WantErr: initScriptErr,
+		},
+		{
+			Name: "enable a unit from another generator fails without the init script message",
+			Setup: `grep -q winchgen /etc/fstab || echo 'tmpfs /mnt/winchgen tmpfs defaults,noauto 0 0' >> /etc/fstab
+systemctl daemon-reload && systemctl show -P UnitFileState mnt-winchgen.mount | grep -qx generated`,
+			Args:    &module.Service{Name: "mnt-winchgen.mount", Enabled: new(true)},
+			WantErr: `mnt-winchgen.mount has the unit file state "generated"; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit`,
+		},
+		{
+			Name:    "disable a unit from an init script fails",
+			Setup:   initScript,
+			Args:    &module.Service{Name: "winch-sysv", Enabled: new(false)},
+			WantErr: initScriptErr,
 		},
 		{
 			Name:         "a failed start shows the journal",
