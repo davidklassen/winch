@@ -982,6 +982,8 @@ func TestLockoutCmdChanges(t *testing.T) {
 	for _, tt := range []struct{ name, command, want string }{
 		{"the command passes", breaks, "/etc/pam.d/common-account: the access check failed: "},
 		{"the command fails", breaks + "; exit 3", "exit status 3; the access check failed: "},
+		// The command outlasts the 60 seconds of the rollback timer.
+		{"a long command", "sleep 90; " + breaks, "/etc/pam.d/common-account: the access check failed: "},
 	} {
 		dir := project(tt.command, "\n          changes: [/etc/pam.d, /etc/winch-test]")
 		r := lab.Winch(t, dir, "plan", "site")
