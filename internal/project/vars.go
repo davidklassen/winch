@@ -606,6 +606,21 @@ func (o *others) marker(v any) (name string, h Host, msg string, ok bool) {
 	return name, o.p.Inventory.Hosts[i], msg, true
 }
 
+// secret reports whether a variable of names is secret on a host of hosts
+// and match(). A computed default counts on the hosts where a read evaluated
+// it.
+func (o *others) secret(names []string) bool {
+	for _, h := range o.p.Inventory.Hosts {
+		pe := o.envs[h.Name]
+		for _, name := range names {
+			if hasSealed(o.p.peers[h.Name][name]) || pe != nil && pe.secret[name] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // peerVar returns the value of the default name of the host h, as hosts and
 // match() give it.
 func (e *Env) peerVar(name string, h Host) (any, error) {
@@ -1096,7 +1111,8 @@ func (p *Project) evalDefaults(e *Env, names []string, pos yamlx.Pos) error {
 
 // evalValue returns the value of v, a default or a value of a recipe step,
 // in the three variants of e. It reports whether the value is secret: it
-// holds a !secret, or it reads a secret variable.
+// holds a !secret, or it reads a secret variable, also of a host from hosts or
+// match().
 func (p *Project) evalValue(e *Env, v *Var) ([3]any, bool, error) {
 	var vals [3]any
 	if v.computed == nil {
@@ -1120,7 +1136,9 @@ func (p *Project) evalValue(e *Env, v *Var) ([3]any, bool, error) {
 		}
 		val := yamlx.Value(node)
 		if n == 0 {
-			isSecret = hasSealed(val) || slices.ContainsFunc(v.computed.reads(), func(r string) bool { return e.secret[r] })
+			isSecret = hasSealed(val) ||
+				slices.ContainsFunc(v.computed.reads(), func(r string) bool { return e.secret[r] }) ||
+				e.others.secret(v.computed.peerReads())
 		}
 		vals[n] = unseal(val, n)
 	}
