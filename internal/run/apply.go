@@ -62,6 +62,9 @@ type HostEvent struct {
 // Reporter receives the results of apply as they happen.
 type Reporter interface {
 	Step(StepEvent)
+	// Access reports an access check that passed: after a step of scope, or
+	// after the run when scope is "".
+	Access(host, scope string)
 	Host(HostEvent)
 	Done(*Outcome)
 }
@@ -104,6 +107,14 @@ func (t text) Step(ev StepEvent) {
 	if line != nil {
 		color.Fprint(t.out, line)
 	}
+}
+
+func (t text) Access(host, scope string) {
+	if scope == "" {
+		fmt.Fprintf(t.out, "%s: access check after the run passed\n", host)
+		return
+	}
+	fmt.Fprintf(t.out, "%s: %s: access check passed\n", host, scope)
 }
 
 func (t text) Host(ev HostEvent) {
@@ -358,6 +369,12 @@ func (r *lockedReporter) Step(ev StepEvent) {
 	r.rep.Step(ev)
 }
 
+func (r *lockedReporter) Access(host, scope string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rep.Access(host, scope)
+}
+
 func (r *lockedReporter) Host(ev HostEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -412,7 +429,11 @@ func (a *hostApply) finish(ctx context.Context, changed bool, err error) error {
 	if changed {
 		a.progress.Busy(a.host, "access check")
 		// The access check returns context.Canceled after a second Ctrl-C.
-		if aerr := a.access(context.WithoutCancel(ctx), time.Time{}); aerr != nil && !errors.Is(aerr, context.Canceled) {
+		aerr := a.access(context.WithoutCancel(ctx), time.Time{})
+		switch {
+		case aerr == nil:
+			a.rep.Access(a.host, "")
+		case !errors.Is(aerr, context.Canceled):
 			aerr = fmt.Errorf("the access check after the run failed: %w", aerr)
 			if err != nil {
 				aerr = fmt.Errorf("%w\n%w", err, aerr)
@@ -791,8 +812,10 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	}
 	err = maskError(err, p.hostText)
 	// The access check error is text of winch around host errors.
+	passed := false
 	if res.Timer != 0 {
 		cerr := maskError(a.confirm(ctx, res.Timer), a.hide)
+		passed = cerr == nil
 		switch {
 		case err == nil:
 			err = cerr
@@ -806,16 +829,21 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	}
 	if err != nil {
 		ev.Status, ev.Error = "failed", err.Error()
-		a.rep.Step(ev)
+	} else {
+		// A step that runs a command counts as changed.
+		if res.Status == module.Unknown {
+			res.Status, res.Action = module.Change, module.Modify
+		}
+		maskResult(p.Step, p.parts, &res)
+		ev.result(p.Step, res)
+	}
+	a.rep.Step(ev)
+	if passed {
+		a.rep.Access(a.host, ev.scope())
+	}
+	if err != nil {
 		return module.Result{}, fmt.Errorf("%s: failed: %s: %w", ev.scope(), l, err)
 	}
-	// A step that runs a command counts as changed.
-	if res.Status == module.Unknown {
-		res.Status, res.Action = module.Change, module.Modify
-	}
-	maskResult(p.Step, p.parts, &res)
-	ev.result(p.Step, res)
-	a.rep.Step(ev)
 	if res.Status == module.Change {
 		// The helper records the notifies before the step changes anything.
 		a.clock++

@@ -70,12 +70,25 @@ func applyWeb1(t *testing.T, p *project.Project, h *fakehost.Hosts) (string, *ru
 func TestConfirmAccess(t *testing.T) {
 	h := fakehost.New()
 	h.SetResult("web1", "nftables", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"reload"}})
-	_, o := applyWeb1(t, lockoutProject(t), h)
+	out, o := applyWeb1(t, lockoutProject(t), h)
 	if !o.OK() {
 		t.Fatalf("apply failed: %v", o.Failed)
 	}
 	if want := []string{"ssh reload", "access", "confirm", "nftables start", "access", "confirm", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+	if want := `web1: ssh: + file /etc/ssh/sshd_config.d/local.conf
+web1: ssh: ~ handler ssh.reload: service ssh
+web1: ssh: access check passed
+web1: base: + file /etc/motd
+web1: firewall: + file /etc/nftables.conf
+web1: firewall: ~ service nftables
+web1: firewall: access check passed
+web1: access check after the run passed
+
+1 host: 1 changed, 0 unchanged
+`; out != want {
+		t.Errorf("output:\n%s\nwant:\n%s", out, want)
 	}
 	want := map[string]protocol.Guard{
 		"web1 /etc/ssh/sshd_config.d/local.conf": {Store: "ssh", Save: true, Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}},
@@ -123,7 +136,7 @@ func TestFailedGuardedCmd(t *testing.T) {
 		log    []string
 		want   string
 	}{
-		{"the check passes", true, []string{"cmd pam-auth-update", "access", "confirm"}, "web1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1\n"},
+		{"the check passes", true, []string{"cmd pam-auth-update", "access", "confirm"}, "web1: base: access check passed\n\n1 host: 0 changed, 0 unchanged, 1 failed\nweb1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1\n"},
 		{"the check fails", false, []string{"cmd pam-auth-update", "access", "rollback"}, "web1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1; the access check failed: ssh: connect to host web1 port 22: Connection timed out; the old files are back\n"},
 	} {
 		h := fakehost.New()
@@ -138,7 +151,7 @@ func TestFailedGuardedCmd(t *testing.T) {
 		if got := h.Log["web1"]; len(got) < len(tt.log) || !slices.Equal(got[:len(tt.log)], tt.log) {
 			t.Errorf("%s: log %q, want it to start with %q", tt.name, got, tt.log)
 		}
-		if !strings.Contains(out, tt.want) {
+		if !strings.Contains(out, tt.want) || !tt.access && strings.Contains(out, "web1: base: access check passed") {
 			t.Errorf("%s: output:\n%s\nwant %q", tt.name, out, tt.want)
 		}
 	}
@@ -186,10 +199,10 @@ func TestRebootStep(t *testing.T) {
 		wantErr       string
 		noConnect     bool
 	}{
-		{name: "always", ifRequired: "false", wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
-		{name: "required", ifRequired: "true", required: true, wantPlan: "    ~ reboot if required\n", wantApply: "web1: base: ~ reboot if required (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
+		{name: "always", ifRequired: "false", wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted)\nweb1: access check after the run passed\n", wantLog: []string{"reboot 30s", "access"}},
+		{name: "required", ifRequired: "true", required: true, wantPlan: "    ~ reboot if required\n", wantApply: "web1: base: ~ reboot if required (rebooted)\nweb1: access check after the run passed\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "degraded", ifRequired: "false", boot: &protocol.Boot{State: "degraded", Failed: []string{"a.service", "b.service"}},
-			wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted with failed units: a.service, b.service)\n", wantLog: []string{"reboot 30s", "access"}},
+			wantPlan: "    ~ reboot\n", wantApply: "web1: base: ~ reboot (rebooted with failed units: a.service, b.service)\nweb1: access check after the run passed\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "still required", ifRequired: "true", required: true, boot: &protocol.Boot{State: "running", Kernel: "6.12.43+deb13-amd64", Newest: "99.0.0+deb13-amd64"},
 			wantPlan: "    ~ reboot if required\n", wantApply: "", wantLog: []string{"reboot 30s"},
 			wantErr: "base: failed: reboot if required: the host still needs a reboot after it rebooted: running kernel 6.12.43+deb13-amd64, newest kernel 99.0.0+deb13-amd64"},
@@ -199,16 +212,16 @@ func TestRebootStep(t *testing.T) {
 		{name: "still required by packages", ifRequired: "true", required: true, boot: &protocol.Boot{State: "running", Kernel: "6.12.43+deb13-amd64", Newest: "6.12.43+deb13-amd64", Packages: []string{"dbus", "libc6"}},
 			wantPlan: "    ~ reboot if required\n", wantApply: "", wantLog: []string{"reboot 30s"},
 			wantErr: "base: failed: reboot if required: the host still needs a reboot after it rebooted: /run/reboot-required lists the packages dbus, libc6"},
-		{name: "maybe, with a change", ifRequired: "true", more: motd, wantPlan: "    * reboot if required\n", wantApply: "web1: base: + file /etc/motd\n", wantLog: []string{"access"}},
+		{name: "maybe, with a change", ifRequired: "true", more: motd, wantPlan: "    * reboot if required\n", wantApply: "web1: base: + file /etc/motd\nweb1: access check after the run passed\n", wantLog: []string{"access"}},
 		{name: "maybe, alone", ifRequired: "true", wantPlan: "0 to change, 1 unchanged", wantApply: "", noConnect: true},
 		{name: "an earlier step requires the reboot", ifRequired: "true", more: motd, requiredAfter: true, wantPlan: "    * reboot if required\n",
-			wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ reboot if required (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
+			wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ reboot if required (rebooted)\nweb1: access check after the run passed\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "a reboot in a handler", pipeline: motd + "        notify: restart\n    handlers:\n      restart:\n        - reboot:\n            if_required: false\n            timeout: 30\n",
-			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ handler base.restart: reboot (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
+			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ handler base.restart: reboot (rebooted)\nweb1: access check after the run passed\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "a handler reboot if required, required by an earlier step", requiredAfter: true, pipeline: motd + "        notify: restart\n    handlers:\n      restart:\n        - reboot:\n            if_required: true\n            timeout: 30\n",
-			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ handler base.restart: reboot if required (rebooted)\n", wantLog: []string{"reboot 30s", "access"}},
+			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ handler base.restart: reboot if required (rebooted)\nweb1: access check after the run passed\n", wantLog: []string{"reboot 30s", "access"}},
 		{name: "a handler reboot if required, not required", pipeline: motd + "        notify: restart\n    handlers:\n      restart:\n        - reboot:\n            if_required: true\n            timeout: 30\n",
-			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\n", wantLog: []string{"access"}},
+			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\nweb1: access check after the run passed\n", wantLog: []string{"access"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

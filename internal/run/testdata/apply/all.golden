@@ -1,7 +1,9 @@
 stdout:
 web1: base: + file /etc/motd
+web1: access check after the run passed
 web2: base: + file /etc/motd
 web2: cleanup: - file /etc/issue
+web2: access check after the run passed
 
 3 hosts: 2 changed, 1 unchanged
 stderr:

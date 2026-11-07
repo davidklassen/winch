@@ -1,5 +1,6 @@
 stdout:
 web1: base: + file /etc/motd
+web1: access check after the run passed
 
 3 hosts: 1 changed, 1 unchanged, 1 failed
 stderr:

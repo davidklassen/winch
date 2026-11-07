@@ -2,6 +2,7 @@ stdout:
 web1: nginx: + Site: file /etc/nginx/site
 web1: nginx: + file /etc/nginx/logo.png
 web1: web: + file /etc/issue
+web1: access check after the run passed
 
 2 hosts: 0 changed, 0 unchanged, 2 failed
 stderr:

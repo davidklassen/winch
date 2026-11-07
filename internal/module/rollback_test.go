@@ -350,6 +350,9 @@ func TestGuard(t *testing.T) {
 	if got := Guard([]Touch{{"/etc/pam.d/sshd", true}}, nil); got != pam {
 		t.Errorf("Guard for an unknown login user = %q, want %q", got, pam)
 	}
+	if got, want := Guard(Touches(&Firewall{}), nil), "changes the firewall rules, which the login passes"; got != want {
+		t.Errorf("Guard of a firewall step = %q, want %q", got, want)
+	}
 	if got := Guard([]Touch{{"/etc/sudoers.d/admin", true}}, nil); got != "" {
 		t.Errorf("Guard of sudo rules for an unknown login user = %q, want none", got)
 	}
