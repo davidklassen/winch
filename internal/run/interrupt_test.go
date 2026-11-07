@@ -79,7 +79,7 @@ func TestApplyInterrupted(t *testing.T) {
 	if h.Open != 0 {
 		t.Errorf("%d connections are still open", h.Open)
 	}
-	want := "web1: app: + file /etc/a\n\n2 hosts: 0 changed, 0 unchanged, 2 failed\n"
+	want := "web1: app: + file /etc/a\nweb1: access check after the run passed\n\n2 hosts: 0 changed, 0 unchanged, 2 failed\n"
 	if out.String() != want || errOut.String() != "web1: interrupted\nweb2: interrupted\n" {
 		t.Errorf("stdout %q, stderr %q", out.String(), errOut.String())
 	}
@@ -129,8 +129,8 @@ func TestApplyInterruptedTwice(t *testing.T) {
 		t.Fatal("web1 did not fail")
 	}
 	// The fake host logs the try that the end of the sessions cancels.
-	if n := slices.Index(h.Log["web1"], "access"); n < 0 || slices.Contains(h.Log["web1"][n+1:], "access") || strings.Contains(errOut.String(), "access check") {
-		t.Errorf("the access check after the run ran after a second interrupt: log %q, stderr %q", h.Log["web1"], errOut.String())
+	if n := slices.Index(h.Log["web1"], "access"); n < 0 || slices.Contains(h.Log["web1"][n+1:], "access") || strings.Contains(errOut.String()+out.String(), "access check") {
+		t.Errorf("the access check after the run ran after a second interrupt: log %q, stdout %q, stderr %q", h.Log["web1"], out.String(), errOut.String())
 	}
 }
 

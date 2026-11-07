@@ -26,6 +26,7 @@ func TestFirewallModule(t *testing.T) {
 	}
 	firewall := "  - firewall:\n      allow:\n"
 	table := "nft list table inet winch"
+	mark := "changes the firewall rules, which the login passes\n        "
 
 	// Without nft and a pkg step for nftables, the plan notes the package.
 	vm.MustRun(t, "[ ! -e /usr/sbin/nft ] || mv /usr/sbin/nft /usr/sbin/nft.off")
@@ -52,10 +53,11 @@ func TestFirewallModule(t *testing.T) {
 
 	// Create.
 	r = lab.Winch(t, dir, "plan")
-	if r.Code != 0 || strings.Contains(r.Stderr, "nft is missing") || !strings.Contains(r.Stdout, "+ firewall\n        add tcp 22\n        create directory /etc/winch") || !strings.Contains(r.Stdout, "create file /etc/systemd/system/nftables.service.d/winch.conf") || !strings.Contains(r.Stdout, "enable winch-firewall.service\n        load the rules\n        start winch-firewall.service\n\n") {
+	if r.Code != 0 || strings.Contains(r.Stderr, "nft is missing") || !strings.Contains(r.Stdout, "+ firewall\n        "+mark+"add tcp 22\n        create directory /etc/winch") || !strings.Contains(r.Stdout, "create file /etc/systemd/system/nftables.service.d/winch.conf") || !strings.Contains(r.Stdout, "enable winch-firewall.service\n        load the rules\n        start winch-firewall.service\n\n") {
 		t.Fatalf("plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
-	if r := lab.Winch(t, dir, "apply", "--yes"); r.Code != 0 {
+	r = lab.Winch(t, dir, "apply", "--yes")
+	if r.Code != 0 || !regexp.MustCompile(`\nfirewall2: \S+: \+ firewall\nfirewall2: \S+: access check passed\nfirewall2: access check after the run passed\n`).MatchString(r.Stdout) {
 		t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	if out := vm.MustRun(t, table); !strings.Contains(out, "policy drop;") || !strings.Contains(out, "tcp dport 22 accept") {
@@ -87,7 +89,7 @@ func TestFirewallModule(t *testing.T) {
 	// Change.
 	project(firewall + "        - tcp: [22, 80]\n        - udp: 51820\n          from: [10.0.0.0/8, 2001:db8::/32]\n")
 	r = lab.Winch(t, dir, "apply", "--yes")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "~ firewall\n        add tcp 22, 80\n        add udp 51820 from 10.0.0.0/8, 2001:db8::/32\n        remove tcp 22\n        load the rules\n") {
+	if r.Code != 0 || !strings.Contains(r.Stdout, "~ firewall\n        "+mark+"add tcp 22, 80\n        add udp 51820 from 10.0.0.0/8, 2001:db8::/32\n        remove tcp 22\n        load the rules\n") {
 		t.Fatalf("apply of a change: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	out := vm.MustRun(t, table)
@@ -104,7 +106,7 @@ func TestFirewallModule(t *testing.T) {
 	// A table that is gone, and a file that changed by hand, come back.
 	vm.MustRun(t, "nft delete table inet winch && sed -i 's/accept/drop/' /etc/winch/firewall.nft")
 	r = lab.Winch(t, dir, "apply", "--yes")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "~ firewall\n        rewrite /etc/winch/firewall.nft\n        load the rules\n") {
+	if r.Code != 0 || !strings.Contains(r.Stdout, "~ firewall\n        "+mark+"rewrite /etc/winch/firewall.nft\n        load the rules\n") {
 		t.Fatalf("apply after the changes by hand: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	if out := vm.MustRun(t, table); !strings.Contains(out, "tcp dport { 22, 80 } accept") {
@@ -123,7 +125,7 @@ func TestFirewallModule(t *testing.T) {
 	for _, edit := range []string{"nft add rule inet winch input tcp dport 6379 accept", "nft flush chain inet winch input && nft add rule inet winch input tcp dport 22 accept"} {
 		vm.MustRun(t, edit)
 		r = lab.Winch(t, dir, "apply", "--yes")
-		if r.Code != 0 || !strings.Contains(r.Stdout, "~ firewall\n        load the rules\n") {
+		if r.Code != 0 || !strings.Contains(r.Stdout, "~ firewall\n        "+mark+"load the rules\n") {
 			t.Fatalf("apply after %s: exit %d, stdout %q, stderr %q", edit, r.Code, r.Stdout, r.Stderr)
 		}
 		if out := vm.MustRun(t, table); strings.Contains(out, "6379") || !strings.Contains(out, "tcp dport { 22, 80 } accept") {
@@ -150,7 +152,7 @@ func TestFirewallModule(t *testing.T) {
 	// A drop-in that changed by hand comes back.
 	vm.MustRun(t, "sed -i /ExecStartPost/d /etc/systemd/system/nftables.service.d/winch.conf")
 	r = lab.Winch(t, dir, "apply", "--yes")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "~ firewall\n        rewrite /etc/systemd/system/nftables.service.d/winch.conf\n") || !strings.Contains(r.Stdout, "daemon-reload\n") {
+	if r.Code != 0 || !strings.Contains(r.Stdout, "~ firewall\n        "+mark+"rewrite /etc/systemd/system/nftables.service.d/winch.conf\n") || !strings.Contains(r.Stdout, "daemon-reload\n") {
 		t.Errorf("apply after a change of the drop-in: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	vm.MustRun(t, "systemctl stop nftables && systemctl start nftables")
@@ -242,7 +244,7 @@ func TestFirewallModule(t *testing.T) {
 	project("  - firewall:\n      absent: true\n")
 	vm.MustRun(t, others)
 	r = lab.Winch(t, dir, "apply", "--yes")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "- firewall\n        stop winch-firewall.service\n") {
+	if r.Code != 0 || !strings.Contains(r.Stdout, "- firewall\n        "+mark+"stop winch-firewall.service\n") {
 		t.Fatalf("apply of absent: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	if out := vm.MustRun(t, "nft list tables; ls /etc/winch /etc/systemd/system/winch-firewall.service /etc/systemd/system/sysinit.target.wants/winch-firewall.service /etc/systemd/system/nftables.service.d/winch.conf 2>&1 || true"); strings.Contains(out, "inet winch") || !strings.Contains(out, "inet f2b-table") || !strings.Contains(out, "ip filter") || strings.Contains(out, "firewall.nft") || strings.Count(out, "No such file") != 3 {

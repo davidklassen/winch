@@ -44,6 +44,8 @@ func (e *Events) Step(ev StepEvent) {
 	e.Write("applied", ev)
 }
 
+func (e *Events) Access(string, string) {}
+
 func (e *Events) Host(ev HostEvent) {
 	ev.Error = secret.PrintableLines(ev.Error)
 	e.Write("host", ev)

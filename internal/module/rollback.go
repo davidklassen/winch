@@ -99,14 +99,17 @@ func LookupLogin(uid uint32) (*Login, error) {
 func (l *Login) Name() string { return l.entry.name }
 
 // Guard returns the plan line of a step whose change can lock out the login
-// user: it changes the PAM rules, the user's home, ~/.ssh, a path in ~/.ssh,
-// or the sudo rules of a login user other than root.
-// It returns "" for another step. An unknown login user has no keys or sudo
-// rules to guard.
+// user: it changes the PAM rules, the firewall rules, the user's home,
+// ~/.ssh, a path in ~/.ssh, or the sudo rules of a login user other than
+// root. It returns "" for another step. An unknown login user has no keys or
+// sudo rules to guard.
 func Guard(touches []Touch, login *Login) string {
 	for _, t := range touches {
 		if pamPath(t.Path) {
 			return "changes the PAM rules, which every login reads"
+		}
+		if t.Path == firewallFile {
+			return "changes the firewall rules, which the login passes"
 		}
 	}
 	if login == nil {
