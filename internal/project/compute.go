@@ -210,6 +210,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 	check := &exprCheck{sc: sc, pos: n.Pos, src: prog.Source(), named: map[ast.Node]bool{}}
 	ast.Walk(new(prog.Node()), check)
 	check.checkByName()
+	(&hostCheck{check: check, lets: map[string]hostKind{}}).value(prog.Node())
 	for _, r := range check.names {
 		r.pos = n.Pos
 		*sc.reads = append(*sc.reads, r)
@@ -321,6 +322,217 @@ func (c *exprCheck) checkByName() {
 			c.fail(n, notByName)
 		}
 	}
+}
+
+// hostKind is what a value holds of hosts and match(): nothing, one host, or
+// a list of hosts.
+type hostKind int
+
+const (
+	noHost hostKind = iota
+	oneHost
+	hostList
+)
+
+func (k hostKind) elem() hostKind {
+	if k == hostList {
+		return oneHost
+	}
+	return noHost
+}
+
+// join returns the kind of a value that is either a or b, and false when
+// one is a host and the other a list.
+func (a hostKind) join(b hostKind) (hostKind, bool) {
+	if a == noHost || a == b {
+		return b, true
+	}
+	return a, b == noHost
+}
+
+// hostCheck reports each host of hosts or match(), or list of them, that an
+// expression reads whole: anything but a read of a field by name, an index
+// into a list, a function that passes elements on, or the value of the
+// expression. Such a read would pass the variables of the host on without
+// their names.
+type hostCheck struct {
+	check *exprCheck
+	// lets are the kinds of the variables of let, and closures the kinds of
+	// # and #acc in the closures around the node.
+	lets     map[string]hostKind
+	closures []closure
+}
+
+type closure struct{ elem, acc hostKind }
+
+func (c *hostCheck) use(ns ...ast.Node) {
+	for _, n := range ns {
+		if n != nil && c.value(n) != noHost {
+			c.check.fail(n, notByName)
+		}
+	}
+}
+
+// value returns the kind of n and reports the whole reads in it.
+func (c *hostCheck) value(n ast.Node) hostKind {
+	n = unpatched(n)
+	if base, _, ok := constKey(n); ok {
+		c.value(base)
+		return noHost
+	}
+	switch n := n.(type) {
+	case *ast.IdentifierNode:
+		if n.Value == "hosts" {
+			return hostList
+		}
+		return c.lets[n.Value]
+	case *ast.PointerNode:
+		if len(c.closures) == 0 {
+			return noHost
+		}
+		top := c.closures[len(c.closures)-1]
+		switch n.Name {
+		case "":
+			return top.elem
+		case "acc":
+			return top.acc
+		}
+	case *ast.CallNode:
+		if id, ok := n.Callee.(*ast.IdentifierNode); ok && id.Value == "match" {
+			c.use(n.Arguments...)
+			return hostList
+		}
+		c.use(n.Callee)
+		c.use(n.Arguments...)
+	case *ast.MemberNode:
+		return c.member(n, n.Node, n.Property)
+	case *ast.SliceNode:
+		c.use(n.From, n.To)
+		if k := c.value(n.Node); k == hostList {
+			return k
+		}
+		c.use(n.Node)
+	case *ast.BuiltinNode:
+		return c.builtin(n)
+	case *ast.ConditionalNode:
+		c.use(n.Cond)
+		return c.either(n, n.Exp1, n.Exp2)
+	case *ast.BinaryNode:
+		if n.Operator == "??" {
+			return c.either(n, n.Left, n.Right)
+		}
+		c.use(n.Left, n.Right)
+	case *ast.UnaryNode:
+		c.use(n.Node)
+	case *ast.VariableDeclaratorNode:
+		outer := c.lets
+		c.lets = maps.Clone(outer)
+		c.lets[n.Name] = c.value(n.Value)
+		k := c.value(n.Expr)
+		c.lets = outer
+		return k
+	case *ast.SequenceNode:
+		c.use(n.Nodes[:len(n.Nodes)-1]...)
+		return c.value(n.Nodes[len(n.Nodes)-1])
+	case *ast.ArrayNode:
+		k := noHost
+		for _, x := range n.Nodes {
+			switch c.value(x) {
+			case oneHost:
+				k = hostList
+			case hostList:
+				c.check.fail(x, notByName)
+			}
+		}
+		return k
+	case *ast.MapNode:
+		c.use(n.Pairs...)
+	case *ast.PairNode:
+		c.use(n.Key, n.Value)
+	case *ast.PredicateNode:
+		c.closures = append(c.closures, closure{})
+		c.use(n.Node)
+		c.closures = c.closures[:len(c.closures)-1]
+	}
+	return noHost
+}
+
+// either returns the kind of n, whose value is a or b.
+func (c *hostCheck) either(n, a, b ast.Node) hostKind {
+	k, ok := c.value(a).join(c.value(b))
+	if !ok {
+		c.check.fail(n, notByName)
+	}
+	return k
+}
+
+// member returns the kind of base[key] with a computed key, which reads a
+// host whole.
+func (c *hostCheck) member(n, base, key ast.Node) hostKind {
+	k := c.value(base)
+	c.use(key)
+	if k == oneHost {
+		c.check.fail(n, notByName)
+	}
+	return k.elem()
+}
+
+func (c *hostCheck) builtin(n *ast.BuiltinNode) hostKind {
+	args := n.Arguments
+	switch n.Name {
+	case "get":
+		if len(args) == 2 {
+			return c.member(n, args[0], args[1])
+		}
+	case "len":
+		c.value(args[0])
+		return noHost
+	case "first", "last":
+		return c.value(args[0]).elem()
+	case "reverse", "take", "uniq":
+		k := c.value(args[0])
+		c.use(args[1:]...)
+		return k
+	case "concat":
+		k := noHost
+		for _, x := range args {
+			var ok bool
+			if k, ok = k.join(c.value(x)); !ok || k == oneHost {
+				c.check.fail(x, notByName)
+			}
+		}
+		return k
+	case "filter", "sortBy", "find", "findLast", "map", "all", "none", "any", "one", "count", "sum", "findIndex", "findLastIndex", "reduce":
+		k := c.value(args[0])
+		if len(args) < 2 {
+			return noHost
+		}
+		// Without an initial value, the #acc of reduce starts as the first
+		// element.
+		cl := closure{elem: k.elem()}
+		if n.Name == "reduce" && len(args) == 2 {
+			cl.acc = cl.elem
+		}
+		c.closures = append(c.closures, cl)
+		body := c.value(args[1].(*ast.PredicateNode).Node)
+		c.closures = c.closures[:len(c.closures)-1]
+		c.use(args[2:]...)
+		if n.Name == "map" && body == oneHost {
+			return hostList
+		}
+		if body != noHost {
+			c.check.fail(args[1], notByName)
+		}
+		switch n.Name {
+		case "filter", "sortBy":
+			return k
+		case "find", "findLast":
+			return k.elem()
+		}
+		return noHost
+	}
+	c.use(args...)
+	return noHost
 }
 
 // unpatched returns n without the call of readFunc that readCheck adds, and

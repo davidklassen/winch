@@ -166,7 +166,208 @@ func (c *nameCheck) check(t *template.Template, main string) {
 	for _, d := range t.Templates() {
 		c.main = d.Name() == main
 		c.walk(d.Root, c.main)
+		(&tmplHosts{c: c, top: c.main, scopes: []map[string]hostKind{{}}}).walk(d.Root)
 	}
+}
+
+// tmplHosts reports each host of .hosts or match, or list of them, that a
+// template reads whole, as hostCheck does for expressions. top is true where
+// dot is the data, dot is the kind of dot elsewhere, and scopes are the kinds
+// of the variables, one map for each block.
+type tmplHosts struct {
+	c      *nameCheck
+	top    bool
+	dot    hostKind
+	scopes []map[string]hostKind
+}
+
+func (h *tmplHosts) fail(n tparse.Node) {
+	h.c.notByName(int(n.Position()))
+}
+
+// set declares the variable of d with the kind k. An = keeps the kind of the
+// variable: it may run in a block that runs once, many times, or never, so
+// an = of a host is a whole read.
+func (h *tmplHosts) set(p *tparse.PipeNode, d *tparse.VariableNode, k hostKind) {
+	switch {
+	case !p.IsAssign:
+		h.scopes[len(h.scopes)-1][d.Ident[0]] = k
+	case k != noHost:
+		h.fail(p.Cmds[len(p.Cmds)-1])
+	}
+}
+
+func (h *tmplHosts) get(name string) hostKind {
+	for i := len(h.scopes) - 1; i >= 0; i-- {
+		if k, ok := h.scopes[i][name]; ok {
+			return k
+		}
+	}
+	return noHost
+}
+
+func (h *tmplHosts) walk(n tparse.Node) {
+	switch n := n.(type) {
+	case *tparse.ListNode:
+		if n != nil {
+			for _, x := range n.Nodes {
+				h.walk(x)
+			}
+		}
+	case *tparse.ActionNode:
+		k := h.pipe(n.Pipe)
+		switch {
+		case len(n.Pipe.Decl) > 0:
+			h.set(n.Pipe, n.Pipe.Decl[0], k)
+		case k != noHost:
+			h.fail(n.Pipe.Cmds[len(n.Pipe.Cmds)-1])
+		}
+	case *tparse.TemplateNode:
+		if n.Pipe != nil && h.pipe(n.Pipe) != noHost {
+			h.fail(n.Pipe)
+		}
+	case *tparse.IfNode:
+		h.block(n.Pipe, n.List, n.ElseList, func(k hostKind) (bool, hostKind, []hostKind) {
+			return h.top, h.dot, []hostKind{k}
+		})
+	case *tparse.RangeNode:
+		h.block(n.Pipe, n.List, n.ElseList, func(k hostKind) (bool, hostKind, []hostKind) {
+			if k == oneHost {
+				h.fail(n.Pipe.Cmds[len(n.Pipe.Cmds)-1])
+			}
+			return false, k.elem(), []hostKind{noHost, k.elem()}
+		})
+	case *tparse.WithNode:
+		h.block(n.Pipe, n.List, n.ElseList, func(k hostKind) (bool, hostKind, []hostKind) {
+			return false, k, []hostKind{k}
+		})
+	}
+}
+
+// block walks an if, range, or with in a scope that holds the variables of
+// its pipe p. kinds gives, for the kind of p, the top and dot of list and
+// the kinds of the variables: the last variable takes the last kind, the
+// one before it the kind before.
+func (h *tmplHosts) block(p *tparse.PipeNode, list, elseList *tparse.ListNode, kinds func(hostKind) (bool, hostKind, []hostKind)) {
+	h.scopes = append(h.scopes, map[string]hostKind{})
+	top, dot, vars := kinds(h.pipe(p))
+	for i, d := range p.Decl {
+		k := noHost
+		if j := len(vars) - len(p.Decl) + i; j >= 0 {
+			k = vars[j]
+		}
+		h.set(p, d, k)
+	}
+	outerTop, outerDot := h.top, h.dot
+	h.top, h.dot = top, dot
+	h.scopes = append(h.scopes, map[string]hostKind{})
+	h.walk(list)
+	h.scopes = h.scopes[:len(h.scopes)-1]
+	h.top, h.dot = outerTop, outerDot
+	h.walk(elseList)
+	h.scopes = h.scopes[:len(h.scopes)-1]
+}
+
+// tmplArg is an argument of a command: a node, or the value of the command
+// before it in the pipeline.
+type tmplArg struct {
+	node tparse.Node
+	kind hostKind
+}
+
+// pipe returns the kind of the value of p and reports the whole reads in it.
+func (h *tmplHosts) pipe(p *tparse.PipeNode) hostKind {
+	var prev tmplArg
+	for i, cmd := range p.Cmds {
+		var args []tmplArg
+		for _, x := range cmd.Args {
+			if _, ok := x.(*tparse.IdentifierNode); !ok {
+				args = append(args, tmplArg{x, h.value(x)})
+			}
+		}
+		if i > 0 {
+			args = append(args, prev)
+		}
+		prev = tmplArg{cmd, h.command(cmd, args)}
+	}
+	return prev.kind
+}
+
+func (h *tmplHosts) use(args []tmplArg) {
+	for _, a := range args {
+		if a.kind != noHost {
+			h.fail(a.node)
+		}
+	}
+}
+
+func (h *tmplHosts) command(cmd *tparse.CommandNode, args []tmplArg) hostKind {
+	fn, ok := cmd.Args[0].(*tparse.IdentifierNode)
+	switch {
+	case !ok && len(args) == 1:
+		return args[0].kind
+	case !ok:
+		h.use(args)
+		return noHost
+	}
+	switch fn.Ident {
+	case "match":
+		h.use(args)
+		return hostList
+	case "len", "not":
+		return noHost
+	case "slice":
+		if len(args) == 0 {
+			return noHost
+		}
+		h.use(args[1:])
+		return args[0].kind
+	case "index", "get":
+		if len(args) == 0 {
+			return noHost
+		}
+		k := args[0].kind
+		keys := args[1:]
+		h.use(keys)
+		for _, key := range keys {
+			if _, ok := key.node.(*tparse.StringNode); ok {
+				k = noHost
+				continue
+			}
+			if k == oneHost {
+				h.fail(key.node)
+			}
+			k = k.elem()
+		}
+		return k
+	}
+	h.use(args)
+	return noHost
+}
+
+func (h *tmplHosts) value(n tparse.Node) hostKind {
+	switch n := n.(type) {
+	case *tparse.FieldNode:
+		if h.top && len(n.Ident) == 1 && n.Ident[0] == "hosts" {
+			return hostList
+		}
+	case *tparse.VariableNode:
+		switch {
+		case n.Ident[0] == "$" && h.c.main && len(n.Ident) == 2 && n.Ident[1] == "hosts":
+			return hostList
+		case len(n.Ident) == 1:
+			return h.get(n.Ident[0])
+		}
+	case *tparse.DotNode:
+		if !h.top {
+			return h.dot
+		}
+	case *tparse.ChainNode:
+		h.value(n.Node)
+	case *tparse.PipeNode:
+		return h.pipe(n)
+	}
+	return noHost
 }
 
 // walk checks n. top is false where "." is another value: inside range and
