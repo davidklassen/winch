@@ -441,6 +441,15 @@ func TestSecretSweep(t *testing.T) {
 			h.SetNote("web1", "/srv/plain", "the user u"+sweepSecret[2:6]+" reads /srv/plain", false)
 			h.FailCommandWith("web1", "probe", "user u"+sweepSecret[2:6]+" is locked")
 		}, applyAll},
+		{"the output of a failed assert", "closed: exit status 1: user u(secret) is locked", `
+      - user:
+          name: !expr '"u" + vars.pw[2:6]'
+      - assert:
+          command: probe
+          message: closed
+`, func(h *fakehost.Hosts) {
+			h.FailCommandWith("web1", "probe", "user u"+sweepSecret[2:6]+" is locked")
+		}, applyAll},
 		{"a session close error", "no user u(secret)", `
       - user:
           name: !expr '"u" + vars.pw[2:6]'

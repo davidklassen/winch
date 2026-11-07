@@ -273,7 +273,7 @@ func TestCmdApply(t *testing.T) {
 func TestAssert(t *testing.T) {
 	dir := t.TempDir()
 	ran := filepath.Join(dir, "ran")
-	a := &Assert{Command: "touch " + ran + "; exit 3", Message: "port 25 is blocked"}
+	a := &Assert{Command: "touch " + ran + "; echo 'curl: (22) 401'; exit 3", Message: "port 25 is blocked"}
 	got, err := a.Check(t.Context(), &State{}, Silent{})
 	if err != nil || got.Status != OK || !got.Deferred || got.Action != "" {
 		t.Errorf("check = %+v, %v; want ok and deferred", got, err)
@@ -281,8 +281,9 @@ func TestAssert(t *testing.T) {
 	if _, err := os.Stat(ran); err == nil {
 		t.Error("the check ran the command")
 	}
-	if err := a.Apply(t.Context(), Silent{}); err == nil || err.Error() != "port 25 is blocked" {
-		t.Errorf("a failing assert: %v, want the message", err)
+	err = a.Apply(t.Context(), Silent{})
+	if want := "port 25 is blocked: exit status 3: curl: (22) 401"; err == nil || err.Error() != want {
+		t.Errorf("a failing assert: %v, want %q", err, want)
 	}
 	if _, err := os.Stat(ran); err != nil {
 		t.Error("apply did not run the command")
@@ -291,11 +292,11 @@ func TestAssert(t *testing.T) {
 		t.Errorf("a passing assert: %v", err)
 	}
 	err = (&Assert{Command: "no-such-tool", Message: "port 25 is blocked"}).Apply(t.Context(), Silent{})
-	if want := "port 25 is blocked: no-such-tool: exit status 127: "; err == nil || !strings.HasPrefix(err.Error(), want) || len(err.Error()) == len(want) {
+	if want := "port 25 is blocked: exit status 127: "; err == nil || !strings.HasPrefix(err.Error(), want) || len(err.Error()) == len(want) {
 		t.Errorf("an assert with a missing command: %v, want %q and the shell's error", err, want)
 	}
 	err = (&Assert{Command: dir, Message: "m"}).Apply(t.Context(), Silent{})
-	if want := "m: " + dir + ": exit status 126: "; err == nil || !strings.HasPrefix(err.Error(), want) || len(err.Error()) == len(want) {
+	if want := "m: exit status 126: "; err == nil || !strings.HasPrefix(err.Error(), want) || len(err.Error()) == len(want) {
 		t.Errorf("an assert that sh cannot run: %v, want %q and the shell's error", err, want)
 	}
 }
