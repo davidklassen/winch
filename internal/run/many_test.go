@@ -177,19 +177,13 @@ func TestParallelismFailure(t *testing.T) {
           path: /etc/issue
           content: "x\n"
 `
+	want := map[string]string{"web1": "not started: web2 failed in stage base", "web2": "base: failed: file /etc/motd: write /etc/motd: read-only file system", "web3": "not started: web2 failed in stage base"}
 	tests := []struct {
 		name        string
 		parallelism string
-		want        map[string]string
-		// issue are the hosts that reach the next stage.
-		issue []string
 	}{
-		{name: "with parallelism", parallelism: "    parallelism: 1\n",
-			want:  map[string]string{"web2": "base: failed: file /etc/motd: write /etc/motd: read-only file system", "web3": "not started: web2 failed in stage base"},
-			issue: []string{"web1"}},
-		{name: "without parallelism",
-			want:  map[string]string{"web2": "base: failed: file /etc/motd: write /etc/motd: read-only file system"},
-			issue: []string{"web1", "web3"}},
+		{name: "with parallelism", parallelism: "    parallelism: 1\n"},
+		{name: "without parallelism"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -203,22 +197,201 @@ func TestParallelismFailure(t *testing.T) {
 			for host, err := range o.Failed {
 				got[host] = err.Error()
 			}
-			for host, want := range tt.want {
-				if got[host] != want {
-					t.Errorf("%s: error %q, want %q", host, got[host], want)
+			for host, w := range want {
+				if got[host] != w {
+					t.Errorf("%s: error %q, want %q", host, got[host], w)
 				}
 			}
-			if len(got) != len(tt.want) {
-				t.Errorf("failed hosts %q, want %q", got, tt.want)
+			if len(got) != len(want) {
+				t.Errorf("failed hosts %q, want %q", got, want)
+			}
+			_, motd := h.File("web3", "/etc/motd")
+			if want := tt.parallelism == ""; motd != want {
+				t.Errorf("web3 ran stage base: %v, want %v", motd, want)
 			}
 			for _, host := range []string{"web1", "web2", "web3"} {
-				_, ok := h.File(host, "/etc/issue")
-				if want := slices.Contains(tt.issue, host); ok != want {
-					t.Errorf("%s reached the next stage: %v, want %v", host, ok, want)
+				if _, ok := h.File(host, "/etc/issue"); ok {
+					t.Errorf("%s reached the next stage", host)
 				}
 			}
 		})
 	}
+}
+
+// spec: Running a pipeline/Failures ("A failure in a stage ... stops the
+// pipeline after that stage"); Lockout protection (the access check after the run)
+func TestFailureStopsLaterStages(t *testing.T) {
+	base := `  - name: base
+    hosts: all
+    health:
+      command: curl -sf http://localhost/
+    steps:
+      - file:
+          path: /etc/motd
+          content: "hi\n"
+  - name: next
+    hosts: all
+    steps:
+      - file:
+          path: /etc/issue
+          content: "x\n"
+`
+	tests := []struct {
+		name string
+		fail func(h *fakehost.Hosts)
+		// err is the start of the error of web2.
+		err string
+	}{
+		{"step", func(h *fakehost.Hosts) { h.FailApply("web2 /etc/motd") }, "base: failed: file /etc/motd: "},
+		{"health gate", func(h *fakehost.Hosts) { h.FailCommand("web2", "curl -sf http://localhost/") }, "base: failed: health: "},
+		{"plan", func(h *fakehost.Hosts) { h.FailCheck("web2 /etc/motd") }, "base: file /etc/motd: "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := manyProject(t, base)
+			h := fakehost.New()
+			tt.fail(h)
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+			var out, errOut bytes.Buffer
+			o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+			if err := o.Failed["web2"]; err == nil || !strings.HasPrefix(err.Error(), tt.err) {
+				t.Errorf("web2: error %v, want %q first", err, tt.err)
+			}
+			for _, host := range []string{"web1", "web3"} {
+				if _, ok := h.File(host, "/etc/motd"); !ok {
+					t.Errorf("%s did not finish stage base", host)
+				}
+				if err := o.Failed[host]; err == nil || err.Error() != "not started: web2 failed in stage base" {
+					t.Errorf("%s: error %v", host, err)
+				}
+				if !slices.Contains(h.Log[host], "access") {
+					t.Errorf("%s: no access check after the run: %q", host, h.Log[host])
+				}
+			}
+			for _, host := range []string{"web1", "web2", "web3"} {
+				if _, ok := h.File(host, "/etc/issue"); ok {
+					t.Errorf("%s started stage next", host)
+				}
+			}
+			if h.Open != 0 {
+				t.Errorf("%d connections are still open", h.Open)
+			}
+		})
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the access check after the
+// run on a host that the first Ctrl-C stops before its next stage)
+func TestInterruptBeforeNextStage(t *testing.T) {
+	p := manyProject(t, motdStage+`  - name: next
+    hosts: all
+    steps:
+      - file:
+          path: /etc/issue
+          content: "x\n"
+`)
+	h := fakehost.New()
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.OnApply = func(host, main string) {
+		if host == "web1" && main == "/etc/motd" {
+			cancel()
+		}
+	}
+	var out, errOut bytes.Buffer
+	o := run.Apply(ctx, plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	if !errors.Is(o.Failed["web1"], run.ErrInterrupted) {
+		t.Errorf("web1: error %v, want interrupted", o.Failed["web1"])
+	}
+	if _, ok := h.File("web1", "/etc/motd"); !ok {
+		t.Fatal("web1 did not finish stage base")
+	}
+	if !slices.Contains(h.Log["web1"], "access") {
+		t.Errorf("web1: no access check after the run: %q", h.Log["web1"])
+	}
+	if _, ok := h.File("web1", "/etc/issue"); ok {
+		t.Error("web1 started stage next")
+	}
+	if h.Open != 0 {
+		t.Errorf("%d connections are still open", h.Open)
+	}
+}
+
+// spec: Running a pipeline/Failures; Lockout protection (the access check
+// after the run)
+func TestStopHosts(t *testing.T) {
+	stages := `  - name: base
+    hosts: web1,web2
+    steps:
+      - file:
+          path: /etc/motd
+          content: "hi\n"
+  - name: next
+    hosts: all
+    steps:
+      - file:
+          path: /etc/issue
+          content: "x\n"
+`
+	t.Run("a host without a change and a host of a later stage only", func(t *testing.T) {
+		h := fakehost.New()
+		h.SetFile("web1", "/etc/motd", "hi\n")
+		h.FailApply("web2 /etc/motd")
+		plan := run.MakePlan(context.Background(), manyProject(t, stages), h.Connector(), run.Options{})
+		var out, errOut bytes.Buffer
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+		for _, host := range []string{"web1", "web3"} {
+			if err := o.Failed[host]; err == nil || err.Error() != "not started: web2 failed in stage base" {
+				t.Errorf("%s: error %v", host, err)
+			}
+			if len(h.Log[host]) != 0 {
+				t.Errorf("%s: log %q, want no access check", host, h.Log[host])
+			}
+		}
+		if h.Connects["web3"] != 1 {
+			t.Errorf("web3: %d connects, want 1 of the plan", h.Connects["web3"])
+		}
+		if h.Open != 0 {
+			t.Errorf("%d connections are still open", h.Open)
+		}
+	})
+	t.Run("a failed access check after the run", func(t *testing.T) {
+		h := fakehost.New()
+		h.FailApply("web2 /etc/motd")
+		h.FailAccess("web1")
+		plan := run.MakePlan(context.Background(), manyProject(t, stages), h.Connector(), run.Options{})
+		var out, errOut bytes.Buffer
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+		want := "not started: web2 failed in stage base\nthe access check after the run failed: ssh: connect to host web1 port 22: Connection timed out"
+		if err := o.Failed["web1"]; err == nil || err.Error() != want {
+			t.Errorf("web1: error %v, want %q", err, want)
+		}
+	})
+	t.Run("a plan failure in a later stage", func(t *testing.T) {
+		h := fakehost.New()
+		h.FailCheck("web2 /etc/issue")
+		plan := run.MakePlan(context.Background(), manyProject(t, stages+`  - name: last
+    hosts: all
+    steps:
+      - file:
+          path: /etc/last
+          content: "x\n"
+`), h.Connector(), run.Options{})
+		var out, errOut bytes.Buffer
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+		for _, host := range []string{"web1", "web3"} {
+			if _, ok := h.File(host, "/etc/issue"); !ok {
+				t.Errorf("%s did not run stage next", host)
+			}
+			if _, ok := h.File(host, "/etc/last"); ok {
+				t.Errorf("%s started stage last", host)
+			}
+			if err := o.Failed[host]; err == nil || err.Error() != "not started: web2 failed in stage next" {
+				t.Errorf("%s: error %v", host, err)
+			}
+		}
+	})
 }
 
 // spec: Running a pipeline/Failures ("With parallelism, a failure, also one in the plan, stops new hosts from starting")
@@ -269,28 +442,6 @@ func TestParallelismPlanFailureFirstHost(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// spec: Running a pipeline/Failures ("A failed host takes no part in later stages; later stages still run on the other hosts")
-func TestParallelismAfterPlanFailure(t *testing.T) {
-	p := manyProject(t, motdStage+`  - name: next
-    hosts: all
-    parallelism: 1
-    steps:
-      - file:
-          path: /etc/issue
-          content: "x\n"
-`)
-	h := fakehost.New()
-	h.FailCheck("web2 /etc/motd")
-	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
-	var out, errOut bytes.Buffer
-	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
-	for _, host := range []string{"web1", "web3"} {
-		if _, ok := h.File(host, "/etc/issue"); !ok || o.Failed[host] != nil {
-			t.Errorf("%s did not run stage next: %v", host, o.Failed[host])
-		}
 	}
 }
 

@@ -207,8 +207,26 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			last[hp.Host.Name] = i
 		}
 	}
-	// stopped are the hosts that failed in the plan at this or an earlier stage.
-	stopped := map[string]bool{}
+	// fail ends the run of each host in names with its error in errs. A host
+	// whose session is still open gets the access check after the run first.
+	fail := func(names []string, errs []error) {
+		var wg sync.WaitGroup
+		for i, name := range names {
+			if a := runs[name]; a != nil && a.conn != nil {
+				wg.Go(func() {
+					defer a.progress.Idle(name)
+					errs[i] = a.finish(ctx, o.Changed[name], errs[i])
+				})
+			}
+		}
+		wg.Wait()
+		for i, name := range names {
+			err := maskError(errs[i], plan.hide(name))
+			o.Failed[name] = err
+			delete(o.Changed, name)
+			rep.Host(HostEvent{Phase: "apply", Host: name, Status: hostStatus(err), Error: err.Error()})
+		}
+	}
 	for si, sp := range plan.Stages {
 		planned := map[string]HostPlan{}
 		for _, hp := range sp.Hosts {
@@ -217,14 +235,15 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 		stage := sp.Stage
 		var hps []HostPlan
 		var hosts []project.Host
+		planFailed := ""
 		for _, h := range stage.Targets {
 			name := h.Name
 			hp, ok := planned[name]
 			if !ok {
-				if !stopped[name] && stage.Parallelism > 0 {
+				planFailed = cmp.Or(planFailed, name)
+				if stage.Parallelism > 0 {
 					hps, hosts = append(hps, HostPlan{Host: h}), append(hosts, h)
 				}
-				stopped[name] = true
 				continue
 			}
 			if toApply[name] == "" || o.Failed[name] != nil {
@@ -270,24 +289,10 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 					changed[i], err = a.apply(ctx, stage, hps[i])
 				}
 				changed[i] = changed[i] || due
-				done := err != nil || last[hosts[i].Name] == si
-				if done && (changed[i] || o.Changed[hosts[i].Name]) {
-					a.progress.Busy(a.host, "access check")
-					// The access check returns context.Canceled after a second Ctrl-C.
-					if aerr := a.access(context.WithoutCancel(ctx), time.Time{}); aerr != nil && !errors.Is(aerr, context.Canceled) {
-						aerr = fmt.Errorf("the access check after the run failed: %w", aerr)
-						if err != nil {
-							aerr = fmt.Errorf("%w\n%w", err, aerr)
-						}
-						err = aerr
-					}
+				if err != nil || last[hosts[i].Name] == si {
+					return a.finish(ctx, changed[i] || o.Changed[hosts[i].Name], err)
 				}
-				if done {
-					if cerr := a.close(); err == nil && cerr != nil {
-						err = cerr
-					}
-				}
-				return err
+				return nil
 			})
 			for j, err := range ge {
 				errs[group[j]] = err
@@ -297,19 +302,35 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 				}
 			}
 		}
+		failed = cmp.Or(failed, planFailed)
 		for i, h := range hosts {
-			if err := errs[i]; err != nil && plan.Failed[h.Name] == nil {
-				runs[h.Name].close() //nolint:errcheck // the host failed already
-				err = maskError(err, plan.hide(h.Name))
-				o.Failed[h.Name] = err
-				delete(o.Changed, h.Name)
-				rep.Host(HostEvent{Phase: "apply", Host: h.Name, Status: hostStatus(err), Error: err.Error()})
-				continue
-			}
 			if changed[i] {
 				o.Changed[h.Name] = true
 			}
 		}
+		var names []string
+		var ferrs []error
+		for i, h := range hosts {
+			if errs[i] != nil && plan.Failed[h.Name] == nil {
+				names, ferrs = append(names, h.Name), append(ferrs, errs[i])
+			}
+		}
+		fail(names, ferrs)
+		if ctx.Err() == nil && failed == "" {
+			continue
+		}
+		reason := ErrInterrupted
+		if ctx.Err() == nil {
+			reason = fmt.Errorf("not started: %s failed in stage %s", failed, stage.Name)
+		}
+		names, ferrs = nil, nil
+		for _, h := range plan.Hosts {
+			if toApply[h.Name] != "" && o.Failed[h.Name] == nil && last[h.Name] > si {
+				names, ferrs = append(names, h.Name), append(ferrs, reason)
+			}
+		}
+		fail(names, ferrs)
+		break
 	}
 	for _, h := range plan.Hosts {
 		if o.Failed[h.Name] != nil {
@@ -383,6 +404,26 @@ type hostApply struct {
 	conn Conn
 	// rollback is the plan of the rollback of an earlier run, until it runs.
 	rollback []string
+}
+
+// finish ends the run of the host with the error err of the run. When the
+// run changed the host, it runs the access check after the run first.
+func (a *hostApply) finish(ctx context.Context, changed bool, err error) error {
+	if changed {
+		a.progress.Busy(a.host, "access check")
+		// The access check returns context.Canceled after a second Ctrl-C.
+		if aerr := a.access(context.WithoutCancel(ctx), time.Time{}); aerr != nil && !errors.Is(aerr, context.Canceled) {
+			aerr = fmt.Errorf("the access check after the run failed: %w", aerr)
+			if err != nil {
+				aerr = fmt.Errorf("%w\n%w", err, aerr)
+			}
+			err = aerr
+		}
+	}
+	if cerr := a.close(); err == nil && cerr != nil {
+		err = cerr
+	}
+	return err
 }
 
 func (a *hostApply) close() error {
