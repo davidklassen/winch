@@ -90,10 +90,12 @@ func TestDocKey(t *testing.T) {
 	tests := []struct{ arg, want string }{
 		{"firewall.allow", `firewall.allow: list of maps
 
-Accepted traffic to the host; the host drops the rest. It always accepts
-established and related traffic, loopback, ICMP echo requests, the
-ICMPv6 types that IPv6 needs, and DHCP replies. It drops invalid
-packets.
+Accepted traffic to the host; the host drops the rest. A rule has tcp,
+udp, or both, and optional from. Without from, a rule accepts every
+source. A rule with only from accepts every port and protocol from those
+sources. The table always accepts established and related traffic,
+loopback, ICMP echo requests, the ICMPv6 types that IPv6 needs, and DHCP
+replies. It drops invalid packets.
 
 Keys of each element:
   tcp   integer or list of integers  -  ports
