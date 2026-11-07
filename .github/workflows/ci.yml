@@ -98,5 +98,6 @@ jobs:
           path: |
             /tmp/winch-it-*/vms/*/console.log
             /tmp/winch-it-*/vms/*/qemu.log
+            /tmp/winch-it-*/vms/*/net.pcap
           retention-days: 7
           if-no-files-found: ignore

@@ -80,13 +80,14 @@ func run(m *testing.M) int {
 	return code
 }
 
-// keepLogs removes all files in dir but the console and QEMU logs of the VMs.
+// keepLogs removes all files in dir but the console and QEMU logs and the
+// packet captures of the VMs.
 func keepLogs(dir string) error {
 	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		if filepath.Base(filepath.Dir(filepath.Dir(p))) == "vms" && (d.Name() == "console.log" || d.Name() == "qemu.log") {
+		if filepath.Base(filepath.Dir(filepath.Dir(p))) == "vms" && (d.Name() == "console.log" || d.Name() == "qemu.log" || d.Name() == "net.pcap") {
 			return nil
 		}
 		return os.Remove(p)
