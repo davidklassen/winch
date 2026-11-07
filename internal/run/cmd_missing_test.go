@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/fakehost"
@@ -69,6 +70,29 @@ func TestCmdMissingNote(t *testing.T) {
 			plan.WriteNotes(plain(&errOut))
 			if errOut.String() != tt.want {
 				t.Errorf("notes = %q, want %q", errOut.String(), tt.want)
+			}
+		})
+	}
+}
+
+// spec: Modules/cmd
+func TestCmdUnlessMissing(t *testing.T) {
+	for _, tt := range []struct{ name, steps string }{
+		{"a user that an earlier step creates", "      - user: {name: deploy}\n      - cmd: {command: make install, user: deploy, unless: \"true\"}\n"},
+		{"a dir that an earlier step creates", "      - dir: {path: /srv/app}\n      - cmd: {command: make install, dir: /srv/app, unless: \"true\"}\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := loadWeb1(t, map[string]string{"pipelines/site.yaml": steps(tt.steps)})
+			h := fakehost.New()
+			h.RemoveDir("web1", "/srv/app")
+			plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+			if len(plan.Failed) > 0 {
+				t.Fatal(plan.Failed)
+			}
+			var out, errOut bytes.Buffer
+			plan.Write(plain(&out), plain(&errOut))
+			if want := "    ~ cmd make install\n"; !strings.Contains(out.String(), want) {
+				t.Errorf("the plan has no %q:\n%s%s", want, out.String(), errOut.String())
 			}
 		})
 	}

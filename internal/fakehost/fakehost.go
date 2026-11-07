@@ -581,12 +581,7 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 	switch m := m.(type) {
 	case *module.Cmd:
 		res := module.Result{Status: module.Unknown}
-		if m.Unless != nil {
-			if !c.hosts.failCmd[c.host+" "+*m.Unless] {
-				return module.Result{Status: module.OK}, nil
-			}
-			res = module.Result{Status: module.Change, Action: module.Modify}
-		} else if m.Creates != "" {
+		if m.Creates != "" {
 			if _, ok := c.hosts.File(c.host, m.Creates); ok {
 				return module.Result{Status: module.OK}, nil
 			}
@@ -599,6 +594,12 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 		}
 		if c.hosts.noDirs[c.host][m.Dir] {
 			res.Missing = append(res.Missing, "dir "+m.Dir)
+		}
+		if m.Unless != nil {
+			if res.Missing == nil && !c.hosts.failCmd[c.host+" "+*m.Unless] {
+				return module.Result{Status: module.OK}, nil
+			}
+			res.Status, res.Action = module.Change, module.Modify
 		}
 		return res, nil
 	case *module.Assert:

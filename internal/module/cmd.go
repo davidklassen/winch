@@ -19,9 +19,9 @@ import (
 type Cmd struct {
 	Command string  `yaml:"command,required" json:"command" line:"shell script" doc:"Shell script. It runs through sh -e as root, in /, with stdin from /dev/null. A script of several lines stops at its first failed line. Without creates or unless, the check result is unknown."`
 	Creates string  `yaml:"creates" json:"creates,omitempty" line:"path that marks the work as done" doc:"Path that marks the work as done. The step is ok when the path exists. When the command exits 0 and the path is still missing, the step fails. The path has no glob characters. A step has at most one of creates and unless."`
-	Unless  *string `yaml:"unless" json:"unless,omitempty" line:"check command; exit 0 skips the step" doc:"Check command; exit 0 skips the step. It runs at the check as root, in /, with the timeout of the step. user and dir do not apply to it. A step has at most one of creates and unless."`
-	User    string  `yaml:"user" json:"user,omitempty" line:"account that runs command" doc:"Account that runs command. Its home is HOME. The step starts no login session: PAM does not run, so the login umask and limits of the account do not apply, and the umask is 022." default:"root"`
-	Dir     string  `yaml:"dir" json:"dir,omitempty" line:"working directory" doc:"Working directory." default:"/"`
+	Unless  *string `yaml:"unless" json:"unless,omitempty" line:"check command as user, in dir; exit 0 skips the step" doc:"Check command; exit 0 skips the step. It runs at the check as user, with the user's home as HOME, in dir, with the timeout of the step. A dir that does not exist yet checks as change. A step has at most one of creates and unless."`
+	User    string  `yaml:"user" json:"user,omitempty" line:"account that runs command and unless" doc:"Account that runs command and unless. Its home is HOME. The step starts no login session: PAM does not run, so the login umask and limits of the account do not apply, and the umask is 022." default:"root"`
+	Dir     string  `yaml:"dir" json:"dir,omitempty" line:"working directory, also for unless" doc:"Working directory, also for unless." default:"/"`
 	Timeout *int    `yaml:"timeout" json:"timeout,omitempty" line:"limit in seconds, also for unless" doc:"Limit in seconds, also for unless. After it, winch stops the command and the step fails." default:"600"`
 }
 
@@ -71,18 +71,24 @@ func (c *Cmd) Validate() error {
 }
 
 func (c *Cmd) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
-	res, err := c.check(ctx)
-	if err != nil || res.Status == OK {
-		return res, err
-	}
-	if c.User != "" {
-		a, err := readAccounts()
-		if err != nil {
+	res := Result{Status: Unknown}
+	if c.Creates != "" {
+		_, err := os.Lstat(c.Creates)
+		switch {
+		case err == nil:
+			return Result{Status: OK}, nil
+		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+			res.Status, res.Action = Change, Create
+		default:
 			return Result{}, err
 		}
-		if _, ok := a.user(c.User); !ok {
-			res.Missing = append(res.Missing, "user "+c.User)
-		}
+	}
+	as, ok, err := c.runAs()
+	if err != nil {
+		return Result{}, err
+	}
+	if !ok {
+		res.Missing = append(res.Missing, "user "+c.User)
 	}
 	if c.Dir != "" {
 		_, err := os.Stat(c.Dir)
@@ -93,64 +99,69 @@ func (c *Cmd) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 			return Result{}, err
 		}
 	}
-	return res, nil
-}
-
-func (c *Cmd) check(ctx context.Context) (Result, error) {
-	if c.Unless != nil {
-		err := shellLimit(ctx, *c.Unless, "/", nil, nil, c.limit(), KillDelay, "timeout")
-		switch {
-		case err == nil:
-			return Result{Status: OK}, nil
-		case errors.As(err, new(*exec.ExitError)):
-			return Result{Status: Change, Action: Modify}, nil
-		}
-		return Result{}, fmt.Errorf("unless: %w", err)
+	if c.Unless == nil {
+		return res, nil
 	}
-	if c.Creates == "" {
-		return Result{Status: Unknown}, nil
+	res.Status, res.Action = Change, Modify
+	if res.Missing != nil {
+		return res, nil
 	}
-	_, err := os.Lstat(c.Creates)
+	err = c.shell(ctx, *c.Unless, as)
 	switch {
 	case err == nil:
 		return Result{Status: OK}, nil
-	case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
-		return Result{Status: Change, Action: Create}, nil
+	case !errors.As(err, new(*exec.ExitError)):
+		return Result{}, fmt.Errorf("unless: %w", err)
 	}
-	return Result{}, err
+	return res, nil
 }
 
 func (c *Cmd) Apply(ctx context.Context, _ Say) error {
-	var as *runAs
-	if c.User != "" {
-		a, err := readAccounts()
-		if err != nil {
-			return err
-		}
-		u, ok := a.user(c.User)
-		if !ok {
-			return fmt.Errorf("user %s does not exist; no earlier user step creates it", c.User)
-		}
-		// The groups that initgroups gives a login of the user.
-		groups := []uint32{u.gid}
-		for _, g := range a.groups {
-			if slices.Contains(g.members, u.name) {
-				groups = append(groups, g.gid)
-			}
-		}
-		as = &runAs{user: u, groups: groups}
+	as, ok, err := c.runAs()
+	if err != nil {
+		return err
 	}
-	err := shellLimit(ctx, c.Command, cmp.Or(c.Dir, "/"), nil, as, c.limit(), KillDelay, "timeout")
-	// exec names sh, not the directory, when the user cannot enter it.
-	if pe, ok := errors.AsType[*fs.PathError](err); ok && pe.Op == "fork/exec" && c.Dir != "" {
-		return fmt.Errorf("dir %s: %w", c.Dir, pe.Err)
+	if !ok {
+		return fmt.Errorf("user %s does not exist; no earlier user step creates it", c.User)
 	}
-	if err != nil || c.Creates == "" {
+	if err := c.shell(ctx, c.Command, as); err != nil || c.Creates == "" {
 		return err
 	}
 	_, err = os.Lstat(c.Creates)
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return fmt.Errorf("the command exited 0 but did not create %s, so each run would run it again; make the command create it, or fix creates", c.Creates)
+	}
+	return err
+}
+
+// runAs is nil without user. ok is false when the user does not exist.
+func (c *Cmd) runAs() (as *runAs, ok bool, err error) {
+	if c.User == "" {
+		return nil, true, nil
+	}
+	a, err := readAccounts()
+	if err != nil {
+		return nil, false, err
+	}
+	u, ok := a.user(c.User)
+	if !ok {
+		return nil, false, nil
+	}
+	// The groups that initgroups gives a login of the user.
+	groups := []uint32{u.gid}
+	for _, g := range a.groups {
+		if slices.Contains(g.members, u.name) {
+			groups = append(groups, g.gid)
+		}
+	}
+	return &runAs{user: u, groups: groups}, true, nil
+}
+
+func (c *Cmd) shell(ctx context.Context, command string, as *runAs) error {
+	err := shellLimit(ctx, command, cmp.Or(c.Dir, "/"), nil, as, c.limit(), KillDelay, "timeout")
+	// exec names sh, not the directory, when the user cannot enter it.
+	if pe, ok := errors.AsType[*fs.PathError](err); ok && pe.Op == "fork/exec" && c.Dir != "" {
+		return fmt.Errorf("dir %s: %w", c.Dir, pe.Err)
 	}
 	return err
 }

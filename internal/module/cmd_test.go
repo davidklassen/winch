@@ -151,7 +151,6 @@ func TestCmdUnless(t *testing.T) {
 		{"exit 126", "exit 126", 0, Result{Status: Change, Action: Modify}, ""},
 		{"exit 127", "exit 127", 0, Result{Status: Change, Action: Modify}, ""},
 		{"a failed line", "false\ntrue", 0, Result{Status: Change, Action: Modify}, ""},
-		{"in /", `test "$(pwd)" = /`, 0, Result{Status: OK}, ""},
 		{"the step timeout", "sleep 5", 1, Result{}, "unless: sleep 5: stopped after 1s; set timeout for a longer limit"},
 	}
 	for _, tt := range tests {
@@ -175,6 +174,36 @@ func TestCmdUnless(t *testing.T) {
 			}
 			if _, err := os.Stat(ran); err == nil {
 				t.Error("the check ran the command")
+			}
+		})
+	}
+}
+
+// spec: Modules/cmd
+func TestCmdUnlessDir(t *testing.T) {
+	dir := t.TempDir()
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "missing")
+	tests := []struct {
+		name, dir, unless string
+		want              Result
+	}{
+		{"without dir", "", `test "$(pwd)" = /`, Result{Status: OK}},
+		{"in dir", dir, `test "$(pwd -P)" = ` + real, Result{Status: OK}},
+		{"a missing dir", missing, "true", Result{Status: Change, Action: Modify, Missing: []string{"dir " + missing}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Cmd{Command: "true", Unless: &tt.unless, Dir: tt.dir}
+			got, err := c.Check(t.Context(), &State{}, Silent{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != tt.want.Status || got.Action != tt.want.Action || !slices.Equal(got.Missing, tt.want.Missing) {
+				t.Errorf("check = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
