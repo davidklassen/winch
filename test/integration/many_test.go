@@ -56,6 +56,24 @@ const hangPipeline = `stages:
           content: "x\n"
 `
 
+const stopPipeline = `stages:
+  - name: first
+    hosts: all
+    health:
+      command: test -e /root/healthy
+      timeout: 3
+    steps:
+      - file:
+          path: /root/first
+          content: "x\n"
+  - name: second
+    hosts: all
+    steps:
+      - file:
+          path: /root/second
+          content: "x\n"
+`
+
 // manyTokens are the secret tokens of the two hosts. No output may hold
 // them.
 var manyTokens = [2]string{"many-token-aaaa", "many-token-bbbb"}
@@ -88,6 +106,7 @@ func TestMany(t *testing.T) {
 			"groups:\n  web:\n    hosts: [many-a, many-b]\n",
 		"pipelines/site.yaml": manyPipeline,
 		"pipelines/hang.yaml": hangPipeline,
+		"pipelines/stop.yaml": stopPipeline,
 		"recipes/app/recipe.yaml": `steps:
   - file:
       path: /etc/winch-app/app.conf
@@ -226,6 +245,27 @@ handlers:
 		}
 		if out := vms[0].MustRun(t, "sed '/^version 1$/d' /var/lib/winch/checks/many"); out != "" {
 			t.Errorf("records after the gate passed: %q", out)
+		}
+	})
+
+	t.Run("a failing health gate stops the later stages", func(t *testing.T) {
+		vms[0].MustRun(t, "rm /root/healthy")
+		r := winch("apply", "stop", "--yes")
+		if r.Code != 1 || !strings.Contains(r.Stderr, "many-a: first: failed: health: test -e /root/healthy: did not pass within 3s") ||
+			!strings.Contains(r.Stderr, "many-b: not started: many-a failed in stage first") {
+			t.Errorf("apply: exit %d, stderr %q", r.Code, r.Stderr)
+		}
+		if out := vms[1].MustRun(t, "cat /root/first"); out != "x\n" {
+			t.Errorf("many-b did not finish stage first: /root/first = %q", out)
+		}
+		for _, vm := range vms {
+			if out := vm.MustRun(t, "test -e /root/second && echo exists; true"); out != "" {
+				t.Errorf("%s started stage second", vm.Name)
+			}
+		}
+		vms[0].MustRun(t, "touch /root/healthy")
+		if r := winch("apply", "stop", "--yes"); r.Code != 0 {
+			t.Errorf("apply after the fix: exit %d, stderr %q", r.Code, r.Stderr)
 		}
 	})
 
