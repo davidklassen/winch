@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -78,12 +79,29 @@ func TestExecCommand(t *testing.T) {
 // spec: CLI (winch exec)
 func TestExecLongOutput(t *testing.T) {
 	t.Parallel()
-	got, err := execLimit(t.Context(), "seq 300000; echo end", commandLimit, time.Second)
-	if err != nil {
-		t.Fatal(err)
+	const cut = "(output cut to the last 1 MiB)\n"
+	xs := func(n int) string { return "head -c " + strconv.Itoa(n) + " /dev/zero | tr '\\0' x" }
+	tests := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{"1 MiB", xs(1<<20-1) + "; echo", strings.Repeat("x", 1<<20-1) + "\n"},
+		{"one byte more", "echo; " + xs(1<<20-1) + "; echo", cut + strings.Repeat("x", 1<<20-1) + "\n"},
+		{"the cut drops the rest of its line", "echo first; " + xs(1<<20+100) + "; echo; echo last", cut + "last\n"},
+		{"a last line longer than 1 MiB", xs(1<<20 + 100), cut},
 	}
-	if !strings.HasPrefix(got.Output, "(output cut to the last 1 MiB)\n") || !strings.HasSuffix(got.Output, "\n300000\nend\n") || len(got.Output) > 1<<20+100 {
-		t.Errorf("output of %d bytes starts %q, want the last 1 MiB after a note", len(got.Output), got.Output[:min(40, len(got.Output))])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := execLimit(t.Context(), tt.command, commandLimit, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Output != tt.want {
+				t.Errorf("output = %.80q ... (%d bytes), want %.80q ... (%d bytes)", got.Output, len(got.Output), tt.want, len(tt.want))
+			}
+		})
 	}
 }
 
