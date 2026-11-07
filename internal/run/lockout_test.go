@@ -101,7 +101,7 @@ func TestAccessFails(t *testing.T) {
 	if o.OK() {
 		t.Fatal("apply succeeded without access")
 	}
-	if want := []string{"ssh reload", "access", "rollback"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"ssh reload", "access", "rollback", "access", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
 	want := "web1: ssh: failed: handler ssh.reload: service ssh: the access check failed: ssh: connect to host web1 port 22: Connection timed out; the old files are back"
@@ -507,6 +507,79 @@ func TestLostAccessAfterRun(t *testing.T) {
 	}
 	if want := []string{"access", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the access check after the run
+// also runs when a step fails the host after an earlier change of that host)
+func TestLostAccessAfterFailedStep(t *testing.T) {
+	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/motd
+          content: hi
+      - file:
+          path: /etc/issue
+          content: hi
+  - name: app
+    hosts: all
+    steps:
+      - file:
+          path: /etc/hosts
+          content: hi
+`})
+	h := fakehost.New()
+	h.FailApply("web1 /etc/issue")
+	h.FailAccess("web1")
+	out, o := applyWeb1(t, p, h)
+	if o.OK() {
+		t.Fatal("apply succeeded after a failed step")
+	}
+	if want := "web1: base: failed: file /etc/issue: "; !strings.Contains(out, want) {
+		t.Errorf("output:\n%s\nwant %q", out, want)
+	}
+	if want := "; the access check after the run failed: ssh: connect to host web1 port 22: Connection timed out"; !strings.Contains(out, want) {
+		t.Errorf("output:\n%s\nwant %q", out, want)
+	}
+	if want := []string{"access", "access"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("log %q, want %q", h.Log["web1"], want)
+	}
+
+	// The failed step is the first change of the host.
+	h = fakehost.New()
+	h.SetFile("web1", "/etc/motd", "hi")
+	h.FailApply("web1 /etc/issue")
+	h.FailAccess("web1")
+	out, o = applyWeb1(t, p, h)
+	if o.OK() {
+		t.Fatal("apply succeeded after a failed step")
+	}
+	if want := "web1: base: failed: file /etc/issue: "; !strings.Contains(out, want) {
+		t.Errorf("output:\n%s\nwant %q", out, want)
+	}
+	if strings.Contains(out, "access check") {
+		t.Errorf("output:\n%s\nwant no access check", out)
+	}
+	if len(h.Log["web1"]) != 0 {
+		t.Errorf("log %q, want none", h.Log["web1"])
+	}
+
+	// Only an earlier stage changes something.
+	h = fakehost.New()
+	h.SetFile("web1", "/etc/issue", "hi")
+	h.FailApply("web1 /etc/hosts")
+	h.FailAccess("web1")
+	out, o = applyWeb1(t, p, h)
+	if o.OK() {
+		t.Fatal("apply succeeded after a failed step")
+	}
+	if want := "web1: app: failed: file /etc/hosts: "; !strings.Contains(out, want) {
+		t.Errorf("output:\n%s\nwant %q", out, want)
+	}
+	if want := "; the access check after the run failed: ssh: connect to host web1 port 22: Connection timed out"; !strings.Contains(out, want) {
+		t.Errorf("output:\n%s\nwant %q", out, want)
 	}
 }
 

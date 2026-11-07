@@ -270,14 +270,18 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 					changed[i], err = a.apply(ctx, stage, hps[i])
 				}
 				changed[i] = changed[i] || due
-				final := last[hosts[i].Name] == si
-				if err == nil && final && (changed[i] || o.Changed[hosts[i].Name]) {
+				done := err != nil || last[hosts[i].Name] == si
+				if done && !errors.Is(err, ErrInterrupted) && (changed[i] || o.Changed[hosts[i].Name]) {
 					a.progress.Busy(a.host, "access check")
 					if aerr := a.access(context.WithoutCancel(ctx), time.Time{}); aerr != nil {
-						err = fmt.Errorf("the access check after the run failed: %w", aerr)
+						aerr = fmt.Errorf("the access check after the run failed: %w", aerr)
+						if err != nil {
+							aerr = fmt.Errorf("%w; %w", err, aerr)
+						}
+						err = aerr
 					}
 				}
-				if err != nil || final {
+				if done {
 					if cerr := a.close(); err == nil && cerr != nil {
 						err = cerr
 					}

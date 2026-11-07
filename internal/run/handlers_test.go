@@ -312,7 +312,7 @@ func TestFailedHandlerStaysPending(t *testing.T) {
 	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
-	if want := []string{"nginx restart", "nginx reload", "command reindex", "nginx reload", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"access", "nginx restart", "nginx reload", "command reindex", "nginx reload", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if p := h.PendingOf("web1"); len(p) != 0 {
@@ -369,7 +369,7 @@ func TestThen(t *testing.T) {
 			t.Fatal("apply succeeded with a failing then")
 		}
 		golden.Assert(t, filepath.Join("testdata", "handlers", "apply-then-fails.golden"), got)
-		if want := []string{"command reindex"}; !slices.Equal(h.Log["web1"], want) {
+		if want := []string{"command reindex", "access"}; !slices.Equal(h.Log["web1"], want) {
 			t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 		}
 		if got, want := h.PendingOf("web1"), []string{"nginx.reload", "app.restart"}; !slices.Equal(got, want) {
@@ -400,7 +400,7 @@ func TestThen(t *testing.T) {
 		if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 			t.Fatal(errOut.String())
 		}
-		if want := []string{"command reindex", "nginx reload", "command reindex", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
+		if want := []string{"command reindex", "access", "nginx reload", "command reindex", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
 			t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 		}
 		if got := h.ThenOf("web1"); len(got) != 0 {
@@ -758,7 +758,7 @@ func TestFixedThenRuns(t *testing.T) {
 	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
-	if want := []string{"command postmapp /etc/postfix/virtual", "command postmap /etc/postfix/virtual", "access"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"command postmapp /etc/postfix/virtual", "access", "command postmap /etc/postfix/virtual", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if got := h.ThenOf("web1"); len(got) != 0 {
@@ -805,7 +805,7 @@ func TestInsertedStepKeepsPendingThen(t *testing.T) {
 	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
-	if want := []string{"command postmap /etc/postfix/virtual", "command postmap /etc/postfix/virtual", "access"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"command postmap /etc/postfix/virtual", "access", "command postmap /etc/postfix/virtual", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if got := h.ThenOf("web1"); len(got) != 0 {
@@ -977,7 +977,7 @@ func TestStageHandlerStaysPending(t *testing.T) {
 	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
 		t.Fatal(errOut.String())
 	}
-	if want := []string{"cmd other-reload", "cmd other-reload", "access"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"cmd other-reload", "access", "cmd other-reload", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	if got := h.PendingOf("web1"); len(got) != 0 {
@@ -1018,7 +1018,7 @@ func TestStageHandlerStep(t *testing.T) {
 	if ok, got := applyAll(t, p, h); ok {
 		t.Fatalf("apply succeeded with a failing then:\n%s", got)
 	}
-	if want := []string{"cmd reload WEB1", "command reindex"}; !slices.Equal(h.Log["web1"], want) {
+	if want := []string{"cmd reload WEB1", "command reindex", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
 	th := h.ThenOf("web1")

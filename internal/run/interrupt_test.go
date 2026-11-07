@@ -67,6 +67,9 @@ func TestApplyInterrupted(t *testing.T) {
 	if _, ok := h.File("web1", "/etc/b"); ok {
 		t.Error("a new step started after the interrupt")
 	}
+	if slices.Contains(h.Log["web1"], "access") {
+		t.Errorf("the access check after the run ran after the interrupt: %q", h.Log["web1"])
+	}
 	if _, ok := h.File("web2", "/etc/a"); ok || h.Connects["web2"] != 1 {
 		t.Errorf("a new host started after the interrupt: %d connects of web2, want 1 of the plan", h.Connects["web2"])
 	}
