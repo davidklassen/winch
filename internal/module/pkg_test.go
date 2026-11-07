@@ -318,6 +318,16 @@ func TestProvidedNameWaitsForTheRefresh(t *testing.T) {
 	}
 }
 
+// spec: Modules/pkg
+func TestUnknownToApt(t *testing.T) {
+	fresh := "Package: winch-signed\nVersions: \n1.0 (/var/lib/winch/apt/lists/example.org_dists_stable_main_binary-amd64_Packages)\n\n"
+	providers, foreign, known := parseShowpkg(fresh)
+	err := unknownToApt([]string{"winch-signed", "winch-typo"}, providers, foreign, known)
+	if want := "apt does not know winch-typo; check the name, or add its source with a repo step"; err == nil || err.Error() != want {
+		t.Errorf("unknownToApt = %v, want %q", err, want)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection
 func TestCutsOff(t *testing.T) {
 	a := accounts{users: []passwdEntry{

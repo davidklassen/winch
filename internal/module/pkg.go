@@ -179,11 +179,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 	if p.Absent || st.Sources {
 		errs := []error{providedOnly(missing, providers)}
 		if !p.Absent {
-			for _, n := range missing {
-				if !known[n] && foreign[n] == "" && len(providers[n]) == 0 {
-					errs = append(errs, fmt.Errorf("apt does not know %s; check the name and the repo step that adds it", n))
-				}
-			}
+			errs = append(errs, unknownToApt(missing, providers, foreign, known))
 		}
 		if err := errors.Join(errs...); err != nil {
 			return Result{}, err
@@ -321,6 +317,16 @@ func providedOnly(names []string, providers map[string][]string) error {
 			errs = append(errs, fmt.Errorf("%s is provided by %s; name that package", n, ps[0]))
 		default:
 			errs = append(errs, fmt.Errorf("%s is provided by %s; name one of them", n, strings.Join(ps, ", ")))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func unknownToApt(names []string, providers map[string][]string, foreign map[string]string, known map[string]bool) error {
+	var errs []error
+	for _, n := range names {
+		if !known[n] && foreign[n] == "" && len(providers[n]) == 0 {
+			errs = append(errs, fmt.Errorf("apt does not know %s; check the name, or add its source with a repo step", n))
 		}
 	}
 	return errors.Join(errs...)

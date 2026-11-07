@@ -432,7 +432,7 @@ func TestPlanAfterRepo(t *testing.T) {
 		vm.MustRun(t, reset)
 		before := vm.MustRun(t, apt)
 		r := lab.Winch(t, project(repo("winch-signed", signedURL), "  - pkg:\n      name: [winch-signed, winch-typo]\n"), "apply", "site", "--yes")
-		if want := "apt does not know winch-typo; check the name and the repo step that adds it"; r.Code == 0 || !strings.Contains(r.Stderr, want) {
+		if want := "apt does not know winch-typo; check the name, or add its source with a repo step"; r.Code == 0 || !strings.Contains(r.Stderr, want) {
 			t.Errorf("apply: exit %d, stdout %q, stderr %q, want an error with %q", r.Code, r.Stdout, r.Stderr, want)
 		}
 		if after := vm.MustRun(t, apt); after != before {
