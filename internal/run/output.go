@@ -395,6 +395,9 @@ func writeStep(t *color.Text, indent string, p Planned) {
 	if u := c.UnlessCommand(); u != "" {
 		fmt.Fprintf(t, "%s    unless:%s\n", indent, command(u, indent+"      "))
 	}
+	if res.Stderr != "" {
+		fmt.Fprintf(t, "%s    stderr:%s\n", indent, lines(res.Stderr, indent+"      "))
+	}
 }
 
 func diffStyle(line string) color.Style {

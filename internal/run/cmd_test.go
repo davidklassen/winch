@@ -372,12 +372,13 @@ func TestPlanShowsUnless(t *testing.T) {
 `,
 	}
 	h := fakehost.New()
-	h.FailCommand("web1", "test -x /usr/local/bin/app")
+	h.FailCommandWith("web1", "test -x /usr/local/bin/app", "app is not installed\nsee /var/log/app.log")
 	h.FailCommand("web1", "app status\napp check\n")
 	plan := run.MakePlan(context.Background(), loadWeb1(t, files), h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
 	want := "    ~ cmd make install\n        unless: test -x /usr/local/bin/app\n" +
+		"        stderr:\n          app is not installed\n          see /var/log/app.log\n" +
 		"    ~ cmd app migrate\n        unless:\n          app status\n          app check\n\n" +
 		"1 host: 1 to change, 0 unchanged, 0 unknown\n"
 	if !strings.Contains(out.String(), want) {

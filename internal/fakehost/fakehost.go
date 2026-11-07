@@ -298,7 +298,8 @@ func (h *Hosts) ChecksOf(host string) []protocol.Check {
 func (h *Hosts) FailCommand(host, command string) { h.FailCommandWith(host, command, "") }
 
 // FailCommandWith makes command fail on host as FailCommand does. A health
-// gate with the command adds output to its error.
+// gate with the command adds output to its error; an unless gives it as its
+// stderr.
 func (h *Hosts) FailCommandWith(host, command, output string) {
 	h.failCmd[host+" "+command] = true
 	h.cmdOut[host+" "+command] = output
@@ -621,6 +622,9 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 				return module.Result{Status: module.OK}, nil
 			}
 			res.Status, res.Action = module.Change, module.Modify
+			if res.Missing == nil {
+				res.Stderr = c.hosts.cmdOut[c.host+" "+*m.Unless]
+			}
 		}
 		return res, nil
 	case *module.Assert:

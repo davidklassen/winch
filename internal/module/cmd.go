@@ -19,7 +19,7 @@ import (
 type Cmd struct {
 	Command string  `yaml:"command,required" json:"command" line:"shell script" doc:"Shell script. It runs through sh -e as root, in /, with stdin from /dev/null. A script of several lines stops at its first failed line. Without creates or unless, the check result is unknown."`
 	Creates string  `yaml:"creates" json:"creates,omitempty" line:"path that marks the work as done" doc:"Path that marks the work as done. The step is ok when the path exists. When the command exits 0 and the path is still missing, the step fails. The path has no glob characters. A step has at most one of creates and unless."`
-	Unless  *string `yaml:"unless" json:"unless,omitempty" line:"check command as user, in dir; exit 0 skips the step" doc:"Check command; exit 0 skips the step. It runs at the check as user, with the user's home as HOME, in dir, with the timeout of the step. A dir that does not exist yet checks as change. A step has at most one of creates and unless."`
+	Unless  *string `yaml:"unless" json:"unless,omitempty" line:"check command as user, in dir; exit 0 skips the step" doc:"Check command; exit 0 skips the step. It runs at the check as user, with the user's home as HOME, in dir, with the timeout of the step. A dir that does not exist yet checks as change. When it fails and writes to stderr, the plan shows its last 3 lines. A step has at most one of creates and unless."`
 	User    string  `yaml:"user" json:"user,omitempty" line:"account that runs command and unless" doc:"Account that runs command and unless. Its home is HOME. The step starts no login session: PAM does not run, so the login umask and limits of the account do not apply, and the umask is 022." default:"root"`
 	Dir     string  `yaml:"dir" json:"dir,omitempty" line:"working directory, also for unless" doc:"Working directory, also for unless." default:"/"`
 	Timeout *int    `yaml:"timeout" json:"timeout,omitempty" line:"limit in seconds, also for unless" doc:"Limit in seconds, also for unless. After it, winch stops the command and the step fails." default:"600"`
@@ -106,12 +106,17 @@ func (c *Cmd) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	if res.Missing != nil {
 		return res, nil
 	}
-	err = c.shell(ctx, *c.Unless, as)
+	stderr := &tailBuffer{max: outputLimit + 1}
+	err = c.shell(ctx, *c.Unless, as, stderr)
 	switch {
 	case err == nil:
 		return Result{Status: OK}, nil
 	case !errors.As(err, new(*exec.ExitError)):
 		return Result{}, fmt.Errorf("unless: %w", err)
+	}
+	if out := shownOutput(string(stderr.tail())); out != "" {
+		lines := strings.Split(out, "\n")
+		res.Stderr = strings.Join(lines[max(0, len(lines)-3):], "\n")
 	}
 	return res, nil
 }
@@ -124,7 +129,7 @@ func (c *Cmd) Apply(ctx context.Context, _ Say) error {
 	if !ok {
 		return fmt.Errorf("user %s does not exist; no earlier user step creates it", c.User)
 	}
-	if err := c.shell(ctx, c.Command, as); err != nil || c.Creates == "" {
+	if err := c.shell(ctx, c.Command, as, nil); err != nil || c.Creates == "" {
 		return err
 	}
 	_, err = os.Lstat(c.Creates)
@@ -157,8 +162,8 @@ func (c *Cmd) runAs() (as *runAs, ok bool, err error) {
 	return &runAs{user: u, groups: groups}, true, nil
 }
 
-func (c *Cmd) shell(ctx context.Context, command string, as *runAs) error {
-	err := shellLimit(ctx, command, cmp.Or(c.Dir, "/"), nil, as, c.limit(), KillDelay, "timeout")
+func (c *Cmd) shell(ctx context.Context, command string, as *runAs, stderr *tailBuffer) error {
+	err := shellLimit(ctx, command, cmp.Or(c.Dir, "/"), nil, as, c.limit(), KillDelay, "timeout", stderr)
 	// exec names sh, not the directory, when the user cannot enter it.
 	if pe, ok := errors.AsType[*fs.PathError](err); ok && pe.Op == "fork/exec" && c.Dir != "" {
 		return fmt.Errorf("dir %s: %w", c.Dir, pe.Err)

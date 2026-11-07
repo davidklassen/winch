@@ -111,8 +111,9 @@ func (plan *Plan) stepHash(p Planned) hashStep {
 	}
 	if p.Step.Args != nil && p.Result.Status != "" {
 		r := hashResult{Result: p.Result}
-		// SourceSHA256 covers the new text.
-		r.Result.Old, r.New, r.Masked = nil, nil, nil
+		// SourceSHA256 covers the new text. The stderr of a check can change
+		// from run to run, such as a time in it, while apply does the same.
+		r.Result.Old, r.New, r.Masked, r.Stderr = nil, nil, nil, ""
 		if p.Result.Old != nil {
 			r.Old = sum(*p.Result.Old)
 		}

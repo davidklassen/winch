@@ -82,6 +82,7 @@ func TestDocCmdUnless(t *testing.T) {
 		{"cmd", "check command as user, in dir"},
 		{"cmd.unless", "as user, with the user's home as HOME, in dir"},
 		{"cmd.unless", "A dir that does not exist yet checks as change."},
+		{"cmd.unless", "When it fails and writes to stderr, the plan shows its last 3 lines."},
 		{"remote", "A cmd with dir runs in that directory, and so does its unless."},
 	}
 	for _, tt := range tests {

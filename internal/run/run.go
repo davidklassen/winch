@@ -1919,6 +1919,7 @@ func maskResult(st project.Step, parts []string, res *module.Result) {
 	}
 	res.Changes = changes
 	res.Link = st.HostText(res.Link, parts)
+	res.Stderr = st.HostText(res.Stderr, parts)
 }
 
 // hide returns text from the host with each secret part of the evaluated
