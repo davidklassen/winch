@@ -558,6 +558,7 @@ var secretsTopic = doc.Topic{
 		doc.Paragraph(`A new member runs winch secret init and sends the change for review. The new key can read the secrets after a member who can read them runs winch secret rekey.`),
 		doc.Heading("Output"),
 		doc.Paragraph(`A variable is secret when its value is a !secret, or when its default reads a secret variable. The plan, diffs, errors, logs, and JSON show (secret) in place of a secret, also a part of a value that comes from a secret. A filter replaces each secret value in all text that winch prints, also in output from the host. The filter also hides private keys, age keys, passwords in URLs, and well-known tokens.`),
+		doc.Paragraph(`When apply runs a step whose content reads a secret, winch keeps a record of the file on the host. The record shows (secret) in place of each secret. A removed line that fits a line of the record shows as that line. When the file has a record, or its new content reads a secret, the diff hides every other removed line: (line hidden: may hold a secret). winch did not write such a line, or has no record of the file yet. So it cannot tell if the line holds a secret. A plain line step shows the old line that it changes, unless that line fits a line of the record.`),
 		doc.Heading("Secrets in commands"),
 		doc.Paragraph(`A secret in a command does not show in the process list of the host. A program that the command starts with the secret as an argument, such as psql -c, does show it.`),
 		doc.Heading("Warnings and errors"),
