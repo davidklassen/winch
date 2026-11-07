@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -882,6 +883,72 @@ func TestSecretOfOtherHost(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// spec: Variables/Secrets in output (three evaluations)
+func TestSecretOfWholeHost(t *testing.T) {
+	const setStep = "  - cmd:\n      command: !tpl \"echo /srv/{{ .vars.app_set }}/x\"\n"
+	const peers = `app_peers: !expr 'match("db")'`
+	tests := []struct {
+		name, stepVars, defaults, step string
+		// secret is in the output when db1 has the secret, and leak is not;
+		// plain is in the output when db1 has the value as plain text.
+		secret, leak, plain string
+	}{
+		{"json of hosts", `app_set: !expr 'json(hosts) contains "hunter2"'`, "", setStep, "/srv/(secret)/x", "/srv/true/x", ""},
+		{"json of a host of match", `app_set: !expr 'json(match("db1")[0]) contains "hunter2"'`, "", setStep, "/srv/(secret)/x", "/srv/true/x", "/srv/true/x"},
+		{"a read by name", `app_set: !expr 'match("db1")[0].vars.pw contains "hunter2"'`, "", setStep, "/srv/(secret)/x", "/srv/true/x", ""},
+		{"a variable that holds hosts", peers, "", "  - cmd:\n      command: !expr '\"echo /srv/\" + upper(replace(json(vars.app_peers[0]), `\"`, \"\"))'\n", "PW:(secret)}", "HUNTER2", "PW:HUNTER2}"},
+		{"names from a variable that holds hosts", peers, "  app_names: !expr 'join(map(vars.app_peers, .name), \"-\")'\n", "  - cmd:\n      command: !tpl \"echo /srv/{{ .vars.app_names }}/y\"\n", "/srv/db1/y", "", "/srv/db1/y"},
+		{"json of a loop item", "", "", "  - cmd:\n      command: !expr '\"echo /srv/\" + upper(replace(json(item), `\"`, \"\"))'\n    loop: !expr 'match(\"db\")'\n", "PW:(secret)}", "HUNTER2", "PW:HUNTER2}"},
+	}
+	for _, tt := range tests {
+		for _, secretOnDB := range []bool{true, false} {
+			if !secretOnDB && tt.plain == "" {
+				continue
+			}
+			t.Run(fmt.Sprintf("%s/secret %v", tt.name, secretOnDB), func(t *testing.T) {
+				identity, recipient := ageKey(t)
+				// Without the secret on db1, the project keeps a secret on web1,
+				// which the reads of db1 do not reach.
+				value, web, want, leak := "hunter2", "pw: plain-pw", tt.secret, tt.leak
+				if !secretOnDB {
+					value, web, want, leak = "kwzqxjqz", "", tt.plain, ""
+				}
+				text, err := secret.Encrypt(value, []age.Recipient{recipient})
+				if err != nil {
+					t.Fatal(err)
+				}
+				db := "pw: !secret " + text
+				if !secretOnDB {
+					web, db = db, "pw: hunter2"
+				}
+				dir := vmtest.WriteProject(t, map[string]string{
+					"winch.yaml":              "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\nvars:\n  pw: \"\"\n",
+					"inventories/test.yaml":   "hosts:\n  web1:\n    vars:\n      " + web + "\n  db1:\n    vars:\n      " + db + "\ngroups:\n  db:\n    hosts: [db1]\n",
+					"pipelines/site.yaml":     "stages:\n  - name: s\n    hosts: web1\n    steps:\n      - recipe: app\n        vars:\n          app_name: x\n          " + tt.stepVars + "\n",
+					"recipes/app/recipe.yaml": "vars:\n  app_name: x\n  app_set: x\n  app_peers: []\n" + tt.defaults + "steps:\n" + tt.step,
+				})
+				filter := secret.NewFilter()
+				p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: filter})
+				if err != nil {
+					t.Fatal(err)
+				}
+				plan := run.MakePlan(t.Context(), p, fakehost.New().Connector(), run.Options{})
+				var out, errOut, events bytes.Buffer
+				plan.Write(color.NewWriter(&out, filter.Parts, false), color.NewWriter(&errOut, filter.Parts, false))
+				plan.WriteJSON(run.NewEvents(color.NewWriter(&events, filter.Parts, false), func() time.Time { return time.Time{} }))
+				if errOut.Len() > 0 {
+					t.Fatalf("errors: %s", errOut.String())
+				}
+				for _, got := range []string{out.String(), events.String()} {
+					if !strings.Contains(got, want) || leak != "" && strings.Contains(got, leak) {
+						t.Errorf("output = %q, want %q and no %q", got, want, leak)
+					}
+				}
+			})
+		}
 	}
 }
 
