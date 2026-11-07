@@ -50,7 +50,7 @@ func (p *Plan) sshdWarnings() []*yamlx.Error {
 			}
 			for _, s := range hp.Steps {
 				if s.Handler == nil {
-					if s.Result.Status == module.Change && slices.ContainsFunc(module.Touches(s.Step.Args), func(t module.Touch) bool { return module.SSHDConfig(t.Path) }) && !slices.Contains(s.Result.Changes, module.SSHSocketRestart) {
+					if (s.Result.Status == module.Change || s.Result.Status == module.Unknown) && slices.ContainsFunc(module.Touches(s.Step.Args), func(t module.Touch) bool { return module.SSHDConfig(t.Path) }) && !slices.Contains(s.Result.Changes, module.SSHSocketRestart) {
 						pending = append(pending, change{name, s.Step.Pos, stores(sp.Stage, s)})
 					}
 					load(name, s, ownStore(sp.Stage, s), s.ThenRuns)

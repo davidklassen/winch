@@ -480,3 +480,20 @@ func TestHashStageOrderDisjointHosts(t *testing.T) {
 		t.Errorf("two swapped stages on disjoint hosts give one hash %s", a)
 	}
 }
+
+// spec: Running a pipeline/Plan; Modules/cmd
+func TestHashUnlessStderr(t *testing.T) {
+	files := map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: app start\n          unless: curl -fsS http://localhost:8080/health\n",
+	}
+	plan := func(stderr string) string {
+		h := fakehost.New()
+		h.FailCommandWith("web1", "curl -fsS http://localhost:8080/health", stderr)
+		return run.MakePlan(context.Background(), loadWeb1(t, files), h.Connector(), run.Options{}).Hash()
+	}
+	if a, b := plan("curl: (7) Failed to connect after 0 ms"), plan("curl: (7) Failed to connect after 1 ms"); a != b {
+		t.Errorf("the stderr of a failed unless changed the hash: %s and %s", a, b)
+	}
+}

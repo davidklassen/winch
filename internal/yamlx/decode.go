@@ -14,7 +14,8 @@ import (
 //
 // Field tags: `yaml:"name"`, `yaml:"name,required"`, and `yaml:",key"`. A
 // missing required key is "<noun> needs <key>", with the Noun() string of a
-// struct that has one. A
+// struct that has one, and ": " and the tag `missing:"..."` when the field has
+// one. A
 // slice of structs with a ",key" field decodes from a map: each key goes into
 // that field, in file order. A field `Pos Pos` gets the position of the
 // struct, or of its key in such a map. A field `XPos Pos` gets the position
@@ -251,7 +252,11 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 	}
 	for _, f := range fs {
 		if _, ok := seen[f.Name]; f.Required && !ok {
-			d.errorf(n.Pos, "", "%s %s", needs, f.Name)
+			msg := needs + " " + f.Name
+			if hint := v.Type().Field(f.Index).Tag.Get("missing"); hint != "" {
+				msg += ": " + hint
+			}
+			d.errorf(n.Pos, "", "%s", msg)
 		}
 	}
 	if len(d.errs) > before || d.deferred > deferred || d.unchecked {

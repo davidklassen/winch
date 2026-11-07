@@ -485,6 +485,9 @@ func qemuArgs(arch, mem, disk, dir string, httpPort int, online bool, forwards [
 		"-drive", "if=virtio,format=qcow2,file=" + disk,
 		"-netdev", netdev,
 		"-device", "virtio-net-pci,netdev=net0",
+		// The headers of each packet, so a lost connection in CI shows
+		// where the packets stopped.
+		"-object", "filter-dump,id=capture,netdev=net0,maxlen=128,file=" + filepath.Join(dir, "net.pcap"),
 		"-smbios", "type=1,serial=ds=nocloud;s=http://" + labAddr + "/seed/",
 		"-display", "none", "-monitor", "none",
 		"-serial", "file:" + filepath.Join(dir, "console.log"),

@@ -298,7 +298,8 @@ func (h *Hosts) ChecksOf(host string) []protocol.Check {
 func (h *Hosts) FailCommand(host, command string) { h.FailCommandWith(host, command, "") }
 
 // FailCommandWith makes command fail on host as FailCommand does. A health
-// gate with the command adds output to its error.
+// gate with the command adds output to its error; an unless gives it as its
+// stderr.
 func (h *Hosts) FailCommandWith(host, command, output string) {
 	h.failCmd[host+" "+command] = true
 	h.cmdOut[host+" "+command] = output
@@ -621,6 +622,12 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 				return module.Result{Status: module.OK}, nil
 			}
 			res.Status, res.Action = module.Change, module.Modify
+			if res.Missing == nil {
+				res.Stderr = c.hosts.cmdOut[c.host+" "+*m.Unless]
+			}
+		}
+		if line := module.Guard(module.Touches(m), nil); line != "" {
+			res.Guard, res.Changes = true, []string{line}
 		}
 		return res, nil
 	case *module.Assert:
@@ -891,7 +898,7 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 		}
 	}
 	c.hosts.mu.Unlock()
-	if err == nil && res.Status == module.Change && (guard.Confirm || res.Guard) {
+	if err == nil && (res.Status == module.Change || res.Status == module.Unknown) && (guard.Confirm || res.Guard) {
 		c.hosts.mu.Lock()
 		res.Timer = c.hosts.timer
 		c.hosts.mu.Unlock()
@@ -961,6 +968,10 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 		defer c.hosts.mu.Unlock()
 		c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "cmd "+cm.Command)
 		if c.hosts.failCmd[c.host+" "+cm.Command] {
+			if res.Guard {
+				res.Failed = cm.Command + ": exit status 1"
+				return res, nil
+			}
 			return module.Result{}, fmt.Errorf("%s: exit status 1", cm.Command)
 		}
 		return res, nil

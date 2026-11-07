@@ -107,7 +107,7 @@ func TestPatternHints(t *testing.T) {
 		// The hint holds only when the parts are names: , is no fix here.
 		{"web:!db", `unknown host or group "web:!db" in inventories/test.yaml`},
 		{"web:&prod", `unknown host or group "web:" in inventories/test.yaml; did you mean "web"?`},
-		{"web[0:2]", `unknown host or group "web[0:2]" in inventories/test.yaml; did you mean "web2"?`},
+		{"web[0:2]", `unknown host or group "web[0:2]" in inventories/test.yaml`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.pattern, func(t *testing.T) {

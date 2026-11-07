@@ -754,6 +754,51 @@ func TestParallelismRunningHostsFinish(t *testing.T) {
 	})
 }
 
+// spec: Running a pipeline/Failures ("Running hosts finish the stage")
+func TestParallelismFirstHostsStart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := manyProject(t, strings.Replace(motdStage, "    hosts: all\n", "    hosts: all\n    parallelism: 3\n", 1))
+		h := fakehost.New()
+		h.FailApply("web1 /etc/motd")
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: true})
+		h.OnConnect = func(host string) {
+			if host == "web2" {
+				synctest.Wait()
+			}
+		}
+		var out, errOut bytes.Buffer
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+		if o.Failed["web1"] == nil {
+			t.Fatal("web1 did not fail")
+		}
+		for _, host := range []string{"web2", "web3"} {
+			if _, ok := h.File(host, "/etc/motd"); !ok || o.Failed[host] != nil {
+				t.Errorf("%s did not finish the stage: %v", host, o.Failed[host])
+			}
+		}
+	})
+}
+
+// spec: Running a pipeline/Failures ("Running hosts finish the stage")
+func TestParallelismUnreachableFirstHost(t *testing.T) {
+	for name, serial := range map[string]bool{"batch": false, "serial": true} {
+		t.Run(name, func(t *testing.T) {
+			p := manyProject(t, strings.Replace(motdStage, "    hosts: all\n", "    hosts: all\n    parallelism: 2\n", 1))
+			h := fakehost.New()
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Serial: serial})
+			h.SetUnreachable("web1")
+			var out, errOut bytes.Buffer
+			o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+			if _, ok := h.File("web2", "/etc/motd"); !ok || o.Failed["web2"] != nil {
+				t.Errorf("web2 did not finish the stage: %v", o.Failed["web2"])
+			}
+			if err := o.Failed["web3"]; err == nil || err.Error() != "not started: web1 failed in stage base" {
+				t.Errorf("web3: error %v", err)
+			}
+		})
+	}
+}
+
 // spec: Running a pipeline/Failures ("Without parallelism, other hosts continue")
 func TestSerialFailureContinues(t *testing.T) {
 	p := manyProject(t, motdStage)

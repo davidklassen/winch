@@ -33,7 +33,7 @@ func (a *Assert) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 
 func (a *Assert) Apply(ctx context.Context, _ Say) error {
 	out := &tailBuffer{max: outputLimit + 1}
-	if err := shell(ctx, "-ec", a.Command, "/", nil, nil, commandLimit, "", KillDelay, out); err != nil {
+	if err := shell(ctx, "-ec", a.Command, "/", nil, nil, commandLimit, "", KillDelay, out, out); err != nil {
 		return failure(a.Message, err, string(out.tail()))
 	}
 	return nil

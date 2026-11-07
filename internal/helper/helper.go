@@ -469,7 +469,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		s.State.Packages = nil
 	}
 	var socket bool
-	if err == nil && res.Status == module.Change {
+	if err == nil && (res.Status == module.Change || res.Status == module.Unknown) {
 		touches := module.Touches(m)
 		if line := module.Guard(touches, loginUser); line != "" {
 			res.Guard = true
@@ -590,6 +590,15 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		err = errors.Join(err, recordErr)
 	}
 	if err != nil {
+		// A failed command can have changed the paths in part. The access
+		// check decides whether they go back.
+		if _, isCmd := m.(*module.Cmd); isCmd && guard {
+			if errors.Join(handlers.remove(notified...), thens.remove(thenLines...)) == nil {
+				out.Timer, out.Failed = time.Until(deadline), err.Error()
+				rb.running = &guarded{}
+				return out, nil
+			}
+		}
 		if guard {
 			if rerr := rb.rollback(ctx); rerr != nil {
 				return out, fmt.Errorf("%w; the rollback failed: %w", err, rerr)

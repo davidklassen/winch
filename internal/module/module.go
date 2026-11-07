@@ -68,6 +68,9 @@ type Result struct {
 	// the group of a step that sets them, as "user <name>", "group <name>",
 	// or "dir <path>", that do not exist on the host.
 	Missing []string `json:"missing,omitempty"`
+	// Stderr is the last 3 lines that a failed unless of a cmd wrote to
+	// stderr.
+	Stderr string `json:"stderr,omitempty"`
 	// MissingTools are the programs and files that the step needs and the
 	// host lacks.
 	MissingTools []Tool `json:"missing_tools,omitempty"`
@@ -81,6 +84,9 @@ type Result struct {
 	// Timer is set by an apply that started the rollback timer: the time
 	// that the timer has left.
 	Timer time.Duration `json:"timer,omitempty"`
+	// Failed is the error of a guarded cmd whose command failed. The timer
+	// runs on, so that the access check decides whether the paths go back.
+	Failed string `json:"failed,omitempty"`
 	// SourceSHA256 is the hash of the content that copy_from or stock
 	// reads on the host, so the plan hash covers it.
 	SourceSHA256 string `json:"source_sha256,omitempty"`

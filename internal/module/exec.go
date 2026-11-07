@@ -83,11 +83,13 @@ func FirstLine(s string) string {
 const outputLimit = 64 << 10
 
 func failure(what string, err error, out string) error {
-	out = shownOutput(out)
-	if out == "" {
-		return fmt.Errorf("%s: %w", what, err)
+	if out = shownOutput(out); out != "" {
+		err = fmt.Errorf("%w: %s", err, out)
 	}
-	return fmt.Errorf("%s: %w: %s", what, err, out)
+	if what == "" {
+		return err
+	}
+	return fmt.Errorf("%s: %w", what, err)
 }
 
 // shownOutput is the end of out that an error shows.
@@ -105,15 +107,20 @@ func shownOutput(out string) string {
 }
 
 // Shell runs a command of the project through sh -ec, in / and with stdin
-// from /dev/null. On a failure, the error holds the output.
+// from /dev/null. On a failure, the error holds the first line of the command
+// and the output.
 func Shell(ctx context.Context, command string) error {
-	return ShellLimit(ctx, command, commandLimit, KillDelay)
+	if err := ShellLimit(ctx, command, commandLimit, KillDelay); err != nil {
+		return fmt.Errorf("%s: %w", FirstLine(command), err)
+	}
+	return nil
 }
 
-// ShellLimit is Shell with the time limit limit. After the limit, the command
-// gets SIGTERM, and SIGKILL when it still runs after killDelay.
+// ShellLimit is Shell with the time limit limit, and without the command in
+// the error. After the limit, the command gets SIGTERM, and SIGKILL when it
+// still runs after killDelay.
 func ShellLimit(ctx context.Context, command string, limit, killDelay time.Duration) error {
-	return shellLimit(ctx, command, "/", nil, nil, limit, killDelay, "")
+	return shellLimit(ctx, command, "/", nil, nil, limit, killDelay, "", nil)
 }
 
 // runAs is the user that a command runs as, with the IDs of its groups.
@@ -124,22 +131,32 @@ type runAs struct {
 
 // shellLimit is ShellLimit in dir, with env, and as the user as when it is
 // not nil. A key that is not empty is the key of the step that sets limit.
-func shellLimit(ctx context.Context, command, dir string, env []string, as *runAs, limit, killDelay time.Duration, key string) error {
+// With stderr, the command's stderr goes there, and an error shows it after
+// stdout.
+func shellLimit(ctx context.Context, command, dir string, env []string, as *runAs, limit, killDelay time.Duration, key string, stderr *tailBuffer) error {
 	out := &tailBuffer{max: outputLimit + 1}
-	if err := shell(ctx, "-ec", command, dir, env, as, limit, key, killDelay, out); err != nil {
-		return failure(FirstLine(command), err, string(out.tail()))
+	var errOut io.Writer = out
+	if stderr != nil {
+		errOut = stderr
+	}
+	if err := shell(ctx, "-ec", command, dir, env, as, limit, key, killDelay, out, errOut); err != nil {
+		shown := string(out.tail())
+		if stderr != nil {
+			shown += string(stderr.tail())
+		}
+		return failure("", err, shown)
 	}
 	return nil
 }
 
 // shell runs command in dir, with env added to the environment, and with its
-// output in out. With as, it runs as that user, with the user's HOME, USER,
-// and LOGNAME.
+// output in stdout and stderr. With as, it runs as that user, with the user's
+// HOME, USER, and LOGNAME.
 //
 // sh reads the command from a pipe on fd 3, as every local user can read
 // the arguments of a process. A script file does not work for a user other
 // than root: the file would have to be readable by that user.
-func shell(ctx context.Context, options, command, dir string, env []string, as *runAs, limit time.Duration, key string, killDelay time.Duration, out *tailBuffer) error {
+func shell(ctx context.Context, options, command, dir string, env []string, as *runAs, limit time.Duration, key string, killDelay time.Duration, stdout, stderr io.Writer) error {
 	stop := noResult(limit)
 	if key != "" {
 		stop = fmt.Errorf("%w; set %s for a longer limit", stop, key)
@@ -160,7 +177,7 @@ func shell(ctx context.Context, options, command, dir string, env []string, as *
 	cmd := exec.CommandContext(ctx, "sh", options, `eval "$(cat <&3)" 3<&-`)
 	cmd.ExtraFiles = []*os.File{r}
 	cmd.Dir = dir
-	cmd.Stdout, cmd.Stderr = out, out
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.Env = append(cmd.Environ(), env...)
 	if as != nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: as.user.uid, Gid: as.user.gid, Groups: as.groups}}
@@ -251,14 +268,15 @@ func Exec(ctx context.Context, command string, limit time.Duration) (ExecResult,
 func execLimit(ctx context.Context, command string, limit, killDelay time.Duration) (ExecResult, error) {
 	const shown = 1 << 20
 	out := &tailBuffer{max: shown + 1}
-	err := shell(ctx, "-c", command, "/", nil, nil, limit, "--timeout", killDelay, out)
+	err := shell(ctx, "-c", command, "/", []string{"NO_COLOR=1"}, nil, limit, "--timeout", killDelay, out, out)
 	tail := string(out.tail())
 	if err != nil && !errors.As(err, new(*exec.ExitError)) {
 		return ExecResult{}, failure(command, err, tail)
 	}
 	res := ExecResult{Output: tail}
 	if len(tail) > shown {
-		res.Output = "(output cut to the last 1 MiB)\n" + tail[len(tail)-shown:]
+		_, kept, _ := strings.Cut(tail, "\n")
+		res.Output = "(output cut to the last 1 MiB)\n" + kept
 	}
 	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		res.ExitCode = exit.ExitCode()

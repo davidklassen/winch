@@ -1,1 +1,1 @@
-pipelines/site.yaml:6:11: a reboot step needs if_required
+pipelines/site.yaml:6:11: a reboot step needs if_required: true reboots when a reboot is pending, false always reboots

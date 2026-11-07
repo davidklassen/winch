@@ -56,7 +56,11 @@ func Touches(m Module) []Touch {
 		}
 		return out
 	case *Cmd:
-		return nil
+		var out []Touch
+		for _, p := range m.Changes {
+			out = append(out, Touch{p, true})
+		}
+		return out
 	case *Unit:
 		out := []Touch{{m.Path(), true}}
 		for _, l := range m.links {
@@ -101,7 +105,7 @@ func (l *Login) Name() string { return l.entry.name }
 // rules to guard.
 func Guard(touches []Touch, login *Login) string {
 	for _, t := range touches {
-		if t.Path == pamDir || strings.HasPrefix(t.Path, pamDir+"/") {
+		if pamPath(t.Path) {
 			return "changes the PAM rules, which every login reads"
 		}
 	}
@@ -119,7 +123,7 @@ func Guard(touches []Touch, login *Login) string {
 		return ""
 	}
 	for _, t := range touches {
-		if t.Path == "/etc/sudoers" || t.Path == sudoersDir || strings.HasPrefix(t.Path, sudoersDir+"/") {
+		if sudoersPath(t.Path) {
 			return "changes the sudo rules, which the login user " + u.name + " needs"
 		}
 	}
@@ -130,6 +134,12 @@ const (
 	sudoersDir = "/etc/sudoers.d"
 	pamDir     = "/etc/pam.d"
 )
+
+func pamPath(p string) bool { return p == pamDir || strings.HasPrefix(p, pamDir+"/") }
+
+func sudoersPath(p string) bool {
+	return p == "/etc/sudoers" || p == sudoersDir || strings.HasPrefix(p, sudoersDir+"/")
+}
 
 // Saved is the state of a path before a step changed it. A restore removes a
 // Missing path, puts back the owner, group, and mode of a Dir, or replaces

@@ -564,7 +564,8 @@ echo '{"QMP": {}}'; expect qmp_capabilities; echo '{"return": {}}'; expect 'info
 				t.Errorf("qemu-img arguments %q, want the size 16G last", img)
 			}
 			args, _ := os.ReadFile(filepath.Join(dir, "bin", "qemu-system-x86_64.args"))
-			for _, w := range []string{"\n-qmp\nstdio\n", "hostfwd=tcp:127.0.0.1:0-:22,", "hostfwd=tcp:127.0.0.1:0-:2222,", "hostfwd=udp:127.0.0.1:0-:1194,", "\n-m\n2G\n"} {
+			capture := "\n-object\nfilter-dump,id=capture,netdev=net0,maxlen=128,file=" + filepath.Join(dir, "vms", "demo", "net.pcap") + "\n"
+			for _, w := range []string{"\n-qmp\nstdio\n", "hostfwd=tcp:127.0.0.1:0-:22,", "hostfwd=tcp:127.0.0.1:0-:2222,", "hostfwd=udp:127.0.0.1:0-:1194,", "\n-m\n2G\n", capture} {
 				if !bytes.Contains(args, []byte(w)) {
 					t.Errorf("QEMU arguments %q, want %q in them", args, w)
 				}

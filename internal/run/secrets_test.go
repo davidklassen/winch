@@ -445,7 +445,7 @@ func TestSecretCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := fakehost.New()
-	h.FailCommand("web1", "app ping --token new-token")
+	h.FailCommandWith("web1", "app ping --token new-token", "token new-token is not valid")
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -453,7 +453,7 @@ func TestSecretCommands(t *testing.T) {
 	for _, want := range []string{
 		"    ? cmd\n        true\n        notify --token (secret)\n",
 		"        validate:\n          true\n          app check --token (secret)\n",
-		"    ~ cmd app login\n        unless: app ping --token (secret)\n",
+		"    ~ cmd app login\n        unless: app ping --token (secret)\n        stderr:\n          token (secret) is not valid\n",
 		`"step":"cmd true\nnotify --token (secret)"`,
 		`"validate":"true\napp check --token (secret)"`,
 		`"unless":"app ping --token (secret)"`,
@@ -836,6 +836,52 @@ func TestSecretBranchValue(t *testing.T) {
 	plan.Write(color.NewWriter(&out, filter.Parts, false), color.NewWriter(&errOut, filter.Parts, false))
 	if all := out.String() + errOut.String(); !strings.Contains(all, "    + dir /srv/(secret)\n") || !strings.Contains(all, "    + file /srv/data/plain.txt\n") {
 		t.Errorf("output = %q, want the masked branch value and the plain path of the second step", all)
+	}
+}
+
+// spec: Variables/Secrets; Templates and expressions/Data
+func TestSecretOfOtherHost(t *testing.T) {
+	tests := []struct {
+		name, vars, stepVars string
+		secret               bool
+	}{
+		{"an expression default", `  app_set: !expr 'match("db1")[0].vars.pw != ""'` + "\n", "", true},
+		{"a template default", `  app_set: !tpl '{{ range .hosts }}{{ if eq .name "db1" }}{{ ne .vars.pw "" }}{{ end }}{{ end }}'` + "\n", "", true},
+		{"a secret default of the other host", "  app_pw_set: !expr 'vars.pw != \"\"'\n  app_set: !expr 'match(\"db1\")[0].vars.app_pw_set != nil'\n", "", true},
+		{"a value of a recipe step", "  app_set: x\n", "        vars:\n          app_set: !expr 'match(\"db1\")[0].vars.pw != \"\"'\n", true},
+		{"a plain variable", "  app_name: x\n  app_set: !expr 'match(\"db1\")[0].vars.app_name != \"\"'\n", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			identity, recipient := ageKey(t)
+			text, err := secret.Encrypt("hunter2", []age.Recipient{recipient})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := vmtest.WriteProject(t, map[string]string{
+				"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
+				"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: plain-pw\n  db1:\n    vars:\n      pw: !secret " + text + "\n",
+				"pipelines/site.yaml":   "stages:\n  - name: s\n    hosts: web1\n    steps:\n      - recipe: app\n" + tt.stepVars,
+				"recipes/app/recipe.yaml": "vars:\n" + tt.vars + "steps:\n  - dir:\n      path: !tpl \"/srv/{{ .vars.app_set }}\"\n" +
+					"  - dir:\n      path: /srv/pw\n    when: !expr 'vars.pw != \"\"'\n",
+			})
+			filter := secret.NewFilter()
+			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: filter})
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := fakehost.New()
+			h.RemoveDir("web1", "/srv/true")
+			plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+			var out, errOut, events bytes.Buffer
+			plan.Write(color.NewWriter(&out, filter.Parts, false), color.NewWriter(&errOut, filter.Parts, false))
+			plan.WriteJSON(run.NewEvents(color.NewWriter(&events, filter.Parts, false), func() time.Time { return time.Time{} }))
+			for _, got := range []string{out.String(), events.String()} {
+				if strings.Contains(got, "/srv/(secret)") != tt.secret || strings.Contains(got, "/srv/true") == tt.secret {
+					t.Errorf("output = %q, want the path secret: %v%s", got, tt.secret, errOut.String())
+				}
+			}
+		})
 	}
 }
 
