@@ -81,7 +81,7 @@ func TestRebootRequiredFact(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, required := range []bool{false, true} {
-		env, err := p.Start(p.Inventory.Hosts[0], facts.Facts{OS: facts.OS{ID: "debian"}, RebootRequired: required})
+		env, err := p.Start(p.Inventory.Hosts[0], facts.Facts{OS: facts.OS{ID: "debian"}, RebootRequired: required}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

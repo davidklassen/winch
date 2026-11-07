@@ -1027,7 +1027,7 @@ func TestRender(t *testing.T) {
 					continue
 				}
 				got := ""
-				env, err := p.Start(h, debian13)
+				env, err := p.Start(h, debian13, onDebian13(p))
 				if err != nil {
 					t.Fatal(err)
 				}

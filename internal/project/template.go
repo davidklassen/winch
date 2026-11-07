@@ -14,23 +14,30 @@ import (
 	tparse "text/template/parse"
 	"unicode"
 
+	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
 // funcs replaces the built-in index, which gives the zero value for a missing
-// map key.
-var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": title, "quote": quote, "sqlquote": sqlquote, "json": toJSON, "get": get}
+// map key. render replaces match with the match of the host.
+var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": title, "quote": quote, "sqlquote": sqlquote, "json": toJSON, "get": get,
+	"match": func(string) ([]any, error) { return nil, errors.New("match has no host") }}
 
 // tmplFile is a parsed template file of a recipe.
 type tmplFile struct {
 	t *template.Template
 	// item is true when the template reads .item.
 	item bool
-	// data is true when it reads a name other than item.
-	data  bool
-	reads []string
+	// data is true when it reads a name other than item, and hosts when it
+	// reads hosts.
+	data, hosts bool
+	reads       []string
 	// values are the variables whose values it reads.
 	values []string
+	// peerReads are the variables that it reads of a host from hosts or
+	// match().
+	peerReads []string
+	matches   []matchCall
 }
 
 // parseTemplate parses the template text of file and checks the names it
@@ -54,7 +61,7 @@ func parseTemplate(file string, text []byte, sc scope) (*tmplFile, error) {
 		return nil, err
 	}
 	failNull(t)
-	return &tmplFile{t: t, item: c.item, data: c.data, reads: c.reads, values: c.values}, nil
+	return c.file(t), nil
 }
 
 // parseInline parses the text of a !tpl value at pos.
@@ -74,7 +81,11 @@ func parseInline(pos yamlx.Pos, text string, sc scope) (*tmplFile, error) {
 		return nil, err
 	}
 	failNull(t)
-	return &tmplFile{t: t, item: c.item, data: c.data, reads: c.reads, values: c.values}, nil
+	return c.file(t), nil
+}
+
+func (c *nameCheck) file(t *template.Template) *tmplFile {
+	return &tmplFile{t: t, item: c.item, data: c.data, hosts: c.hosts, reads: c.reads, values: c.values, peerReads: c.peerReads, matches: c.matches}
 }
 
 // names is a level of the names that a template can read. A nil *names allows
@@ -88,23 +99,35 @@ type names struct {
 // takes any name.
 var templateNames = func() *names {
 	vars := &names{noun: "variable"}
-	fact := map[string]*names{}
-	for _, n := range osFields {
-		fact[n] = nil
-	}
-	host := map[string]*names{"vars": vars}
+	fact := factNames(reflect.TypeFor[facts.Facts]())
+	host := map[string]*names{"vars": vars, "facts": fact}
 	for _, n := range hostFields {
-		if n != "vars" {
+		if _, ok := host[n]; !ok {
 			host[n] = nil
 		}
 	}
 	return &names{noun: "name", sub: map[string]*names{
 		"vars":  vars,
-		"facts": {noun: "fact", sub: map[string]*names{"os": {noun: "fact", sub: fact}, "reboot_required": nil}},
+		"facts": fact,
 		"host":  {noun: "host field", sub: host},
+		"hosts": nil,
 		"item":  nil,
 	}}
 }()
+
+// factNames returns the names of the facts in the struct t.
+func factNames(t reflect.Type) *names {
+	n := &names{noun: "fact", sub: map[string]*names{}}
+	for i := range t.NumField() {
+		f := t.Field(i)
+		var sub *names
+		if f.Type.Kind() == reflect.Struct {
+			sub = factNames(f.Type)
+		}
+		n.sub[f.Tag.Get("expr")] = sub
+	}
+	return n
+}
 
 // nameCheck checks the names of each field that reads the data. at gives the
 // position of an offset in the text.
@@ -116,7 +139,11 @@ type nameCheck struct {
 	main  bool
 	item  bool
 	data  bool
+	hosts bool
 	reads []string
+	// peerReads are the variables that it reads of other hosts.
+	peerReads []string
+	matches   []matchCall
 	// values are the variables whose values it reads. A field of the
 	// elements of a variable x is the value "x.field". A range over only
 	// the keys of a map does not read its values.
@@ -126,9 +153,9 @@ type nameCheck struct {
 	// of the element, and fields are those fields.
 	elem   bool
 	fields []string
-	// byKey is true for the map of a get or index with a constant key: a
-	// read of a host's vars by name.
-	byKey bool
+	// byKey is the key while the check walks the map of a get or index with
+	// a constant key: a read of a host's vars by name.
+	byKey *tparse.StringNode
 }
 
 // check checks every template of t. main names the template of the text,
@@ -174,13 +201,19 @@ func (c *nameCheck) walk(n tparse.Node, top bool) {
 	case *tparse.CommandNode:
 		id, _ := n.Args[0].(*tparse.IdentifierNode)
 		lookup := id != nil && (id.Ident == "get" || id.Ident == "index")
-		byKey := false
+		var byKey *tparse.StringNode
 		if lookup && len(n.Args) > 2 {
-			_, byKey = n.Args[2].(*tparse.StringNode)
+			byKey, _ = n.Args[2].(*tparse.StringNode)
+		}
+		if id != nil && id.Ident == "match" {
+			c.match(n)
 		}
 		outer := c.byKey
 		for i, x := range n.Args {
-			c.byKey = byKey && i == 1
+			c.byKey = nil
+			if i == 1 {
+				c.byKey = byKey
+			}
 			c.walk(x, top)
 		}
 		c.byKey = outer
@@ -232,6 +265,23 @@ func (c *nameCheck) walk(n tparse.Node, top bool) {
 	}
 }
 
+// match logs the call of match n: the hosts that it can reach, and a
+// constant pattern for the check against the inventory.
+func (c *nameCheck) match(n *tparse.CommandNode) {
+	c.data = true
+	if len(n.Args) != 2 {
+		c.sc.reach.all = true
+		return
+	}
+	pattern, ok := n.Args[1].(*tparse.StringNode)
+	if !ok {
+		c.sc.reach.all = true
+		return
+	}
+	c.matches = append(c.matches, matchCall{pos: c.at(int(n.Pos)), pattern: pattern.Text})
+	c.sc.reach.patterns = append(c.sc.reach.patterns, pattern.Text)
+}
+
 func (c *nameCheck) notByName(off int) {
 	c.errs = append(c.errs, yamlx.Errorf(c.at(off), "%s", notByName))
 }
@@ -247,20 +297,30 @@ func (c *nameCheck) log(name string, off int) {
 func (c *nameCheck) peers(ident []string, off int) {
 	for i := 1; i < len(ident); i++ {
 		if ident[i-1] == "vars" {
+			c.peerReads = append(c.peerReads, ident[i])
 			c.log(ident[i], off)
 		}
 	}
-	if len(ident) > 0 && ident[len(ident)-1] == "vars" && !c.byKey {
-		c.notByName(off)
+	if len(ident) > 0 && ident[len(ident)-1] == "vars" {
+		if c.byKey == nil {
+			c.notByName(off)
+			return
+		}
+		c.peerReads = append(c.peerReads, c.byKey.Text)
+		c.log(c.byKey.Text, int(c.byKey.Pos))
 	}
 }
 
 // field checks the names of a field such as .host.vars.domain. dot is the
 // offset of its first dot, first the offset for an error in the first name.
 func (c *nameCheck) field(ident []string, dot, first int) {
-	if ident[0] == "item" {
+	switch ident[0] {
+	case "item":
 		c.item = true
-	} else {
+	case "hosts":
+		c.data, c.hosts = true, true
+		c.sc.reach.all = true
+	default:
 		c.data = true
 	}
 	level := c.top

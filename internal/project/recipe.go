@@ -229,7 +229,7 @@ func (l *loader) parseTemplates(r *Recipe) error {
 	}
 	defer root.Close()
 	var errs []error
-	sc := scope{reads: &l.reads}
+	sc := scope{reads: &l.reads, reach: &l.reach}
 	err = fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -267,7 +267,7 @@ func (l *loader) recipe(name string, pos yamlx.Pos) (*Recipe, error) {
 
 // content sets the data of a file step of r from content or source, or
 // returns its template. loops is true when the step has loop.
-func (r *Recipe) content(f *module.File, loops bool) (*template.Template, error) {
+func (r *Recipe) content(f *module.File, loops bool) (*tmplFile, error) {
 	switch {
 	case f.Content != nil:
 		f.Data = []byte(*f.Content)
@@ -291,7 +291,7 @@ func (r *Recipe) content(f *module.File, loops bool) (*template.Template, error)
 		case t.item && !loops:
 			return nil, yamlx.Errorf(f.TemplatePos, "template: %s reads .item; %s", f.Template, itemOutsideLoop)
 		}
-		return t.t, nil
+		return t, nil
 	}
 	return nil, nil
 }

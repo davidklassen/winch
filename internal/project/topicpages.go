@@ -312,7 +312,7 @@ var variablesTopic = doc.Topic{
 		),
 		doc.Paragraph(`Maps and lists do not merge.`),
 		doc.Heading("Defaults"),
-		doc.Paragraph(`A default is declared once: in vars of winch.yaml, or in vars of the recipe that owns it. A recipe's own defaults start with the recipe name and _. A default can be a !secret, a template, or an expression. It sees vars, host, and facts, but not match(). A cycle between defaults is an error.`),
+		doc.Paragraph(`A default is declared once: in vars of winch.yaml, or in vars of the recipe that owns it. A recipe's own defaults start with the recipe name and _. A default can be a !secret, a template, or an expression. It sees vars, facts, host, hosts, and match(). A cycle between defaults is an error. A default that reads vars.x of another host depends on x, so a cycle through other hosts is an error too.`),
 		doc.Heading("Variables without a default"),
 		doc.Paragraph(`A variable without a default needs no declaration. A read of it is enough, and the variable is required where it is read. A variable that may stay unset needs a default, such as relay_host: "".`),
 		doc.Heading("Names and reads"),
@@ -368,7 +368,8 @@ var templatesTopic = doc.Topic{
 		doc.Table([][]string{
 			{".vars", "the variables of the host, with the vars of the recipe step"},
 			{".facts", "the facts of the host; run winch doc facts"},
-			{".host", "name, short, address, groups, and vars of the host; address is the name when the host has no address"},
+			{".host", "name, short, address, groups, vars, and facts of the host; address is the name when the host has no address"},
+			{".hosts", "every host of the inventory, in inventory order, each with the fields of .host"},
 			{".item", "the current element in a step with loop"},
 		}),
 		doc.Paragraph(`Inside range, "." is the element. $.vars reads the variables.`),
@@ -381,7 +382,7 @@ var templatesTopic = doc.Topic{
 		doc.Heading("Quoting"),
 		doc.Paragraph(`A value goes into a command as it is. Quote a value that must stay one word with quote. Quote a YAML value that starts with a quote, [, {, &, *, or !, or that contains ": " or " #". A template that starts with {{ needs quotes.`),
 		doc.Heading("Other hosts"),
-		doc.Paragraph(`Templates have no match(). To list other hosts, give a recipe step a variable with an !expr that uses match(), and range over it in a template of the recipe.`),
+		doc.Paragraph(`match gives the hosts of .hosts that match a host pattern: {{ range match "backup" }}{{ .facts.ssh.ed25519 }}{{ end }}. .hosts and match read the inventory, not the --hosts selection. A host from them has all its variables, without the vars of a recipe step, and its facts. The plan reads the facts of each host that they can reach, also of a host outside --hosts. When winch cannot read them, each host that reads them fails.`),
 		doc.Heading("When they run"),
 		doc.Paragraph(`winch evaluates templates on the machine that runs winch, during the plan. They cannot read the result of a step. winch checks each one when it loads the project: an unknown name or a syntax error is an error. An error while winch evaluates one for a host fails that host. The other hosts go on.`),
 		doc.Example(`# winch.yaml
@@ -403,15 +404,9 @@ steps:
       path: /etc/app/admins.conf
       content: !tpl "admins ={{ range .vars.admins }} {{ . }}{{ end }}\n"
   - name: List the other hosts
-    recipe: peers
-    vars:
-      peers_hosts: !expr filter(match("all"), .name != host.name)
-recipes:
-  peers:
-    steps:
-      - file:
-          path: /etc/peers
-          content: !tpl "{{ range .vars.peers_hosts }}{{ .name }} {{ .address }}\n{{ end }}"
+    file:
+      path: /etc/peers
+      content: !tpl "{{ range match \"all\" }}{{ if ne .name $.host.name }}{{ .name }} {{ .facts.net.ipv4 }}\n{{ end }}{{ end }}"
 `),
 	},
 }
@@ -428,11 +423,12 @@ var expressionsTopic = doc.Topic{
 		doc.Table([][]string{
 			{"vars", "the variables of the host, with the vars of the recipe step"},
 			{"facts", "the facts of the host; run winch doc facts"},
-			{"host", "name, short, address, groups, and vars of the host; address is the name when the host has no address"},
+			{"host", "name, short, address, groups, vars, and facts of the host; address is the name when the host has no address"},
+			{"hosts", "every host of the inventory, in inventory order, each with the fields of host"},
 			{"item", "the current element in a step with loop"},
-			{"match(p)", "the hosts that match the host pattern p, with the fields of host"},
+			{"match(p)", "the hosts of hosts that match the host pattern p"},
 		}),
-		doc.Paragraph(`match(p) reads the inventory, not the --hosts selection. A host from match() has only the vars that need no facts. A default cannot use match().`),
+		doc.Paragraph(`hosts and match(p) read the inventory, not the --hosts selection. A host from them has all its variables, computed with its own facts, without the vars of a recipe step, and its facts. The plan reads the facts of each host that a read of hosts or match() can reach, also of a host outside --hosts. When winch cannot read them, each host that reads them fails: read the facts of <host>: <error>. The other hosts go on.`),
 		doc.Heading("Where expressions go"),
 		doc.Paragraph(`Any module argument can be an expression or a template, and so can then. when takes an expression. loop takes a list or an expression.`),
 		doc.Heading("Operators"),
@@ -492,7 +488,7 @@ var factsTopic = doc.Topic{
 	Blocks: []doc.Block{
 		doc.Paragraph(`Facts are values that winch reads from each host before the plan, such as the OS release.`),
 		doc.Heading("Reading a fact"),
-		doc.Paragraph(`Expressions read a fact as facts.os.id, and templates as {{ .facts.os.id }}. Facts are a fixed set. A read of an unknown fact is an error.`),
+		doc.Paragraph(`Expressions read a fact as facts.os.id, and templates as {{ .facts.os.id }}. A host from hosts or match() has its facts too: match("backup")[0].facts.ssh.ed25519. Facts are a fixed set. A read of an unknown fact is an error.`),
 		doc.Code(`# winch.yaml
 name: demo
 hosts:
@@ -512,7 +508,7 @@ recipes:
 # reboot reboots.
 `),
 		doc.Heading("When winch reads them"),
-		doc.Paragraph(`winch reads the facts once per host per run, before the first step, and again after a reboot. They describe the host before the run.`),
+		doc.Paragraph(`winch reads the facts once per host per run, before the first step, and again after a reboot. It also reads the facts of each other host that hosts and match() can reach. They describe the host before the run.`),
 	},
 }
 
