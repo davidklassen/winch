@@ -877,6 +877,75 @@ func TestFailedCmdWithChangesConfirms(t *testing.T) {
 	}
 }
 
+// spec: Modules/cmd (changes: the rollback timer starts when the command
+// ends)
+func TestGuardedCmdTimerStartsAfterTheCommand(t *testing.T) {
+	l := startLockout(t)
+	args, _ := json.Marshal(module.Cmd{Command: "sleep 1; echo new > " + l.b, Changes: []string{l.b}})
+	ended := time.Now().Add(time.Second)
+	r := l.c.call(t, "apply", protocol.Step{Module: "cmd", Args: args, Guard: protocol.Guard{Store: "app", Confirm: true}})
+	if r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	data, err := os.ReadFile(l.job())
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := decodeJob(l.job(), data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := ended.Add(timerTime); j.Deadline.Before(want) {
+		t.Errorf("deadline %s, want at least %s: the timer starts when the command ends", j.Deadline, want)
+	}
+}
+
+// spec: Modules/cmd (changes: the controller goes away during the command)
+func TestGuardedCmdRollsBackAfterTheControllerWent(t *testing.T) {
+	l := startLockout(t)
+	early := filepath.Join(t.TempDir(), "early")
+	args, _ := json.Marshal(module.Cmd{Command: "test -e " + l.job() + " && touch " + early + "; sleep 1; echo new > " + l.b, Changes: []string{l.b}})
+	time.AfterFunc(200*time.Millisecond, func() { l.c.w.Close() })
+	r := l.c.call(t, "apply", protocol.Step{Module: "cmd", Args: args, Guard: protocol.Guard{Store: "app", Confirm: true}})
+	if r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if err := <-l.c.done; err != nil {
+		t.Fatalf("the helper ended with %v", err)
+	}
+	if _, err := os.Lstat(early); err == nil {
+		t.Error("the timer job was there while the command ran")
+	}
+	if content(t, l.b) != "old\n" {
+		t.Errorf("b = %q after the session end, want old", content(t, l.b))
+	}
+}
+
+// spec: Modules/cmd (changes: the saved paths go back when the timer does not
+// start after the command)
+func TestGuardedCmdTimerStartFails(t *testing.T) {
+	dir := t.TempDir()
+	b := filepath.Join(t.TempDir(), "b")
+	write(t, b, "old\n")
+	c := start(t, dir, filepath.Join(dir, "missing"))
+	h := hello("r1")
+	h.Project = "acme"
+	if r := c.call(t, "hello", h); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	args, _ := json.Marshal(module.Cmd{Command: "echo new > " + b, Changes: []string{b}})
+	r := c.call(t, "apply", protocol.Step{Module: "cmd", Args: args, Guard: protocol.Guard{Store: "app", Confirm: true}, Notify: []string{"app.restart"}})
+	if !strings.Contains(r.Error, "start the rollback timer: ") || !strings.HasSuffix(r.Error, "; the old files are back") {
+		t.Errorf("apply error %q, want the timer error and the old files back", r.Error)
+	}
+	if content(t, b) != "old\n" {
+		t.Errorf("b = %q, want old", content(t, b))
+	}
+	if p := pendingAll(t, c); len(p.Handlers) != 0 {
+		t.Errorf("records of the failed step: %+v, want none", p)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (a step saves in the store of
 // its own recipe and in that of each recipe whose confirm_access handler it
 // notifies)

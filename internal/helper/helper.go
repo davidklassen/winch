@@ -560,9 +560,14 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	if _, err := rb.notified().add(s.Guard.Handlers); err != nil {
 		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 	}
+	_, isCmd := m.(*module.Cmd)
+	var saved, all []module.Saved
 	if s.Guard.Save || guard {
-		saved, all, err := rb.save(rb.store(s.Guard.Store), m)
-		if err == nil && guard {
+		var err error
+		saved, all, err = rb.save(rb.store(s.Guard.Store), m)
+		// The timer of a command starts when it ends, so a long command does
+		// not roll back while it runs.
+		if err == nil && guard && !isCmd {
 			deadline, err = startTimer(rb, s.Guard, m, saved, all)
 		}
 		if err != nil {
@@ -589,10 +594,23 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		}
 		err = errors.Join(err, recordErr)
 	}
+	if isCmd && guard {
+		var terr error
+		deadline, terr = startTimer(rb, s.Guard, m, saved, all)
+		if terr != nil {
+			err = errors.Join(err, terr)
+			if rerr := restore(ctx, rb.downloads, saved); rerr != nil {
+				err = fmt.Errorf("%w; the rollback failed: %w", err, rerr)
+			} else {
+				err = fmt.Errorf("%w; the old files are back", err)
+			}
+			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+		}
+	}
 	if err != nil {
 		// A failed command can have changed the paths in part. The access
 		// check decides whether they go back.
-		if _, isCmd := m.(*module.Cmd); isCmd && guard {
+		if isCmd && guard {
 			if errors.Join(handlers.remove(notified...), thens.remove(thenLines...)) == nil {
 				out.Timer, out.Failed = time.Until(deadline), err.Error()
 				rb.running = &guarded{}
