@@ -98,9 +98,9 @@ func FuzzCompile(f *testing.F) {
 	f.Fuzz(func(t *testing.T, text string, tpl, loop bool) {
 		var sc scope
 		if loop {
-			sc = scope{reads: &[]varRead{}, args: true}
+			sc = scope{reads: &[]varRead{}, reach: &reach{}, args: true}
 		} else {
-			sc = scope{reads: &[]varRead{}, noItem: "a default cannot use item", inDefault: true}
+			sc = scope{reads: &[]varRead{}, reach: &reach{}, noItem: "a default cannot use item", inDefault: true}
 		}
 		tag := "!expr"
 		if tpl {

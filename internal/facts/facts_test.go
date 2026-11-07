@@ -161,3 +161,24 @@ func TestCompareVersions(t *testing.T) {
 		}
 	}
 }
+
+// spec: Remote execution/Facts
+func TestReadSSH(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/ssh_host_ed25519_key.pub", []byte("ssh-ed25519 AAAAC3Nz root@host\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/ssh_host_rsa_key.pub", []byte("ssh-rsa AAAAB3Nz\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadSSH(dir)
+	if want := (SSH{ED25519: "ssh-ed25519 AAAAC3Nz", RSA: "ssh-rsa AAAAB3Nz"}); err != nil || got != want {
+		t.Errorf("ReadSSH = %+v, %v; want %+v", got, err, want)
+	}
+	if err := os.WriteFile(dir+"/ssh_host_ecdsa_key.pub", []byte("junk\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSSH(dir); err == nil || err.Error() != "read facts: "+dir+"/ssh_host_ecdsa_key.pub: not a public key" {
+		t.Errorf("ReadSSH of a bad key: %v", err)
+	}
+}

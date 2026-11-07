@@ -118,7 +118,7 @@ func TestWritten(t *testing.T) {
 					h = ih
 				}
 			}
-			got, err := p.Written(h, debian13)
+			got, err := p.Written(h, debian13, onDebian13(p))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,7 +147,7 @@ func TestOtherPipelineErrorFailsOnlyWritten(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load: %v", err)
 			}
-			if _, err := p.Written(p.Inventory.Hosts[0], debian13); err == nil || !strings.Contains(err.Error(), "other") {
+			if _, err := p.Written(p.Inventory.Hosts[0], debian13, onDebian13(p)); err == nil || !strings.Contains(err.Error(), "other") {
 				t.Errorf("written: error %v, want one about pipeline other", err)
 			}
 		})

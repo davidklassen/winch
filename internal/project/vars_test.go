@@ -24,6 +24,15 @@ import (
 
 var debian13 = facts.Facts{OS: facts.OS{ID: "debian", Version: "13", Codename: "trixie", Arch: "amd64"}}
 
+// onDebian13 returns the facts of debian13 for every host of p.
+func onDebian13(p *Project) map[string]HostFacts {
+	out := map[string]HostFacts{}
+	for _, h := range p.Inventory.Hosts {
+		out[h.Name] = HostFacts{Facts: debian13}
+	}
+	return out
+}
+
 var varsProject = map[string]string{
 	"winch.yaml": `name: acme
 inventory: test
@@ -366,7 +375,7 @@ func evalAll(t *testing.T, p *Project) string {
 	var b strings.Builder
 	envs := map[string]*Env{}
 	for _, h := range p.Inventory.Hosts {
-		env, err := p.Start(h, debian13)
+		env, err := p.Start(h, debian13, onDebian13(p))
 		if err != nil {
 			fmt.Fprintf(&b, "%s: %v\n", h.Name, err)
 			continue
@@ -623,7 +632,7 @@ func evalOne(t *testing.T, vars, step string, files map[string]string) string {
 	if err != nil {
 		return "load error: " + err.Error()
 	}
-	env, err := p.Start(p.Inventory.Hosts[0], debian13)
+	env, err := p.Start(p.Inventory.Hosts[0], debian13, onDebian13(p))
 	if err != nil {
 		return "error: " + err.Error()
 	}
@@ -768,11 +777,6 @@ func TestHabitHints(t *testing.T) {
 			name: "toJSON in a template",
 			step: "  - file:\n      path: /a\n      content: !tpl \"{{ toJSON .vars.m }}\"\n",
 			want: `load error: recipes/r/recipe.yaml:4:16: function "toJSON" not defined`,
-		},
-		{
-			name: "match in a template",
-			step: "  - file:\n      path: /a\n      content: !tpl \"{{ match \\\"all\\\" }}\"\n",
-			want: `load error: recipes/r/recipe.yaml:4:16: function "match" not defined; match is an expression function: use !expr`,
 		},
 		{
 			name: "colon that is not after a map key",
@@ -1158,7 +1162,7 @@ func TestStartRecipeWhen(t *testing.T) {
 	}
 	var got []string
 	for _, h := range p.Inventory.Hosts {
-		_, err := p.Start(h, debian13)
+		_, err := p.Start(h, debian13, onDebian13(p))
 		got = append(got, fmt.Sprintf("%s: %v", h.Name, err))
 	}
 	want := []string{
@@ -1175,11 +1179,11 @@ func TestStartRecipeWhen(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, i := range []int{0, 2} {
-		if _, err := p.Start(p.Inventory.Hosts[i], debian13); err != nil {
+		if _, err := p.Start(p.Inventory.Hosts[i], debian13, onDebian13(p)); err != nil {
 			t.Errorf("%s: %v", p.Inventory.Hosts[i].Name, err)
 		}
 	}
-	_, err = p.Start(p.Inventory.Hosts[1], debian13)
+	_, err = p.Start(p.Inventory.Hosts[1], debian13, onDebian13(p))
 	if want := `recipes/r/recipe.yaml:2:5: vars.r_x has no value on host web2; set it in the inventory for this host, or give it a default`; err == nil || err.Error() != want {
 		t.Errorf("web2: got %v, want %s", err, want)
 	}
@@ -1252,7 +1256,7 @@ func TestStartOnlyRunningDefaults(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, h := range p.Inventory.Hosts {
-				env, err := p.Start(h, debian13)
+				env, err := p.Start(h, debian13, onDebian13(p))
 				if err != nil {
 					t.Errorf("%s: %v", h.Name, err)
 					continue
@@ -1328,7 +1332,7 @@ func TestStartUsedDefaults(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, h := range p.Inventory.Hosts {
-				env, err := p.Start(h, debian13)
+				env, err := p.Start(h, debian13, onDebian13(p))
 				if err != nil {
 					t.Errorf("%s: %v", h.Name, err)
 					continue
@@ -1511,7 +1515,7 @@ func TestReadsNeedValue(t *testing.T) {
 			}
 			var got []string
 			for _, h := range p.Inventory.Hosts {
-				_, err := p.Start(h, debian13)
+				_, err := p.Start(h, debian13, onDebian13(p))
 				got = append(got, fmt.Sprintf("%s: %v", h.Name, err))
 			}
 			if !slices.Equal(got, tt.want) {
@@ -1545,7 +1549,7 @@ func TestExprTypeMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = expr.Run(prog, exprEnv{Vars: map[string]any{"v": "12"}})
+	_, err = expr.Run(prog, exprEnv{Vars: map[string]any{"v": "12"}, Read: func(v any) (any, error) { return v, nil }})
 	want := `vars.v is a string; compare it with a string, such as "13"`
 	if got := exprMessage(err, src, exprNames); !strings.HasPrefix(got, want+"\n") {
 		t.Errorf("%s:\ngot  %s\nwant %s", src, got, want)

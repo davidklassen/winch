@@ -17,7 +17,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"text/template"
 	"unicode/utf8"
 
 	"github.com/davidklassen/winch/internal/facts"
@@ -50,8 +49,10 @@ type Project struct {
 	secrets bool
 	// set holds the names that --set gives.
 	set map[string]bool
-	// peers are the vars of each host for match(), with sealed values.
+	// peers are the vars of each host for hosts and match(), with sealed
+	// values.
 	peers map[string]map[string]any
+	reach reach
 	// sums are the SHA-256 of the project files by path.
 	sums     map[string]string
 	setFlags []string
@@ -183,7 +184,7 @@ type Step struct {
 	then *value
 	// notifyNames are the handler names as written.
 	notifyNames []nameAt
-	tmpl        *template.Template
+	tmpl        *tmplFile
 	// tmplReads are the variables that the template file of the step reads
 	// by name. A computed file name reads those of all templates of the recipe.
 	tmplReads []string
@@ -245,7 +246,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 	if err := errors.Join(cfgErr, lErr, setErr, invErr, plErr); err != nil {
 		return nil, err
 	}
-	if err := resolve(invs[0], pl, map[*Recipe]bool{}); err != nil {
+	if err := errors.Join(resolve(invs[0], pl, l.decls, map[*Recipe]bool{}), defaultMatches(invs[0], l.decls, "")); err != nil {
 		return nil, err
 	}
 	// The other pipelines count only for dir purge; their warnings show in
@@ -259,7 +260,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 	lost := othersErr != nil
 	l.warnings = l.warnings[:n]
 	for _, o := range others {
-		othersErr = errors.Join(othersErr, resolve(invs[0], o, map[*Recipe]bool{}))
+		othersErr = errors.Join(othersErr, resolve(invs[0], o, l.decls, map[*Recipe]bool{}))
 	}
 	// A pipeline that fails to load logs no reads; winch validate reports it.
 	if othersErr == nil {
@@ -295,7 +296,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 		}
 	}
 	return &Project{Name: cfg.Name, SSHConfig: sshConfig, Inventory: invs[0], Pipeline: pl, others: others, othersErr: othersErr, lost: lost, Warnings: warnings, vars: l.order, defaults: l.vars, filter: keys.Filter, secrets: len(l.sealed) > 0,
-		set: setNames, peers: peerVars(invs[0], l.decls), sums: sums, setFlags: set}, nil
+		set: setNames, peers: peerVars(invs[0], l.decls), reach: l.reach, sums: sums, setFlags: set}, nil
 }
 
 // Sums returns the SHA-256 of each project file by its path.
@@ -386,8 +387,11 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 		}
 		pls = append(pls, pl)
 		for _, inv := range invs {
-			errs = append(errs, resolve(inv, pl, checked[inv]))
+			errs = append(errs, resolve(inv, pl, l.decls, checked[inv]))
 		}
+	}
+	for _, inv := range invs {
+		errs = append(errs, defaultMatches(inv, l.decls, ""))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -430,6 +434,7 @@ type loader struct {
 	// sealed are the !secret values of the variables.
 	sealed   []sealedAt
 	warnings []*yamlx.Error
+	reach    reach
 }
 
 // newLoader adds the defaults of winch.yaml and of every recipe, then
@@ -500,8 +505,9 @@ func (l *loader) loadInventories(flag string, cfg *Config, all bool, set []setVa
 
 // resolve sets the targets of every stage from the inventory. It checks that
 // a recipe runs at most once per host. It checks the match() patterns of
-// each recipe that checked does not hold yet, and adds the recipe to checked.
-func resolve(inv *Inventory, pl *Pipeline, checked map[*Recipe]bool) error {
+// each recipe that checked does not hold yet, also of its defaults in decls,
+// and adds the recipe to checked.
+func resolve(inv *Inventory, pl *Pipeline, decls []*Var, checked map[*Recipe]bool) error {
 	var errs []error
 	first := map[[2]string]yamlx.Pos{}
 	for i := range pl.Stages {
@@ -526,6 +532,12 @@ func resolve(inv *Inventory, pl *Pipeline, checked map[*Recipe]bool) error {
 				for _, h := range st.Recipe.Handlers {
 					for _, hs := range h.Steps {
 						errs = append(errs, hs.checkMatches(inv))
+					}
+				}
+				errs = append(errs, defaultMatches(inv, decls, st.Recipe.Name))
+				for _, name := range slices.Sorted(maps.Keys(st.Recipe.templates)) {
+					if t := st.Recipe.templates[name]; t != nil {
+						errs = append(errs, matchErrors(inv, t.matches)...)
 					}
 				}
 			}
@@ -564,17 +576,67 @@ func (st Step) checkMatches(inv *Inventory) error {
 	})
 	var errs []error
 	for _, c := range cs {
-		for _, m := range c.matches {
-			hosts, err := inv.Match(m.pattern)
-			switch {
-			case err != nil:
-				errs = append(errs, yamlx.Errorf(c.pos, "match(%q): %s%s", m.pattern, problem(err), m.snippet))
-			case len(hosts) == 0:
-				errs = append(errs, yamlx.Errorf(c.pos, "match(%q): the host pattern matches no host in %s%s", m.pattern, inv.File, m.snippet))
-			}
+		errs = append(errs, matchErrors(inv, c.matches)...)
+	}
+	return errors.Join(errs...)
+}
+
+// defaultMatches checks the constant match() patterns of the defaults of the
+// recipe, or of winch.yaml when recipe is empty.
+func defaultMatches(inv *Inventory, decls []*Var, recipe string) error {
+	var errs []error
+	for _, v := range decls {
+		if v.computed == nil || v.recipe != recipe {
+			continue
+		}
+		cs := slices.SortedFunc(maps.Values(v.computed.computed), func(a, b *computed) int {
+			return cmp.Or(cmp.Compare(a.pos.Line, b.pos.Line), cmp.Compare(a.pos.Col, b.pos.Col))
+		})
+		for _, c := range cs {
+			errs = append(errs, matchErrors(inv, c.matches)...)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// matchErrors returns an error for each constant match() pattern of calls
+// that matches no host of inv.
+func matchErrors(inv *Inventory, calls []matchCall) []error {
+	var errs []error
+	for _, m := range calls {
+		hosts, err := inv.Match(m.pattern)
+		switch {
+		case err != nil:
+			errs = append(errs, yamlx.Errorf(m.pos, "match(%q): %s%s", m.pattern, problem(err), m.snippet))
+		case len(hosts) == 0:
+			errs = append(errs, yamlx.Errorf(m.pos, "match(%q): the host pattern matches no host in %s%s", m.pattern, inv.File, m.snippet))
+		}
+	}
+	return errs
+}
+
+// Reach returns the hosts that a read of hosts or match() can reach, in
+// inventory order.
+func (p *Project) Reach() []Host {
+	if p.reach.all {
+		return p.Inventory.Hosts
+	}
+	reached := map[string]bool{}
+	for _, pattern := range p.reach.patterns {
+		// A pattern that fails is a load error, or in a recipe that no
+		// pipeline runs.
+		hosts, _ := p.Inventory.Match(pattern)
+		for _, h := range hosts {
+			reached[h.Name] = true
+		}
+	}
+	var out []Host
+	for _, h := range p.Inventory.Hosts {
+		if reached[h.Name] {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // notifyHosts checks that the recipe of each handler that a step notifies
@@ -966,8 +1028,8 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 	st := Step{Pos: n.Pos, in: r, actions: kind != plainStep}
 	isRecipe := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "recipe" })
 	hasLoop := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "loop" })
-	sc := scope{reads: &l.reads}
-	thenScope := scope{reads: &l.reads, noItem: thenInLoop}
+	sc := scope{reads: &l.reads, reach: &l.reach}
+	thenScope := scope{reads: &l.reads, reach: &l.reach, noItem: thenInLoop}
 	if !hasLoop {
 		sc.noItem = itemOutsideLoop
 		thenScope.noItem = itemOutsideLoop
@@ -1345,7 +1407,7 @@ func (l *loader) stepVars(n *yamlx.Node) ([]*Var, error) {
 			continue
 		}
 		l.warnNumbers(p.Key, p.Value)
-		c, err := compileValue(p.Value, scope{reads: &l.reads, noItem: itemOutsideLoop})
+		c, err := compileValue(p.Value, scope{reads: &l.reads, reach: &l.reach, noItem: itemOutsideLoop})
 		errs = append(errs, err)
 		out = append(out, &Var{Name: p.Key, Pos: p.KeyPos, node: p.Value, computed: c})
 	}
@@ -1482,14 +1544,14 @@ func (l *loader) compileWhen(n *yamlx.Node) (*computed, error) {
 	if n.Tag != "!expr" {
 		return nil, yamlx.Errorf(n.Pos, "when: use an expression with the !expr tag, such as when: !expr vars.mail_server")
 	}
-	return compile(n, scope{reads: &l.reads, noItem: "when runs before loop; it cannot use item"})
+	return compile(n, scope{reads: &l.reads, reach: &l.reach, noItem: "when runs before loop; it cannot use item"})
 }
 
 func (l *loader) compileLoop(n *yamlx.Node) (*value, error) {
 	if n.Tag != "!expr" && n.Kind != yamlx.List {
 		return nil, yamlx.Errorf(n.Pos, "loop: use a list, or an expression with the !expr tag, such as loop: !expr vars.sites")
 	}
-	v, err := compileValue(n, scope{reads: &l.reads, noItem: "loop cannot use item"})
+	v, err := compileValue(n, scope{reads: &l.reads, reach: &l.reach, noItem: "loop cannot use item"})
 	if v == nil && err == nil {
 		v = &value{node: n}
 	}
@@ -1770,9 +1832,9 @@ func (st Step) instance(e *Env, decode func(*yamlx.Node, any) error) (Step, any,
 	if st.tmpl == nil {
 		return st, args, nil
 	}
-	out, err := e.render(st.tmpl)
+	out, err := e.render(st.tmpl.t, st.tmpl.peerReads, st.tmpl.hosts)
 	if err != nil {
-		return st, args, templateError(st.tmpl.Name(), err)
+		return st, args, templateError(st.tmpl.t.Name(), err)
 	}
 	f := *st.Args.(*module.File)
 	// Empty output is empty content, not missing content.
@@ -1899,8 +1961,9 @@ type Writes struct {
 
 // Written returns the paths that the steps for the host h write, in every
 // pipeline of the project. A stage that the selection leaves out counts. A
-// step that when skips does not count, and neither does an absent one.
-func (p *Project) Written(h Host, f facts.Facts) (Writes, error) {
+// step that when skips does not count, and neither does an absent one. f and
+// other are the facts as for Start.
+func (p *Project) Written(h Host, f facts.Facts, other map[string]HostFacts) (Writes, error) {
 	if p.othersErr != nil {
 		return Writes{}, p.othersErr
 	}
@@ -1930,7 +1993,7 @@ func (p *Project) Written(h Host, f facts.Facts) (Writes, error) {
 		}
 		q := *p
 		q.Pipeline = &all
-		e, err := q.Start(h, f)
+		e, err := q.Start(h, f, other)
 		if err != nil {
 			return Writes{}, fmt.Errorf("pipeline %s: %w", pl.Name, err)
 		}

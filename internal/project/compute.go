@@ -33,17 +33,29 @@ type computed struct {
 	reads []string
 	// values are the variables whose values it reads.
 	values []string
+	// peerReads are the variables that it reads of a host from hosts or
+	// match().
+	peerReads []string
 	// matches are the calls of match() with a constant pattern.
 	matches []matchCall
-	// data is true when it reads a name other than item.
-	data bool
+	// data is true when it reads a name other than item, and hosts when it
+	// reads hosts.
+	data, hosts bool
 }
 
 // matchCall is a call of match() with a constant pattern. snippet shows the
-// call in the expression.
+// call in an expression.
 type matchCall struct {
+	pos     yamlx.Pos
 	pattern string
 	snippet string
+}
+
+// reach is what the reads of hosts and match() of the project can reach:
+// every host, or the hosts of the constant patterns.
+type reach struct {
+	all      bool
+	patterns []string
 }
 
 // scope is what an expression or a template can read.
@@ -51,10 +63,10 @@ type scope struct {
 	// reads logs each read that names a variable, also of a host from
 	// match().
 	reads *[]varRead
+	reach *reach
 	// noItem is the reason that item is not defined, or "" when it is.
 	noItem string
-	// inDefault is true in a default: a !secret value is allowed there, and
-	// match() is not.
+	// inDefault is true in a default: a !secret value is allowed there.
 	inDefault bool
 	// args is true in module arguments: a literal null fails there. The
 	// decoder would leave a pointer argument unset for it.
@@ -77,8 +89,12 @@ type exprEnv struct {
 	Vars  map[string]any              `expr:"vars"`
 	Facts facts.Facts                 `expr:"facts"`
 	Host  hostEnv                     `expr:"host"`
+	Hosts []any                       `expr:"hosts"`
 	Item  any                         `expr:"item"`
 	Match func(string) ([]any, error) `expr:"match"`
+	// Read checks the value of a member read. Its name cannot be written in
+	// an expression.
+	Read func(any) (any, error) `expr:"$read"`
 }
 
 type hostEnv struct {
@@ -87,6 +103,7 @@ type hostEnv struct {
 	Address string         `expr:"address"`
 	Groups  []string       `expr:"groups"`
 	Vars    map[string]any `expr:"vars"`
+	Facts   facts.Facts    `expr:"facts"`
 }
 
 // exprOptions add quote, sqlquote, and json, and replace keys, values, and toPairs, whose order
@@ -103,9 +120,6 @@ var exprOptions = []expr.Option{
 	sortedFunc("keys", func(k string, v any) any { return k }),
 	sortedFunc("values", func(k string, v any) any { return v }),
 	sortedFunc("toPairs", func(k string, v any) any { return []any{k, v} }),
-	expr.Function(readFunc, func(args ...any) (any, error) {
-		return args[0], computedError(args[0])
-	}),
 	expr.Patch(readCheck{}),
 	expr.Function("quote", func(args ...any) (any, error) {
 		s, ok := args[0].(string)
@@ -135,13 +149,11 @@ func isExprFunc(name string) bool {
 	return name == "match" || ok && !slices.Contains(noExprFuncs, name)
 }
 
-// readFunc checks the value of a member read. Its name cannot be written in
-// an expression.
 const readFunc = "$read"
 
 // readCheck checks each member read and get() that gives a value of unknown
 // type: such a value can be the marker of a computed default of a host from
-// match().
+// hosts or match().
 type readCheck struct{}
 
 func (readCheck) Visit(n *ast.Node) {
@@ -187,7 +199,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.tmpl, c.reads, c.values, c.data = t.t, t.reads, t.values, t.data
+		c.tmpl, c.reads, c.values, c.peerReads, c.matches, c.data, c.hosts = t.t, t.reads, t.values, t.peerReads, t.matches, t.data, t.hosts
 		return c, nil
 	}
 	prog, err := expr.Compile(text, exprOptions...)
@@ -195,7 +207,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 		return nil, yamlx.Errorf(n.Pos, "%s", exprMessage(err, text, exprNames))
 	}
 	c.prog = prog
-	check := &exprCheck{sc: sc, src: prog.Source(), named: map[ast.Node]bool{}}
+	check := &exprCheck{sc: sc, pos: n.Pos, src: prog.Source(), named: map[ast.Node]bool{}}
 	ast.Walk(new(prog.Node()), check)
 	check.checkByName()
 	for _, r := range check.names {
@@ -209,7 +221,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 		}
 		return nil, errors.Join(errs...)
 	}
-	c.reads, c.values, c.matches, c.data = check.reads, check.reads, check.matches, check.data
+	c.reads, c.values, c.peerReads, c.matches, c.data, c.hosts = check.reads, check.reads, check.peerReads, check.matches, check.data, check.hosts
 	return c, nil
 }
 
@@ -218,20 +230,23 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 // than by name. get() with a constant key reads a peer's variable by name.
 type exprCheck struct {
 	sc  scope
+	pos yamlx.Pos
 	src file.Source
-	// reads are the variables of the host that it reads, and names every
-	// read that names a variable.
-	reads   []string
-	names   []varRead
-	matches []matchCall
-	errs    []string
+	// reads are the variables of the host that it reads, peerReads those of
+	// other hosts, and names every read that names a variable.
+	reads     []string
+	peerReads []string
+	names     []varRead
+	matches   []matchCall
+	errs      []string
 	// named are the nodes that a member access with a constant name reads.
 	named map[ast.Node]bool
 	// whole are the nodes that hold vars: vars, host, host.vars, and the
 	// vars of a peer.
 	whole []ast.Node
-	// data is true when it reads a name other than item.
-	data bool
+	// data is true when it reads a name other than item, and hosts when it
+	// reads hosts.
+	data, hosts bool
 }
 
 func (c *exprCheck) fail(n ast.Node, msg string) {
@@ -255,6 +270,9 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		if member && isVars(base) {
 			c.reads = append(c.reads, key)
 		}
+		if isPeerVars(base) {
+			c.peerReads = append(c.peerReads, key)
+		}
 		if member && isVars(base) || isPeerVars(base) {
 			c.names = append(c.names, varRead{name: key, snippet: c.snippet(*np)})
 		}
@@ -270,8 +288,9 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		if n.Value == "$env" {
 			c.fail(n, "$env is not allowed")
 		}
-		if n.Value == "match" && c.sc.inDefault {
-			c.fail(n, "a default cannot use match()")
+		if n.Value == "hosts" {
+			c.hosts = true
+			c.sc.reach.all = true
 		}
 		if n.Value == "host" {
 			c.whole = append(c.whole, n)
@@ -285,9 +304,13 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		if !ok || id.Value != "match" || len(n.Arguments) != 1 {
 			return
 		}
-		if pattern, ok := n.Arguments[0].(*ast.StringNode); ok {
-			c.matches = append(c.matches, matchCall{pattern: pattern.Value, snippet: c.snippet(n)})
+		pattern, ok := n.Arguments[0].(*ast.StringNode)
+		if !ok {
+			c.sc.reach.all = true
+			return
 		}
+		c.matches = append(c.matches, matchCall{pos: c.pos, pattern: pattern.Value, snippet: c.snippet(n)})
+		c.sc.reach.patterns = append(c.sc.reach.patterns, pattern.Value)
 	}
 }
 
@@ -372,7 +395,7 @@ var (
 	predicateKeyRe = regexp.MustCompile(`\{\s*([\pL\pN_$]+|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|` + "`[^`]*`" + `)\s*$`)
 	// typeWords name the types of expr in messages.
 	typeWords  = map[string]string{"string": "a string", "int": "a number", "int64": "a number", "float": "a number", "float64": "a number", "bool": "a boolean", "array": "a list", "map": "a map", "nil": "null"}
-	exprNames  = []string{"vars", "facts", "host", "item", "match"}
+	exprNames  = []string{"vars", "facts", "host", "hosts", "item", "match"}
 	osFields   = fieldTags(facts.OS{})
 	hostFields = fieldTags(hostEnv{})
 	// fieldNames are the fields of the typed data, by the type name in
@@ -383,6 +406,8 @@ var (
 	}{
 		"facts.Facts":     {"fact", fieldTags(facts.Facts{})},
 		"facts.OS":        {"fact", osFields},
+		"facts.SSH":       {"fact", fieldTags(facts.SSH{})},
+		"facts.Net":       {"fact", fieldTags(facts.Net{})},
 		"project.hostEnv": {"host field", hostFields},
 	}
 )
@@ -501,19 +526,23 @@ func (c *computed) evalItem(item any) (any, error) {
 		err := c.tmpl.Execute(&b, map[string]any{"item": item})
 		return b.String(), err
 	}
-	return expr.Run(c.prog, exprEnv{Item: item})
+	return expr.Run(c.prog, exprEnv{Item: item, Read: func(v any) (any, error) { return v, nil }})
 }
 
 // eval returns the value for the environment of a host.
 func (c *computed) eval(e *Env) (any, error) {
 	if c.tmpl != nil {
-		out, err := e.render(c.tmpl)
+		out, err := e.render(c.tmpl, c.peerReads, c.hosts)
 		if err != nil {
 			return nil, errors.New(templateMessage(c.tmpl.Name(), err))
 		}
 		return out, nil
 	}
-	out, err := expr.Run(c.prog, e.exprEnv())
+	env, err := e.exprEnv(c.hosts)
+	if err != nil {
+		return nil, err
+	}
+	out, err := expr.Run(c.prog, env)
 	if err != nil {
 		return nil, errors.New(exprMessage(err, c.prog.Source().String(), exprNames))
 	}
@@ -573,6 +602,16 @@ func (v *value) reads() []string {
 	var out []string
 	for _, c := range v.computed {
 		out = append(out, c.reads...)
+	}
+	return out
+}
+
+// peerReads returns the variables that the value reads of a host from hosts
+// or match().
+func (v *value) peerReads() []string {
+	var out []string
+	for _, c := range v.computed {
+		out = append(out, c.peerReads...)
 	}
 	return out
 }

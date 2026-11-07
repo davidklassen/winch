@@ -273,7 +273,7 @@ func TestEvalThenAndRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	web1 := p.Inventory.Hosts[0]
-	env, err := p.Start(web1, debian13)
+	env, err := p.Start(web1, debian13, onDebian13(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestEvalThenAndRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env, err = p.Start(web1, debian13); err != nil {
+	if env, err = p.Start(web1, debian13, onDebian13(p)); err != nil {
 		t.Fatal(err)
 	}
 	siteSteps := p.Pipeline.Stages[0].Steps[1].Recipe.Steps
@@ -316,7 +316,7 @@ func TestThenEvalErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := p.Start(p.Inventory.Hosts[1], debian13)
+	env, err := p.Start(p.Inventory.Hosts[1], debian13, onDebian13(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestHandlerServiceEvalError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := p.Start(p.Inventory.Hosts[0], debian13)
+	env, err := p.Start(p.Inventory.Hosts[0], debian13, onDebian13(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +358,7 @@ func TestThenOfAnEmptyLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := p.Start(p.Inventory.Hosts[1], debian13)
+	env, err := p.Start(p.Inventory.Hosts[1], debian13, onDebian13(p))
 	if err != nil {
 		t.Fatal(err)
 	}
