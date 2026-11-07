@@ -441,6 +441,28 @@ func TestAccessSecondTry(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Apply (a second Ctrl-C ends the sessions, and the
+// hosts fail with the session error); Lockout protection (the helper rolls
+// back at the session end)
+func TestConfirmAccessAfterSecondInterrupt(t *testing.T) {
+	h := fakehost.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.OnAccess = func(host string) {
+		cancel()
+		h.EndSessions(host)
+	}
+	plan := run.MakePlan(context.Background(), lockoutProject(t), h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	o := run.Apply(ctx, plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	if o.OK() {
+		t.Fatal("apply succeeded after a second interrupt")
+	}
+	if want := "the session ended without an error message (ssh: signal: killed)"; !strings.Contains(errOut.String(), want) || strings.Contains(errOut.String(), "access check") {
+		t.Errorf("stderr %q, want %q and no access check", errOut.String(), want)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (a guarded step that ends after
 // its rollback timer fails)
 func TestTimerEndedFirst(t *testing.T) {
@@ -537,10 +559,7 @@ func TestLostAccessAfterFailedStep(t *testing.T) {
 	if o.OK() {
 		t.Fatal("apply succeeded after a failed step")
 	}
-	if want := "web1: base: failed: file /etc/issue: "; !strings.Contains(out, want) {
-		t.Errorf("output:\n%s\nwant %q", out, want)
-	}
-	if want := "; the access check after the run failed: ssh: connect to host web1 port 22: Connection timed out"; !strings.Contains(out, want) {
+	if want := "web1: base: failed: file /etc/issue: write /etc/issue: read-only file system\n  the access check after the run failed: ssh: connect to host web1 port 22: Connection timed out\n"; !strings.Contains(out, want) {
 		t.Errorf("output:\n%s\nwant %q", out, want)
 	}
 	if want := []string{"access", "access"}; !slices.Equal(h.Log["web1"], want) {
@@ -575,10 +594,7 @@ func TestLostAccessAfterFailedStep(t *testing.T) {
 	if o.OK() {
 		t.Fatal("apply succeeded after a failed step")
 	}
-	if want := "web1: app: failed: file /etc/hosts: "; !strings.Contains(out, want) {
-		t.Errorf("output:\n%s\nwant %q", out, want)
-	}
-	if want := "; the access check after the run failed: ssh: connect to host web1 port 22: Connection timed out"; !strings.Contains(out, want) {
+	if want := "web1: app: failed: file /etc/hosts: write /etc/hosts: read-only file system\n  the access check after the run failed: ssh: connect to host web1 port 22: Connection timed out\n"; !strings.Contains(out, want) {
 		t.Errorf("output:\n%s\nwant %q", out, want)
 	}
 }

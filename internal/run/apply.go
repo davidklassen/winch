@@ -271,12 +271,13 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 				}
 				changed[i] = changed[i] || due
 				done := err != nil || last[hosts[i].Name] == si
-				if done && !errors.Is(err, ErrInterrupted) && (changed[i] || o.Changed[hosts[i].Name]) {
+				if done && (changed[i] || o.Changed[hosts[i].Name]) {
 					a.progress.Busy(a.host, "access check")
-					if aerr := a.access(context.WithoutCancel(ctx), time.Time{}); aerr != nil {
+					// The access check returns context.Canceled after a second Ctrl-C.
+					if aerr := a.access(context.WithoutCancel(ctx), time.Time{}); aerr != nil && !errors.Is(aerr, context.Canceled) {
 						aerr = fmt.Errorf("the access check after the run failed: %w", aerr)
 						if err != nil {
-							aerr = fmt.Errorf("%w; %w", err, aerr)
+							aerr = fmt.Errorf("%w\n%w", err, aerr)
 						}
 						err = aerr
 					}
@@ -626,6 +627,15 @@ func (a *hostApply) confirm(ctx context.Context, left time.Duration) error {
 	if err == nil {
 		return a.conn.Confirm(ctx)
 	}
+	// After a second Ctrl-C, the rollback fails with the error of the ended
+	// session, and the helper rolls back at the session end. The kill of the
+	// session may come after the rollback request.
+	if errors.Is(err, context.Canceled) {
+		if rerr := a.conn.Rollback(ctx); rerr != nil {
+			return rerr
+		}
+		return ErrInterrupted
+	}
 	if rerr := a.conn.Rollback(ctx); rerr != nil {
 		return fmt.Errorf("the access check failed: %w; the rollback failed: %w", err, rerr)
 	}
@@ -636,7 +646,7 @@ func (a *hostApply) confirm(ctx context.Context, left time.Duration) error {
 // a deadline, it does not start the second try after it.
 func (a *hostApply) access(ctx context.Context, deadline time.Time) error {
 	err := a.conn.Access(ctx)
-	if err != nil && (deadline.IsZero() || time.Now().Add(accessPoll).Before(deadline)) {
+	if err != nil && !errors.Is(err, context.Canceled) && (deadline.IsZero() || time.Now().Add(accessPoll).Before(deadline)) {
 		time.Sleep(accessPoll)
 		err = a.conn.Access(ctx)
 	}

@@ -72,8 +72,9 @@ type Hosts struct {
 	// OnCheck and OnApply run before each check and each apply of a step,
 	// with the host and the main argument of the step.
 	OnCheck, OnApply func(host, main string)
-	// OnConnect runs before each connect, and OnExec in each exec.
-	OnConnect, OnExec func(host string)
+	// OnConnect runs before each connect, OnExec in each exec, and OnAccess
+	// before each access check.
+	OnConnect, OnExec, OnAccess func(host string)
 	// Batch lists the batch mode of each ConnectorFor call, and SSHConfig its
 	// SSH config file.
 	Batch     []bool
@@ -113,6 +114,8 @@ type Hosts struct {
 	// kills counts the Kill calls per host. A session of an earlier count is
 	// dead.
 	kills map[string]int
+	// ended holds the hosts whose sessions EndSessions ended.
+	ended map[string]bool
 }
 
 func New() *Hosts {
@@ -156,6 +159,7 @@ func New() *Hosts {
 		dests:        map[string]protocol.Destination{},
 		jumps:        map[string]string{},
 		kills:        map[string]int{},
+		ended:        map[string]bool{},
 		due:          map[string][]string{},
 	}
 }
@@ -450,6 +454,15 @@ func (h *Hosts) Kill(host string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.kills[host]++
+}
+
+// EndSessions ends the sessions of host as a second Ctrl-C does: each of their
+// calls but Close fails, and the access check returns context.Canceled.
+func (h *Hosts) EndSessions(host string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.kills[host]++
+	h.ended[host] = true
 }
 
 // dest returns the destination of host, with the jump host that SetJump set.
@@ -1013,6 +1026,16 @@ func (c *Conn) log(entry string) {
 }
 
 func (c *Conn) Access(ctx context.Context) error {
+	if c.hosts.OnAccess != nil {
+		c.hosts.OnAccess(c.host)
+	}
+	c.hosts.mu.Lock()
+	ended := c.hosts.ended[c.host]
+	c.hosts.mu.Unlock()
+	if ended {
+		c.log("access")
+		return context.Canceled
+	}
 	if err := c.dead(); err != nil {
 		return err
 	}
