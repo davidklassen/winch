@@ -737,7 +737,7 @@ winch apply site --batch
 		}),
 		doc.Paragraph(`Nothing comes from the login session, such as the TMPDIR that libpam-tmpdir sets.`),
 		doc.Paragraph(`The commands of cmd, assert, unless, validate, then, health, and the certbot hooks run through sh -e, with stdin from /dev/null. A command of several lines stops at its first failed line.`),
-		doc.Paragraph(`A cmd with dir runs in that directory. A cmd with user runs as that user, with the home of that user as HOME, and its name as USER and LOGNAME. It starts no login session: PAM does not run, so the login umask and limits of the user do not apply.`),
+		doc.Paragraph(`A cmd with dir runs in that directory, and so does its unless. A cmd with user runs as that user, and so does its unless, with the home of that user as HOME, and its name as USER and LOGNAME. It starts no login session: PAM does not run, so the login umask and limits of the user do not apply.`),
 		doc.Heading("The time limit"),
 		doc.Paragraph(`A command stops after 10 minutes, after the timeout of a cmd step in seconds, or after the --timeout of winch exec. The helper sends SIGTERM to the command and its child processes, and SIGKILL 10 seconds later to those that still run. The step fails, and the error shows the last 10 lines of output. apt-get in pkg, repo, and upgrade has no time limit.`),
 		doc.Paragraph(`When the session ends, the helper lets the running command finish within its limit, and then exits. A package install is not cut off in the middle. winch exec is different: on Ctrl-C, or when its session breaks, its command gets SIGINT, and SIGKILL after 10 seconds.`),

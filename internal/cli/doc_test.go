@@ -58,6 +58,24 @@ func TestDocServiceWatch(t *testing.T) {
 	}
 }
 
+// spec: Modules/cmd
+func TestDocCmdUnless(t *testing.T) {
+	tests := []struct{ arg, want string }{
+		{"cmd", "check command as user, in dir"},
+		{"cmd.unless", "as user, with the user's home as HOME, in dir"},
+		{"cmd.unless", "A dir that does not exist yet checks as change."},
+		{"remote", "A cmd with dir runs in that directory, and so does its unless."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", tt.arg)
+			if out := strings.Join(strings.Fields(r.out), " "); !strings.Contains(out, tt.want) {
+				t.Errorf("winch doc %s lacks %q:\n%s", tt.arg, tt.want, r.out)
+			}
+		})
+	}
+}
+
 // spec: CLI
 func TestDocKey(t *testing.T) {
 	tests := []struct{ arg, want string }{

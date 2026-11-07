@@ -96,12 +96,25 @@ func TestCmdModule(t *testing.T) {
 			After:     "test -e /root/made",
 		},
 		{
-			Name:      "unless runs as root in / with the command environment",
+			Name:      "unless runs as user in dir with the command environment",
 			Setup:     user + "mkdir /srv/winch-c && chown winchc /srv/winch-c",
-			Args:      &module.Cmd{Command: "touch made", User: "winchc", Dir: "/srv/winch-c", Unless: new(`test "$(id -un)" = root && test "$(pwd)" = / && test "$HOME" = /root && test "$LC_ALL" = C.UTF-8 && test -e /srv/winch-c/made`)},
+			Args:      &module.Cmd{Command: "touch made", User: "winchc", Dir: "/srv/winch-c", Unless: new(`test "$(id -un)" = winchc && test "$(pwd)" = /srv/winch-c && test "$HOME" = /home/winchc && test "$LC_ALL" = C.UTF-8 && test -e made`)},
 			Want:      module.Result{Status: module.Change, Action: module.Modify},
 			Unchanged: "test ! -e /srv/winch-c/made",
 			After:     `test "$(stat -c %U /srv/winch-c/made)" = winchc`,
+		},
+		{
+			Name:  "unless as nobody in /tmp",
+			Args:  &module.Cmd{Command: "echo ran > /root/out", User: "nobody", Dir: "/tmp", Unless: new(`test "$(id -un)" = nobody && test "$PWD" = /tmp`)},
+			Want:  module.Result{Status: module.OK},
+			After: "test ! -e /root/out",
+		},
+		{
+			Name:         "unless with a missing dir",
+			Args:         &module.Cmd{Command: "true", User: "nobody", Dir: "/srv/winch-missing", Unless: new("true")},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Missing: []string{"dir /srv/winch-missing"}},
+			WantApplyErr: "/srv/winch-missing",
+			Fix:          "mkdir /srv/winch-missing",
 		},
 		{
 			Name:       "the command environment",
@@ -149,6 +162,13 @@ func TestCmdModule(t *testing.T) {
 			WantApplyErr: "dir /srv/winch-c: permission denied",
 			Fix:          "chmod 0755 /srv/winch-c",
 			NoConverge:   true,
+		},
+		{
+			Name:         "unless with a missing user",
+			Args:         &module.Cmd{Command: "true", User: "winch-nobody", Unless: new("true")},
+			Want:         module.Result{Status: module.Change, Action: module.Modify, Missing: []string{"user winch-nobody"}},
+			WantApplyErr: "user winch-nobody does not exist; no earlier user step creates it",
+			Fix:          "useradd winch-nobody",
 		},
 		{
 			Name:         "a missing user",
