@@ -39,13 +39,20 @@ func TestShell(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ""
-			if err := ShellLimit(t.Context(), tt.command, commandLimit, time.Second); err != nil {
+			if err := Shell(t.Context(), tt.command); err != nil {
 				got = err.Error()
 			}
 			if got != tt.want {
 				t.Errorf("error = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// spec: Modules (commands)
+func TestShellLimitLeavesOutTheCommand(t *testing.T) {
+	if err := ShellLimit(t.Context(), "exit 2", commandLimit, time.Second); err == nil || err.Error() != "exit status 2" {
+		t.Errorf("error = %v, want exit status 2", err)
 	}
 }
 
@@ -200,7 +207,7 @@ func TestTimeLimitEndsWhenTheCommandStops(t *testing.T) {
 			t.Parallel()
 			start := time.Now()
 			err := tt.run(t.Context(), "sleep 30 & wait")
-			if err == nil || !strings.HasSuffix(err.Error(), ": stopped after 1s") {
+			if err == nil || !strings.HasSuffix(err.Error(), "stopped after 1s") {
 				t.Fatalf("error = %v, want it to end at the time limit", err)
 			}
 			if d := time.Since(start); d >= time.Second+killDelay {
@@ -243,7 +250,7 @@ func TestFailureWhileAChildKeepsTheOutputOpen(t *testing.T) {
 	for _, tt := range limitRunners(time.Second) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if err := tt.run(t.Context(), "sleep 3 & exit 1"); err == nil || !strings.HasSuffix(err.Error(), ": exit status 1") {
+			if err := tt.run(t.Context(), "sleep 3 & exit 1"); err == nil || !strings.HasSuffix(err.Error(), "exit status 1") {
 				t.Errorf("error = %v, want the exit status", err)
 			}
 		})
@@ -265,7 +272,7 @@ func TestFailureWithoutOutput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			for _, command := range []string{"exit 2", "echo; exit 2"} {
-				if err := tt.run(t.Context(), command); err == nil || !strings.HasSuffix(err.Error(), ": exit status 2") {
+				if err := tt.run(t.Context(), command); err == nil || !strings.HasSuffix(err.Error(), "exit status 2") {
 					t.Errorf("%s: error = %v, want it to end at the exit status", command, err)
 				}
 			}

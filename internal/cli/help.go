@@ -342,13 +342,14 @@ shows its output. It makes no plan and asks no question.`,
 			`A host pattern is a group or a host, with "," for union, "&" for
 intersection, and "!" for exclusion.`,
 			`winch joins the words after -- with spaces and runs them through sh -c
-as root, in /, with stdin from /dev/null.`,
+as root, in /, with stdin from /dev/null and with NO_COLOR=1.`,
 			`When the project has secrets, exec needs the age key. It decrypts the
 secrets, so that its output hides them.`,
 			`Each host shows one block: the host name, then the output. Hosts with
 the same output and exit code share one block. A command that exits
 non-zero adds "exit status N" to its block. winch exits with code 1
-when the command fails on a host.`,
+when the command fails on a host. A control character in the output
+shows as "?".`,
 			"With --json, each host gives one exec event with output and exit_code.",
 			`The command stops after 600 seconds, or after --timeout. Each host
 then sends SIGTERM to the command, and SIGKILL 10 seconds later.`,

@@ -77,6 +77,15 @@ func TestExecCommand(t *testing.T) {
 }
 
 // spec: CLI (winch exec)
+func TestExecNoColor(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	got, err := execLimit(t.Context(), "echo $NO_COLOR", commandLimit, time.Second)
+	if err != nil || got.Output != "1\n" {
+		t.Errorf("exec = %+v, %v, want NO_COLOR=1", got, err)
+	}
+}
+
+// spec: CLI (winch exec)
 func TestExecLongOutput(t *testing.T) {
 	t.Parallel()
 	const cut = "(output cut to the last 1 MiB)\n"

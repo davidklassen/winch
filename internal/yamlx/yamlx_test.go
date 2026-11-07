@@ -93,6 +93,20 @@ func decodeString(src string) string {
 		d.Name, d.Enabled, d.Count, d.Mode, d.ModePos, note, d.Tags, d.Pos, d.Hosts)
 }
 
+// spec: YAML
+func TestDecodeMissingHint(t *testing.T) {
+	var d struct {
+		On *bool `yaml:"on,required" missing:"true is on, false is off"`
+	}
+	n, err := Parse("test.yaml", []byte("{}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Decode(n, &d); err == nil || err.Error() != "test.yaml:1:1: needs on: true is on, false is off" {
+		t.Errorf("error = %v", err)
+	}
+}
+
 func TestErrorType(t *testing.T) {
 	n, _ := Parse("f.yaml", []byte("nope: 1\n"))
 	err := Decode(n, &testDoc{})
@@ -114,6 +128,7 @@ func TestSuggest(t *testing.T) {
 		{"nginx_prot", []string{"nginx_port", "nginx_sites"}, `; did you mean "nginx_port"?`},
 		{"fiel", []string{"file"}, `; did you mean "file"?`},
 		{"zzzz", []string{"file"}, ""},
+		{"tailscale_auth_key", []string{"headscale_tls_key"}, ""},
 		{"x", nil, ""},
 	}
 	for _, tt := range tests {

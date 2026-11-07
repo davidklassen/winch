@@ -1,1 +1,1 @@
-pipelines/site.yaml:5:17: unknown recipe "../nginx"; did you mean "nginx"?
+pipelines/site.yaml:5:17: unknown recipe "../nginx"
