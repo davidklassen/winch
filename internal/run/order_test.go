@@ -239,7 +239,7 @@ var orderCases = []orderCase{
       - file:
           path: /srv/app/config
           content: ""
-`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, "s: file /srv/app/config: this step creates dir /srv/app, which an earlier step needs: s#1 cmd make install; move this step before it"},
+`), func(h *fakehost.Hosts) { h.RemoveDir("web1", "/srv/app") }, "s: file /srv/app/config: this step creates dir /srv/app, which an earlier step needs: s#1 cmd make install; move this step before it, or add a dir step for /srv/app before that step"},
 	{"a cmd in a dir that an earlier step creates", steps(`      - dir:
           path: /srv/app
       - cmd:

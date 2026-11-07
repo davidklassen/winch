@@ -899,7 +899,13 @@ func (hr *hostRun) order(st project.Step, res module.Result, where string) error
 	}
 	for _, c := range created {
 		if w, ok := hr.needs[c]; ok {
-			return fmt.Errorf("%s: this step creates %s, which an earlier step needs: %s; move this step before it", where, w.shown, w.step)
+			fix := "move this step before it"
+			// A dir step for the dir itself would only repeat this step.
+			m, isDir := st.Args.(*module.Dir)
+			if d, ok := strings.CutPrefix(w.shown, "dir "); ok && (!isDir || c != "dir "+m.Path) {
+				fix += ", or add a dir step for " + d + " before that step"
+			}
+			return fmt.Errorf("%s: this step creates %s, which an earlier step needs: %s; %s", where, w.shown, w.step, fix)
 		}
 		hr.created[c] = true
 	}

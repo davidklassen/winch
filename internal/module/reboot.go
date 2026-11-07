@@ -10,7 +10,7 @@ import (
 )
 
 type Reboot struct {
-	IfRequired *bool `yaml:"if_required,required" json:"if_required" line:"only on a pending reboot" doc:"Only on a pending reboot. With false, the step always reboots."`
+	IfRequired *bool `yaml:"if_required,required" missing:"true reboots when a reboot is pending, false always reboots" json:"if_required" line:"only on a pending reboot" doc:"Only on a pending reboot. With false, the step always reboots."`
 	Timeout    *int  `yaml:"timeout" json:"timeout,omitempty" line:"wait limit in seconds" doc:"Wait limit in seconds." default:"600"`
 }
 

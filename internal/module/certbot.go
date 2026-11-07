@@ -416,7 +416,7 @@ func (c *Certbot) Apply(ctx context.Context, _ Say) error {
 			}
 			if command != nil {
 				if err := shellLimit(ctx, *command, "/", env, nil, commandLimit, KillDelay, "", nil); err != nil {
-					errs = append(errs, fmt.Errorf("%s: %w", hook, err))
+					errs = append(errs, fmt.Errorf("%s: %s: %w", hook, FirstLine(*command), err))
 					continue
 				}
 			}

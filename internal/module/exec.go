@@ -83,11 +83,13 @@ func FirstLine(s string) string {
 const outputLimit = 64 << 10
 
 func failure(what string, err error, out string) error {
-	out = shownOutput(out)
-	if out == "" {
-		return fmt.Errorf("%s: %w", what, err)
+	if out = shownOutput(out); out != "" {
+		err = fmt.Errorf("%w: %s", err, out)
 	}
-	return fmt.Errorf("%s: %w: %s", what, err, out)
+	if what == "" {
+		return err
+	}
+	return fmt.Errorf("%s: %w", what, err)
 }
 
 // shownOutput is the end of out that an error shows.
@@ -105,13 +107,18 @@ func shownOutput(out string) string {
 }
 
 // Shell runs a command of the project through sh -ec, in / and with stdin
-// from /dev/null. On a failure, the error holds the output.
+// from /dev/null. On a failure, the error holds the first line of the command
+// and the output.
 func Shell(ctx context.Context, command string) error {
-	return ShellLimit(ctx, command, commandLimit, KillDelay)
+	if err := ShellLimit(ctx, command, commandLimit, KillDelay); err != nil {
+		return fmt.Errorf("%s: %w", FirstLine(command), err)
+	}
+	return nil
 }
 
-// ShellLimit is Shell with the time limit limit. After the limit, the command
-// gets SIGTERM, and SIGKILL when it still runs after killDelay.
+// ShellLimit is Shell with the time limit limit, and without the command in
+// the error. After the limit, the command gets SIGTERM, and SIGKILL when it
+// still runs after killDelay.
 func ShellLimit(ctx context.Context, command string, limit, killDelay time.Duration) error {
 	return shellLimit(ctx, command, "/", nil, nil, limit, killDelay, "", nil)
 }
@@ -137,7 +144,7 @@ func shellLimit(ctx context.Context, command, dir string, env []string, as *runA
 		if stderr != nil {
 			shown += string(stderr.tail())
 		}
-		return failure(FirstLine(command), err, shown)
+		return failure("", err, shown)
 	}
 	return nil
 }
@@ -261,7 +268,7 @@ func Exec(ctx context.Context, command string, limit time.Duration) (ExecResult,
 func execLimit(ctx context.Context, command string, limit, killDelay time.Duration) (ExecResult, error) {
 	const shown = 1 << 20
 	out := &tailBuffer{max: shown + 1}
-	err := shell(ctx, "-c", command, "/", nil, nil, limit, "--timeout", killDelay, out, out)
+	err := shell(ctx, "-c", command, "/", []string{"NO_COLOR=1"}, nil, limit, "--timeout", killDelay, out, out)
 	tail := string(out.tail())
 	if err != nil && !errors.As(err, new(*exec.ExitError)) {
 		return ExecResult{}, failure(command, err, tail)
