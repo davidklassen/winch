@@ -368,26 +368,47 @@ func TestStopHosts(t *testing.T) {
 			t.Errorf("web1: error %v, want %q", err, want)
 		}
 	})
+	// A host that failed in the plan takes no part in any stage, so its
+	// failure counts at the first stage that matches it.
 	t.Run("a plan failure in a later stage", func(t *testing.T) {
 		h := fakehost.New()
 		h.FailCheck("web2 /etc/issue")
-		plan := run.MakePlan(context.Background(), manyProject(t, stages+`  - name: last
+		plan := run.MakePlan(context.Background(), manyProject(t, stages), h.Connector(), run.Options{})
+		var out, errOut bytes.Buffer
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+		if _, ok := h.File("web1", "/etc/motd"); !ok {
+			t.Error("web1 did not run stage base")
+		}
+		for _, host := range []string{"web1", "web3"} {
+			if _, ok := h.File(host, "/etc/issue"); ok {
+				t.Errorf("%s started stage next", host)
+			}
+			if err := o.Failed[host]; err == nil || err.Error() != "not started: web2 failed in stage base" {
+				t.Errorf("%s: error %v", host, err)
+			}
+		}
+	})
+	t.Run("a plan failure in a later stage with parallelism", func(t *testing.T) {
+		h := fakehost.New()
+		h.FailCheck("web2 /etc/issue")
+		p := manyProject(t, strings.Replace(motdStage, "    hosts: all\n", "    hosts: all\n    parallelism: 1\n", 1)+`  - name: next
     hosts: all
     steps:
       - file:
-          path: /etc/last
+          path: /etc/issue
           content: "x\n"
-`), h.Connector(), run.Options{})
+`)
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 		var out, errOut bytes.Buffer
 		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+		if _, ok := h.File("web1", "/etc/motd"); !ok {
+			t.Error("web1 did not run stage base")
+		}
+		if _, ok := h.File("web3", "/etc/motd"); ok {
+			t.Error("web3 started stage base after web2")
+		}
 		for _, host := range []string{"web1", "web3"} {
-			if _, ok := h.File(host, "/etc/issue"); !ok {
-				t.Errorf("%s did not run stage next", host)
-			}
-			if _, ok := h.File(host, "/etc/last"); ok {
-				t.Errorf("%s started stage last", host)
-			}
-			if err := o.Failed[host]; err == nil || err.Error() != "not started: web2 failed in stage next" {
+			if err := o.Failed[host]; err == nil || err.Error() != "not started: web2 failed in stage base" {
 				t.Errorf("%s: error %v", host, err)
 			}
 		}

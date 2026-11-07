@@ -238,8 +238,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 		planFailed := ""
 		for _, h := range stage.Targets {
 			name := h.Name
-			hp, ok := planned[name]
-			if !ok {
+			if plan.Failed[name] != nil {
 				planFailed = cmp.Or(planFailed, name)
 				if stage.Parallelism > 0 {
 					hps, hosts = append(hps, HostPlan{Host: h}), append(hosts, h)
@@ -249,6 +248,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			if toApply[name] == "" || o.Failed[name] != nil {
 				continue
 			}
+			hp := planned[name]
 			hps, hosts = append(hps, hp), append(hosts, hp.Host)
 			if runs[name] == nil {
 				runs[name] = &hostApply{host: name, hide: plan.hide(name), rep: rep, progress: plan.opts.progress(), state: module.State{Refreshed: plan.refreshed[name]}, notified: map[string]bool{}, notifiedAt: map[string]int{}, started: map[string]int{}, thens: slices.Clone(plan.Pending[name].Then), rollback: plan.Pending[name].Rollback}

@@ -117,7 +117,7 @@ func TestDocAssert(t *testing.T) {
 func TestDocPipelineFailures(t *testing.T) {
 	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "pipeline")
 	out := strings.Join(strings.Fields(r.out), " ")
-	for _, want := range []string{"stops the pipeline after that stage", "not started: etcd1 failed in stage etcd", "leave it out with --hosts"} {
+	for _, want := range []string{"stops the pipeline after that stage", "not started: etcd1 failed in stage etcd", "leave it out with --hosts", "its failure counts at the first stage that matches it"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("winch doc pipeline lacks %q:\n%s", want, r.out)
 		}
