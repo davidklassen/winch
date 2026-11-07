@@ -19,6 +19,10 @@ func (p *Plan) suppressMissingUnitFiles() {
 			if m.Absent {
 				path = m.Path
 			}
+		case *module.Unit:
+			if m.Absent {
+				path = m.Path()
+			}
 		}
 		if path != "" {
 			if absent[host] == nil {

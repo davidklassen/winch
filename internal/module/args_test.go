@@ -14,7 +14,7 @@ var controllerOnly = map[string][]string{
 	"dir":      {"ModePos"},
 	"download": {"Recorded"},
 	"file":     {"Content", "Template", "TemplatePos", "Source", "SourcePos"},
-	"repo":     {"Key", "KeyPos", "KeyContent", "KeyContentPos"},
+	"repo":     {"URLPos", "SuitePos", "Key", "KeyPos", "KeyContent", "KeyContentPos"},
 	"service":  {"Actions"},
 	"unit":     {"Source", "SourcePos", "Content"},
 }

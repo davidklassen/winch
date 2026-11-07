@@ -240,6 +240,30 @@ func TestRepoModule(t *testing.T) {
 			Args:    &module.Repo{Name: "debian", URL: "http://deb.debian.org/debian", Suite: "trixie", Components: []string{"main"}},
 			WantErr: "/etc/apt/sources.list.d/debian.sources holds deb mirror+file:///etc/apt/mirrors/debian.list trixie, which is not this step's source; move it to another file",
 		},
+		{
+			Name:      "absent removes the source and the key",
+			Setup:     signedSource(suite),
+			State:     module.State{IndexFresh: true, Refreshed: true},
+			Args:      &module.Repo{Name: "winch-signed", Absent: true},
+			Want:      module.Result{Status: module.Change, Action: module.Remove, Changes: []string{"remove " + signedFile, "remove " + signedAsc}},
+			WantState: module.State{Sources: true},
+			Unchanged: "[ -e " + signedFile + " ] && [ -e " + signedAsc + " ]",
+			After:     "[ ! -e " + signedFile + " ] && [ ! -e " + signedAsc + " ]",
+		},
+		{
+			Name:      "absent without the files",
+			State:     module.State{IndexFresh: true, Refreshed: true},
+			Args:      &module.Repo{Name: "winch-signed", Absent: true},
+			Want:      module.Result{Status: module.OK},
+			WantState: module.State{IndexFresh: true, Refreshed: true},
+		},
+		{
+			Name:      "absent on a file with a deb-src entry",
+			Setup:     signedSource(suite) + " && sed -i 's/^Types: deb$/Types: deb deb-src/' " + signedFile,
+			Args:      &module.Repo{Name: "winch-signed", Absent: true},
+			WantErr:   signedFile + " holds deb-src " + signedURL + " " + suite + ", which is not this step's source; move it to another file",
+			Unchanged: "[ -e " + signedFile + " ] && [ -e " + signedAsc + " ]",
+		},
 	})
 }
 
@@ -441,4 +465,40 @@ func TestPlanAfterRepo(t *testing.T) {
 			t.Errorf("plan: exit %d, stdout %q, stderr %q, want an error with %q", r.Code, r.Stdout, r.Stderr, want)
 		}
 	})
+}
+
+// spec: Modules/repo; Modules/pkg
+func TestRepoAbsentRefresh(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "repo-gone")
+	suite := osRelease().codename
+	vm.MustRun(t, signedSource(suite)+" && apt-get update -q >/dev/null && apt-cache policy winch-signed | grep -q 'Candidate: 1'")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  repo-gone: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: apt\n    hosts: all\n    steps:\n      - recipe: gone\n",
+		"recipes/gone/recipe.yaml": `steps:
+  - pkg:
+      name: winch-up-new
+  - repo:
+      name: winch-signed
+      absent: true
+  - pkg:
+      name: winch-rec-dep
+`,
+	})
+	r := lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "- repo winch-signed") || strings.Count(r.Stdout, "refresh the package index") != 2 {
+		t.Fatalf("plan: exit %d, stdout %q, stderr %q, want the removal and a refresh before each install", r.Code, r.Stdout, r.Stderr)
+	}
+	// The plan of the last step reads an index of the sources without the
+	// removed one.
+	vm.MustRun(t, "[ -e /var/lib/winch/apt/sources/sources.list.d/winch-test.sources ] && [ ! -e /var/lib/winch/apt/sources/sources.list.d/winch-signed.sources ]")
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+	vm.MustRun(t, "[ ! -e "+signedFile+" ] && [ ! -e "+signedAsc+" ] && dpkg -s winch-rec-dep >/dev/null && ! apt-cache policy winch-signed | grep -q Candidate && ! ls /var/lib/apt/lists | grep -q '^10.0.2.100_signed_'")
+	if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 || !unchanged(r.Stdout, 1) {
+		t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
 }

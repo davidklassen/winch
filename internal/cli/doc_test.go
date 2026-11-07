@@ -58,6 +58,24 @@ func TestDocServiceWatch(t *testing.T) {
 	}
 }
 
+// spec: Modules/service and unit; Modules/repo
+func TestDocAbsent(t *testing.T) {
+	tests := []struct{ arg, want string }{
+		{"unit", "absent boolean false stop the unit and remove it"},
+		{"unit.absent", "For a template unit, it also stops each running instance and removes their enable links."},
+		{"repo", "absent boolean false remove the source and its key"},
+		{"repo.absent", "The next pkg step that installs a package refreshes the index."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.arg, func(t *testing.T) {
+			r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", tt.arg)
+			if out := strings.Join(strings.Fields(r.out), " "); !strings.Contains(out, tt.want) {
+				t.Errorf("winch doc %s lacks %q:\n%s", tt.arg, tt.want, r.out)
+			}
+		})
+	}
+}
+
 // spec: Modules/cmd
 func TestDocCmdUnless(t *testing.T) {
 	tests := []struct{ arg, want string }{

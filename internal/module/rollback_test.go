@@ -437,6 +437,8 @@ func TestTouches(t *testing.T) {
 		{&Hostname{Name: "mail"}, []Touch{{"/etc/hostname", true}}},
 		{&Timezone{Name: "Etc/UTC"}, []Touch{{"/etc/localtime", true}, {"/etc/timezone", true}}},
 		{&Unit{Name: "app.service"}, []Touch{{"/etc/systemd/system/app.service", true}}},
+		{&Unit{Name: "app@.service", Absent: true, links: []string{"/etc/systemd/system/multi-user.target.wants/app@a.service"}}, []Touch{{"/etc/systemd/system/app@.service", true}, {"/etc/systemd/system/multi-user.target.wants/app@a.service", true}}},
+		{&Repo{Name: "docker", Absent: true}, []Touch{{"/etc/apt/sources.list.d/docker.sources", true}, {"/etc/apt/keyrings/docker.asc", true}}},
 		{&Certbot{Name: "mail"}, []Touch{{"/etc/letsencrypt/renewal/mail.conf", true}, {"/etc/letsencrypt/live/mail", true}, {"/etc/letsencrypt/archive/mail", true}}},
 		{&Service{Name: "ssh", Running: &no}, nil},
 		{&Firewall{}, []Touch{{"/etc/winch/firewall.nft", true}, {"/etc/systemd/system/winch-firewall.service", true}, {"/etc/systemd/system/sysinit.target.wants/winch-firewall.service", true}, {"/etc/systemd/system/nftables.service.d/winch.conf", true}}},

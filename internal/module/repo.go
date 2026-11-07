@@ -22,8 +22,10 @@ import (
 
 type Repo struct {
 	Name       string        `yaml:"name,required" json:"name" line:"file name in /etc/apt" doc:"File name in /etc/apt, of the source file and of the key file."`
-	URL        string        `yaml:"url,required" json:"url" line:"without a user or a password" doc:"Without a user or a password."`
-	Suite      string        `yaml:"suite,required" json:"suite" line:"such as trixie" doc:"Such as trixie. A flat suite ends in /."`
+	URL        string        `yaml:"url" json:"url,omitempty" line:"required without absent; no user or password" doc:"Required without absent. Without a user or a password."`
+	URLPos     yamlx.Pos     `json:"-"`
+	Suite      string        `yaml:"suite" json:"suite,omitempty" line:"required without absent; such as trixie" doc:"Required without absent. Such as trixie. A flat suite ends in /."`
+	SuitePos   yamlx.Pos     `json:"-"`
 	Components yamlx.Strings `yaml:"components" json:"components,omitempty" line:"such as main" doc:"Such as main. They are required, except for a flat suite, which has none."`
 	Key        string        `yaml:"key" json:"-" line:"key file in the recipe's files/" doc:"Key file in the recipe's files/ directory: an ASCII-armored OpenPGP public key. Download the vendor's key once and keep it in the project. A step has at most one of key and key_content."`
 	KeyPos     yamlx.Pos     `json:"-"`
@@ -33,6 +35,7 @@ type Repo struct {
 	// KeyData is key_content, or the content of the key file in the recipe's
 	// files.
 	KeyData []byte `json:"key_data,omitempty"`
+	Absent  bool   `yaml:"absent" json:"absent,omitempty" line:"remove the source and its key" doc:"Remove the source file and the key file. The check fails when the source file holds an entry that is not one deb entry, so the step never removes another source. The next pkg step that installs a package refreshes the index."`
 	// Removed are the paths that earlier steps of the host remove. The
 	// controller sets them.
 	Removed []string `json:"removed,omitempty"`
@@ -40,6 +43,7 @@ type Repo struct {
 	// Check sets these for Apply.
 	writes  []repoFile
 	refresh bool
+	removes []*File
 }
 
 func (*Repo) Noun() string { return "a repo step" }
@@ -79,6 +83,15 @@ const spaceMsg = "has white space or a control character"
 func (r *Repo) Validate() error {
 	if !sourceNameRe.MatchString(r.Name) {
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf(`%q is not a source name; a name has letters, digits, _, -, and ., and does not start with .`, r.Name)}
+	}
+	if r.Absent {
+		return absentTakesNone(arg{"url", r.URLPos.Line > 0}, arg{"suite", r.SuitePos.Line > 0}, arg{"components", r.Components != nil}, arg{"key", r.KeyPos.Line > 0}, arg{"key_content", r.KeyContent != nil})
+	}
+	switch {
+	case r.URLPos.Line == 0:
+		return &yamlx.FieldError{Msg: "a repo step needs url"}
+	case r.SuitePos.Line == 0:
+		return &yamlx.FieldError{Msg: "a repo step needs suite"}
 	}
 	if hasSpace(r.URL) {
 		return &yamlx.FieldError{Field: "url", Msg: spaceMsg}
@@ -220,7 +233,10 @@ func (r *Repo) source(key string) []byte {
 	return []byte(b.String())
 }
 
-func (r *Repo) Check(_ context.Context, st *State, _ Say) (Result, error) {
+func (r *Repo) Check(ctx context.Context, st *State, say Say) (Result, error) {
+	if r.Absent {
+		return r.checkAbsent(ctx, st, say)
+	}
 	if err := r.checkOthers(); err != nil {
 		return Result{}, err
 	}
@@ -276,7 +292,8 @@ func (r *Repo) Check(_ context.Context, st *State, _ Say) (Result, error) {
 	return Result{Status: Change, Action: action, Changes: changes}, nil
 }
 
-// plan writes the source and the key of the step into the planned sources.
+// plan writes the source and the key of the step into the planned sources,
+// or removes them for a step with absent.
 // The first repo step of the run that changes one copies apt's sources there
 // first. Each drops the copies of the sources that an earlier step removes.
 func (r *Repo) plan(st *State) error {
@@ -318,6 +335,14 @@ func (r *Repo) plan(st *State) error {
 		}
 	}
 	key := path.Join(plannedKeys, r.Name+".asc")
+	if r.Absent {
+		for _, p := range []string{path.Join(plannedParts, r.Name+".sources"), key} {
+			if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+		}
+		return nil
+	}
 	if r.KeyData != nil {
 		if err := os.MkdirAll(plannedKeys, 0o700); err != nil {
 			return err
@@ -499,9 +524,49 @@ func orNone(s string) string {
 	return s
 }
 
+// checkAbsent finds the source file and the key file to remove. The next
+// install refreshes the index without the source.
+func (r *Repo) checkAbsent(ctx context.Context, st *State, say Say) (Result, error) {
+	var changes []string
+	for _, p := range []string{r.SourcePath(), r.keyPath()} {
+		f := &File{Path: p, Absent: true}
+		res, err := f.Check(ctx, st, say)
+		if err != nil {
+			return Result{}, err
+		}
+		if res.Status == OK {
+			continue
+		}
+		if p == r.SourcePath() {
+			src, _, err := checkRepoFile(p, nil)
+			if err != nil {
+				return Result{}, err
+			}
+			if err := r.checkOwnFile(src.old); err != nil {
+				return Result{}, err
+			}
+		}
+		r.removes = append(r.removes, f)
+		changes = append(changes, "remove "+p)
+	}
+	if changes == nil {
+		return Result{Status: OK}, nil
+	}
+	if err := r.plan(st); err != nil {
+		return Result{}, fmt.Errorf("plan the sources: %w", err)
+	}
+	st.IndexFresh, st.Refreshed, st.Sources = false, false, true
+	return Result{Status: Change, Action: Remove, Changes: changes}, nil
+}
+
 // Apply writes the files that Check found different and refreshes the index
 // of the source. When the refresh fails, it puts the old files back.
 func (r *Repo) Apply(ctx context.Context, say Say) error {
+	for _, f := range r.removes {
+		if err := f.Apply(ctx, say); err != nil {
+			return err
+		}
+	}
 	for i, f := range r.writes {
 		if err := writeRoot(f.path, f.content, 0, 0, 0o644); err != nil {
 			return undo(r.writes[:i], err)
@@ -581,7 +646,8 @@ func (r *Repo) removed(p string) bool {
 
 // checkOwnFile fails when old, the content of the source file, holds more
 // than one entry or an entry that is not deb. One deb entry is the step's
-// source, perhaps with an old URI or suite.
+// source, perhaps with an old URI or suite. For a step with absent, the first
+// deb entry is its source.
 func (r *Repo) checkOwnFile(old []byte) error {
 	if r.removed(r.SourcePath()) {
 		return nil
@@ -602,8 +668,14 @@ func (r *Repo) checkOwnFile(old []byte) error {
 	if len(keys) == 1 && strings.HasPrefix(keys[0], "deb ") {
 		return nil
 	}
+	own := "deb " + r.Source()
+	if r.Absent {
+		if i := slices.IndexFunc(keys, func(k string) bool { return strings.HasPrefix(k, "deb ") }); i >= 0 {
+			own = keys[i]
+		}
+	}
 	for i, k := range keys {
-		if k != "deb "+r.Source() {
+		if k != own {
 			return r.otherEntry(entries[i])
 		}
 	}

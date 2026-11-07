@@ -303,6 +303,8 @@ type hostRun struct {
 	// started are the units that service steps start or enable, by name and
 	// by unit file, with the first step.
 	started map[string]string
+	// gone are the unit files that unit steps remove, with the first step.
+	gone map[string]string
 	// trees are the paths of steps that remove the tree there, and writes the
 	// paths that steps write, with the step.
 	trees, writes []pathStep
@@ -600,7 +602,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 }
 
 func newHostRun() *hostRun {
-	return &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]need{}, created: map[string]bool{}, reported: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}, texts: map[string]sourceText{}}
+	return &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]need{}, created: map[string]bool{}, reported: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, gone: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}, texts: map[string]sourceText{}}
 }
 
 // readFacts reads the facts of hosts, the hosts that hosts and match() can
@@ -987,11 +989,13 @@ func (hr *hostRun) repo(st *project.Step, where string) error {
 	if !ok {
 		return nil
 	}
-	key := r.Source()
-	if w, ok := hr.sources[key]; ok {
-		return fmt.Errorf("%s: the source %s %s is also in %s; use one step", where, r.URL, r.Suite, w)
+	if !r.Absent {
+		key := r.Source()
+		if w, ok := hr.sources[key]; ok {
+			return fmt.Errorf("%s: the source %s %s is also in %s; use one step", where, r.URL, r.Suite, w)
+		}
+		hr.sources[key] = hr.step
 	}
-	hr.sources[key] = hr.step
 	c := *r
 	c.Removed = hr.removed
 	st.Args = &c
@@ -1224,15 +1228,19 @@ func otherOwner(tree, o module.Owned) bool {
 }
 
 // unitOrder fails a unit step whose unit file an earlier service step needs to
-// start or enable the unit. Such a step fails on a new host. It also fails a
-// step that changes a drop-in of a unit that an earlier service step starts or
-// enables, when the step notifies no handler on the host: daemon-reload does
-// not restart the unit.
+// start or enable the unit. Such a step fails on a new host. It fails a
+// service step that starts or enables a unit that a unit step removes, in
+// either order. It also fails a step that changes a drop-in of a unit that an
+// earlier service step starts or enables, when the step notifies no handler on
+// the host: daemon-reload does not restart the unit.
 func (hr *hostRun) unitOrder(p Planned, where string) error {
 	var dropIn string
 	switch m := p.Step.Args.(type) {
 	case *module.Service:
 		if m.Running != nil && *m.Running || m.Enabled != nil && *m.Enabled {
+			if w, ok := hr.gone[m.UnitFile()]; ok {
+				return fmt.Errorf("%s: %s removes %s, which this step starts or enables", where, w, m.UnitFile())
+			}
 			if _, ok := hr.services[m.UnitFile()]; !ok {
 				hr.services[m.UnitFile()] = hr.step
 			}
@@ -1243,6 +1251,15 @@ func (hr *hostRun) unitOrder(p Planned, where string) error {
 			}
 		}
 	case *module.Unit:
+		if m.Absent {
+			if w, ok := hr.started[m.Name]; ok {
+				return fmt.Errorf("%s: %s starts or enables %s, which this step removes", where, w, m.Name)
+			}
+			if _, ok := hr.gone[m.Name]; !ok {
+				hr.gone[m.Name] = hr.step
+			}
+			return nil
+		}
 		if w := hr.services[m.Name]; w != "" {
 			return fmt.Errorf("%s: %s uses %s before this step writes it; move this step before it", where, w, m.Name)
 		}
@@ -1393,7 +1410,7 @@ func (hr *hostRun) newUnitFile(st *project.Step) {
 }
 
 func (hr *hostRun) trackUnitFile(m module.Module, res module.Result) {
-	if u, ok := m.(*module.Unit); ok && res.Status == module.Change {
+	if u, ok := m.(*module.Unit); ok && !u.Absent && res.Status == module.Change {
 		hr.unitFiles[u.Name] = u.Data
 	}
 }
@@ -1447,17 +1464,32 @@ func (hr *hostRun) trackRemoved(m module.Module) {
 		if m.Absent {
 			hr.removed = append(hr.removed, m.Path)
 		}
+	case *module.Unit:
+		if m.Absent {
+			hr.removed = append(hr.removed, m.Path())
+		}
+	case *module.Repo:
+		if m.Absent {
+			hr.removed = append(hr.removed, m.SourcePath())
+		}
 	}
 }
 
-// trackUnits records the unit of a service step, and the units that start it
-// while no service step names them.
+// trackUnits records the unit of a service step or of a unit step that
+// removes it, and the units that start it while no such step names them.
 func (hr *hostRun) trackUnits(m module.Module, res module.Result, where string) {
-	sv, ok := m.(*module.Service)
-	if !ok {
+	var unit string
+	switch m := m.(type) {
+	case *module.Service:
+		unit = m.Unit()
+	case *module.Unit:
+		if !m.Absent {
+			return
+		}
+		unit = m.Name
+	default:
 		return
 	}
-	unit := sv.Unit()
 	hr.units[unit] = true
 	hr.startedBy = slices.DeleteFunc(hr.startedBy, func(s startedBy) bool { return s.unit == unit })
 	for _, u := range res.StartedBy {

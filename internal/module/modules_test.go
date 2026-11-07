@@ -409,7 +409,11 @@ func TestUnitValidate(t *testing.T) {
 		{"content", "name: app.service\ncontent: \"\"\n", ""},
 		{"content and source", "name: app.service\ncontent: a\nsource: a\n", `t.yaml:2:10: a unit step has at most one of content and source`},
 		{"source outside files", "name: app.service\nsource: ../app.service\n", `t.yaml:2:9: source: must be a clean relative path, such as "a/b.conf"`},
-		{"absent", "name: app.service\nsource: a\nabsent: true\n", `t.yaml:3:1: unknown key "absent"`},
+		{"absent", "name: app.service\nabsent: true\n", ""},
+		{"absent template", "name: app@.service\nabsent: true\n", ""},
+		{"absent with source", "name: app.service\nsource: a\nabsent: true\n", `t.yaml:2:9: source: not with absent: true`},
+		{"absent with content", "name: app.service\ncontent: a\nabsent: true\n", `t.yaml:2:10: content: not with absent: true`},
+		{"absent instance", "name: app@one.service\nabsent: true\n", `t.yaml:1:7: name: "app@one.service" is an instance; write the template "app@.service", and put instance settings in a drop-in`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Unit{}, tt.yaml, tt.want) })
