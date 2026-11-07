@@ -262,36 +262,74 @@ func sealedFields(v any, fields map[string]bool) bool {
 	return true
 }
 
-// force returns alt, the value of a secret variable in the variant n, with
-// each leaf that equals the real leaf replaced by the placeholder. Map keys
-// stay.
-func force(real, alt any, n int) any {
+// force returns alt1 and alt2, the placeholder variants of the value of a
+// secret variable, with the placeholders in place of each leaf that equals the
+// real leaf or the leaf of the other variant. The output takes text that is
+// the same in both variants as text from no secret. Map keys stay.
+func force(real, alt1, alt2 any) (any, any) {
 	switch r := real.(type) {
 	case map[string]any:
-		am, ok := alt.(map[string]any)
-		if !ok {
-			return alt
+		m1, ok1 := alt1.(map[string]any)
+		m2, ok2 := alt2.(map[string]any)
+		if !ok1 || !ok2 {
+			break
 		}
-		m := make(map[string]any, len(am))
-		for k, x := range am {
-			m[k] = force(r[k], x, n)
+		o1, o2 := make(map[string]any, len(m1)), make(map[string]any, len(m2))
+		for k, x1 := range m1 {
+			o1[k], _ = force(r[k], x1, m2[k])
 		}
-		return m
+		for k, x2 := range m2 {
+			_, o2[k] = force(r[k], m1[k], x2)
+		}
+		return o1, o2
 	case []any:
-		al, ok := alt.([]any)
-		if !ok || len(al) != len(r) {
-			return alt
+		l1, ok1 := alt1.([]any)
+		l2, ok2 := alt2.([]any)
+		if !ok1 || !ok2 || len(l1) != len(r) || len(l2) != len(r) {
+			break
 		}
-		l := make([]any, len(al))
-		for i := range al {
-			l[i] = force(r[i], al[i], n)
+		o1, o2 := make([]any, len(r)), make([]any, len(r))
+		for i := range r {
+			o1[i], o2[i] = force(r[i], l1[i], l2[i])
 		}
-		return l
+		return o1, o2
 	}
-	if reflect.DeepEqual(real, alt) {
-		return secret.Placeholder(n)
+	if reflect.DeepEqual(real, alt1) || reflect.DeepEqual(real, alt2) || reflect.DeepEqual(alt1, alt2) {
+		return secret.Placeholder(1), secret.Placeholder(2)
 	}
-	return alt
+	return alt1, alt2
+}
+
+// agreeOff reports whether a leaf of alt1 and alt2, the placeholder variants
+// of a value, equals the other variant but not real.
+func agreeOff(real, alt1, alt2 any) bool {
+	switch r := real.(type) {
+	case map[string]any:
+		m1, ok1 := alt1.(map[string]any)
+		m2, ok2 := alt2.(map[string]any)
+		if !ok1 || !ok2 {
+			break
+		}
+		for k, x1 := range m1 {
+			if x2, ok := m2[k]; ok && agreeOff(r[k], x1, x2) {
+				return true
+			}
+		}
+		return false
+	case []any:
+		l1, ok1 := alt1.([]any)
+		l2, ok2 := alt2.([]any)
+		if !ok1 || !ok2 || len(l1) != len(r) || len(l2) != len(r) {
+			break
+		}
+		for i := range r {
+			if agreeOff(r[i], l1[i], l2[i]) {
+				return true
+			}
+		}
+		return false
+	}
+	return reflect.DeepEqual(alt1, alt2) && !reflect.DeepEqual(real, alt1)
 }
 
 // maskError returns err, an error of the real values, with each part of its

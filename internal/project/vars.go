@@ -1151,13 +1151,17 @@ func (p *Project) evalValue(e *Env, v *Var) ([3]any, bool, error) {
 		}
 		return vals, false, err
 	}
-	for n := 1; n < 3; n++ {
-		switch {
-		case errs[n] != nil:
-			vals[n] = secret.Placeholder(n)
-		case isSecret:
-			vals[n] = force(vals[0], vals[n], n)
-		}
+	// A host of hosts or match() brings its secrets without a read by name.
+	// A value built from them, such as a result of contains, can differ from
+	// two placeholder variants that agree. Such a value is secret. A value
+	// whose variants differ wherever it differs, such as a list of hosts,
+	// keeps its plain parts, such as host names.
+	switch {
+	case errs[1] != nil || errs[2] != nil:
+		vals[1], vals[2], isSecret = secret.Placeholder(1), secret.Placeholder(2), true
+	case e.secrets && (isSecret || agreeOff(vals[0], vals[1], vals[2])):
+		vals[1], vals[2] = force(vals[0], vals[1], vals[2])
+		isSecret = true
 	}
 	return vals, isSecret, nil
 }
