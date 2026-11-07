@@ -65,7 +65,7 @@ func Suggest(name string, options []string) string {
 
 // Closest returns the option closest to name, or "" when no option is close.
 func Closest(name string, options []string) string {
-	best, bestDist := "", len(name)/2+1
+	best, bestDist := "", len(name)/3+1
 	for _, o := range options {
 		if d := distance(name, o); d < bestDist {
 			best, bestDist = o, d

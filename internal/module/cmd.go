@@ -112,7 +112,7 @@ func (c *Cmd) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 	case err == nil:
 		return Result{Status: OK}, nil
 	case !errors.As(err, new(*exec.ExitError)):
-		return Result{}, fmt.Errorf("unless: %w", err)
+		return Result{}, fmt.Errorf("unless: %s: %w", FirstLine(*c.Unless), err)
 	}
 	if out := shownOutput(string(stderr.tail())); out != "" {
 		lines := strings.Split(out, "\n")

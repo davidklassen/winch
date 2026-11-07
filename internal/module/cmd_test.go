@@ -270,7 +270,7 @@ func TestCmdApply(t *testing.T) {
 		t.Errorf("with dir: pwd = %q, want %q", got, real)
 	}
 	err = (&Cmd{Command: "echo the cause; exit 3"}).Apply(t.Context(), Silent{})
-	if want := "echo the cause; exit 3: exit status 3: the cause"; err == nil || err.Error() != want {
+	if want := "exit status 3: the cause"; err == nil || err.Error() != want {
 		t.Errorf("a failing command: %v, want %q", err, want)
 	}
 	missing := filepath.Join(dir, "missing")

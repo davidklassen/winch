@@ -589,6 +589,14 @@ func TestCertbotPendingHookOrder(t *testing.T) {
 	}
 }
 
+// spec: Modules/certbot
+func TestCertbotPendingHookFails(t *testing.T) {
+	c := &Certbot{Name: "fails", PendingHooks: []string{"post_hook"}, PostHook: new("echo bad >&2; exit 1")}
+	if err := c.Apply(t.Context(), Silent{}); err == nil || err.Error() != "post_hook: echo bad >&2; exit 1: exit status 1: bad" {
+		t.Errorf("error = %v", err)
+	}
+}
+
 // spec: Modules/certbot (hooks round-trip through the renewal file)
 func TestCertbotHookRoundTrip(t *testing.T) {
 	// Each line is what configobj writes for the wrapped command.
