@@ -291,6 +291,10 @@ func TestAssert(t *testing.T) {
 	if err := (&Assert{Command: "true", Message: "x"}).Apply(t.Context(), Silent{}); err != nil {
 		t.Errorf("a passing assert: %v", err)
 	}
+	err = (&Assert{Command: "seq 40000; echo last; exit 1", Message: "m"}).Apply(t.Context(), Silent{})
+	if want := "m: exit status 1: (output cut to the last 64 KiB)\n"; err == nil || !strings.HasPrefix(err.Error(), want) || !strings.HasSuffix(err.Error(), "\n40000\nlast") {
+		t.Errorf("an assert with a long output: %.80q, want %q first", err, want)
+	}
 	err = (&Assert{Command: "no-such-tool", Message: "port 25 is blocked"}).Apply(t.Context(), Silent{})
 	if want := "port 25 is blocked: exit status 127: "; err == nil || !strings.HasPrefix(err.Error(), want) || len(err.Error()) == len(want) {
 		t.Errorf("an assert with a missing command: %v, want %q and the shell's error", err, want)

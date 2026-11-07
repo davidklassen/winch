@@ -33,7 +33,7 @@ func Seconds(d time.Duration) string {
 }
 
 // run runs a command and returns its output. On a failure, the error holds
-// the end of the output.
+// the output.
 func run(ctx context.Context, name string, args ...string) (string, error) {
 	return runLimited(ctx, commandLimit, KillDelay, nil, "", name, args...)
 }
@@ -79,17 +79,33 @@ func FirstLine(s string) string {
 	return first
 }
 
+// outputLimit is the most output that an error shows.
+const outputLimit = 64 << 10
+
 func failure(what string, err error, out string) error {
-	out = strings.TrimSpace(out)
+	out = shownOutput(out)
 	if out == "" {
 		return fmt.Errorf("%s: %w", what, err)
 	}
-	lines := strings.Split(out, "\n")
-	return fmt.Errorf("%s: %w: %s", what, err, strings.Join(lines[max(0, len(lines)-10):], "\n"))
+	return fmt.Errorf("%s: %w: %s", what, err, out)
+}
+
+// shownOutput is the end of out that an error shows.
+func shownOutput(out string) string {
+	if len(out) <= outputLimit {
+		return strings.TrimSpace(out)
+	}
+	// A part of a line could show the end of a secret, which the secret
+	// filter does not find.
+	kept := out[len(out)-outputLimit:]
+	if out[len(out)-outputLimit-1] != '\n' {
+		_, kept, _ = strings.Cut(kept, "\n")
+	}
+	return strings.TrimSpace("(output cut to the last 64 KiB)\n" + kept)
 }
 
 // Shell runs a command of the project through sh -ec, in / and with stdin
-// from /dev/null. On a failure, the error holds the end of the output.
+// from /dev/null. On a failure, the error holds the output.
 func Shell(ctx context.Context, command string) error {
 	return ShellLimit(ctx, command, commandLimit, KillDelay)
 }
@@ -109,8 +125,7 @@ type runAs struct {
 // shellLimit is ShellLimit in dir, with env, and as the user as when it is
 // not nil. A key that is not empty is the key of the step that sets limit.
 func shellLimit(ctx context.Context, command, dir string, env []string, as *runAs, limit, killDelay time.Duration, key string) error {
-	// The error shows only the end of the output.
-	out := &tailBuffer{max: 64 << 10}
+	out := &tailBuffer{max: outputLimit + 1}
 	if err := shell(ctx, "-ec", command, dir, env, as, limit, key, killDelay, out); err != nil {
 		return failure(FirstLine(command), err, string(out.tail()))
 	}
@@ -194,11 +209,11 @@ func wait(ctx context.Context, cmd *exec.Cmd, killDelay time.Duration) error {
 }
 
 // tailBuffer keeps the last max bytes written to it. It trims only at twice
-// max, so a long output is not copied at each write.
+// max, so a long output is not copied at each write. A caller that keeps one
+// byte more than it shows tells a cut output by its length.
 type tailBuffer struct {
 	b   []byte
 	max int
-	cut bool
 }
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
@@ -209,10 +224,9 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// tail returns the last max bytes, and records when it drops some.
+// tail returns the last max bytes.
 func (t *tailBuffer) tail() []byte {
 	if over := len(t.b) - t.max; over > 0 {
-		t.cut = true
 		return t.b[over:]
 	}
 	return t.b
@@ -235,15 +249,16 @@ func Exec(ctx context.Context, command string, limit time.Duration) (ExecResult,
 // execLimit is Exec with the kill delay killDelay. Exit codes and signals are
 // results; the time limit is an error.
 func execLimit(ctx context.Context, command string, limit, killDelay time.Duration) (ExecResult, error) {
-	out := &tailBuffer{max: 1 << 20}
+	const shown = 1 << 20
+	out := &tailBuffer{max: shown + 1}
 	err := shell(ctx, "-c", command, "/", nil, nil, limit, "--timeout", killDelay, out)
-	tail := out.tail()
+	tail := string(out.tail())
 	if err != nil && !errors.As(err, new(*exec.ExitError)) {
-		return ExecResult{}, failure(command, err, string(tail))
+		return ExecResult{}, failure(command, err, tail)
 	}
-	res := ExecResult{Output: string(tail)}
-	if out.cut {
-		res.Output = "(output cut to the last 1 MiB)\n" + res.Output
+	res := ExecResult{Output: tail}
+	if len(tail) > shown {
+		res.Output = "(output cut to the last 1 MiB)\n" + tail[len(tail)-shown:]
 	}
 	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		res.ExitCode = exit.ExitCode()

@@ -94,6 +94,15 @@ func TestDocCmdUnless(t *testing.T) {
 	}
 }
 
+// spec: Modules (every command on the host)
+func TestDocFailedCommandOutput(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "remote")
+	want := "The error of a failed command shows its output, up to the last 64 KiB."
+	if out := strings.Join(strings.Fields(r.out), " "); !strings.Contains(out, want) {
+		t.Errorf("winch doc remote lacks %q:\n%s", want, r.out)
+	}
+}
+
 // spec: Modules/assert
 func TestDocAssert(t *testing.T) {
 	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "assert")
