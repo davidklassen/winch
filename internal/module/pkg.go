@@ -174,6 +174,9 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 		for n, ps := range providers {
 			providers[n] = slices.DeleteFunc(ps, func(q string) bool { return pkgs[q].state != installed && pkgs[q].half == 0 })
 		}
+	}
+	// winch's own index is fresh. Only an old index can miss a real package.
+	if p.Absent || st.Sources {
 		if err := providedOnly(missing, providers); err != nil {
 			return Result{}, err
 		}

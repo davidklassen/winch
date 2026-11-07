@@ -396,6 +396,14 @@ func TestPlanAfterRepo(t *testing.T) {
 		}
 	})
 
+	t.Run("a name that the fresh index knows only as provided", func(t *testing.T) {
+		vm.MustRun(t, reset)
+		r := lab.Winch(t, project(repo("winch-signed", signedURL), "  - pkg:\n      name: [winch-signed, winch-mta]\n"), "plan", "site")
+		if want := "winch-mta is provided by winch-mta-a, winch-mta-b; name one of them"; r.Code == 0 || !strings.Contains(r.Stderr, want) {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want an error with %q", r.Code, r.Stdout, r.Stderr, want)
+		}
+	})
+
 	t.Run("upgrade", func(t *testing.T) {
 		vm.MustRun(t, reset+" && DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-signed=0 >/dev/null")
 		dir := project(repo("winch-signed", signedURL), "  - upgrade:\n      mode: safe\n")
