@@ -428,6 +428,26 @@ func TestPlanAfterRepo(t *testing.T) {
 		}
 	})
 
+	t.Run("a name that the fresh index does not know", func(t *testing.T) {
+		vm.MustRun(t, reset)
+		before := vm.MustRun(t, apt)
+		r := lab.Winch(t, project(repo("winch-signed", signedURL), "  - pkg:\n      name: [winch-signed, winch-typo]\n"), "apply", "site", "--yes")
+		if want := "apt does not know winch-typo; check the name and the repo step that adds it"; r.Code == 0 || !strings.Contains(r.Stderr, want) {
+			t.Errorf("apply: exit %d, stdout %q, stderr %q, want an error with %q", r.Code, r.Stdout, r.Stderr, want)
+		}
+		if after := vm.MustRun(t, apt); after != before {
+			t.Errorf("a step ran:\nbefore:\n%s\nafter:\n%s", before, after)
+		}
+	})
+
+	t.Run("an absent name that the fresh index does not know", func(t *testing.T) {
+		vm.MustRun(t, reset)
+		r := lab.Winch(t, project(repo("winch-signed", signedURL), "  - pkg:\n      name: winch-typo\n      absent: true\n"), "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stderr, "note: apt does not know winch-typo\n") {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want the note apt does not know winch-typo", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+
 	t.Run("upgrade", func(t *testing.T) {
 		vm.MustRun(t, reset+" && DEBIAN_FRONTEND=noninteractive apt-get install -y -q winch-signed=0 >/dev/null")
 		dir := project(repo("winch-signed", signedURL), "  - upgrade:\n      mode: safe\n")
