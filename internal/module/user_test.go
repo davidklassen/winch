@@ -517,6 +517,23 @@ func TestUserCheckNewSystemHome(t *testing.T) {
 }
 
 // spec: Modules/user and group
+func TestUserCheckNewNoHome(t *testing.T) {
+	for _, system := range []bool{true, false} {
+		u := User{Name: "wtsvc", System: system, Home: noHome}
+		res, home, _, err := u.checkNew(accounts{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "home " + noHome + " (not created)"; !slices.Contains(res.Changes, want) {
+			t.Errorf("system %v: changes = %q, want %q", system, res.Changes, want)
+		}
+		if home != noHome || !slices.Contains(u.account, "-M") || slices.Contains(u.account, "-m") || u.mkHome != "" {
+			t.Errorf("system %v: home = %q, account = %q, mkHome = %q; want %s, useradd -M, and no mkHome", system, home, u.account, u.mkHome, noHome)
+		}
+	}
+}
+
+// spec: Modules/user and group
 func TestUserCheckExistingGroups(t *testing.T) {
 	alice := passwdEntry{name: "alice", uid: 1000, gid: 1000, home: noHome}
 	a := accounts{users: []passwdEntry{alice}, groups: []groupEntry{{name: "alice", gid: 1000}, {name: "adm", gid: 4, members: []string{"alice"}}, {name: "wtgrp", gid: 1001}}}

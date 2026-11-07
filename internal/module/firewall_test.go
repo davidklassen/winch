@@ -30,8 +30,12 @@ func TestFirewallValidate(t *testing.T) {
 		{"absent", "absent: true\n", ""},
 		{"nothing", "{}\n", "a firewall step needs allow, or absent: true"},
 		{"absent with rules", "absent: true\nallow:\n  - tcp: 22\n", "allow: not with absent: true"},
-		{"tcp and udp", "allow:\n  - tcp: 53\n    udp: 53\n", "t.yaml:3:10: a rule has at most one of tcp and udp"},
-		{"no protocol", "allow:\n  - from: 10.0.0.0/8\n", "a rule needs tcp or udp"},
+		{"tcp and udp", "allow:\n  - tcp: [6443, 10250]\n    udp: 8472\n    from: 10.0.0.5\n", ""},
+		{"only from", "allow:\n  - from: [10.42.0.0/16, 10.43.0.0/16]\n", ""},
+		{"neither ports nor from", "allow:\n  - {}\n", "a rule needs tcp, udp, or from"},
+		{"no udp ports", "allow:\n  - tcp: 22\n    udp: []\n", "udp: needs a port"},
+		{"udp port too high", "allow:\n  - tcp: 22\n    udp: 65536\n", "udp: port 65536 is not between 1 and 65535"},
+		{"only from without an address", "allow:\n  - from: []\n", "from: needs an address or a network"},
 		{"no ports", "allow:\n  - tcp: []\n", "tcp: needs a port"},
 		{"port 0", "allow:\n  - tcp: 0\n", "tcp: port 0 is not between 1 and 65535"},
 		{"port too high", "allow:\n  - udp: [53, 65536]\n", "udp: port 65536 is not between 1 and 65535"},
@@ -56,7 +60,8 @@ func TestFirewallValidate(t *testing.T) {
 
 // spec: Modules/firewall (the table, its built-in rules, and its file)
 func TestFirewallContent(t *testing.T) {
-	f, err := decodeFirewall(t, "allow:\n  - tcp: [22, 80, 443]\n  - udp: 51820\n  - tcp: 5432\n    from: [10.0.0.0/8, 2001:DB8::/32, 192.0.2.7]\n")
+	f, err := decodeFirewall(t, "allow:\n  - tcp: [22, 80, 443]\n  - udp: 51820\n  - tcp: 5432\n    from: [10.0.0.0/8, 2001:DB8::/32, 192.0.2.7]\n"+
+		"  - tcp: 53\n    udp: 53\n  - tcp: [6443, 10250]\n    udp: 8472\n    from: [10.0.0.5, 2001:db8::5]\n  - from: [10.42.0.0/16, fd00::/8]\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +70,9 @@ func TestFirewallContent(t *testing.T) {
 # allow tcp 22, 80, 443
 # allow udp 51820
 # allow tcp 5432 from 10.0.0.0/8, 2001:db8::/32, 192.0.2.7
+# allow tcp 53 and udp 53
+# allow tcp 6443, 10250 and udp 8472 from 10.0.0.5, 2001:db8::5
+# allow from 10.42.0.0/16, fd00::/8
 table inet winch
 delete table inet winch
 table inet winch {
@@ -82,6 +90,14 @@ table inet winch {
 		udp dport 51820 accept
 		ip saddr { 10.0.0.0/8, 192.0.2.7 } tcp dport 5432 accept
 		ip6 saddr 2001:db8::/32 tcp dport 5432 accept
+		tcp dport 53 accept
+		udp dport 53 accept
+		ip saddr 10.0.0.5 tcp dport { 6443, 10250 } accept
+		ip6 saddr 2001:db8::5 tcp dport { 6443, 10250 } accept
+		ip saddr 10.0.0.5 udp dport 8472 accept
+		ip6 saddr 2001:db8::5 udp dport 8472 accept
+		ip saddr 10.42.0.0/16 accept
+		ip6 saddr fd00::/8 accept
 	}
 }
 `
@@ -121,6 +137,12 @@ func TestFirewallSSH(t *testing.T) {
 		{"other port", "- tcp: 80", v4, "no rule accepts TCP port 22 from 10.0.2.2, the address that winch connects from; add a rule with tcp: 22"},
 		{"udp", "- udp: 22", v4, "no rule accepts TCP port 22 from 10.0.2.2, the address that winch connects from; add a rule with tcp: 22"},
 		{"other network", "- tcp: 22\n  from: 192.168.0.0/16", v4, "no rule accepts TCP port 22 from 10.0.2.2, the address that winch connects from; add 10.0.2.2 to from in the rule with tcp: 22"},
+		{"tcp and udp", "- udp: 8472\n  tcp: 22", v4, ""},
+		{"only from the network", "- from: 10.0.0.0/8", v4, ""},
+		{"only from another network", "- from: 192.168.0.0/16", v4, "no rule accepts TCP port 22 from 10.0.2.2, the address that winch connects from; add a rule with tcp: 22"},
+		{"other port from the network", "- tcp: 80\n  from: 10.0.0.0/8", v4, "no rule accepts TCP port 22 from 10.0.2.2, the address that winch connects from; add a rule with tcp: 22"},
+		{"udp from the network", "- udp: 22\n  from: 10.0.0.0/8", v4, "no rule accepts TCP port 22 from 10.0.2.2, the address that winch connects from; add a rule with tcp: 22"},
+		{"only from an IPv6 network", "- from: 2001:db8::/32", v6, ""},
 		{"IPv6", "- tcp: 2222\n  from: 2001:db8::/32", v6, ""},
 		{"IPv6 from an IPv4 network", "- tcp: 2222\n  from: 10.0.0.0/8", v6, "no rule accepts TCP port 2222 from 2001:db8::5, the address that winch connects from; add 2001:db8::5 to from in the rule with tcp: 2222"},
 		{"no rules", "[]", v4, "no rule accepts TCP port 22 from 10.0.2.2, the address that winch connects from; add a rule with tcp: 22"},
@@ -167,6 +189,8 @@ func TestFirewallRuleChanges(t *testing.T) {
 		{"new file", "- tcp: 22", nil, []string{"add tcp 22"}},
 		{"same rules", "- tcp: [22, 80]\n- udp: 51820", old, nil},
 		{"add and remove", "- tcp: [22, 80]\n- tcp: 5432\n  from: 10.0.0.0/8", old, []string{"add tcp 5432 from 10.0.0.0/8", "remove udp 51820"}},
+		{"only from", "- tcp: [22, 80]\n- udp: 51820\n- from: 10.42.0.0/16", old, []string{"add from 10.42.0.0/16"}},
+		{"tcp and udp", "- tcp: [22, 80]\n  udp: 51820", old, []string{"add tcp 22, 80 and udp 51820", "remove tcp 22, 80", "remove udp 51820"}},
 		{"a port more", "- tcp: [22, 80, 443]\n- udp: 51820", old, []string{"add tcp 22, 80, 443", "remove tcp 22, 80"}},
 		{"a file of another writer", "- tcp: 22", []byte("table inet winch {\n}\n"), []string{"add tcp 22"}},
 	}

@@ -108,7 +108,7 @@ func (s *Service) Validate() error {
 }
 
 func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
-	out, err := run(ctx, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,FragmentPath,DropInPaths,NeedDaemonReload,Type,RemainAfterExit,TriggeredBy", "--", s.Name)
+	out, err := run(ctx, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,UnitFileState,FragmentPath,SourcePath,DropInPaths,NeedDaemonReload,Type,RemainAfterExit,TriggeredBy", "--", s.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -134,7 +134,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		return Result{}, fmt.Errorf("%s is an alias of %s; use %s", s.Name, u.id, strings.TrimSuffix(u.id, ".service"))
 	}
 	var files [][]byte
-	if fresh || s.Enabled != nil && *s.Enabled && (u.file == "linked" || u.file == "indirect") {
+	if fresh || s.Enabled != nil && *s.Enabled && (u.file == "linked" || u.file == "enabled-runtime" || u.file == "indirect") {
 		if files, err = s.files(u, fresh); err != nil {
 			return Result{}, err
 		}
@@ -191,6 +191,8 @@ func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 			linked = err == nil && fi.Mode().Type() == fs.ModeSymlink
 		}
 		switch {
+		case u.file == "generated" && strings.HasPrefix(u.source, "/etc/init.d/"):
+			return Result{}, fmt.Errorf("%s comes from the init script %s, whose rc links start it at boot; remove enabled", u.id, u.source)
 		case missing && !fresh:
 			if *s.Enabled {
 				s.todo = append(s.todo, "enable")
@@ -206,11 +208,11 @@ func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 		case !*s.Enabled && u.file == "enabled":
 			s.todo = append(s.todo, "disable")
 		case !*s.Enabled, u.file == "enabled":
-		case u.file == "disabled", u.file == "enabled-runtime":
+		case u.file == "disabled":
 			s.todo = append(s.todo, "enable")
-		case u.file == "linked":
+		case u.file == "linked", u.file == "enabled-runtime":
 			// systemd reports a unit without [Install] as static, but not
-			// a linked one.
+			// a linked or runtime-enabled one.
 			if !installs(sectionKeys(files, "Install")) {
 				return Result{}, fmt.Errorf("%s has no [Install] section with WantedBy, RequiredBy, UpheldBy, or Alias; enabled: true cannot enable it", u.id)
 			}
@@ -697,9 +699,9 @@ func sectionKeys(files [][]byte, section string) map[string][]string {
 }
 
 type unitState struct {
-	id, load, active, sub, file, fragment, dropIns, invocation, typ string
-	triggeredBy                                                     []string
-	reload, remain, canReload                                       bool
+	id, load, active, sub, file, fragment, source, dropIns, invocation, typ string
+	triggeredBy                                                             []string
+	reload, remain, canReload                                               bool
 }
 
 func (u unitState) up() bool {
@@ -752,6 +754,8 @@ func parseShow(out string) (unitState, error) {
 			u.file = v
 		case "FragmentPath":
 			u.fragment = v
+		case "SourcePath":
+			u.source = v
 		case "DropInPaths":
 			u.dropIns = v
 		case "NeedDaemonReload":

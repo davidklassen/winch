@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"runtime"
 	"strconv"
@@ -17,6 +18,19 @@ import (
 type Facts struct {
 	OS             OS   `json:"os" expr:"os" yaml:"os" line:"OS release of the host" doc:"OS release of the host. winch reads id, version, and codename from /etc/os-release, or from /usr/lib/os-release when the first does not exist."`
 	RebootRequired bool `json:"reboot_required" expr:"reboot_required" yaml:"reboot_required" line:"pending reboot" doc:"Pending reboot. It is true when /run/reboot-required exists, or when a kernel in /boot is newer than the running kernel."`
+	SSH            SSH  `json:"ssh" expr:"ssh" yaml:"ssh" line:"public SSH host keys" doc:"Public SSH host keys. Each is the type and the key of /etc/ssh/ssh_host_<type>_key.pub, without the comment, or \"\" when the file does not exist."`
+	Net            Net  `json:"net" expr:"net" yaml:"net" line:"addresses of the default routes" doc:"Addresses of the default routes. Each is the source address of the host's default route of its family, or \"\" when the host has no such route. A host with several networks sets the address of the network it means in a variable."`
+}
+
+type SSH struct {
+	ED25519 string `json:"ed25519" expr:"ed25519" yaml:"ed25519" line:"Ed25519 host key, such as ssh-ed25519 AAAAC3Nz…" doc:"Ed25519 host key, such as ssh-ed25519 AAAAC3Nz…"`
+	ECDSA   string `json:"ecdsa" expr:"ecdsa" yaml:"ecdsa" line:"ECDSA host key, such as ecdsa-sha2-nistp256 AAAAE2Vj…" doc:"ECDSA host key, such as ecdsa-sha2-nistp256 AAAAE2Vj…"`
+	RSA     string `json:"rsa" expr:"rsa" yaml:"rsa" line:"RSA host key, such as ssh-rsa AAAAB3Nz…" doc:"RSA host key, such as ssh-rsa AAAAB3Nz…"`
+}
+
+type Net struct {
+	IPv4 string `json:"ipv4" expr:"ipv4" yaml:"ipv4" line:"IPv4 address, such as 192.0.2.10" doc:"IPv4 address, such as 192.0.2.10."`
+	IPv6 string `json:"ipv6" expr:"ipv6" yaml:"ipv6" line:"IPv6 address, such as 2001:db8::10" doc:"IPv6 address, such as 2001:db8::10."`
 }
 
 type OS struct {
@@ -97,7 +111,52 @@ func unquote(s string) string {
 
 // Map returns the facts with the names that templates read.
 func (f Facts) Map() map[string]any {
-	return map[string]any{"os": map[string]any{"id": f.OS.ID, "version": f.OS.Version, "codename": f.OS.Codename, "arch": f.OS.Arch}, "reboot_required": f.RebootRequired}
+	return map[string]any{
+		"os":              map[string]any{"id": f.OS.ID, "version": f.OS.Version, "codename": f.OS.Codename, "arch": f.OS.Arch},
+		"reboot_required": f.RebootRequired,
+		"ssh":             map[string]any{"ed25519": f.SSH.ED25519, "ecdsa": f.SSH.ECDSA, "rsa": f.SSH.RSA},
+		"net":             map[string]any{"ipv4": f.Net.IPv4, "ipv6": f.Net.IPv6},
+	}
+}
+
+// ReadSSH reads the public host keys in dir.
+func ReadSSH(dir string) (SSH, error) {
+	var s SSH
+	for _, k := range []struct {
+		name string
+		key  *string
+	}{{"ed25519", &s.ED25519}, {"ecdsa", &s.ECDSA}, {"rsa", &s.RSA}} {
+		path := dir + "/ssh_host_" + k.name + "_key.pub"
+		data, err := os.ReadFile(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return SSH{}, fmt.Errorf("read facts: %w", err)
+		}
+		fields := strings.Fields(string(data))
+		if len(fields) < 2 {
+			return SSH{}, fmt.Errorf("read facts: %s: not a public key", path)
+		}
+		*k.key = fields[0] + " " + fields[1]
+	}
+	return s, nil
+}
+
+// ReadNet reads the source address of the default route of each family: the
+// address that the kernel picks for a global address. A connect of a UDP
+// socket sends nothing. It fails when the host has no route of that family.
+func ReadNet() Net {
+	return Net{IPv4: source("udp4", "192.0.2.1:9"), IPv6: source("udp6", "[2001:db8::1]:9")}
+}
+
+func source(network, addr string) string {
+	c, err := net.Dial(network, addr)
+	if err != nil {
+		return ""
+	}
+	defer c.Close() //nolint:errcheck // the socket sent nothing
+	return c.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
 // RebootRequired reports whether the host waits for a reboot: the flag file

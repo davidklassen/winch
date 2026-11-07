@@ -714,6 +714,10 @@ func readFacts() (facts.Facts, error) {
 	if err != nil {
 		return f, fmt.Errorf("read facts: %w", err)
 	}
+	if f.SSH, err = facts.ReadSSH("/etc/ssh"); err != nil {
+		return f, err
+	}
+	f.Net = facts.ReadNet()
 	return f, nil
 }
 

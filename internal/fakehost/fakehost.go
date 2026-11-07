@@ -915,7 +915,11 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 			}
 		}
 		if failed {
-			return module.Result{}, errors.New(a.Message)
+			msg := a.Message + ": exit status 1"
+			if out := c.hosts.cmdOut[c.host+" "+a.Command]; out != "" {
+				msg += ": " + out
+			}
+			return module.Result{}, errors.New(msg)
 		}
 		return res, nil
 	}

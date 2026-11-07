@@ -5,8 +5,9 @@ as the OS release.
 
 Reading a fact:
   Expressions read a fact as facts.os.id, and templates as {{
-  .facts.os.id }}. Facts are a fixed set. A read of an unknown fact is
-  an error.
+  .facts.os.id }}. A host from hosts or match() has its facts too:
+  match("backup")[0].facts.ssh.ed25519. Facts are a fixed set. A read of
+  an unknown fact is an error.
 
     # winch.yaml
     name: demo
@@ -28,7 +29,9 @@ Reading a fact:
 
 When winch reads them:
   winch reads the facts once per host per run, before the first step,
-  and again after a reboot. They describe the host before the run.
+  and again after a reboot. It also reads the facts of each other host
+  that hosts and match() can reach. They describe the host before the
+  run.
 
 Keys:
   os               map      -  OS release of the host
@@ -37,5 +40,12 @@ Keys:
   os.codename      string   -  release code name, such as trixie or noble
   os.arch          string   -  CPU architecture: amd64 or arm64
   reboot_required  boolean  -  pending reboot
+  ssh              map      -  public SSH host keys
+  ssh.ed25519      string   -  Ed25519 host key, such as ssh-ed25519 AAAAC3Nz…
+  ssh.ecdsa        string   -  ECDSA host key, such as ecdsa-sha2-nistp256 AAAAE2Vj…
+  ssh.rsa          string   -  RSA host key, such as ssh-rsa AAAAB3Nz…
+  net              map      -  addresses of the default routes
+  net.ipv4         string   -  IPv4 address, such as 192.0.2.10
+  net.ipv6         string   -  IPv6 address, such as 2001:db8::10
 
 Run "winch doc facts.<key>" for the full text of a key.

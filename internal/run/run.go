@@ -440,8 +440,10 @@ func (p *Plan) rollsBack(host string) bool {
 }
 
 // MakePlan checks every step on every host, stage by stage. The hosts of a
-// stage run at the same time. At the first contact with a host, it reads the
-// facts and starts the host's evaluation. A host that fails stops there.
+// stage run at the same time. First it reads the facts of the hosts that
+// hosts and match() can reach, also of a host that it does not plan. At the
+// first contact with a host, it reads the facts and starts the host's
+// evaluation. A host that fails stops there.
 func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Options) *Plan {
 	plan := &Plan{Project: p.Name, pipeline: p.Pipeline.Name, Failed: map[string]error{}, Pending: map[string]protocol.Pending{}, Destinations: map[string]protocol.Destination{}, opts: opts,
 		sums: p.Sums(), set: p.SetFlags()}
@@ -473,7 +475,26 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			plan.Hosts = append(plan.Hosts, h)
 		}
 	}
-	maps.Copy(plan.Failed, sharedDestinations(context.WithoutCancel(ctx), plan.Hosts, connect.Resolve))
+	// A session that reads only facts takes the lock of the helper too.
+	reached := p.Reach()
+	hosts := slices.Clone(plan.Hosts)
+	for _, h := range reached {
+		if _, ok := last[h.Name]; !ok {
+			hosts = append(hosts, h)
+		}
+	}
+	shared := sharedDestinations(context.WithoutCancel(ctx), hosts, connect.Resolve)
+	for _, h := range plan.Hosts {
+		if err := shared[h.Name]; err != nil {
+			plan.Failed[h.Name] = err
+		}
+	}
+	other := readFacts(ctx, p, reached, connect, opts, runs, last, shared, open)
+	for _, h := range reached {
+		if _, ok := last[h.Name]; ok && other[h.Name].Err != nil {
+			plan.Failed[h.Name] = other[h.Name].Err
+		}
+	}
 	for si := range p.Pipeline.Stages {
 		stage := &p.Pipeline.Stages[si]
 		if stage.Skipped {
@@ -486,14 +507,14 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			}
 			hosts = append(hosts, h)
 			if runs[h.Name] == nil {
-				runs[h.Name] = &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]need{}, created: map[string]bool{}, reported: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}, texts: map[string]sourceText{}}
+				runs[h.Name] = newHostRun()
 			}
 		}
 		steps := make([][]Planned, len(hosts))
 		errs := rollout(ctx, stage.Name, hosts, 0, nil, opts, open, func(i int, conn Conn) error {
 			hr := runs[hosts[i].Name]
 			var err error
-			steps[i], err = check(ctx, conn, opts.progress(), p, hosts[i], stage, hr)
+			steps[i], err = check(ctx, conn, opts.progress(), p, hosts[i], stage, hr, other)
 			if err == nil && last[hosts[i].Name] == si {
 				for _, s := range hr.startedBy {
 					err = errors.Join(err, s.err)
@@ -578,6 +599,46 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 	return plan
 }
 
+func newHostRun() *hostRun {
+	return &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]need{}, created: map[string]bool{}, reported: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}, texts: map[string]sourceText{}}
+}
+
+// readFacts reads the facts of hosts, the hosts that hosts and match() can
+// reach, at the same time. A host that the plan has, by last, keeps its
+// session in runs; open opens it. Another host gets a session for the read
+// only. A host in failed gets its error without a session.
+func readFacts(ctx context.Context, p *project.Project, hosts []project.Host, connect Connect, opts Options, runs map[string]*hostRun, last map[string]int,
+	failed map[string]error, open func(project.Host) (Conn, error)) map[string]project.HostFacts {
+	for _, h := range hosts {
+		if _, ok := last[h.Name]; ok && runs[h.Name] == nil {
+			runs[h.Name] = newHostRun()
+		}
+	}
+	read := make([]facts.Facts, len(hosts))
+	errs := rollout(ctx, "facts", hosts, 0, failed, opts, func(h project.Host) (Conn, error) {
+		if runs[h.Name] != nil {
+			return open(h)
+		}
+		opts.progress().Busy(h.Name, "connecting")
+		return connect.Open(context.WithoutCancel(ctx), p.Name, h, nil)
+	}, func(i int, conn Conn) error {
+		var err error
+		read[i], err = conn.Facts(context.WithoutCancel(ctx))
+		if runs[hosts[i].Name] == nil {
+			err = errors.Join(err, conn.Close())
+		}
+		return err
+	})
+	out := map[string]project.HostFacts{}
+	for i, h := range hosts {
+		out[h.Name] = project.HostFacts{Facts: read[i], Err: errs[i]}
+		if hr := runs[h.Name]; hr != nil && errs[i] != nil {
+			hr.close() //nolint:errcheck // the host fails with the error of the read
+		}
+	}
+	return out
+}
+
 // sharedDestinations returns errors for the hosts whose host name, port, and
 // jump host, as ssh resolves them, are those of another host: the sessions of
 // both would share the lock of one helper.
@@ -618,16 +679,22 @@ func sharedDestinations(ctx context.Context, hosts []project.Host, resolve func(
 // check checks the steps of a stage on one host. At the first contact, it
 // reads the facts and the pending handlers, and evaluates all stages of the
 // host: the text from the host then passes the secret parts of all its steps.
-func check(ctx context.Context, conn Conn, progress Progress, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun) ([]Planned, error) {
+// other holds the facts that the plan read before, also of h.
+func check(ctx context.Context, conn Conn, progress Progress, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun, other map[string]project.HostFacts) ([]Planned, error) {
 	if hr.env == nil {
-		f, err := conn.Facts(context.WithoutCancel(ctx))
-		if err != nil {
+		hf, ok := other[h.Name]
+		f := hf.Facts
+		if !ok {
+			var err error
+			if f, err = conn.Facts(context.WithoutCancel(ctx)); err != nil {
+				return nil, err
+			}
+		}
+		var err error
+		if hr.env, err = p.Start(h, f, other); err != nil {
 			return nil, err
 		}
-		if hr.env, err = p.Start(h, f); err != nil {
-			return nil, err
-		}
-		hr.written = sync.OnceValues(func() (project.Writes, error) { return p.Written(h, f) })
+		hr.written = sync.OnceValues(func() (project.Writes, error) { return p.Written(h, f, other) })
 		hr.stages = map[*project.Stage][]Planned{}
 		for i := range p.Pipeline.Stages {
 			s := &p.Pipeline.Stages[i]

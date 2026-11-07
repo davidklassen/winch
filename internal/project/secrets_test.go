@@ -128,7 +128,7 @@ func evalSecret(t *testing.T, steps string, files map[string]string) ([]Step, Ke
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := p.Start(p.Inventory.Hosts[0], debian13)
+	env, err := p.Start(p.Inventory.Hosts[0], debian13, onDebian13(p))
 	if err != nil {
 		return nil, keys, err
 	}
@@ -824,7 +824,7 @@ func TestSecretAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := p.Start(p.Inventory.Hosts[0], debian13)
+	env, err := p.Start(p.Inventory.Hosts[0], debian13, onDebian13(p))
 	if err != nil {
 		t.Fatal(err)
 	}

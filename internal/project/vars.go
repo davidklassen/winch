@@ -73,6 +73,7 @@ func (l *loader) compileDefaults() error {
 	var errs []error
 	sc := scope{
 		reads:     &l.reads,
+		reach:     &l.reach,
 		noItem:    "a default cannot use item",
 		inDefault: true,
 	}
@@ -105,7 +106,7 @@ func (l *loader) compileDefaults() error {
 		state[v] = visiting
 		path = append(path, v)
 		if v.computed != nil {
-			for _, name := range v.computed.reads() {
+			for _, name := range slices.Concat(v.computed.reads(), v.computed.peerReads()) {
 				if d := l.vars[name]; d != nil {
 					visit(d)
 				}
@@ -407,8 +408,57 @@ type Env struct {
 	parent *Env
 	// steps holds the data of each recipe step with vars.
 	steps map[*Step]*Env
-	inv   *Inventory
-	peers map[string]map[string]any
+	// others gives the data of the hosts of hosts and match().
+	others *others
+}
+
+// HostFacts are the facts of a host, or the error of their read.
+type HostFacts struct {
+	Facts facts.Facts
+	Err   error
+}
+
+// others holds the data of the hosts of hosts and match() for the evaluation
+// of one host. host is that host, with the facts f; all has the facts of the
+// other hosts that the plan read. envs holds the data of each other host,
+// without the vars of a recipe step, and failed the defaults that failed on
+// it, by name and host.
+type others struct {
+	p      *Project
+	host   string
+	f      facts.Facts
+	all    map[string]HostFacts
+	envs   map[string]*Env
+	failed map[string]error
+}
+
+func (o *others) facts(host string) (facts.Facts, error) {
+	if host == o.host {
+		return o.f, nil
+	}
+	hf, ok := o.all[host]
+	if !ok {
+		return facts.Facts{}, fmt.Errorf("read the facts of %s: the plan did not read them", host)
+	}
+	if hf.Err != nil {
+		return facts.Facts{}, fmt.Errorf("read the facts of %s: %w", host, hf.Err)
+	}
+	return hf.Facts, nil
+}
+
+// env returns the data of the host h for hosts and match().
+func (o *others) env(h Host) (*Env, error) {
+	if e := o.envs[h.Name]; e != nil {
+		return e, nil
+	}
+	f, err := o.facts(h.Name)
+	if err != nil {
+		return nil, err
+	}
+	e := &Env{host: h, facts: f, secrets: o.p.secrets, runs: map[string]*Stage{}, filter: o.p.filter, steps: map[*Step]*Env{}, others: o}
+	e.setHostValues()
+	o.envs[h.Name] = e
+	return e, nil
 }
 
 // RunsIn returns the stage of the host whose step for the recipe has a true
@@ -460,52 +510,177 @@ func (e *Env) masked(err error, f func(*Env) error) error {
 	return maskError(err, alt)
 }
 
-func (e *Env) templateData() map[string]any {
+// templateData returns the data of templates, with hosts when hosts is true.
+func (e *Env) templateData(hosts bool) (map[string]any, error) {
 	d := map[string]any{
 		"vars":  e.vars[e.n],
 		"facts": e.facts.Map(),
-		"host":  hostMap(e.host, e.hostVars()),
+		"host":  hostMap(e.host, e.hostVars(), e.facts),
 	}
 	if e.hasItem {
 		d["item"] = e.item[e.n]
 	}
-	return d
+	if hosts {
+		var err error
+		if d["hosts"], err = e.hosts(e.others.p.Inventory.Hosts); err != nil {
+			return nil, err
+		}
+	}
+	return d, nil
 }
 
-func (e *Env) exprEnv() exprEnv {
+// exprEnv returns the data of expressions, with hosts when hosts is true.
+func (e *Env) exprEnv(hosts bool) (exprEnv, error) {
 	short, _, _ := strings.Cut(e.host.Name, ".")
-	return exprEnv{
+	env := exprEnv{
 		Vars:  e.vars[e.n],
 		Facts: e.facts,
-		Host:  hostEnv{Name: e.host.Name, Short: short, Address: e.host.Address, Groups: e.host.Groups, Vars: e.hostVars()},
+		Host:  hostEnv{Name: e.host.Name, Short: short, Address: e.host.Address, Groups: e.host.Groups, Vars: e.hostVars(), Facts: e.facts},
 		Item:  e.item[e.n],
 		Match: e.match,
+		Read:  e.read,
 	}
+	if hosts {
+		var err error
+		if env.Hosts, err = e.hosts(e.others.p.Inventory.Hosts); err != nil {
+			return exprEnv{}, err
+		}
+	}
+	return env, nil
 }
 
 // match returns the hosts of a host pattern with the fields of host.
 func (e *Env) match(pattern string) ([]any, error) {
-	hosts, err := e.inv.Match(pattern)
+	hosts, err := e.others.p.Inventory.Match(pattern)
 	if err != nil {
 		return nil, err
 	}
+	return e.hosts(hosts)
+}
+
+// hosts returns the fields of each host of hosts. A computed default of a
+// host holds a marker, which a read of it by name replaces with its value.
+func (e *Env) hosts(hosts []Host) ([]any, error) {
 	out := make([]any, len(hosts))
 	for i, h := range hosts {
-		out[i] = hostMap(h, unseal(e.peers[h.Name], e.n))
+		f, err := e.others.facts(h.Name)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = hostMap(h, unseal(e.others.p.peers[h.Name], e.n), f)
 	}
 	return out, nil
 }
 
-// hostMap returns the fields of host h for templates and match(), with
-// vars.
-func hostMap(h Host, vars any) map[string]any {
+// hostMap returns the fields of host h for templates, hosts, and match().
+func hostMap(h Host, vars any, f facts.Facts) map[string]any {
 	short, _, _ := strings.Cut(h.Name, ".")
-	return map[string]any{"name": h.Name, "short": short, "address": h.Address, "groups": h.Groups, "vars": vars}
+	return map[string]any{"name": h.Name, "short": short, "address": h.Address, "groups": h.Groups, "vars": vars, "facts": f.Map()}
 }
 
-// peerVars returns the vars of each host for match(): the defaults that are
-// plain values, the inventory values, and --set. A computed default holds a
-// marker that names it and the host.
+// read returns v, or the value of the default that v marks.
+func (e *Env) read(v any) (any, error) {
+	name, h, msg, ok := e.others.marker(v)
+	switch {
+	case !ok:
+		return v, nil
+	case msg != "":
+		return nil, errors.New(msg)
+	}
+	return e.peerVar(name, h)
+}
+
+// marker reads the marker of the default name of the host h in v. It
+// reports false for any other value, also for project text that looks like
+// a marker.
+func (o *others) marker(v any) (name string, h Host, msg string, ok bool) {
+	s, _ := v.(string)
+	name, host, msg, ok := parseMark(s)
+	if !ok {
+		return "", Host{}, "", false
+	}
+	i := slices.IndexFunc(o.p.Inventory.Hosts, func(h Host) bool { return h.Name == host })
+	if d := o.p.defaults[name]; i < 0 || d == nil || d.computed == nil {
+		return "", Host{}, "", false
+	}
+	return name, o.p.Inventory.Hosts[i], msg, true
+}
+
+// peerVar returns the value of the default name of the host h, as hosts and
+// match() give it.
+func (e *Env) peerVar(name string, h Host) (any, error) {
+	o := e.others
+	key := name + "\x00" + h.Name
+	if err := o.failed[key]; err != nil {
+		return nil, err
+	}
+	pe, err := o.env(h)
+	if err == nil {
+		err = o.p.evalDefaults(pe, []string{name}, o.p.defaults[name].Pos)
+	}
+	if err != nil {
+		err = fmt.Errorf("host %s: %w", h.Name, err)
+		o.failed[key] = err
+		return nil, err
+	}
+	return pe.vars[e.n][name], nil
+}
+
+// resolve returns v with the value of each marked default that names holds.
+// A default that fails gives a marker of its error. It reports whether v
+// changed.
+func (e *Env) resolve(v any, names []string) (any, bool) {
+	switch v := v.(type) {
+	case string:
+		name, h, msg, ok := e.others.marker(v)
+		if !ok || msg != "" || !slices.Contains(names, name) {
+			return v, false
+		}
+		val, err := e.peerVar(name, h)
+		if err != nil {
+			return mark(name, h.Name, err.Error()), true
+		}
+		out, _ := e.resolve(val, names)
+		return out, true
+	case map[string]any:
+		var out map[string]any
+		for k, x := range v {
+			r, changed := e.resolve(x, names)
+			if !changed {
+				continue
+			}
+			if out == nil {
+				out = maps.Clone(v)
+			}
+			out[k] = r
+		}
+		if out == nil {
+			return v, false
+		}
+		return out, true
+	case []any:
+		var out []any
+		for i, x := range v {
+			r, changed := e.resolve(x, names)
+			if !changed {
+				continue
+			}
+			if out == nil {
+				out = slices.Clone(v)
+			}
+			out[i] = r
+		}
+		if out == nil {
+			return v, false
+		}
+		return out, true
+	}
+	return v, false
+}
+
+// peerVars returns the vars of each host for hosts and match(): the defaults
+// that are plain values, the inventory values, and --set. A computed default
+// holds a marker that names it and the host.
 func peerVars(inv *Inventory, decls []*Var) map[string]map[string]any {
 	defaults := map[string]any{}
 	for _, v := range decls {
@@ -518,7 +693,7 @@ func peerVars(inv *Inventory, decls []*Var) map[string]map[string]any {
 		vars := maps.Clone(defaults)
 		for _, v := range decls {
 			if v.computed != nil {
-				vars[v.Name] = computedMark + v.Name + "\x00" + h.Name + "\x00"
+				vars[v.Name] = mark(v.Name, h.Name, "")
 			}
 		}
 		maps.Copy(vars, h.Vars)
@@ -527,22 +702,47 @@ func peerVars(inv *Inventory, decls []*Var) map[string]map[string]any {
 	return out
 }
 
-// computedMark starts the marker of a computed default of a host from match():
-// the marker is the variable name and the host name, each with a NUL byte
-// after it. The marker passes through variables, so the variables of a recipe
-// step can hold match() hosts.
+// computedMark starts the marker of a computed default of a host from hosts
+// or match(): the marker is the variable name, the host name, and the quoted
+// message of the error of the default or nothing, each with a NUL byte after
+// it. The marker passes through variables, so the variables of a recipe step
+// can hold hosts.
 const computedMark = "\x00computed\x00"
+
+func mark(name, host, msg string) string {
+	if msg != "" {
+		msg = strconv.Quote(msg)
+	}
+	return computedMark + name + "\x00" + host + "\x00" + msg + "\x00"
+}
+
+// parseMark reads the marker that s starts with.
+func parseMark(s string) (name, host, msg string, ok bool) {
+	rest, ok := strings.CutPrefix(s, computedMark)
+	if !ok {
+		return "", "", "", false
+	}
+	name, rest, _ = strings.Cut(rest, "\x00")
+	host, rest, _ = strings.Cut(rest, "\x00")
+	q, _, _ := strings.Cut(rest, "\x00")
+	if q != "" {
+		msg, _ = strconv.Unquote(q)
+	}
+	return name, host, msg, true
+}
 
 // computedError returns the error for the first marker in v, a string, or
 // nil.
 func computedError(v any) error {
 	s, _ := v.(string)
-	_, rest, ok := strings.Cut(s, computedMark)
-	if !ok {
+	i := strings.Index(s, computedMark)
+	if i < 0 {
 		return nil
 	}
-	name, rest, _ := strings.Cut(rest, "\x00")
-	host, _, _ := strings.Cut(rest, "\x00")
+	name, host, msg, _ := parseMark(s[i:])
+	if msg != "" {
+		return errors.New(msg)
+	}
 	return computedDefault{name, host}
 }
 
@@ -566,11 +766,12 @@ func computedIn(v any) error {
 	return computedError(v)
 }
 
-// computedDefault is a read of a computed default of a host from match().
+// computedDefault is a read of a computed default of a host from hosts or
+// match() other than by name.
 type computedDefault struct{ name, host string }
 
 func (c computedDefault) Error() string {
-	return fmt.Sprintf("vars.%s of host %s is an !expr or !tpl default; match() gives only inventory values and plain defaults", c.name, c.host)
+	return fmt.Sprintf("vars.%s of host %s is an !expr or !tpl default; read it by name", c.name, c.host)
 }
 
 // withoutComputed returns a copy of v without the map entries that hold a
@@ -604,18 +805,48 @@ func withoutComputed(v any) (out any, found bool) {
 
 var missingKeyRe = regexp.MustCompile(`map has no entry for key "([a-z0-9_]+)"`)
 
-// render executes t with the data of e. A read of a computed default of a
-// match() host fails as a missing key. get gives nothing for a missing key,
-// so when the data holds markers, a second run with the markers fails where
-// get reads one. A template that prints a whole host, in any encoding, gives
-// other output in the second run and fails too. When the second run prints
-// the marker of a missing key, the error names the default and the host
-// instead.
-func (e *Env) render(t *template.Template) (string, error) {
-	data := e.templateData()
+// render executes t with the data of e, with hosts when hosts is true. The
+// computed defaults names of the hosts of hosts and match() get their values.
+// A read of another computed default fails as a missing key. get gives
+// nothing for a missing key, so when the data holds markers, a second run
+// with the markers fails where get reads one. A template that prints a whole
+// host, in any encoding, gives other output in the second run and fails too.
+// When the second run prints the marker of a missing key, the error names the
+// default and the host instead.
+func (e *Env) render(t *template.Template, names []string, hosts bool) (string, error) {
+	d, err := e.templateData(hosts)
+	if err != nil {
+		return "", err
+	}
+	data := any(d)
+	if len(names) > 0 {
+		data, _ = e.resolve(data, names)
+	}
+	t, err = t.Clone()
+	if err != nil {
+		return "", err
+	}
+	// match strips the markers in the first run, as the data has them
+	// stripped.
+	strip, matched := true, false
+	t.Funcs(template.FuncMap{"match": func(pattern string) ([]any, error) {
+		hs, err := e.match(pattern)
+		if err != nil {
+			return nil, err
+		}
+		out, _ := e.resolve(hs, names)
+		if strip {
+			var found bool
+			out, found = withoutComputed(out)
+			matched = matched || found
+		}
+		return out.([]any), nil
+	}})
 	stripped, found := withoutComputed(data)
 	var b strings.Builder
-	err := t.Execute(&b, stripped)
+	err = t.Execute(&b, stripped)
+	found = found || matched
+	strip = false
 	var full strings.Builder
 	if found {
 		var cd computedDefault
@@ -642,22 +873,22 @@ func (e *Env) render(t *template.Template) (string, error) {
 	if m == nil {
 		return "", err
 	}
-	_, rest, ok := strings.Cut(full.String(), computedMark+m[1]+"\x00")
-	if !ok {
+	i := strings.Index(full.String(), computedMark+m[1]+"\x00")
+	if i < 0 {
 		return "", err
 	}
-	host, _, _ := strings.Cut(rest, "\x00")
-	return "", errors.New(strings.Replace(err.Error(), m[0], computedDefault{m[1], host}.Error(), 1))
+	return "", errors.New(strings.Replace(err.Error(), m[0], computedError(full.String()[i:]).Error(), 1))
 }
 
-// Start returns the data of host h with facts f: it evaluates the defaults
+// Start returns the data of host h with facts f, where all holds the facts of
+// the other hosts that hosts and match() can reach: it evaluates the defaults
 // that h uses, and checks that h has a value for each variable without a
 // default that it reads. It checks the requirements of each recipe that runs
 // on h in the pipeline, also in later stages and in stages that the
 // selection leaves out.
-func (p *Project) Start(h Host, f facts.Facts) (*Env, error) {
+func (p *Project) Start(h Host, f facts.Facts, all map[string]HostFacts) (*Env, error) {
 	e := &Env{host: h, facts: f, secrets: p.secrets, runs: map[string]*Stage{}, filter: p.filter,
-		steps: map[*Step]*Env{}, inv: p.Inventory, peers: p.peers}
+		steps: map[*Step]*Env{}, others: &others{p: p, host: h.Name, f: f, all: all, envs: map[string]*Env{}, failed: map[string]error{}}}
 	e.setHostValues()
 	for i := range p.Pipeline.Stages {
 		s := &p.Pipeline.Stages[i]
@@ -762,7 +993,7 @@ func (p *Project) stepEnv(e *Env, st *Step) (*Env, error) {
 		return nil, err
 	}
 	se := &Env{host: e.host, facts: e.facts, secrets: e.secrets, runs: e.runs, filter: e.filter,
-		parent: e, inv: e.inv, peers: e.peers}
+		parent: e, others: e.others}
 	se.setHostValues()
 	for _, v := range st.vars {
 		if p.set[v.Name] {

@@ -338,7 +338,7 @@ func evalSteps(t *testing.T, p *Project) string {
 	var b strings.Builder
 	for _, s := range p.Pipeline.Stages {
 		for _, h := range s.Targets {
-			env, err := p.Start(h, debian13)
+			env, err := p.Start(h, debian13, onDebian13(p))
 			if err != nil {
 				b.WriteString(h.Name + ": " + err.Error() + "\n")
 				continue
@@ -396,7 +396,6 @@ func TestStepVarsLoad(t *testing.T) {
 	tests := []struct {
 		name     string
 		pipeline string
-		winch    string
 		want     string
 	}{
 		{name: "module step", pipeline: "      - file:\n          path: /x\n          content: x\n        vars:\n          site_port: 1\n",
@@ -413,15 +412,10 @@ func TestStepVarsLoad(t *testing.T) {
 			want: "item is defined only in a step with loop"},
 		{name: "other key", pipeline: "      - recipe: site\n        loop: [a]\n",
 			want: `pipelines/site.yaml:6:9: a recipe step has only name, recipe, vars, and when, not "loop"`},
-		{name: "match in a default", winch: "name: acme\ninventory: test\nvars:\n  domain: acme.com\n  peers: !expr 'match(\"all\")'\n", pipeline: "      - recipe: site\n",
-			want: "winch.yaml:5:10: a default cannot use match()"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			files := map[string]string{"pipelines/site.yaml": "stages:\n  - name: web\n    hosts: all\n    steps:\n" + tt.pipeline}
-			if tt.winch != "" {
-				files["winch.yaml"] = tt.winch
-			}
 			_, err := Load(t.Context(), writeProject(t, with(stepVarsFiles, files)), "", "site", nil, Keys{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("error = %v, want %q", err, tt.want)
@@ -517,6 +511,18 @@ func TestMatchConstantPattern(t *testing.T) {
 		{name: "loop of a stage step", files: map[string]string{
 			"pipelines/site.yaml": "stages:\n  - name: monit\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: x\n        loop: !expr 'match(\"mon & !mon\")'\n",
 		}, want: `pipelines/site.yaml:8:15: match("mon & !mon"): the host pattern matches no host`},
+		{name: "default", files: map[string]string{
+			"winch.yaml": "name: acme\ninventory: test\nvars:\n  mail_server: false\n  role: !expr 'len(match(\"mon & !mon\"))'\n",
+		}, want: `winch.yaml:5:9: match("mon & !mon"): the host pattern matches no host`},
+		{name: "template", files: map[string]string{
+			"recipes/monit/templates/peers.tmpl": "{{ range .vars.monit_peers }}{{ .name }}{{ end }}\n{{ range match \"mial\" }}{{ .name }}{{ end }}\n",
+		}, want: `recipes/monit/templates/peers.tmpl:2:10: match("mial"): unknown host or group "mial"`},
+		{name: "default of a recipe outside the pipeline", files: map[string]string{
+			"recipes/other/recipe.yaml": "vars:\n  other_n: !expr 'len(match(\"mon & !mon\"))'\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(vars.other_n)'\n",
+		}},
+		{name: "default of a recipe", files: map[string]string{
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\n  monit_n: !expr 'len(match(\"mial\"))'\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(vars.monit_n)'\n",
+		}, want: `recipes/monit/recipe.yaml:3:12: match("mial"): unknown host or group "mial"`},
 		{name: "computed pattern", files: map[string]string{
 			"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(len(match(host.short + \"x\")))'\n",
 		}},
@@ -555,7 +561,8 @@ func TestMatchConstantPatternOnce(t *testing.T) {
 
 // spec: Templates and expressions/Data
 func TestMatchComputedDefault(t *testing.T) {
-	const computed = "vars.role of host monitor.acme.com is an !expr or !tpl default; match() gives only inventory values and plain defaults"
+	const computed = "vars.role of host monitor.acme.com is an !expr or !tpl default; read it by name"
+	const node = `data="node"`
 	tests := []struct {
 		name    string
 		content string
@@ -563,17 +570,17 @@ func TestMatchComputedDefault(t *testing.T) {
 		set     []string
 		want    string
 	}{
-		{name: "expression", content: `!expr 'string(match("mon")[0].vars.role)'`, want: computed},
-		{name: "stored expression", content: `!expr 'string(vars.monit_peers[0].vars.role)'`, want: computed},
-		{name: "template", tmpl: "{{ range .vars.monit_peers }}{{ .vars.role }}{{ end }}", want: computed},
-		{name: "template condition", tmpl: "{{ range .vars.monit_peers }}{{ if .vars.role }}x{{ end }}{{ end }}", want: `map has no entry for key "role"`},
-		{name: "template get", tmpl: "{{ range .vars.monit_peers }}{{ with get .vars \"role\" }}{{ . }}{{ end }}{{ end }}", want: computed},
-		{name: "template get prints", tmpl: "{{ range .vars.monit_peers }}{{ get .vars \"role\" }}{{ end }}", want: computed},
-		{name: "template get into a function", tmpl: "{{ range .vars.monit_peers }}{{ get .vars \"role\" | quote }}{{ end }}", want: computed},
-		{name: "template get plain default", tmpl: "{{ range .vars.monit_peers }}{{ .name }} {{ with get .vars \"mail_server\" }}x{{ else }}-{{ end }}{{ with get .vars \"zone\" }}x{{ else }}-{{ end }}{{ end }}", want: `data="monitor.acme.com --"`},
-		{name: "comparison", content: `!expr 'string(match("mon")[0]?.vars?.role == nil)'`, want: computed},
+		{name: "expression", content: `!expr 'string(match("mon")[0].vars.role)'`, want: node},
+		{name: "stored expression", content: `!expr 'string(vars.monit_peers[0].vars.role)'`, want: node},
+		{name: "template", tmpl: "{{ range .vars.monit_peers }}{{ .vars.role }}{{ end }}", want: node},
+		{name: "template condition", tmpl: "{{ range .vars.monit_peers }}{{ if .vars.role }}x{{ end }}{{ end }}", want: `data="x"`},
+		{name: "template get", tmpl: "{{ range .vars.monit_peers }}{{ with get .vars \"role\" }}{{ . }}{{ end }}{{ end }}", want: node},
+		{name: "template get prints", tmpl: "{{ range .vars.monit_peers }}{{ get .vars \"role\" }}{{ end }}", want: node},
+		{name: "template get into a function", tmpl: "{{ range .vars.monit_peers }}{{ get .vars \"role\" | quote }}{{ end }}", want: `data="'node'"`},
+		{name: "template get plain default", tmpl: "{{ range .vars.monit_peers }}{{ .name }} {{ with get .vars \"mail_server\" }}x{{ else }}-{{ end }}{{ end }}", want: `data="monitor.acme.com -"`},
+		{name: "comparison", content: `!expr 'string(match("mon")[0]?.vars?.role == nil)'`, want: `data="false"`},
 		{name: "whole map", content: "!expr 'string(match(\"mon\")[0][item])'\n    loop: [vars]", want: computed},
-		{name: "get", content: `!expr 'string(get(match("mon")[0].vars, "role") == nil)'`, want: computed},
+		{name: "get", content: `!expr 'string(get(match("mon")[0].vars, "role") == nil)'`, want: `data="false"`},
 		{name: "json", content: `!expr 'json(match("mon"))'`, want: computed},
 		{name: "template json", tmpl: "{{ json .vars.monit_peers }}", want: computed},
 		{name: "template printf", tmpl: "{{ printf \"%v\" .vars.monit_peers }}", want: computed},
@@ -583,7 +590,7 @@ func TestMatchComputedDefault(t *testing.T) {
 		{name: "values", content: "!expr 'string(len(filter(values(match(\"mon\")[0][item]), # != \"\")))'\n    loop: [vars]", want: computed},
 		{name: "toPairs", content: "!expr 'string(len(toPairs(match(\"mon\")[0][item])))'\n    loop: [vars]", want: computed},
 		{name: "keys", content: "!expr 'join(keys(match(\"mon\")[0][item]), \",\")'\n    loop: [vars]", want: `data="mail_server,monit_peers,role"`},
-		{name: "inline template", content: `!tpl "{{ range .vars.monit_peers }}{{ .vars.role }}{{ end }}"`, want: computed},
+		{name: "inline template", content: `!tpl "{{ range .vars.monit_peers }}{{ .vars.role }}{{ end }}"`, want: node},
 		{name: "set value", content: `!expr 'match("mon")[0].vars.role'`, set: []string{"vars.role=x"}, want: `data="x"`},
 		{name: "inventory value", content: `!expr 'match("mail.acme.com")[0].vars.role'`, want: `data="relay"`},
 		{name: "plain default", content: `!expr 'string(match("mon")[0].vars.mail_server)'`, want: `data="false"`},
@@ -699,7 +706,7 @@ func TestMatchSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := p.Start(p.Inventory.Hosts[0], debian13)
+	env, err := p.Start(p.Inventory.Hosts[0], debian13, onDebian13(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -787,7 +794,7 @@ func TestSkippedStageEvaluatesOnlyRequirements(t *testing.T) {
 	if err := p.Select(Selection{Stages: "db"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Start(p.Inventory.Hosts[0], debian13); err != nil {
+	if _, err := p.Start(p.Inventory.Hosts[0], debian13, onDebian13(p)); err != nil {
 		t.Errorf("web1: %v", err)
 	}
 }
@@ -801,7 +808,7 @@ func TestStepVarNull(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = p.Start(p.Inventory.Hosts[0], debian13)
+	_, err = p.Start(p.Inventory.Hosts[0], debian13, onDebian13(p))
 	if err == nil || !strings.Contains(err.Error(), `pipelines/site.yaml:7:22: vars.site_name: null is not a value`) {
 		t.Errorf("error %v", err)
 	}

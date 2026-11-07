@@ -206,7 +206,7 @@ func TestAssertFails(t *testing.T) {
 	if ok {
 		t.Fatal("apply passed")
 	}
-	if want := "web1: base: failed: assert probe 25: outbound port 25 is blocked\n"; !strings.Contains(string(got), want) {
+	if want := "web1: base: failed: assert probe 25: outbound port 25 is blocked: exit status 1\n"; !strings.Contains(string(got), want) {
 		t.Errorf("no %q in the output:\n%s", want, got)
 	}
 	if _, ok := h.File("web1", "/etc/issue"); ok {
