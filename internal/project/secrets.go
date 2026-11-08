@@ -946,15 +946,23 @@ func SecretAt(dir, at string) (*SecretEdit, error) {
 	l, lErr := newLoader(dir, cfg)
 	_, plErr := l.otherPipelines("")
 	name := keys[varsAt(keys)+1]
-	if read := l.readNames(); !read[name] {
-		return nil, errors.Join(fmt.Errorf("nothing reads vars.%s%s", name, yamlx.Suggest(name, slices.Sorted(maps.Keys(read)))), lErr, plErr)
-	}
 	pl, err := l.locate(prefix, keys)
 	if err != nil {
 		return nil, err
 	}
-	if len(prefix) > 0 && prefix[0] == "recipes" && !strings.HasPrefix(name, prefix[1]+"_") {
+	inRecipe := len(prefix) > 0 && prefix[0] == "recipes"
+	if inRecipe && !strings.HasPrefix(name, prefix[1]+"_") {
 		return nil, fmt.Errorf("cannot write %s: a variable of recipe %s starts with %s_", at, prefix[1], prefix[1])
+	}
+	if read := l.readNames(); !read[name] {
+		hint := yamlx.Suggest(name, slices.Sorted(maps.Keys(read)))
+		if hint == "" && lErr == nil && plErr == nil {
+			hint = "; write the step that reads it, or give it a default first"
+			if inRecipe {
+				hint += " in " + pl.file
+			}
+		}
+		return nil, errors.Join(fmt.Errorf("nothing reads vars.%s%s", name, hint), lErr, plErr)
 	}
 	e := &SecretEdit{place: pl, at: at, recs: recs}
 	if v, ok := l.vars[name]; ok && keys[0] == "vars" {
