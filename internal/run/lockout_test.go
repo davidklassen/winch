@@ -643,6 +643,54 @@ func TestLostAccessAfterFailedStep(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (the access check after the run
+// prints after the error of the failed step)
+func TestAccessPassedAfterFailedStep(t *testing.T) {
+	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/motd
+          content: hi
+      - cmd:
+          command: boom
+`})
+	h := fakehost.New()
+	h.FailCommand("web1", "boom")
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var b bytes.Buffer
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&b), plain(&b)))
+	if o.OK() {
+		t.Fatal("apply succeeded after a failed step")
+	}
+	want := "web1: base: + file /etc/motd\nweb1: base: failed: cmd boom: boom: exit status 1\nweb1: access check after the run passed\n\n1 host: 0 changed, 0 unchanged, 1 failed\n"
+	if b.String() != want {
+		t.Errorf("output:\n%s\nwant:\n%s", b.String(), want)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the access check after the run
+// after the first Ctrl-C prints after the error)
+func TestAccessPassedAfterInterrupt(t *testing.T) {
+	p := interruptProject(t)
+	h := fakehost.New()
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.OnApply = func(host, main string) {
+		if host == "web1" && main == "/etc/a" {
+			cancel()
+		}
+	}
+	var b bytes.Buffer
+	run.Apply(ctx, plan, h.Connector(), run.Text(plain(&b), plain(&b)))
+	want := "web1: app: + file /etc/a\nweb1: interrupted\nweb1: access check after the run passed\nweb2: interrupted\n\n2 hosts: 0 changed, 0 unchanged, 2 failed\n"
+	if b.String() != want {
+		t.Errorf("output:\n%s\nwant:\n%s", b.String(), want)
+	}
+}
+
 // spec: Remote execution/Sessions (a host whose login needed a prompt plans
 // as usual, but apply stops before its first change)
 func TestApplyAfterPrompt(t *testing.T) {
