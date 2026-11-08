@@ -389,7 +389,7 @@ func TestPlanAfterRepo(t *testing.T) {
 			"recipes/signed/files/signed.asc": string(vmtest.RepoKey),
 		})
 	}
-	reset := "dpkg --purge winch-signed winch-up-new >/dev/null; rm -f /etc/apt/sources.list.d/winch-* /etc/apt/keyrings/winch-* /etc/apt/sources.list /etc/apt/sources.list.d/stale.list && " +
+	reset := "dpkg --purge winch-signed winch-up-new winch-uses-fragile winch-fragile >/dev/null; rm -f /etc/apt/sources.list.d/winch-* /etc/apt/keyrings/winch-* /etc/apt/sources.list /etc/apt/sources.list.d/stale.list /var/lib/apt/lists/10.0.2.100_test_* && " +
 		"printf 'Types: deb\\nURIs: http://10.0.2.100/test/\\nSuites: ./\\nTrusted: yes\\n' > /etc/apt/sources.list.d/winch-test.sources && apt-get update -q >/dev/null"
 	// stale lists the signed source with another key, which apt refuses next
 	// to the step's source.
@@ -417,6 +417,19 @@ func TestPlanAfterRepo(t *testing.T) {
 		r = lab.Winch(t, dir, "plan", "site")
 		if r.Code != 0 || !strings.Contains(r.Stdout, ": 0 to change,") {
 			t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+	})
+
+	t.Run("an install after a repo step and an install from the old index", func(t *testing.T) {
+		// apt's old index has version 0 of winch-uses-fragile without a
+		// dependency. The test source has version 1, which needs winch-fragile 2;
+		// the host has winch-fragile 1.
+		vm.MustRun(t, reset+" && "+fragileDeb+" && touch /etc/winch-fragile.ok && dpkg -i /root/winch-fragile.deb >/dev/null && "+
+			"sed -i '/^Package: winch-uses-fragile$/,/^$/{s/^Version: 1$/Version: 0/;/^Depends:/d}' "+testIndex+" && "+
+			"apt-cache policy winch-uses-fragile | grep -q 'Candidate: 0'")
+		r := lab.Winch(t, project("  - pkg:\n      name: winch-uses-fragile\n", repo("winch-signed", signedURL), "  - pkg:\n      name: winch-signed\n"), "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, "install winch-uses-fragile") || strings.Contains(r.Stdout, "also upgrade winch-fragile") || !strings.Contains(r.Stdout, "install winch-signed") {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want winch-uses-fragile 0 and then winch-signed", r.Code, r.Stdout, r.Stderr)
 		}
 	})
 
