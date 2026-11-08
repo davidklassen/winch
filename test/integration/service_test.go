@@ -764,7 +764,7 @@ systemctl daemon-reload && systemctl is-enabled winch-dropin | grep -qx linked`,
 			Setup: `grep -q winchgen /etc/fstab || echo 'tmpfs /mnt/winchgen tmpfs defaults,noauto 0 0' >> /etc/fstab
 systemctl daemon-reload && systemctl show -P UnitFileState mnt-winchgen.mount | grep -qx generated`,
 			Args:    &module.Service{Name: "mnt-winchgen.mount", Enabled: new(true)},
-			WantErr: `mnt-winchgen.mount has the unit file state "generated"; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit`,
+			WantErr: `mnt-winchgen.mount has the unit file state "generated"; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit; remove enabled`,
 		},
 		{
 			Name:    "disable a unit from an init script fails",
@@ -800,10 +800,12 @@ systemctl daemon-reload && systemctl show -P UnitFileState mnt-winchgen.mount | 
 			WantErr: `winch-also.service has no [Install] rule of its own, only Also=; enable these units in place of it: winch-a.service, winch-b.socket, winch-c.service`,
 		},
 		{
-			Name:    "enable an indirect unit without Also= fails",
-			Setup:   `systemctl is-enabled winch-indirect | grep -qx indirect`,
-			Args:    &module.Service{Name: "winch-indirect", Enabled: new(true)},
-			WantErr: `winch-indirect.service has the unit file state "indirect"; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit`,
+			Name:      "enable an indirect unit with its own install rules",
+			Setup:     `systemctl is-enabled winch-indirect | grep -qx indirect`,
+			Args:      &module.Service{Name: "winch-indirect", Enabled: new(true)},
+			Want:      change("enable"),
+			Unchanged: `systemctl is-enabled winch-indirect | grep -qx indirect`,
+			After:     `systemctl is-enabled winch-indirect | grep -qx enabled`,
 		},
 		{
 			Name:         "a failed restart shows the journal",

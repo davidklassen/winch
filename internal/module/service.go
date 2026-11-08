@@ -217,6 +217,10 @@ func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 				return Result{}, fmt.Errorf("%s has no [Install] section with WantedBy, RequiredBy, UpheldBy, or Alias; enabled: true cannot enable it; remove enabled, or enable the unit that wants it", u.id)
 			}
 			s.todo = append(s.todo, "enable")
+		// systemd reports a unit as indirect when it has a link whose name
+		// Alias= does not list, before it reads the [Install] rules.
+		case u.file == "indirect" && installs(sectionKeys(files, "Install")):
+			s.todo = append(s.todo, "enable")
 		default:
 			if u.file == "indirect" {
 				if in := sectionKeys(files, "Install"); len(in["Also"]) > 0 {
@@ -226,7 +230,11 @@ func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 			if u.file == "static" {
 				return Result{}, fmt.Errorf("%s is static: it has no [Install] section, so enabled: true cannot enable it; remove enabled, or enable the unit that wants it", u.id)
 			}
-			return Result{}, fmt.Errorf("%s has the unit file state %q; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit", u.id, u.file)
+			fix := "remove enabled"
+			if u.file == "bad" {
+				fix = "fix the unit file"
+			}
+			return Result{}, fmt.Errorf("%s has the unit file state %q; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit; %s", u.id, u.file, fix)
 		}
 	}
 	if s.Running != nil {

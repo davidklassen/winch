@@ -158,3 +158,49 @@ func TestMaskedNamesTheUnmask(t *testing.T) {
 		}
 	}
 }
+
+// spec: Modules/service; CLI/Messages (an error for a user's mistake says
+// what to do)
+func TestEnableOtherFileStateNamesTheFix(t *testing.T) {
+	for _, tt := range []struct {
+		file, want string
+	}{
+		{"transient", `app.service has the unit file state "transient"; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit; remove enabled`},
+		{"bad", `app.service has the unit file state "bad"; enabled: true needs an enabled, disabled, enabled-runtime, or linked unit; fix the unit file`},
+	} {
+		t.Run(tt.file, func(t *testing.T) {
+			dir := t.TempDir()
+			script := "#!/bin/sh\necho Id=app.service; echo LoadState=loaded; echo ActiveState=active; echo UnitFileState=" + tt.file + "\n"
+			if err := os.WriteFile(filepath.Join(dir, "systemctl"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+			s := &Service{Name: "app", Enabled: new(true)}
+			_, err := s.Check(t.Context(), nil, Silent{})
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("got  %v\nwant %s", err, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Modules/service and unit (enabled: true on an indirect unit)
+func TestEnableIndirectUnitWithRules(t *testing.T) {
+	dir := t.TempDir()
+	unit := filepath.Join(dir, "app.service")
+	if err := os.WriteFile(unit, []byte("[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=multi-user.target\nAlso=other.service\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\necho Id=app.service; echo LoadState=loaded; echo ActiveState=inactive; echo UnitFileState=indirect; echo FragmentPath=" + unit + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "systemctl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	s := &Service{Name: "app", Enabled: new(true)}
+	if _, err := s.Check(t.Context(), nil, Silent{}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(s.todo, []string{"enable"}) {
+		t.Errorf("todo %q, want enable", s.todo)
+	}
+}
