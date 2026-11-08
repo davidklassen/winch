@@ -62,10 +62,10 @@ handlers:
   site_pages: [a, b]
 steps:
   - file:
-      path: !tpl /var/www/{{ .item }}.html
+      path: !tpl /var/www/{{ item }}.html
       content: hi
     loop: !expr vars.site_pages
-    then: !tpl "echo {{ len .vars.site_pages }}"
+    then: !tpl "echo {{ len(vars.site_pages) }}"
     notify: nginx.reload
   - link:
       path: /etc/nginx/sites-enabled/site
@@ -220,7 +220,7 @@ func TestLoadHandlers(t *testing.T) {
 			"pipelines/site.yaml": pl + "      - service:\n          name: postgresql\n          reloaded: !expr 'true'\n",
 		}},
 		{name: "then-item-in-loop", files: map[string]string{
-			"recipes/site/recipe.yaml": strings.Replace(site, "{{ len .vars.site_pages }}", "{{ .item }}", 1),
+			"recipes/site/recipe.yaml": strings.Replace(site, "{{ len(vars.site_pages) }}", "{{ item }}", 1),
 		}},
 		{name: "then-not-string", files: map[string]string{
 			"recipes/db/recipe.yaml": strings.Replace(handlersProject["recipes/db/recipe.yaml"], "then: echo db", "then: [echo, db]", 1),

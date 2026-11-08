@@ -27,11 +27,11 @@ steps:
 
   - name: Write the home page
     file:
-      path: !tpl /var/www/{{ .vars.domain }}/index.html
+      path: !tpl /var/www/{{ vars.domain }}/index.html
       content: !tpl |
         <!doctype html>
-        <title>{{ .vars.domain }}</title>
-        <p>Hello from {{ .host.name }}.</p>
+        <title>{{ vars.domain }}</title>
+        <p>Hello from {{ host.name }}.</p>
 
   - name: Serve the site over HTTPS
     file:
@@ -39,11 +39,11 @@ steps:
       validate: caddy validate --config /etc/caddy/Caddyfile
       content: !tpl |
         {
-        	email {{ .vars.acme_email }}
+        	email {{ vars.acme_email }}
         }
 
-        {{ .vars.domain }}, www.{{ .vars.domain }} {
-        	root * /var/www/{{ .vars.domain }}
+        {{ vars.domain }}, www.{{ vars.domain }} {
+        	root * /var/www/{{ vars.domain }}
         	file_server
         }
     notify: reload_caddy

@@ -413,7 +413,7 @@ steps:
       package: winch-reconf
       question: winch-reconf/enabled
       type: boolean
-      value: !tpl "{{ .vars.reconf_enabled }}"
+      value: !tpl "{{ vars.reconf_enabled }}"
     notify: reconfigure
   - pkg:
       name: winch-reconf

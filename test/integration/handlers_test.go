@@ -37,7 +37,7 @@ steps:
       content: x
     when: !expr 'vars.conf_break and host.name == "handlers"'
   - file:
-      path: !tpl /srv/{{ .host.name }}/a.conf
+      path: !tpl /srv/{{ host.name }}/a.conf
       content: "a\n"
     notify: app.restart
 `
@@ -48,16 +48,16 @@ const appRecipe = `vars:
 steps:
   - file:
       path: /etc/winch-app/1.conf
-      content: !tpl "{{ .vars.app_value }}\n"
+      content: !tpl "{{ vars.app_value }}\n"
     notify: restart
   - file:
       path: /etc/winch-app/2.conf
-      content: !tpl "{{ .vars.app_value }}\n"
+      content: !tpl "{{ vars.app_value }}\n"
     notify: restart
   # The last step, so that a run killed in its then has no step left to change.
   - file:
       path: /etc/winch-app/3.conf
-      content: !tpl "{{ .vars.app_value }}\n"
+      content: !tpl "{{ vars.app_value }}\n"
     then: !expr vars.app_then
     notify: restart
 handlers:
@@ -74,12 +74,12 @@ const validateRecipe = `vars:
 steps:
   - file:
       path: /etc/winch-v/1.conf
-      content: !tpl "{{ .vars.v_one }}\n"
+      content: !tpl "{{ vars.v_one }}\n"
     then: test -e /root/v-ok
     notify: restart
   - file:
       path: /etc/winch-v/2.conf
-      content: !tpl "{{ .vars.v_two }}\n"
+      content: !tpl "{{ vars.v_two }}\n"
       validate: !expr vars.v_check
     then: echo two >> /root/v-then
     notify: [restart, reload]
@@ -291,7 +291,7 @@ func TestHandlers(t *testing.T) {
         then: test -e /root/t-ok && echo moved >> /root/t-runs
 `
 		const loop = `      - file:
-          path: !tpl /root/t/{{ .item }}
+          path: !tpl /root/t/{{ item }}
           content: "x\n"
         loop: [a, b]
         then: test -e /root/t-ok && echo loop >> /root/t-runs
@@ -401,7 +401,7 @@ const stageHandlerPipeline = `stages:
             		ct state established,related accept
             		ct state invalid drop
             		iif lo accept
-            		tcp dport { {{ join .vars.fw_ports ", " }} } accept
+            		tcp dport { {{ join(map(vars.fw_ports, string(#)), ", ") }} } accept
             	}
             }
           mode: "0755"
@@ -413,7 +413,7 @@ const stageHandlerPipeline = `stages:
           running: true
       - file:
           path: /etc/winch-motd
-          content: !tpl "{{ .vars.fw_motd }}\n"
+          content: !tpl "{{ vars.fw_motd }}\n"
         notify: motd
       - name: Fails on request
         cmd:
@@ -525,7 +525,7 @@ systemctl daemon-reload`)
     steps:
       - file:
           path: /etc/winch-hs.conf
-          content: !tpl "{{ .vars.hs_value }}\n"
+          content: !tpl "{{ vars.hs_value }}\n"
         notify: restart
       - service:
           name: winch-hs

@@ -21,7 +21,7 @@ steps:
   - pkg:
       name: [rspamd, valkey-server]
   - file:
-      path: !tpl /etc/rspamd/local.d/{{ .item }}
+      path: !tpl /etc/rspamd/local.d/{{ item }}
       source: !expr item
       validate: rspamadm configtest
     loop: [dmarc.conf, greylist.conf, milter_headers.conf, redis.conf]
@@ -33,7 +33,7 @@ steps:
       mode: "0700"
   - name: DKIM key, selector "dkim", Rspamd's default path
     file:
-      path: !tpl /var/lib/rspamd/dkim/{{ .vars.domain }}.dkim.key
+      path: !tpl /var/lib/rspamd/dkim/{{ vars.domain }}.dkim.key
       content: !expr vars.rspamd_dkim_key
       owner: _rspamd
       group: _rspamd

@@ -69,14 +69,14 @@ steps:
       mode: "0600"
   - name: Key file
     file:
-      path: !tpl "/etc/monit/{{ .vars.monit_password }}.key"
+      path: !tpl "/etc/monit/{{ vars.monit_password }}.key"
       content: "k\n"
-    then: !tpl "monit-passwd {{ .vars.monit_password }}"
+    then: !tpl "monit-passwd {{ vars.monit_password }}"
   - file:
       path: /etc/monit/hidden
-      content: !tpl "{{ index .vars.monit_m .vars.monit_password }}\n"
+      content: !tpl "{{ vars.monit_m[vars.monit_password] }}\n"
 `,
-		"recipes/monit/templates/settings.tmpl": "set httpd port 2812\n  allow {{ .vars.monit_user }}:{{ .vars.monit_password }}\n# {{ title .vars.monit_password }}\n",
+		"recipes/monit/templates/settings.tmpl": "set httpd port 2812\n  allow {{ vars.monit_user }}:{{ vars.monit_password }}\n# {{ upper(vars.monit_password[:1]) + vars.monit_password[1:] }}\n",
 	})
 	filter := secret.NewFilter()
 	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: filter})
@@ -306,7 +306,7 @@ func TestSecretContentReasons(t *testing.T) {
           content: !expr vars.big
       - file:
           path: /etc/big.conf
-          content: !tpl "key: {{ .vars.big }}\n"
+          content: !tpl "key: {{ vars.big }}\n"
 `,
 	})
 	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
@@ -338,7 +338,7 @@ func TestOldContentReasons(t *testing.T) {
           content: !expr vars.tls_key
       - file:
           path: /etc/app.conf
-          content: !tpl "key: {{ .vars.tls_key }}\n"
+          content: !tpl "key: {{ vars.tls_key }}\n"
       - file:
           path: /etc/blob
           content: "text\n"
@@ -384,7 +384,7 @@ func TestPlanLine(t *testing.T) {
       match: "^port "
   - line:
       path: /etc/redis/redis.conf
-      line: !tpl "requirepass {{ .vars.redis_password }}"
+      line: !tpl "requirepass {{ vars.redis_password }}"
       match: "^requirepass "
   - line:
       path: /etc/redis/redis.conf
@@ -396,7 +396,7 @@ func TestPlanLine(t *testing.T) {
       match: "^maxmemory "
   - line:
       path: /etc/redis/redis.conf
-      line: !tpl "masterauth {{ .vars.redis_password }}"
+      line: !tpl "masterauth {{ vars.redis_password }}"
       match: "^masterauth "
 `,
 	})
@@ -431,14 +431,14 @@ func TestSecretCommands(t *testing.T) {
     hosts: all
     steps:
       - cmd:
-          command: !tpl "true\nnotify --token {{ .vars.token }}"
+          command: !tpl "true\nnotify --token {{ vars.token }}"
       - cmd:
           command: app login
-          unless: !tpl "app ping --token {{ .vars.token }}"
+          unless: !tpl "app ping --token {{ vars.token }}"
       - file:
           path: /etc/app.conf
           content: "a\n"
-          validate: !tpl "true\napp check --token {{ .vars.token }}"
+          validate: !tpl "true\napp check --token {{ vars.token }}"
 `,
 	})
 	p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
@@ -567,12 +567,12 @@ func TestSecretThenRecord(t *testing.T) {
 		// ok makes the step check as ok.
 		ok func(h *fakehost.Hosts)
 	}{
-		{name: "cmd", step: "      - cmd:\n          command: !tpl \"setpw {{ .vars.pw }}\"\n          creates: /srv/done\n        then: echo done\n",
+		{name: "cmd", step: "      - cmd:\n          command: !tpl \"setpw {{ vars.pw }}\"\n          creates: /srv/done\n        then: echo done\n",
 			ok: func(h *fakehost.Hosts) { h.SetFile("web1", "/srv/done", "") }},
-		{name: "file", step: "      - file:\n          path: !tpl \"/etc/{{ .vars.pw }}.key\"\n          content: \"k\\n\"\n        then: echo done\n",
+		{name: "file", step: "      - file:\n          path: !tpl \"/etc/{{ vars.pw }}.key\"\n          content: \"k\\n\"\n        then: echo done\n",
 			ok: func(h *fakehost.Hosts) { h.SetFile("web1", "/etc/hunter2.key", "k\n") }},
 		// The placeholder in enabled is not true or false.
-		{name: "a failed placeholder variant", step: "      - service:\n          name: !tpl \"app-{{ .vars.pw }}\"\n          running: true\n          enabled: !expr 'vars.pw == \"hunter2\" || int(vars.pw) > 0'\n        then: echo done\n",
+		{name: "a failed placeholder variant", step: "      - service:\n          name: !tpl \"app-{{ vars.pw }}\"\n          running: true\n          enabled: !expr 'vars.pw == \"hunter2\" || int(vars.pw) > 0'\n        then: echo done\n",
 			ok: func(h *fakehost.Hosts) { h.SetResult("web1", "app-hunter2", module.Result{Status: module.OK}) }},
 	}
 	for _, tt := range tests {
@@ -632,23 +632,23 @@ func TestThenRecordHash(t *testing.T) {
 		return "      - file:\n          path: " + path + "\n          content: \"k\\n\"\n        then: echo done\n"
 	}
 	one := map[string]string{"pw": "hunter2"}
-	pw := record(t, one, file(`!tpl "/etc/app/{{ .vars.pw }}.key"`))
-	pw2 := record(t, map[string]string{"pw2": "hunter3"}, file(`!tpl "/etc/app/{{ .vars.pw2 }}.key"`))
+	pw := record(t, one, file(`!tpl "/etc/app/{{ vars.pw }}.key"`))
+	pw2 := record(t, map[string]string{"pw2": "hunter3"}, file(`!tpl "/etc/app/{{ vars.pw2 }}.key"`))
 	if pw.Matches(pw2) {
 		t.Errorf("the pw and pw2 steps have records that match: %+v and %+v", pw, pw2)
 	}
 	if want := (protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/app/hunter2.key")}); !reflect.DeepEqual(pw, want) {
 		t.Errorf("record of the pw step = %+v, want %+v", pw, want)
 	}
-	changed := record(t, map[string]string{"pw": "hunter4"}, file(`!tpl "/etc/app/{{ .vars.pw }}.key"`))
+	changed := record(t, map[string]string{"pw": "hunter4"}, file(`!tpl "/etc/app/{{ vars.pw }}.key"`))
 	if pw.Matches(changed) {
 		t.Errorf("the record did not change with the secret: %+v", changed)
 	}
-	plain := record(t, one, file("/etc/motd")+file(`!tpl "/etc/app/{{ .vars.pw }}.key"`))
+	plain := record(t, one, file("/etc/motd")+file(`!tpl "/etc/app/{{ vars.pw }}.key"`))
 	if want := mains("/etc/motd"); !reflect.DeepEqual(plain.Mains, want) {
 		t.Errorf("main arguments of a plain step = %q, want %q", plain.Mains, want)
 	}
-	cmd := record(t, one, "      - cmd:\n          command: !tpl \"setpw {{ .vars.pw }}\"\n        then: echo done\n")
+	cmd := record(t, one, "      - cmd:\n          command: !tpl \"setpw {{ vars.pw }}\"\n        then: echo done\n")
 	if want := mains("setpw hunter2"); !reflect.DeepEqual(cmd.Mains, want) {
 		t.Errorf("main arguments of a cmd step = %q, want %q", cmd.Mains, want)
 	}
@@ -847,7 +847,7 @@ func TestSecretOfOtherHost(t *testing.T) {
 		secret               bool
 	}{
 		{"an expression default", `  app_set: !expr 'match("db1")[0].vars.pw != ""'` + "\n", "", true},
-		{"a template default", `  app_set: !tpl '{{ range .hosts }}{{ if eq .name "db1" }}{{ ne .vars.pw "" }}{{ end }}{{ end }}'` + "\n", "", true},
+		{"a template default", `  app_set: !tpl '{{ for h in hosts }}{{ if h.name == "db1" }}{{ h.vars.pw != "" }}{{ end }}{{ end }}'` + "\n", "", true},
 		{"a secret default of the other host", "  app_pw_set: !expr 'vars.pw != \"\"'\n  app_set: !expr 'match(\"db1\")[0].vars.app_pw_set != nil'\n", "", true},
 		{"a value of a recipe step", "  app_set: x\n", "        vars:\n          app_set: !expr 'match(\"db1\")[0].vars.pw != \"\"'\n", true},
 		{"a plain variable", "  app_name: x\n  app_set: !expr 'match(\"db1\")[0].vars.app_name != \"\"'\n", "", false},
@@ -863,7 +863,7 @@ func TestSecretOfOtherHost(t *testing.T) {
 				"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + recipient.String() + "]\n",
 				"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: plain-pw\n  db1:\n    vars:\n      pw: !secret " + text + "\n",
 				"pipelines/site.yaml":   "stages:\n  - name: s\n    hosts: web1\n    steps:\n      - recipe: app\n" + tt.stepVars,
-				"recipes/app/recipe.yaml": "vars:\n" + tt.vars + "steps:\n  - dir:\n      path: !tpl \"/srv/{{ .vars.app_set }}\"\n" +
+				"recipes/app/recipe.yaml": "vars:\n" + tt.vars + "steps:\n  - dir:\n      path: !tpl \"/srv/{{ vars.app_set }}\"\n" +
 					"  - dir:\n      path: /srv/pw\n    when: !expr 'vars.pw != \"\"'\n",
 			})
 			filter := secret.NewFilter()
@@ -888,7 +888,7 @@ func TestSecretOfOtherHost(t *testing.T) {
 
 // spec: Variables/Secrets in output (three evaluations)
 func TestSecretOfWholeHost(t *testing.T) {
-	const setStep = "  - cmd:\n      command: !tpl \"echo /srv/{{ .vars.app_set }}/x\"\n"
+	const setStep = "  - cmd:\n      command: !tpl \"echo /srv/{{ vars.app_set }}/x\"\n"
 	const peers = `app_peers: !expr 'match("db")'`
 	tests := []struct {
 		name, stepVars, defaults, step string
@@ -900,7 +900,7 @@ func TestSecretOfWholeHost(t *testing.T) {
 		{"json of a host of match", `app_set: !expr 'json(match("db1")[0]) contains "hunter2"'`, "", setStep, "/srv/(secret)/x", "/srv/true/x", "/srv/true/x"},
 		{"a read by name", `app_set: !expr 'match("db1")[0].vars.pw contains "hunter2"'`, "", setStep, "/srv/(secret)/x", "/srv/true/x", ""},
 		{"a variable that holds hosts", peers, "", "  - cmd:\n      command: !expr '\"echo /srv/\" + upper(replace(json(vars.app_peers[0]), `\"`, \"\"))'\n", "PW:(secret)}", "HUNTER2", "PW:HUNTER2}"},
-		{"names from a variable that holds hosts", peers, "  app_names: !expr 'join(map(vars.app_peers, .name), \"-\")'\n", "  - cmd:\n      command: !tpl \"echo /srv/{{ .vars.app_names }}/y\"\n", "/srv/db1/y", "", "/srv/db1/y"},
+		{"names from a variable that holds hosts", peers, "  app_names: !expr 'join(map(vars.app_peers, .name), \"-\")'\n", "  - cmd:\n      command: !tpl \"echo /srv/{{ vars.app_names }}/y\"\n", "/srv/db1/y", "", "/srv/db1/y"},
 		{"json of a loop item", "", "", "  - cmd:\n      command: !expr '\"echo /srv/\" + upper(replace(json(item), `\"`, \"\"))'\n    loop: !expr 'match(\"db\")'\n", "PW:(secret)}", "HUNTER2", "PW:HUNTER2}"},
 	}
 	for _, tt := range tests {
@@ -1032,7 +1032,7 @@ func TestSecretPublicFile(t *testing.T) {
 	debconfStep := func(typ, v string) string {
 		return "      - debconf:\n          package: app\n          question: app/token\n          type: " + typ + "\n          value: " + v + "\n"
 	}
-	secretLine := lineStep(`!tpl "TOKEN={{ .vars.token }}"`, "^TOKEN=")
+	secretLine := lineStep(`!tpl "TOKEN={{ vars.token }}"`, "^TOKEN=")
 	for _, tt := range []struct {
 		name, steps string
 		// handlers are the handlers of the stage, with a step that notifies
@@ -1045,9 +1045,9 @@ func TestSecretPublicFile(t *testing.T) {
 		{name: "line ok", steps: secretLine, res: &module.Result{Status: module.OK, OthersRead: true}, want: []string{"5:9: " + line}},
 		{name: "line into a file with mode 0600", steps: secretLine, res: &module.Result{Status: module.OK}},
 		{name: "plain line", steps: lineStep("TOKEN=x", "^TOKEN="), res: &module.Result{Status: module.OK, OthersRead: true}},
-		{name: "secret only in match", steps: lineStep("TOKEN=x", `!tpl "^TOKEN={{ .vars.token }}|^TOKEN="`), res: &module.Result{Status: module.OK, OthersRead: true}},
-		{name: "line in a loop", steps: lineStep(`!tpl "{{ .item }}={{ .vars.token }}"`, `!tpl "^{{ .item }}="`) + "        loop: [A, B]\n", res: &module.Result{Status: module.OK, OthersRead: true}, want: []string{"5:9: " + line}},
-		{name: "comment", steps: userStep(`!tpl "{{ .item.name }} {{ .vars.token }}"`), want: []string{"5:9: " + comment}},
+		{name: "secret only in match", steps: lineStep("TOKEN=x", `!tpl "^TOKEN={{ vars.token }}|^TOKEN="`), res: &module.Result{Status: module.OK, OthersRead: true}},
+		{name: "line in a loop", steps: lineStep(`!tpl "{{ item }}={{ vars.token }}"`, `!tpl "^{{ item }}="`) + "        loop: [A, B]\n", res: &module.Result{Status: module.OK, OthersRead: true}, want: []string{"5:9: " + line}},
+		{name: "comment", steps: userStep(`!tpl "{{ item.name }} {{ vars.token }}"`), want: []string{"5:9: " + comment}},
 		{name: "plain field in a loop over secret fields", steps: userStep("!expr item.name")},
 		{name: "secret field in a comment", steps: userStep("!expr item.hash"), want: []string{"5:9: " + comment}},
 		{name: "string answer", steps: debconfStep("string", "!expr vars.token"), want: []string{"5:9: " + answer}},
@@ -1063,7 +1063,7 @@ func TestSecretPublicFile(t *testing.T) {
 				"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\ngroups:\n  all:\n    vars:\n      token: !secret " + texts[0] +
 					"\n      users:\n        - name: alice\n          hash: !secret " + texts[1] + "\n",
 				"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.steps +
-					"      - file:\n          path: /etc/app/token\n          content: !tpl \"{{ .vars.token }}{{ range .vars.users }}{{ .hash }}{{ end }}\"\n          mode: \"0600\"\n" + tt.handlers,
+					"      - file:\n          path: /etc/app/token\n          content: !tpl \"{{ vars.token }}{{ for user in vars.users }}{{ user.hash }}{{ end }}\"\n          mode: \"0600\"\n" + tt.handlers,
 			})
 			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
 			if err != nil {

@@ -1,2 +1,6 @@
 recipes/web/templates/site.tmpl:1:9: unknown host field "nmae"; did you mean "name"?
-recipes/web/templates/site.tmpl:1:30: unknown fact "idd"; did you mean "id"?
+ | {{ host.nmae }} {{ facts.os.idd }}
+ | ........^
+recipes/web/templates/site.tmpl:1:29: unknown fact "idd"; did you mean "id"?
+ | {{ host.nmae }} {{ facts.os.idd }}
+ | ............................^

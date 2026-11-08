@@ -10,4 +10,4 @@ items:
   - &first
     name: one
   - *first
-  - !tpl "{{ .vars.x }}"
+  - !tpl "{{ vars.x }}"

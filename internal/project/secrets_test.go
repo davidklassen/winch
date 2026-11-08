@@ -88,7 +88,7 @@ recipients: [RECIPIENT]
 vars:
   token: {{secret:winch-yaml-token}}
   users: {}
-  line: !tpl "user:{{ .vars.pw }}"
+  line: !tpl "user:{{ vars.pw }}"
   has_pw: !expr 'vars.pw != ""'
   short: x
 `,
@@ -225,11 +225,11 @@ func TestEvalSecrets(t *testing.T) {
 		data, lines string
 		main, then  string
 	}{
-		{name: "content reads a secret", step: "  - file:\n      path: /a\n      content: !tpl \"pw={{ .vars.pw }}\\n\"\n",
+		{name: "content reads a secret", step: "  - file:\n      path: /a\n      content: !tpl \"pw={{ vars.pw }}\\n\"\n",
 			data: "pw=hunter2\n", lines: "pw=(secret)\n", main: "/a"},
-		{name: "a default that reads a secret is secret", step: "  - file:\n      path: /a\n      content: !tpl \"{{ .vars.line }}\\n\"\n",
+		{name: "a default that reads a secret is secret", step: "  - file:\n      path: /a\n      content: !tpl \"{{ vars.line }}\\n\"\n",
 			data: "user:hunter2\n", lines: "user:(secret)\n", main: "/a"},
-		{name: "a derived value that the secret does not change", step: "  - file:\n      path: /a\n      content: !tpl \"set={{ .vars.has_pw }}\\n\"\n",
+		{name: "a derived value that the secret does not change", step: "  - file:\n      path: /a\n      content: !tpl \"set={{ vars.has_pw }}\\n\"\n",
 			data: "set=true\n", lines: "set=(secret)\n", main: "/a"},
 		{name: "a map value is secret, its key is not", step: "  - file:\n      path: /a\n      template: users.tmpl\n",
 			data: "alice:$6$aaa$alicehash\nbob:plain-bob\n", lines: "alice:(secret)\nbob:plain-bob\n", main: "/a"},
@@ -237,18 +237,20 @@ func TestEvalSecrets(t *testing.T) {
 			data: "winch-yaml-token\n", lines: "(secret)\n", main: "/a"},
 		{name: "upper of a secret", step: "  - file:\n      path: /a\n      content: !expr 'upper(vars.pw) + \"\\n\"'\n",
 			data: "HUNTER2\n", lines: "(secret)\n", main: "/a"},
-		{name: "a path that reads a secret", step: "  - file:\n      path: !tpl \"/etc/{{ .vars.pw }}.conf\"\n      content: x\n",
+		{name: "a path that reads a secret", step: "  - file:\n      path: !tpl \"/etc/{{ vars.pw }}.conf\"\n      content: x\n",
 			data: "x", lines: "", main: "/etc/(secret).conf"},
-		{name: "a then that reads a secret", step: "  - file:\n      path: /a\n      content: x\n    then: !tpl \"echo {{ .vars.pw }} | chpasswd\"\n",
+		{name: "a then that reads a secret", step: "  - file:\n      path: /a\n      content: x\n    then: !tpl \"echo {{ vars.pw }} | chpasswd\"\n",
 			data: "x", lines: "", main: "/a", then: "echo (secret) | chpasswd"},
-		{name: "a loop over secrets", step: "  - file:\n      path: /a\n      content: !tpl \"{{ .item }}\\n\"\n    loop: !expr 'values(vars.users)'\n",
+		{name: "a loop over secrets", step: "  - file:\n      path: /a\n      content: !tpl \"{{ item }}\\n\"\n    loop: !expr 'values(vars.users)'\n",
 			data: "$6$aaa$alicehash\n", lines: "(secret)\n", main: "/a"},
-		{name: "content beside an owner that the placeholders fail", step: "  - file:\n      path: /a\n      owner: !expr vars.pw\n      content: !tpl \"k={{ .vars.pw }}\\nplain\\n\"\n",
+		{name: "content beside an owner that the placeholders fail", step: "  - file:\n      path: /a\n      owner: !expr vars.pw\n      content: !tpl \"k={{ vars.pw }}\\nplain\\n\"\n",
 			data: "k=hunter2\nplain\n", lines: "k=(secret)\nplain\n", main: "/a"},
-		{name: "no secret", step: "  - file:\n      path: /a\n      content: !tpl \"{{ .vars.short }}\\n\"\n",
+		{name: "a map with a secret prints as JSON", step: "  - file:\n      path: /a\n      content: !tpl \"{{ vars.users }}\\n\"\n",
+			data: "{\"alice\":\"$6$aaa$alicehash\",\"bob\":\"plain-bob\"}\n", lines: "{\"alice\":\"(secret)\",\"bob\":\"plain-bob\"}\n", main: "/a"},
+		{name: "no secret", step: "  - file:\n      path: /a\n      content: !tpl \"{{ vars.short }}\\n\"\n",
 			data: "x\n", lines: "no shown", main: "/a"},
 	}
-	files := map[string]string{"recipes/r/templates/users.tmpl": "{{ range $u, $h := .vars.users }}{{ $u }}:{{ $h }}\n{{ end }}"}
+	files := map[string]string{"recipes/r/templates/users.tmpl": "{{ for u in keys(vars.users) }}{{ u }}:{{ vars.users[u] }}\n{{ end }}"}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			steps, _, err := evalSecret(t, tt.step, files)
@@ -274,8 +276,8 @@ func TestEvalSecrets(t *testing.T) {
 
 func TestSecretContentFailsWithPlaceholders(t *testing.T) {
 	files := map[string]string{
-		"recipes/r/recipe.yaml":      "vars:\n  r_m: {hunter2: found}\nsteps:\n  - file:\n      path: !tpl \"/etc/{{ .vars.short }}\"\n      template: t.tmpl\n",
-		"recipes/r/templates/t.tmpl": "{{ index .vars.r_m .vars.pw }}\n",
+		"recipes/r/recipe.yaml":      "vars:\n  r_m: {hunter2: found}\nsteps:\n  - file:\n      path: !tpl \"/etc/{{ vars.short }}\"\n      template: t.tmpl\n",
+		"recipes/r/templates/t.tmpl": "{{ vars.r_m[vars.pw] }}\n",
 	}
 	steps, _, err := evalSecret(t, "", files)
 	if err != nil {
@@ -333,7 +335,7 @@ steps:
       path: /etc/peer.conf
       template: peer.tmpl
 `,
-		"recipes/r/templates/peer.tmpl": "[Peer]\nEndpoint = {{ .vars.r_wg }}\n",
+		"recipes/r/templates/peer.tmpl": "[Peer]\nEndpoint = {{ vars.r_wg }}\n",
 		"inventories/test.yaml":         secretProject["inventories/test.yaml"] + "        carol: |\n          [Interface]\n",
 	})
 	if err != nil {
@@ -358,8 +360,8 @@ func TestSecretErrors(t *testing.T) {
 		{name: "expr error that holds a changed value", step: "  - file:\n      path: /a\n      content: !expr 'string(int(upper(vars.pw)))'\n",
 			want: `recipes/r/recipe.yaml:4:16: content: invalid operation: int((secret))`},
 		{name: "template error that holds the value", step: "  - file:\n      path: /a\n      template: t.tmpl\n",
-			files: map[string]string{"recipes/r/templates/t.tmpl": "{{ index .vars.users .vars.pw }}"},
-			want:  `error calling index: map has no entry for key "(secret)"`},
+			files: map[string]string{"recipes/r/templates/t.tmpl": "{{ int(vars.pw) }}"},
+			want:  `invalid operation: int((secret))`},
 		{name: "a type error that shows the value", step: "  - file:\n      path: /a\n      content: x\n    when: !expr vars.pw\n",
 			want: `recipes/r/recipe.yaml:5:11: when: expected true or false, got the string "(secret)"`},
 		{name: "a plain field error beside a password from a secret", step: "  - user:\n      name: alice\n      password: !expr vars.users.alice\n      comment: \"a:b\"\n",
@@ -463,7 +465,7 @@ func TestLoadWarnings(t *testing.T) {
 	files := map[string]string{
 		"inventories/test.yaml":          "hosts:\n  web1:\n    vars:\n      pw: {{secret:" + strings.ReplaceAll(key, "\n", `\n`) + "}}\n      token: " + fakeSecret(t, "ghp.txt") + "\n      users: {k: \"-----BEGIN PRIVATE KEY-----\\n" + strings.Repeat(line, 3) + "\\n-----END PRIVATE KEY-----\"}\n",
 		"recipes/r/recipe.yaml":          recipe("  - file:\n      path: /a\n      template: t.tmpl\n  - file:\n      path: /b\n      source: k.pem\n"),
-		"recipes/r/templates/t.tmpl":     "id {{ .vars.short }}\naws " + fakeSecret(t, "aws.txt") + "\nexample " + fakeSecret(t, "aws_example.txt") + "\n",
+		"recipes/r/templates/t.tmpl":     "id {{ vars.short }}\naws " + fakeSecret(t, "aws.txt") + "\nexample " + fakeSecret(t, "aws_example.txt") + "\n",
 		"recipes/r/files/k.pem":          key,
 		"recipes/r/files/unused.pem":     key,
 		"pipelines/other.yaml":           "# " + slack + "\nstages:\n  - {name: a, hosts: all, steps: []}\n",
@@ -472,7 +474,7 @@ func TestLoadWarnings(t *testing.T) {
 		"inventories/production.yaml":    "hosts:\n  web1:\n    vars:\n      pw: !secret YWdl\n",
 		"recipes/r/templates/note.tmpl":  "nothing\n",
 		"recipes/r/files/sub/deeper.key": "x\n" + key,
-		"recipes/r/templates/key.tmpl":   "# {{ .vars.short }}\n" + key,
+		"recipes/r/templates/key.tmpl":   "# {{ vars.short }}\n" + key,
 	}
 	want := []string{
 		"inventories/test.yaml:5:14: this looks like a GitHub token; use !secret",
@@ -517,9 +519,9 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 		"inventories/test.yaml": secretProject["inventories/test.yaml"] + "      keys:\n        - name: ddns\n          secret: {{secret:tsig-secret}}\n      cfg:\n        zone:\n          k:\n            inner:\n              secret: {{secret:cfg-secret}}\n",
 	})
 	loopTemplates := map[string]string{
-		"recipes/r/templates/http.conf.tmpl":   "{{ .vars.short }}\n",
+		"recipes/r/templates/http.conf.tmpl":   "{{ vars.short }}\n",
 		"recipes/r/templates/https.conf.tmpl":  "x\n",
-		"recipes/r/templates/secret.conf.tmpl": "{{ .vars.line }}\n",
+		"recipes/r/templates/secret.conf.tmpl": "{{ vars.line }}\n",
 	}
 	db1 := func(v string) map[string]string {
 		return map[string]string{
@@ -532,61 +534,63 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 		files      map[string]string
 		want       string
 	}{
-		{"no mode", `content: !tpl "pw={{ .vars.pw }}"`, nil, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"no mode", `content: !tpl "pw={{ vars.pw }}"`, nil, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"other host's secret", `content: !expr 'match("db1")[0].vars.dbpw'`, peer, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"other host's secret with 0600", "content: !expr 'match(\"db1\")[0].vars.dbpw'\n      mode: \"0600\"", peer, ""},
 		{"other host's plain variable", `content: !expr 'match("db1")[0].vars.dbpw'`, db1("dbpw: plain"), ""},
-		{"inline template reads other host's secret", `content: !tpl '{{ (index (match "db1") 0).vars.dbpw }}'`, peer, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"template reads other hosts' secret", "template: t.tmpl", with(peer, map[string]string{"recipes/r/templates/t.tmpl": "{{ range .hosts }}{{ .vars.dbpw }}{{ end }}\n"}), "recipes/r/recipe.yaml:2:5: " + msg},
+		{"inline template reads other host's secret", `content: !tpl '{{ match("db1")[0].vars.dbpw }}'`, peer, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads other hosts' secret", "template: t.tmpl", with(peer, map[string]string{"recipes/r/templates/t.tmpl": "{{ for h in hosts }}{{ h.vars.dbpw }}{{ end }}\n"}), "recipes/r/recipe.yaml:2:5: " + msg},
 		{"default reads other host's secret", "content: !expr vars.r_peer\nvars:\n  r_peer: !expr 'match(\"db1\")[0].vars.dbpw'", peer, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"loop reads other host's secret", "content: !expr item\n    loop: !expr '[match(\"db1\")[0].vars.dbpw]'", peer, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"loop over other hosts reads a secret", "content: !expr item.vars.dbpw\n    loop: !expr 'match(\"db1\")'", peer, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"0644", "content: !tpl \"pw={{ .vars.pw }}\"\n      mode: \"0644\"", nil, "recipes/r/recipe.yaml:5:13: " + msg},
-		{"0604", "content: !tpl \"pw={{ .vars.pw }}\"\n      mode: \"0604\"", nil, "recipes/r/recipe.yaml:5:13: " + msg},
-		{"0640", "content: !tpl \"pw={{ .vars.pw }}\"\n      mode: \"0640\"", nil, ""},
-		{"computed mode", "content: !tpl \"pw={{ .vars.pw }}\"\n      mode: !expr '\"0644\"'", nil, ""},
-		{"no secret", `content: !tpl "x={{ .vars.short }}"`, nil, ""},
+		{"0644", "content: !tpl \"pw={{ vars.pw }}\"\n      mode: \"0644\"", nil, "recipes/r/recipe.yaml:5:13: " + msg},
+		{"0604", "content: !tpl \"pw={{ vars.pw }}\"\n      mode: \"0604\"", nil, "recipes/r/recipe.yaml:5:13: " + msg},
+		{"0640", "content: !tpl \"pw={{ vars.pw }}\"\n      mode: \"0640\"", nil, ""},
+		{"computed mode", "content: !tpl \"pw={{ vars.pw }}\"\n      mode: !expr '\"0644\"'", nil, ""},
+		{"no secret", `content: !tpl "x={{ vars.short }}"`, nil, ""},
 		{"plain content", `content: "x"`, nil, ""},
 		{"secret default", `content: !expr vars.token`, nil, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"default reads secret", `content: !expr vars.line`, nil, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"template", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ .vars.line }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"template without secret", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ .vars.short }}\n"}, ""},
-		{"template reads the keys of a secret map", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range $k, $v := .vars.users }}{{ $k }}{{ end }}\n"}, ""},
-		{"template reads the values of a secret map", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range $k, $v := .vars.users }}{{ $v }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"template reads the values of a secret map by dot", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range $k, $v := .vars.users }}{{ . }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"inline template reads the keys of a secret map", `content: !tpl "{{ range $k, $v := .vars.users }}{{ $k }}{{ end }}"`, nil, ""},
-		{"template reads the keys of a secret map by dot in with", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range $k, $v := .vars.users }}{{ with $k }}{{ . }}{{ end }}{{ end }}\n"}, ""},
-		{"template reads the values of a secret map in else of with", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range $k, $v := .vars.users }}{{ with $k }}{{ else }}{{ . }}{{ end }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"template reads the values of a secret map in if", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range $k, $v := .vars.users }}{{ if $v }}x{{ end }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"template assigns the values of a secret map", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ $k := \"\" }}{{ $v := \"\" }}{{ range $k, $v = .vars.users }}{{ $k }}{{ end }}{{ $v }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"default reads the values of a secret map", "content: !expr vars.r_vals\nvars:\n  r_vals: !tpl \"{{ range $k, $v := .vars.users }}{{ $v }}{{ end }}\"", nil, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"default reads the keys of a secret map", "content: !expr vars.r_names\nvars:\n  r_names: !tpl \"{{ range $k, $v := .vars.users }}{{ $k }}{{ end }}\"", nil, ""},
-		{"template reads a plain field of secret elements", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.keys }}{{ .name }}{{ end }}\n"}, ""},
-		{"template reads a plain field of secret elements by variable", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range $i, $k := .vars.keys }}{{ $k.name }}{{ end }}\n"}, ""},
-		{"template reads the secret field of elements", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.keys }}{{ .name }}={{ .secret }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"template reads the secret field of elements by variable", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range $k := .vars.keys }}{{ $k.secret }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"template reads secret elements whole", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.keys }}{{ json . }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"template reads the secret field of elements in with", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.keys }}{{ with .secret }}{{ . }}{{ end }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"inline template reads a plain field of secret elements", `content: !tpl "{{ range .vars.keys }}{{ .name }}{{ end }}"`, nil, ""},
-		{"default reads a plain field of secret elements", "content: !expr vars.r_names\nvars:\n  r_names: !tpl \"{{ range .vars.keys }}{{ .name }}{{ end }}\"", nil, ""},
-		{"default reads the secret field of elements", "content: !expr vars.r_vals\nvars:\n  r_vals: !tpl \"{{ range .vars.keys }}{{ .secret }}{{ end }}\"", nil, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"template reads a field of elements of a nested value", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.cfg.zone }}{{ .secret }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"template reads a field of secret map values", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ range .vars.users }}{{ .name }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ vars.line }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template without secret", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ vars.short }}\n"}, ""},
+		{"template reads the keys of a secret map", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for k in keys(vars.users) }}{{ k }}{{ end }}\n"}, ""},
+		{"template reads the values of a secret map", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for k in keys(vars.users) }}{{ vars.users[k] }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads the values of a secret map with values()", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for v in values(vars.users) }}{{ v }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"inline template reads the keys of a secret map", `content: !tpl "{{ for k in keys(vars.users) }}{{ k }}{{ end }}"`, nil, ""},
+		{"template reads the values of a secret map in if", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for k in keys(vars.users) }}{{ if vars.users[k] != \"\" }}x{{ end }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"default reads the values of a secret map", "content: !expr vars.r_vals\nvars:\n  r_vals: !tpl \"{{ for k in keys(vars.users) }}{{ vars.users[k] }}{{ end }}\"", nil, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"default reads the keys of a secret map", "content: !expr vars.r_names\nvars:\n  r_names: !tpl \"{{ for k in keys(vars.users) }}{{ k }}{{ end }}\"", nil, ""},
+		{"template reads a plain field of secret elements", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for key in vars.keys }}{{ key.name }}{{ end }}\n"}, ""},
+		{"template reads the secret field of elements", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for key in vars.keys }}{{ key.name }}={{ key.secret }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads the secret field of elements by variable", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for k in vars.keys }}{{ k.secret }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads secret elements whole", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for key in vars.keys }}{{ json(key) }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads the secret field of elements in a condition", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for key in vars.keys }}{{ if key.secret != \"\" }}x{{ end }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads the secret field of elements in else", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for key in vars.keys }}{{ if key.name == \"\" }}{{ else }}{{ key.secret }}{{ end }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads the secret field of elements in a nested loop", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for key in vars.keys }}{{ for i in [1] }}{{ key.secret }}{{ end }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads a plain field of elements in a nested loop", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for key in vars.keys }}{{ for i in [1] }}{{ key.name }}{{ end }}{{ end }}\n"}, ""},
+		{"template reads a plain field of elements in an inner loop", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for z in vars.zones }}{{ for key in vars.keys }}{{ key.name }}{{ end }}{{ end }}\n"}, ""},
+		{"template reads secret elements whole in a nested loop list", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for key in vars.keys }}{{ for v in values(key) }}{{ v }}{{ end }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads the secret field of elements by a constant key", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for key in vars.keys }}{{ key[\"secret\"] }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"inline template reads a plain field of secret elements", `content: !tpl "{{ for key in vars.keys }}{{ key.name }}{{ end }}"`, nil, ""},
+		{"default reads a plain field of secret elements", "content: !expr vars.r_names\nvars:\n  r_names: !tpl \"{{ for key in vars.keys }}{{ key.name }}{{ end }}\"", nil, ""},
+		{"default reads the secret field of elements", "content: !expr vars.r_vals\nvars:\n  r_vals: !tpl \"{{ for key in vars.keys }}{{ key.secret }}{{ end }}\"", nil, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template reads the elements of a nested value", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for x in values(vars.cfg.zone) }}{{ x.inner.secret }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"template loops over secret map values", "template: t.tmpl", map[string]string{"recipes/r/templates/t.tmpl": "{{ for user in values(vars.users) }}{{ user }}{{ end }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"absent", "absent: true", nil, ""},
 		{"loop over secrets", "content: !expr item\n    loop: !expr values(vars.users)", nil, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"plain content in loop over secrets", "content: x\n    loop: !expr values(vars.users)", nil, ""},
-		{"computed template name in loop over secrets", "template: !expr '\"t.tmpl\"'\n    loop: !expr values(vars.users)", map[string]string{"recipes/r/templates/t.tmpl": "{{ .item }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"computed template name in a literal loop", "template: !tpl \"{{ .item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, ""},
+		{"computed template name in loop over secrets", "template: !expr '\"t.tmpl\"'\n    loop: !expr values(vars.users)", map[string]string{"recipes/r/templates/t.tmpl": "{{ item }}\n"}, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name in a literal loop", "template: !tpl \"{{ item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, ""},
 		{"computed template name by expr in a literal loop", "template: !expr 'item + \".conf.tmpl\"'\n    loop: [http, https]", loopTemplates, ""},
-		{"computed template name in a literal loop selects a secret", "template: !tpl \"{{ .item }}.conf.tmpl\"\n    loop: [http, secret]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"computed template name reads a variable", "template: !tpl \"{{ .vars.short }}{{ .item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name in a literal loop selects a secret", "template: !tpl \"{{ item }}.conf.tmpl\"\n    loop: [http, secret]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name reads a variable", "template: !tpl \"{{ vars.short }}{{ item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"computed template name reads a fact", "template: !expr 'facts.os.id + item + \".conf.tmpl\"'\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"computed template name reads a variable in a branch", "template: !tpl \"{{ if eq .item \\\"none\\\" }}{{ .vars.short }}{{ end }}{{ .item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"computed template name in a loop with a computed element", "template: !tpl \"{{ .item }}.conf.tmpl\"\n    loop: [http, !expr '\"secret\"']", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"computed template name in a computed loop", "template: !tpl \"zones/{{ .item.name }}.zone\"\n    loop: !expr vars.zones", with(loopTemplates, map[string]string{"recipes/r/templates/zones/a.zone": "x\n"}), ""},
-		{"computed template name in a computed loop matches a secret", "template: !tpl \"{{ .item.name }}.conf.tmpl\"\n    loop: !expr vars.zones", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name reads a variable in a branch", "template: !tpl \"{{ if item == \\\"none\\\" }}{{ vars.short }}{{ end }}{{ item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name in a loop with a computed element", "template: !tpl \"{{ item }}.conf.tmpl\"\n    loop: [http, !expr '\"secret\"']", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name in a computed loop", "template: !tpl \"zones/{{ item.name }}.zone\"\n    loop: !expr vars.zones", with(loopTemplates, map[string]string{"recipes/r/templates/zones/a.zone": "x\n"}), ""},
+		{"computed template name in a computed loop matches a secret", "template: !tpl \"{{ item.name }}.conf.tmpl\"\n    loop: !expr vars.zones", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"computed template name by expr in a computed loop", "template: !expr '\"zones/\" + item.name + \".zone\"'\n    loop: !expr vars.zones", with(loopTemplates, map[string]string{"recipes/r/templates/zones/a.zone": "x\n"}), "recipes/r/recipe.yaml:2:5: " + msg},
-		{"computed template name reads the host", "template: !tpl \"{{ .host.short }}{{ .item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
+		{"computed template name reads the host", "template: !tpl \"{{ host.short }}{{ item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"handler", "content: x\nhandlers:\n  h:\n    - file:\n        path: /etc/h\n        content: !expr vars.token", nil, "recipes/r/recipe.yaml:7:7: " + msg},
 		{"recipe step value", "", map[string]string{
 			"recipes/r/recipe.yaml": "steps:\n  - file:\n      path: /a\n      content: !expr vars.r_pw\n",
@@ -630,15 +634,15 @@ func TestLoadSecretCertbotHook(t *testing.T) {
 		files      map[string]string
 		want       string
 	}{
-		{"deploy_hook", `deploy_hook: !tpl "curl -u {{ .vars.pw }} x"`, nil, "recipes/r/recipe.yaml:6:20: " + msg},
+		{"deploy_hook", `deploy_hook: !tpl "curl -u {{ vars.pw }} x"`, nil, "recipes/r/recipe.yaml:6:20: " + msg},
 		{"pre_hook", `pre_hook: !expr '"echo " + vars.token'`, nil, "recipes/r/recipe.yaml:6:17: " + msg},
 		{"post_hook from a default that reads a secret", `post_hook: !expr '"echo " + vars.line'`, nil, "recipes/r/recipe.yaml:6:18: " + msg},
 		{"loop over secrets", "deploy_hook: !expr '\"echo \" + item'\n    loop: !expr values(vars.users)", nil, "recipes/r/recipe.yaml:6:20: " + msg},
 		{"stage step", "deploy_hook: x", map[string]string{
 			"pipelines/site.yaml": stage("      - recipe: r\n      - certbot:\n          name: b\n          domains: [b.example.com]\n          email: a@example.com\n          deploy_hook: !expr '\"echo \" + vars.pw'\n"),
 		}, "pipelines/site.yaml:10:24: " + msg},
-		{"no secret", `deploy_hook: !tpl "echo {{ .vars.short }}"`, nil, ""},
-		{"keys of a secret map", `deploy_hook: !tpl "echo {{ range $k, $v := .vars.users }}{{ $k }}{{ end }}"`, nil, ""},
+		{"no secret", `deploy_hook: !tpl "echo {{ vars.short }}"`, nil, ""},
+		{"keys of a secret map", `deploy_hook: !tpl "echo {{ for k in keys(vars.users) }}{{ k }}{{ end }}"`, nil, ""},
 		{"plain hook", "deploy_hook: systemctl reload nginx", nil, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -828,7 +832,7 @@ func TestSecretAlias(t *testing.T) {
 	files := map[string]string{
 		"winch.yaml":            "name: acme\ninventory: test\nrecipients: [" + k.id.Recipient().String() + "]\nvars:\n  users: {}\n",
 		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: &pw !secret " + text + "\ngroups:\n  all:\n    vars:\n      users:\n        alice: *pw\n",
-		"pipelines/site.yaml":   stage("      - file:\n          path: /a\n          content: !tpl \"{{ .vars.pw }} {{ .vars.users.alice }}\\n\"\n"),
+		"pipelines/site.yaml":   stage("      - file:\n          path: /a\n          content: !tpl \"{{ vars.pw }} {{ vars.users.alice }}\\n\"\n"),
 	}
 	dir := writeProject(t, files)
 	if _, err := Validate(dir, "", nil); err != nil {
@@ -1005,13 +1009,13 @@ func TestSecretPlaces(t *testing.T) {
 	}{
 		{name: "a list in the inventory", files: map[string]string{
 			"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      pw: x\n      users: {list: [{{secret:first-secret}}, plain]}\n",
-			"recipes/r/recipe.yaml": recipe("  - file:\n      path: /a\n      content: !tpl \"{{ index .vars.users.list 0 }} {{ index .vars.users.list 1 }}\\n\"\n"),
+			"recipes/r/recipe.yaml": recipe("  - file:\n      path: /a\n      content: !tpl \"{{ vars.users.list[0] }} {{ vars.users.list[1] }}\\n\"\n"),
 		}, want: "(secret) plain\n"},
 		{name: "a recipe default", files: map[string]string{
-			"recipes/r/recipe.yaml": "vars:\n  r_key: {{secret:recipe-secret}}\nsteps:\n  - file:\n      path: /a\n      content: !tpl \"k={{ .vars.r_key }}\\n\"\n",
+			"recipes/r/recipe.yaml": "vars:\n  r_key: {{secret:recipe-secret}}\nsteps:\n  - file:\n      path: /a\n      content: !tpl \"k={{ vars.r_key }}\\n\"\n",
 		}, want: "k=(secret)\n"},
 		{name: "a loop whose length depends on a secret", files: map[string]string{
-			"recipes/r/recipe.yaml": recipe("  - file:\n      path: /a\n      content: !tpl \"{{ .item }}\\n\"\n    loop: !expr 'split(vars.pw, \"t\")'\n"),
+			"recipes/r/recipe.yaml": recipe("  - file:\n      path: /a\n      content: !tpl \"{{ item }}\\n\"\n    loop: !expr 'split(vars.pw, \"t\")'\n"),
 		}, want: "(secret)\n"},
 	}
 	for _, tt := range tests {
@@ -1031,7 +1035,7 @@ func TestSecretPlaces(t *testing.T) {
 // evaluation shows the whole argument)
 func TestSecretArgumentFailsWithPlaceholders(t *testing.T) {
 	files := map[string]string{
-		"recipes/r/recipe.yaml": "vars:\n  r_m: {hunter2: found}\nsteps:\n  - file:\n      path: !tpl \"/etc/{{ index .vars.r_m .vars.pw }}\"\n      content: x\n",
+		"recipes/r/recipe.yaml": "vars:\n  r_m: {hunter2: found}\nsteps:\n  - file:\n      path: !tpl \"/etc/{{ vars.r_m[vars.pw] }}\"\n      content: x\n",
 	}
 	steps, _, err := evalSecret(t, "", files)
 	if err != nil {
@@ -1215,7 +1219,7 @@ func TestAddRecipient(t *testing.T) {
 func readsPipeline(names ...string) string {
 	content := ""
 	for _, n := range names {
-		content += "{{ .vars." + n + " }}"
+		content += "{{ vars." + n + " }}"
 	}
 	return "stages:\n  - name: a\n    hosts: all\n    steps:\n      - file:\n          path: /a\n          content: !tpl \"" + content + "\"\n          mode: \"0600\"\n"
 }
@@ -1366,12 +1370,12 @@ func TestSecretCommandOfSeveralLines(t *testing.T) {
 	files := map[string]string{
 		"recipes/r/recipe.yaml": `steps:
   - cmd:
-      command: !tpl "curl -H t:{{ .vars.pw }}\nrm -rf /srv/x\nnotify {{ .vars.pw }}"
-    then: !tpl "a {{ .vars.pw }}\nrm -rf /srv/y\nb {{ .vars.pw }}"
+      command: !tpl "curl -H t:{{ vars.pw }}\nrm -rf /srv/x\nnotify {{ vars.pw }}"
+    then: !tpl "a {{ vars.pw }}\nrm -rf /srv/y\nb {{ vars.pw }}"
   - file:
       path: /a
       content: x
-      validate: !tpl "c {{ .vars.pw }}\nrm -rf /srv/z\nd {{ .vars.pw }}"
+      validate: !tpl "c {{ vars.pw }}\nrm -rf /srv/z\nd {{ vars.pw }}"
 `,
 	}
 	steps, _, err := evalSecret(t, "", files)
@@ -1481,16 +1485,16 @@ func TestEvalRepoSecret(t *testing.T) {
 	for _, tt := range []struct {
 		name, step, want string
 	}{
-		{"secret in the url path", repo(`!tpl "https://apt.example.com/{{ .vars.pw }}/debian"`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
-		{"a default that reads a secret", repo(`!tpl "https://apt.example.com/{{ .vars.line }}"`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
+		{"secret in the url path", repo(`!tpl "https://apt.example.com/{{ vars.pw }}/debian"`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
+		{"a default that reads a secret", repo(`!tpl "https://apt.example.com/{{ vars.line }}"`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
 		{"a secret of a host from match", repo(`!expr '"https://apt.example.com/" + match("web1")[0].vars.pw'`, "trixie", "[main]"), "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
-		{"a loop over secrets", repo(`!tpl "https://apt.example.com/{{ .item }}"`, "trixie", "[main]") + "    loop: !expr values(vars.users)\n", "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
+		{"a loop over secrets", repo(`!tpl "https://apt.example.com/{{ item }}"`, "trixie", "[main]") + "    loop: !expr values(vars.users)\n", "recipes/r/recipe.yaml:4:12: url: " + msg + urlFix},
 		{"suite", repo(plain, "!expr vars.pw", "[main]"), "recipes/r/recipe.yaml:5:14: suite: " + msg},
 		{"a suite that fails with a placeholder", repo(plain, `!expr 'vars.pw == "hunter2" ? "trixie" : string(int(vars.pw))'`, "[main]"), "recipes/r/recipe.yaml:5:14: suite: " + msg},
 		{"components", repo(plain, "trixie", "!expr '[vars.pw]'"), "recipes/r/recipe.yaml:6:19: components: " + msg},
-		{"a plain field of a map with a secret", repo(`!tpl "https://apt.example.com/{{ .vars.users.bob }}"`, "trixie", "[main]"), ""},
+		{"a plain field of a map with a secret", repo(`!tpl "https://apt.example.com/{{ vars.users.bob }}"`, "trixie", "[main]"), ""},
 		{"a plain url in a loop over secrets", repo(plain, "trixie", "[main]") + "    loop: !expr values(vars.users)\n", ""},
-		{"no secret", repo(`!tpl "https://apt.example.com/{{ .vars.short }}"`, "trixie", "[main]"), ""},
+		{"no secret", repo(`!tpl "https://apt.example.com/{{ vars.short }}"`, "trixie", "[main]"), ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			_, _, err := evalSecret(t, tt.step, nil)

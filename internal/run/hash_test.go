@@ -38,7 +38,7 @@ var hashFiles = map[string]string{
     steps:
       - file:
           path: /etc/motd
-          content: !tpl "{{ .vars.greeting }}\n"
+          content: !tpl "{{ vars.greeting }}\n"
           validate: "true"
         then: echo done
       - dir:
@@ -63,7 +63,7 @@ var hashFiles = map[string]string{
           path: /etc/issue
           content: "x\n"
 `,
-	"recipes/app/templates/app.tmpl": "{{/* app */}}a\n",
+	"recipes/app/templates/app.tmpl": "{{ \"\" }}a\n",
 	"recipes/app/recipe.yaml": `steps:
   - file:
       path: /etc/app.conf
@@ -216,7 +216,7 @@ func TestHashChanges(t *testing.T) {
 			return edit(t, "recipes/app/recipe.yaml", "steps:\n", "# app\nsteps:\n")
 		}},
 		{name: "a template", text: true, files: func(t *testing.T) map[string]string {
-			return edit(t, "recipes/app/templates/app.tmpl", "{{/* app */}}", "{{/* the app */}}")
+			return edit(t, "recipes/app/templates/app.tmpl", "{{ \"\" }}", "{{ \"\" + \"\" }}")
 		}},
 		{name: "another login user from the ssh config", setup: func(h *fakehost.Hosts) {
 			h.SetDestination("web1", protocol.Destination{User: "admin", HostName: "web1", Port: "22"})
@@ -299,27 +299,27 @@ const stage = "stages:\n  - name: base\n    hosts: all\n    steps:\n"
 func TestHashSecret(t *testing.T) {
 	tests := []struct{ name, pipeline, recipe string }{
 		{name: "every argument", pipeline: stage + `      - file:
-          path: !tpl "/etc/{{ .vars.pw }}.key"
-          content: !tpl "password {{ .vars.pw }}\n"
-          owner: !tpl "u{{ .vars.pw }}"
-        then: !tpl "passwd {{ .vars.pw }}"
+          path: !tpl "/etc/{{ vars.pw }}.key"
+          content: !tpl "password {{ vars.pw }}\n"
+          owner: !tpl "u{{ vars.pw }}"
+        then: !tpl "passwd {{ vars.pw }}"
 `},
 		{name: "then only", pipeline: stage + `      - file:
           path: /etc/pw
           content: "x\n"
-        then: !tpl "passwd {{ .vars.pw }}"
+        then: !tpl "passwd {{ vars.pw }}"
 `},
 		{name: "owner only", pipeline: stage + `      - file:
           path: /etc/pw
           content: "x\n"
-          owner: !tpl "u{{ .vars.pw }}"
+          owner: !tpl "u{{ vars.pw }}"
 `},
 		{name: "content only", pipeline: stage + `      - file:
           path: /etc/pw
-          content: !tpl "password {{ .vars.pw }}\n"
+          content: !tpl "password {{ vars.pw }}\n"
 `},
 		{name: "a loop item", pipeline: stage + `      - file:
-          path: !tpl "/etc/{{ .item }}"
+          path: !tpl "/etc/{{ item }}"
           content: "x\n"
         loop: !expr '[vars.pw]'
 `},
@@ -331,7 +331,7 @@ func TestHashSecret(t *testing.T) {
 handlers:
   reload:
     - service:
-        name: !tpl "app-{{ .vars.pw }}"
+        name: !tpl "app-{{ vars.pw }}"
         reloaded: true
 `},
 	}

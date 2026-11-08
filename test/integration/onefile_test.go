@@ -34,7 +34,7 @@ recipes:
           name: winch-one.service
           content: !tpl |
             [Service]
-            Environment=WORD={{ .vars.app_word }}
+            Environment=WORD={{ vars.app_word }}
             ExecStart=/bin/sleep infinity
       - repo:
           name: winch-signed

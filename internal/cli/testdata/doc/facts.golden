@@ -5,7 +5,7 @@ as the OS release.
 
 Reading a fact:
   Expressions read a fact as facts.os.id, and templates as {{
-  .facts.os.id }}. A host from hosts or match() has its facts too:
+  facts.os.id }}. A host from hosts or match() has its facts too:
   match("backup")[0].facts.ssh.ed25519. Facts are a fixed set. A read of
   an unknown fact is an error.
 

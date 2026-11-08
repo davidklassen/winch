@@ -39,7 +39,7 @@ inventory: test
 vars:
   mail_server: false
   admins: [root]
-  greeting: !tpl "hello {{ .host.short }}"
+  greeting: !tpl "hello {{ host.short }}"
 `,
 	"inventories/test.yaml": `hosts:
   mail.acme.com:
@@ -66,18 +66,18 @@ groups:
       - recipe: web
       - file:
           path: /etc/motd
-          content: !tpl "{{ .vars.greeting }} in {{ index .host.groups 1 }}\n"
+          content: !tpl "{{ vars.greeting }} in {{ host.groups[1] }}\n"
         when: !expr 'len(host.groups) > 1'
   - name: mail
     hosts: mail
     steps:
       - file:
-          path: !tpl /etc/mail/{{ .item.name }}
+          path: !tpl /etc/mail/{{ item.name }}
           content: !expr item.text
         loop:
           - {name: a, text: "A\n"}
           - name: !expr host.short
-            text: !tpl "{{ .vars.domain }}\n"
+            text: !tpl "{{ vars.domain }}\n"
 `,
 	"recipes/web/recipe.yaml": `vars:
   web_port: 80
@@ -86,20 +86,20 @@ groups:
   web_title: !expr 'upper(vars.web_name)'
 steps:
   - file:
-      path: !tpl /etc/web/{{ .item }}.conf
+      path: !tpl /etc/web/{{ item }}.conf
       template: site.tmpl
     loop: !expr vars.web_sites
   - name: Mail only
     file:
       path: /etc/web/mail
-      content: !tpl "{{ .vars.web_title }}\n"
+      content: !tpl "{{ vars.web_title }}\n"
     when: !expr vars.mail_server
   - file:
       path: /etc/web/port
       content: !expr 'string(vars.web_port) + " " + facts.os.codename + " " + vars.tools_name + "\n"'
 `,
 	"recipes/tools/recipe.yaml":       "vars:\n  tools_name: !expr 'vars.web_name + \"-tools\"'\nsteps: []\n",
-	"recipes/web/templates/site.tmpl": "server {{ .item }} {{ .vars.web_port }} {{ join .host.groups \",\" }}\n",
+	"recipes/web/templates/site.tmpl": "server {{ item }} {{ vars.web_port }} {{ join(host.groups, \",\") }}\n",
 }
 
 func describeVars(p *Project) string {
@@ -137,16 +137,16 @@ func TestLoadVars(t *testing.T) {
 			"recipes/web/recipe.yaml": strings.Replace(web, "vars.web_port) +", "vars.web_prot) +", 1),
 		}},
 		{name: "undeclared-in-tpl", files: map[string]string{
-			"recipes/web/recipe.yaml": strings.Replace(web, "{{ .vars.web_title }}", "{{ .vars.web_titel }}", 1),
+			"recipes/web/recipe.yaml": strings.Replace(web, "{{ vars.web_title }}", "{{ vars.web_titel }}", 1),
 		}},
 		{name: "undeclared-in-template-file", files: map[string]string{
-			"recipes/web/templates/site.tmpl": "{{ .vars.web_prot }}\n",
+			"recipes/web/templates/site.tmpl": "{{ vars.web_prot }}\n",
 		}},
 		{name: "undeclared-in-inventory", files: map[string]string{
 			"inventories/test.yaml": strings.Replace(inv, "web_port: 8080", "web_prot: 8080", 1),
 		}},
 		{name: "undeclared-in-host-vars", files: map[string]string{
-			"winch.yaml": strings.Replace(varsProject["winch.yaml"], ".host.short", ".host.vars.domian", 1),
+			"winch.yaml": strings.Replace(varsProject["winch.yaml"], "host.short", "host.vars.domian", 1),
 		}},
 		{name: "read-without-value", files: map[string]string{
 			"inventories/test.yaml": strings.Replace(inv, "    vars:\n      domain: acme.com\n", "", 1),
@@ -171,7 +171,7 @@ func TestLoadVars(t *testing.T) {
 			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80\n", "web_port: 80\n  port: 81\n", 1),
 		}},
 		{name: "cycle", files: map[string]string{
-			"winch.yaml": varsProject["winch.yaml"] + "  a: !expr vars.b\n  b: !tpl '{{ .vars.c }}'\n  c: !expr 'vars[\"a\"]'\n",
+			"winch.yaml": varsProject["winch.yaml"] + "  a: !expr vars.b\n  b: !tpl '{{ vars.c }}'\n  c: !expr 'vars[\"a\"]'\n",
 		}},
 		{name: "cycle-through-host-vars", files: map[string]string{
 			"winch.yaml": varsProject["winch.yaml"] + "  a: !expr host.vars.a\n",
@@ -183,7 +183,7 @@ func TestLoadVars(t *testing.T) {
 			"recipes/web/recipe.yaml": strings.Replace(web, ": host.name'", ": host.nmae'", 1),
 		}},
 		{name: "unknown-host-field-in-template", files: map[string]string{
-			"recipes/web/templates/site.tmpl": "{{ .host.nmae }} {{ .facts.os.idd }}\n",
+			"recipes/web/templates/site.tmpl": "{{ host.nmae }} {{ facts.os.idd }}\n",
 		}},
 		{name: "unknown-fact", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "facts.os.codename", "facts.os.codenam", 1),
@@ -242,11 +242,11 @@ func TestLoadVars(t *testing.T) {
 		{name: "default-tpl-dot", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ . }}'", 1),
 		}},
-		{name: "default-tpl-dollar", files: map[string]string{
-			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ $ }}'", 1),
+		{name: "default-tpl-range", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ range vars.web_sites }}x{{ end }}'", 1),
 		}},
-		{name: "default-tpl-with-host", files: map[string]string{
-			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ with .host }}{{ .vars.domain }}{{ end }}'", 1),
+		{name: "default-tpl-whole-host", files: map[string]string{
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ if host != nil }}{{ host.vars.domain }}{{ end }}'", 1),
 		}},
 		{name: "loop-keys-vars", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "loop: !expr vars.web_sites", "loop: !expr keys(vars)", 1),
@@ -255,16 +255,16 @@ func TestLoadVars(t *testing.T) {
 			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !expr len(vars)", 1),
 		}},
 		{name: "default-tpl-range-vars", files: map[string]string{
-			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ range .vars }}x{{ end }}'", 1),
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ for x in vars }}x{{ end }}'", 1),
 		}},
 		{name: "default-tpl-index-vars", files: map[string]string{
-			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ index .vars \"domain\" }}'", 1),
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ vars[\"domain\"] }}'", 1),
 		}},
 		{name: "default-tpl-get-vars", files: map[string]string{
-			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ get .vars \"domain\" }}'", 1),
+			"recipes/web/recipe.yaml": strings.Replace(web, "web_port: 80", "web_port: !tpl '{{ get(vars, \"domain\") }}'", 1),
 		}},
 		{name: "arg-vars-item", files: map[string]string{
-			"recipes/web/recipe.yaml": strings.Replace(web, "path: !tpl /etc/web/{{ .item }}.conf", "path: !expr '\"/etc/web/\" + vars[item]'", 1),
+			"recipes/web/recipe.yaml": strings.Replace(web, "path: !tpl /etc/web/{{ item }}.conf", "path: !expr '\"/etc/web/\" + vars[item]'", 1),
 		}},
 		{name: "when-untagged", files: map[string]string{
 			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: vars.mail_server", 1),
@@ -288,10 +288,10 @@ func TestLoadVars(t *testing.T) {
 			"recipes/web/recipe.yaml": strings.Replace(web, "when: !expr vars.mail_server", "when: !expr vars.mail_server ==", 1),
 		}},
 		{name: "tpl-syntax", files: map[string]string{
-			"recipes/web/recipe.yaml": strings.Replace(web, "{{ .vars.web_title }}", "{{ .vars.web_title ", 1),
+			"recipes/web/recipe.yaml": strings.Replace(web, "{{ vars.web_title }}", "{{ vars.web_title ", 1),
 		}},
 		{name: "computed-template-in-stage", files: map[string]string{
-			"pipelines/site.yaml": "stages:\n  - name: web\n    hosts: all\n    steps:\n      - file:\n          path: /a\n          template: !tpl '{{ .host.short }}.tmpl'\n",
+			"pipelines/site.yaml": "stages:\n  - name: web\n    hosts: all\n    steps:\n      - file:\n          path: /a\n          template: !tpl '{{ host.short }}.tmpl'\n",
 		}},
 		{name: "computed-arg-type", files: map[string]string{
 			"pipelines/site.yaml": "stages:\n  - name: web\n    hosts: all\n    steps:\n      - file:\n          path: !expr host.name\n          mode: 0644\n          contnet: x\n",
@@ -338,7 +338,7 @@ func TestLoadVars(t *testing.T) {
 		}},
 		{name: "nested-tag-in-set", set: []string{"vars.admins=[!tpl x]"}},
 		{name: "tpl-item-outside-loop", files: map[string]string{
-			"recipes/web/recipe.yaml": strings.Replace(web, "content: !tpl \"{{ .vars.web_title }}\\n\"", "content: !tpl \"{{ .item }}\"", 1),
+			"recipes/web/recipe.yaml": strings.Replace(web, "content: !tpl \"{{ vars.web_title }}\\n\"", "content: !tpl \"{{ item }}\"", 1),
 		}},
 		{name: "unused-recipe-broken", files: map[string]string{
 			"recipes/unused/recipe.yaml": "steps:\n  - fiel: {}\n",
@@ -665,25 +665,24 @@ const valueVars = `  early: !expr 'vars.late + 1'
   nothing: !expr vars.m.nope
 `
 
-// spec: Templates and expressions/Data; Templates and expressions/Template functions; Variables
+// spec: Templates and expressions/Data; Templates and expressions/Functions; Variables
 func TestValues(t *testing.T) {
 	tests := []struct {
 		name string
 		text string
 		want string
 	}{
-		{"float", "{{ .vars.f }} {{ .vars.f2 }}", "8 8.5"},
-		{"int and bool", "{{ .vars.i }} {{ .vars.b }}", "80 true"},
-		{"list and map", "{{ .vars.l }} {{ .vars.m }}", "[a b] map[a:1 k:v]"},
-		{"join", "{{ join .vars.l \", \" }}|{{ join .vars.ports \",\" }}", "a, b|22,25"},
-		{"has", "{{ has .vars.l \"a\" }} {{ has .vars.l \"z\" }} {{ has .vars.ports 22 }}", "true false true"},
-		{"title", "{{ title \"hello mail  world\" }}", "Hello Mail  World"},
-		{"host groups", "{{ .host.groups }}", "[all]"},
-		{"host vars", "{{ .host.vars.i }} {{ .host.address }}", "80 192.0.2.1"},
-		{"has keeps types", "{{ has .vars.ports \"22\" }}", "false"},
-		{"facts", "{{ .facts.os.id }} {{ .facts.os.version }} {{ .facts.os.codename }} {{ .facts.os.arch }}", "debian 13 trixie amd64"},
-		{"missing key", "{{ .vars.m.nope }}", `error: recipes/r/templates/t.tmpl:1:9: .vars.m.nope: map has no entry for key "nope"`},
-		{"variable without a value", "{{ .vars.nothing }}", `error: recipes/r/templates/t.tmpl:1:9: .vars.nothing: map has no entry for key "nothing"`},
+		{"float", "{{ vars.f }} {{ vars.f2 }}", "8 8.5"},
+		{"int and bool", "{{ vars.i }} {{ vars.b }}", "80 true"},
+		{"list and map", "{{ vars.l }} {{ vars.m }}", `["a","b"] {"a":1,"k":"v"}`},
+		{"join", "{{ join(vars.l, \", \") }}|{{ join(map(vars.ports, string(#)), \",\") }}", "a, b|22,25"},
+		{"has", "{{ \"a\" in vars.l }} {{ \"z\" in vars.l }} {{ 22 in vars.ports }}", "true false true"},
+		{"host groups", "{{ host.groups }}", `["all"]`},
+		{"host vars", "{{ host.vars.i }} {{ host.address }}", "80 192.0.2.1"},
+		{"has keeps types", "{{ \"22\" in vars.ports }}", "false"},
+		{"facts", "{{ facts.os.id }} {{ facts.os.version }} {{ facts.os.codename }} {{ facts.os.arch }}", "debian 13 trixie amd64"},
+		{"missing key", "{{ vars.m.nope }}", "error: recipes/r/templates/t.tmpl:1:4: the expression gave null\n | {{ vars.m.nope }}\n | ...^"},
+		{"variable without a value", "{{ vars.nothing }}", "error: recipes/r/templates/t.tmpl:1:4: the expression gave null\n | {{ vars.nothing }}\n | ...^"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -696,13 +695,13 @@ func TestValues(t *testing.T) {
 	}
 }
 
-// spec: Templates and expressions/Template functions
+// spec: Templates and expressions/Functions
 func TestQuote(t *testing.T) {
 	values := []string{"", "a b", "it's", "''", "x; echo pwned", "a\nb", "$HOME $(id) `id`", `\ "`}
 	for _, v := range values {
 		vars := "  v: " + strconv.Quote(v) + "\n"
 		for kind, content := range map[string]string{
-			"tpl":  `!tpl "printf %s {{ quote .vars.v }}"`,
+			"tpl":  `!tpl "printf %s {{ quote(vars.v) }}"`,
 			"expr": `!expr '"printf %s " + quote(vars.v)'`,
 		} {
 			t.Run(fmt.Sprintf("%s %q", kind, v), func(t *testing.T) {
@@ -755,28 +754,19 @@ func TestHabitHints(t *testing.T) {
 		fixFiles map[string]string
 	}{
 		{
-			name: "expression function in a template",
-			step: "  - file:\n      path: /a\n      content: !tpl \"{{ keys .vars.m }}\"\n",
-			want: `load error: recipes/r/recipe.yaml:4:16: function "keys" not defined; keys is an expression function: use !expr`,
-			fix:  "  - file:\n      path: /a\n      content: !expr 'json(keys(vars.m))'\n",
-		},
-		{
-			name:     "expression function in a template file",
-			step:     "  - file:\n      path: /a\n      template: a.tmpl\n",
-			files:    map[string]string{"recipes/r/templates/a.tmpl": "{{ filter .vars.l }}\n"},
-			want:     `load error: recipes/r/templates/a.tmpl:1:1: function "filter" not defined; filter is an expression function: compute it in a variable with !expr, and read that variable in the template`,
-			fixVars:  "  ks: !expr keys(vars.m)\n",
-			fixFiles: map[string]string{"recipes/r/templates/a.tmpl": "{{ join .vars.ks \",\" }}\n"},
-		},
-		{
 			name: "now in a template",
 			step: "  - file:\n      path: /a\n      content: !tpl \"{{ now }}\"\n",
-			want: `load error: recipes/r/recipe.yaml:4:16: function "now" not defined`,
+			want: "load error: recipes/r/recipe.yaml:4:16: now() is not allowed\n | {{ now }}\n | ...^",
+		},
+		{
+			name: "now without a call",
+			step: "  - file:\n      path: /a\n      content: !expr 'string(now)'\n",
+			want: "load error: recipes/r/recipe.yaml:4:16: now() is not allowed\n | string(now)\n | .......^",
 		},
 		{
 			name: "toJSON in a template",
-			step: "  - file:\n      path: /a\n      content: !tpl \"{{ toJSON .vars.m }}\"\n",
-			want: `load error: recipes/r/recipe.yaml:4:16: function "toJSON" not defined`,
+			step: "  - file:\n      path: /a\n      content: !tpl \"{{ toJSON(vars.m) }}\"\n",
+			want: "load error: recipes/r/recipe.yaml:4:16: unknown name \"toJSON\"; use json\n | {{ toJSON(vars.m) }}\n | ...^",
 		},
 		{
 			name: "colon that is not after a map key",
@@ -822,7 +812,7 @@ func TestHabitHints(t *testing.T) {
 	}
 }
 
-// spec: Templates and expressions/Template functions
+// spec: Templates and expressions/Functions
 func TestSQLQuote(t *testing.T) {
 	tests := []struct{ value, want string }{
 		{"", "''"},
@@ -835,7 +825,7 @@ func TestSQLQuote(t *testing.T) {
 	for _, tt := range tests {
 		vars := "  v: " + strconv.Quote(tt.value) + "\n"
 		for kind, content := range map[string]string{
-			"tpl":  `!tpl "{{ sqlquote .vars.v }}"`,
+			"tpl":  `!tpl "{{ sqlquote(vars.v) }}"`,
 			"expr": `!expr sqlquote(vars.v)`,
 		} {
 			t.Run(fmt.Sprintf("%s %q", kind, tt.value), func(t *testing.T) {
@@ -848,7 +838,7 @@ func TestSQLQuote(t *testing.T) {
 	}
 }
 
-// spec: Templates and expressions/Template functions
+// spec: Templates and expressions/Functions
 func TestJSON(t *testing.T) {
 	tests := []struct{ value, want string }{
 		{`""`, `""`},
@@ -874,7 +864,7 @@ func TestJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 		for kind, content := range map[string]string{
-			"tpl":  `!tpl "{{ json .vars.v }}"`,
+			"tpl":  `!tpl "{{ json(vars.v) }}"`,
 			"expr": `!expr json(vars.v)`,
 		} {
 			t.Run(fmt.Sprintf("%s %s", kind, tt.value), func(t *testing.T) {
@@ -897,15 +887,15 @@ func TestJSON(t *testing.T) {
 	}
 }
 
-// spec: Templates and expressions/Template functions
+// spec: Templates and expressions/Functions
 func TestGet(t *testing.T) {
 	const vars = "  peers:\n    - {name: a}\n    - {name: b, endpoint: \"192.0.2.2:51820\"}\n  l: [a]\n"
 	tests := []struct{ name, text, want string }{
-		{"optional key", `{{ range .vars.peers }}{{ .name }}{{ with get . "endpoint" }} {{ . }}{{ end }};{{ end }}`, "a;b 192.0.2.2:51820;"},
-		{"missing key prints null", `{{ range .vars.peers }}{{ get . "endpoint" }}{{ end }}`,
-			`error: recipes/r/recipe.yaml:4:16: content: get . "endpoint": null is not a value`},
-		{"not a map", `{{ get .vars.l "endpoint" }}`,
-			`error: recipes/r/recipe.yaml:4:16: content: get .vars.l "endpoint": error calling get: get: a list is not a map`},
+		{"optional key", `{{ for peer in vars.peers }}{{ peer.name }}{{ if get(peer, "endpoint") != nil }} {{ get(peer, "endpoint") }}{{ end }};{{ end }}`, "a;b 192.0.2.2:51820;"},
+		{"missing key prints null", `{{ for peer in vars.peers }}{{ get(peer, "endpoint") }}{{ end }}`,
+			"error: recipes/r/recipe.yaml:4:16: content: the expression gave null\n | {{ for peer in vars.peers }}{{ get(peer, \"endpoint\") }}{{ end }}\n | ...............................^"},
+		{"not a map", `{{ get(vars.l, "endpoint") }}`,
+			"error: recipes/r/recipe.yaml:4:16: content: invalid operation: int(string)\n | {{ get(vars.l, \"endpoint\") }}\n | ...^"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -963,11 +953,11 @@ func TestEvalErrors(t *testing.T) {
 			want: "error: recipes/r/recipe.yaml:5:11: loop: expected a list, got a map"},
 		{name: "empty loop", step: "  - file:\n      path: /a\n      content: x\n    loop: []\n",
 			want: "no steps"},
-		{name: "path not absolute", step: "  - file:\n      path: !tpl '{{ .vars.s }}'\n      content: x\n",
+		{name: "path not absolute", step: "  - file:\n      path: !tpl '{{ vars.s }}'\n      content: x\n",
 			want: "error: recipes/r/recipe.yaml:3:13: path: must be an absolute path"},
-		{name: "path not clean", step: "  - file:\n      path: !tpl '/etc/{{ .vars.s }}/'\n      content: x\n",
+		{name: "path not clean", step: "  - file:\n      path: !tpl '/etc/{{ vars.s }}/'\n      content: x\n",
 			want: `error: recipes/r/recipe.yaml:3:13: path: must be a clean path, such as "/etc/yes"`},
-		{name: "control character in a computed path", step: "  - file:\n      path: !tpl \"/etc/{{ .vars.s }}\\n\"\n      content: x\n",
+		{name: "control character in a computed path", step: "  - file:\n      path: !tpl \"/etc/{{ vars.s }}\\n\"\n      content: x\n",
 			want: "error: recipes/r/recipe.yaml:3:13: path: has a control character"},
 		{name: "content not a string", step: "  - file:\n      path: /a\n      content: !expr vars.l\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: expected a string, got a list"},
@@ -983,10 +973,10 @@ func TestEvalErrors(t *testing.T) {
 			want: "error: winch.yaml:15:8: vars.bad: + cannot take a number and a string\n | 1 + vars.s\n | ..^"},
 		{name: "when fails before a default", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n    when: !expr 'vars.l[5] == \"x\"'\n",
 			want: "error: recipes/r/recipe.yaml:5:11: when: index out of range: 5 (array length is 2)\n | vars.l[5] == \"x\"\n | ......^"},
-		{name: "computed template", step: "  - file:\n      path: /a\n      template: !tpl '{{ .vars.s }}.tmpl'\n",
-			files: map[string]string{"recipes/r/templates/yes.tmpl": "{{ .vars.i }}"},
+		{name: "computed template", step: "  - file:\n      path: /a\n      template: !tpl '{{ vars.s }}.tmpl'\n",
+			files: map[string]string{"recipes/r/templates/yes.tmpl": "{{ vars.i }}"},
 			want:  "80"},
-		{name: "missing computed template", step: "  - file:\n      path: /a\n      template: !tpl '{{ .vars.i }}.tmpl'\n",
+		{name: "missing computed template", step: "  - file:\n      path: /a\n      template: !tpl '{{ vars.i }}.tmpl'\n",
 			files: map[string]string{"recipes/r/templates/yes.tmpl": "x"},
 			want:  "error: recipes/r/recipe.yaml:4:17: template: recipes/r/templates/80.tmpl does not exist"},
 		{name: "computed source", step: "  - file:\n      path: /a\n      source: !expr item\n    loop: [a.txt]\n",
@@ -994,25 +984,25 @@ func TestEvalErrors(t *testing.T) {
 			want:  "A\n"},
 		{name: "missing computed source", step: "  - file:\n      path: /a\n      source: !expr vars.s\n",
 			want: "error: recipes/r/recipe.yaml:4:15: source: recipes/r/files/yes does not exist"},
-		{name: "missing template beside a computed path", step: "  - file:\n      path: !tpl /etc/{{ .vars.s }}\n      template: htp.conf\n",
+		{name: "missing template beside a computed path", step: "  - file:\n      path: !tpl /etc/{{ vars.s }}\n      template: htp.conf\n",
 			want: "load error: recipes/r/recipe.yaml:4:17: template: recipes/r/templates/htp.conf does not exist"},
-		{name: "missing source beside a computed path", step: "  - file:\n      path: !tpl /etc/{{ .vars.s }}\n      source: nothere.txt\n",
+		{name: "missing source beside a computed path", step: "  - file:\n      path: !tpl /etc/{{ vars.s }}\n      source: nothere.txt\n",
 			want: "load error: recipes/r/recipe.yaml:4:15: source: recipes/r/files/nothere.txt does not exist"},
-		{name: "missing unit source beside a computed name", step: "  - unit:\n      name: !tpl '{{ .vars.s }}.service'\n      source: nothere.service\n",
+		{name: "missing unit source beside a computed name", step: "  - unit:\n      name: !tpl '{{ vars.s }}.service'\n      source: nothere.service\n",
 			want: "load error: recipes/r/recipe.yaml:4:15: source: recipes/r/files/nothere.service does not exist"},
-		{name: "unclean source beside a computed path", step: "  - file:\n      path: !tpl /etc/{{ .vars.s }}\n      source: ../x\n",
+		{name: "unclean source beside a computed path", step: "  - file:\n      path: !tpl /etc/{{ vars.s }}\n      source: ../x\n",
 			want: `load error: recipes/r/recipe.yaml:4:15: source: must be a clean relative path, such as "a/b.conf"`},
-		{name: "unclean template beside a computed path", step: "  - file:\n      path: !tpl /etc/{{ .vars.s }}\n      template: ./t.tmpl\n",
+		{name: "unclean template beside a computed path", step: "  - file:\n      path: !tpl /etc/{{ vars.s }}\n      template: ./t.tmpl\n",
 			files: map[string]string{"recipes/r/templates/t.tmpl": "x"},
 			want:  `load error: recipes/r/recipe.yaml:4:17: template: must be a clean relative path, such as "a/b.conf"`},
-		{name: "unclean unit source beside a computed name", step: "  - unit:\n      name: !tpl '{{ .vars.s }}.service'\n      source: /a.service\n",
+		{name: "unclean unit source beside a computed name", step: "  - unit:\n      name: !tpl '{{ vars.s }}.service'\n      source: /a.service\n",
 			want: `load error: recipes/r/recipe.yaml:4:15: source: must be a clean relative path, such as "a/b.conf"`},
-		{name: "template reads item beside a computed path", step: "  - file:\n      path: !tpl /etc/{{ .vars.s }}\n      template: t.tmpl\n",
-			files: map[string]string{"recipes/r/templates/t.tmpl": "{{ .item }}"},
-			want:  "load error: recipes/r/recipe.yaml:4:17: template: t.tmpl reads .item; item is defined only in a step with loop"},
-		{name: "computed unit content", step: "  - unit:\n      name: a.service\n      content: !tpl '{{ .vars.s }}'\n",
+		{name: "template reads item beside a computed path", step: "  - file:\n      path: !tpl /etc/{{ vars.s }}\n      template: t.tmpl\n",
+			files: map[string]string{"recipes/r/templates/t.tmpl": "{{ item }}"},
+			want:  "load error: recipes/r/recipe.yaml:4:17: template: t.tmpl reads item; item is defined only in a step with loop"},
+		{name: "computed unit content", step: "  - unit:\n      name: a.service\n      content: !tpl '{{ vars.s }}'\n",
 			want: "yes"},
-		{name: "computed unit source", step: "  - unit:\n      name: !tpl '{{ .vars.s }}.service'\n      source: a.service\n",
+		{name: "computed unit source", step: "  - unit:\n      name: !tpl '{{ vars.s }}.service'\n      source: a.service\n",
 			files: map[string]string{"recipes/r/files/a.service": "[Unit]\n"},
 			want:  "[Unit]\n"},
 	}
@@ -1065,14 +1055,12 @@ func TestTemplateNull(t *testing.T) {
 		// col is the column of the error in the template file.
 		col int
 	}{
-		{"depth 0", "{{ range .vars.nl }}{{ . }}{{ end }}", ".: null is not a value", 24},
-		{"depth 1", "{{ .vars.nm.k }}", ".vars.nm.k: null is not a value", 4},
-		{"depth 1 list", "{{ index .vars.nl 1 }}", "index .vars.nl 1: null is not a value", 4},
-		{"depth 2", "{{ .vars.nm.d.j }}", ".vars.nm.d.j: null is not a value", 4},
-		{"variable", "{{ $x := .vars.nm.k }}{{ $x }}", "$x: null is not a value", 26},
-		{"defined template", "{{ define \"x\" }}{{ .k }}{{ end }}{{ template \"x\" .vars.nm }}", ".k: null is not a value", 20},
-		{"join", "{{ join .vars.nl \",\" }}", "join .vars.nl \",\": error calling join: join: element 2 is null", 4},
-		{"condition", "{{ if .vars.nm.k }}set{{ else }}null{{ end }}", "null", 0},
+		{"depth 0", "{{ for x in vars.nl }}{{ x }}{{ end }}", "the expression gave null", 26},
+		{"depth 1", "{{ vars.nm.k }}", "the expression gave null", 4},
+		{"depth 1 list", "{{ vars.nl[1] }}", "the expression gave null", 4},
+		{"depth 2", "{{ vars.nm.d.j }}", "the expression gave null", 4},
+		{"join", "{{ join(vars.nl, \",\") }}", "interface conversion: interface {} is nil, not string", 4},
+		{"condition", "{{ if vars.nm.k != nil }}set{{ else }}null{{ end }}", "null", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name+" file", func(t *testing.T) {
@@ -1080,7 +1068,7 @@ func TestTemplateNull(t *testing.T) {
 				map[string]string{"recipes/r/templates/t.tmpl": tt.text})
 			want := tt.want
 			if tt.col > 0 {
-				want = fmt.Sprintf("error: recipes/r/templates/t.tmpl:1:%d: %s", tt.col, tt.want)
+				want = fmt.Sprintf("error: recipes/r/templates/t.tmpl:1:%d: %s\n | %s\n | %s^", tt.col, tt.want, tt.text, strings.Repeat(".", tt.col-1))
 			}
 			if got != want {
 				t.Errorf("got  %q\nwant %q", got, want)
@@ -1090,7 +1078,7 @@ func TestTemplateNull(t *testing.T) {
 			got := evalOne(t, vars, "  - file:\n      path: /a\n      content: !tpl '"+tt.text+"'\n", nil)
 			want := tt.want
 			if tt.col > 0 {
-				want = "error: recipes/r/recipe.yaml:4:16: content: " + tt.want
+				want = fmt.Sprintf("error: recipes/r/recipe.yaml:4:16: content: %s\n | %s\n | %s^", tt.want, tt.text, strings.Repeat(".", tt.col-1))
 			}
 			if got != want {
 				t.Errorf("got  %q\nwant %q", got, want)
@@ -1111,7 +1099,7 @@ func TestLoopNull(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := evalOne(t, "  nl: [a, null]\n", "  - file:\n      path: !tpl '/srv/{{ .item }}'\n      content: x\n    loop: "+tt.loop+"\n", nil)
+			got := evalOne(t, "  nl: [a, null]\n", "  - file:\n      path: !tpl '/srv/{{ item }}'\n      content: x\n    loop: "+tt.loop+"\n", nil)
 			if got != tt.want {
 				t.Errorf("got  %q\nwant %q", got, tt.want)
 			}
@@ -1200,9 +1188,9 @@ func TestStartOnlyRunningDefaults(t *testing.T) {
       postfix_domain: acme.com
 `,
 		"recipes/web/recipe.yaml":         "vars:\n  web_name: !expr host.name\nsteps:\n  - file:\n      path: !expr '\"/etc/motd-\" + vars.tools_suffix'\n      template: motd.tmpl\n",
-		"recipes/web/templates/motd.tmpl": "{{ .vars.tools_motd }} {{ .vars.site_title }} {{ .vars.web_name }}\n",
-		"recipes/tools/recipe.yaml":       "vars:\n  tools_motd: !tpl \"hi {{ .host.name }}\"\n  tools_path: !expr '\"/etc/\" + host.name'\n  tools_a: !expr 'vars.tools_name + \"!\"'\n  tools_name: !expr host.name\n  tools_on: true\n  tools_list: [a]\n  tools_suffix: x\nsteps: []\n",
-		"recipes/postfix/recipe.yaml":     "vars:\n  postfix_mailname: !tpl \"mail.{{ .vars.postfix_domain }}\"\nsteps:\n  - file:\n      path: /etc/mailname\n      content: !expr vars.postfix_mailname\n",
+		"recipes/web/templates/motd.tmpl": "{{ vars.tools_motd }} {{ vars.site_title }} {{ vars.web_name }}\n",
+		"recipes/tools/recipe.yaml":       "vars:\n  tools_motd: !tpl \"hi {{ host.name }}\"\n  tools_path: !expr '\"/etc/\" + host.name'\n  tools_a: !expr 'vars.tools_name + \"!\"'\n  tools_name: !expr host.name\n  tools_on: true\n  tools_list: [a]\n  tools_suffix: x\nsteps: []\n",
+		"recipes/postfix/recipe.yaml":     "vars:\n  postfix_mailname: !tpl \"mail.{{ vars.postfix_domain }}\"\nsteps:\n  - file:\n      path: /etc/mailname\n      content: !expr vars.postfix_mailname\n",
 	}
 	want := map[string]string{
 		"web1":  `{"site_title":"WEB1!","tools_a":"web1!","tools_list":["a"],"tools_motd":"hi web1","tools_name":"web1","tools_on":true,"tools_path":"/etc/web1","tools_suffix":"x","web_name":"web1"}`,
@@ -1282,8 +1270,8 @@ func TestStartUsedDefaults(t *testing.T) {
   web2: {}
 `,
 		"pipelines/site.yaml":            stage("      - recipe: nginx\n"),
-		"recipes/nginx/templates/a.tmpl": "{{ .vars.nginx_a }}\n",
-		"recipes/nginx/templates/b.tmpl": "{{ .vars.nginx_b }}\n",
+		"recipes/nginx/templates/a.tmpl": "{{ vars.nginx_a }}\n",
+		"recipes/nginx/templates/b.tmpl": "{{ vars.nginx_b }}\n",
 	}
 	const recipeVars = `vars:
   nginx_tls: false
@@ -1296,7 +1284,7 @@ func TestStartUsedDefaults(t *testing.T) {
 	const tlsStep = `  - name: TLS config
     file:
       path: /etc/nginx/tls.conf
-      content: !tpl "ssl_certificate {{ .vars.nginx_cert_path }};\n"
+      content: !tpl "ssl_certificate {{ vars.nginx_cert_path }};\n"
     when: !expr vars.nginx_tls
 `
 	tests := []struct {
@@ -1314,7 +1302,7 @@ func TestStartUsedDefaults(t *testing.T) {
 			"web2": `{"nginx_a":"a","nginx_tls":false}`,
 		}},
 		{name: "skipped-template", steps: tlsStep + "  - file:\n      path: /etc/nginx/tls2.conf\n      template: tls.tmpl\n    when: !expr vars.nginx_tls\n",
-			files: map[string]string{"recipes/nginx/templates/tls.tmpl": "{{ .vars.nginx_cert_path }}\n"}, want: map[string]string{
+			files: map[string]string{"recipes/nginx/templates/tls.tmpl": "{{ vars.nginx_cert_path }}\n"}, want: map[string]string{
 				"web1": `{"nginx_cert_path":"/etc/letsencrypt/live/example.com/fullchain.pem","nginx_domains":["example.com"],"nginx_tls":true}`,
 				"web2": `{"nginx_tls":false}`,
 			}},
@@ -1396,7 +1384,7 @@ func TestReadsDeclare(t *testing.T) {
 		}, want: `recipes/r/recipe.yaml:4:16: vars.domian has no value: set it in the inventory, or give it a default; did you mean "domain"?`},
 		{name: "a misspelled read in a template", files: map[string]string{
 			"recipes/r/recipe.yaml":      r + "  - file:\n      path: /etc/t\n      template: t.tmpl\n",
-			"recipes/r/templates/t.tmpl": "x {{ .vars.domian }}\n",
+			"recipes/r/templates/t.tmpl": "x {{ vars.domian }}\n",
 		}, want: `recipes/r/templates/t.tmpl:1:11: vars.domian has no value: set it in the inventory, or give it a default; did you mean "domain"?`},
 		{name: "an unread value of a recipe step", files: map[string]string{
 			"pipelines/site.yaml": "stages:\n  - name: a\n    hosts: web1\n    steps:\n      - recipe: r\n        vars:\n          domian: x\n",
@@ -1406,19 +1394,19 @@ func TestReadsDeclare(t *testing.T) {
 		{name: "a declaration without a default", files: map[string]string{
 			"winch.yaml": "name: acme\ninventory: test\nvars:\n  port: 80\n  domain:\n",
 		}, want: `winch.yaml:5:3: vars.domain: null is not a value; give it a default, or remove it`},
-		{name: "with .vars in a step", files: map[string]string{
-			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/w\n      content: !tpl '{{ with .vars }}{{ .domain }}{{ end }}'\n",
+		{name: "whole vars in a step", files: map[string]string{
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/w\n      content: !tpl '{{ if vars != nil }}{{ vars.domain }}{{ end }}'\n",
 		}, want: `recipes/r/recipe.yaml:14:16: a read of vars names the variable, such as vars.nginx_port`},
 		{name: "vars[item] in a step", files: map[string]string{
 			"recipes/r/recipe.yaml": r + "  - file:\n      path: !expr '\"/etc/\" + vars[item]'\n      content: x\n    loop: [domain]\n",
 		}, want: `recipes/r/recipe.yaml:13:13: a read of vars names the variable, such as vars.nginx_port`},
-		{name: "with .host in a step", files: map[string]string{
-			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/w\n      content: !tpl '{{ with .host }}{{ .name }}{{ end }}'\n",
+		{name: "whole host in a step", files: map[string]string{
+			"recipes/r/recipe.yaml": r + "  - file:\n      path: /etc/w\n      content: !tpl '{{ if host != nil }}{{ host.name }}{{ end }}'\n",
 		}, want: `recipes/r/recipe.yaml:14:16: a read of vars names the variable, such as vars.nginx_port`},
 		{name: "reads of peers in a template", files: map[string]string{
 			"inventories/test.yaml":      strings.Replace(inv, "key: k1", "key: k1\n      role: a\n      zone: b\n      rack: c", 1),
 			"recipes/r/recipe.yaml":      r + "  - file:\n      path: /etc/t\n      template: t.tmpl\n",
-			"recipes/r/templates/t.tmpl": "{{ range .vars.peers }}{{ .vars.role }}{{ end }}{{ $p := index .vars.peers 0 }}{{ $p.vars.zone }}{{ (index .vars.peers 0).vars.rack }}\n",
+			"recipes/r/templates/t.tmpl": "{{ for peer in vars.peers }}{{ peer.vars.role }}{{ end }}{{ vars.peers[0].vars.zone }}{{ get(vars.peers[0].vars, \"rack\") }}\n",
 			"pipelines/site.yaml":        "stages:\n  - name: a\n    hosts: web1\n    steps:\n      - recipe: r\n        vars:\n          peers: !expr match(\"all\")\n",
 		}},
 		{name: "a peer read under filter of match", files: map[string]string{
@@ -1507,7 +1495,7 @@ func TestReadsNeedValue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			files := maps.Clone(readsProject)
-			files["winch.yaml"] += "  url: !tpl 'https://{{ .vars.domain }}'\n"
+			files["winch.yaml"] += "  url: !tpl 'https://{{ vars.domain }}'\n"
 			files["pipelines/site.yaml"] = tt.pipeline
 			p, err := Load(t.Context(), writeProject(t, files), "", "site", nil, Keys{})
 			if err != nil {

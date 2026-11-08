@@ -63,7 +63,7 @@ steps:
 `,
 		"recipes/nginx/files/demo.conf":           "server {\n    listen 8080;\n    root /var/www/demo;\n}\n",
 		"recipes/nginx/files/blob/blob.bin":       string(blob),
-		"recipes/nginx/templates/index.html.tmpl": "Hello from {{ .host.name }} ({{ .host.short }}).\n",
+		"recipes/nginx/templates/index.html.tmpl": "Hello from {{ host.name }} ({{ host.short }}).\n",
 		"recipes/alpine_only/recipe.yaml": `require:
   - !expr 'facts.os.id == "alpine"'
 steps:

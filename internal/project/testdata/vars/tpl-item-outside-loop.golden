@@ -1,1 +1,3 @@
 recipes/web/recipe.yaml:14:16: item is defined only in a step with loop
+ | {{ item }}
+ | ...^

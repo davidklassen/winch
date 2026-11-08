@@ -301,7 +301,7 @@ const stepVarsProject = `stages:
     steps:
       - file:
           path: /etc/port
-          content: !tpl "{{ .vars.site_port }}\n"
+          content: !tpl "{{ vars.site_port }}\n"
 `
 
 var stepVarsFiles = map[string]string{
@@ -322,12 +322,12 @@ groups:
 	"pipelines/site.yaml": stepVarsProject,
 	"recipes/site/recipe.yaml": `vars:
   site_port: 80
-  site_url: !tpl "http://{{ .vars.site_name }}.{{ .vars.domain }}:{{ .vars.site_port }}"
+  site_url: !tpl "http://{{ vars.site_name }}.{{ vars.domain }}:{{ vars.site_port }}"
   site_other: !expr 'vars.domain + "/x"'
 steps:
   - file:
       path: /etc/site
-      content: !tpl "{{ .vars.site_url }} host.vars.site_port={{ .host.vars.site_port }} other={{ .host.vars.site_other }}\n"
+      content: !tpl "{{ vars.site_url }} host.vars.site_port={{ host.vars.site_port }} other={{ host.vars.site_other }}\n"
 `,
 }
 
@@ -445,8 +445,8 @@ groups:
         vars:
           monit_peers: !expr 'filter(match("all"), .name != host.name)'
       - file:
-          path: !tpl /etc/peer-{{ .item.short }}
-          content: !tpl "{{ .item.address }} {{ join .item.groups \",\" }}\n"
+          path: !tpl /etc/peer-{{ item.short }}
+          content: !tpl "{{ item.address }} {{ join(item.groups, \",\") }}\n"
         loop: !expr 'match("all & !mon")'
         when: !expr 'len(match("mon")) == 1 and match("mon")[0].vars.mail_server != nil'
 `,
@@ -455,8 +455,8 @@ groups:
       path: /etc/monit/peers
       template: peers.tmpl
 `,
-	"recipes/monit/templates/peers.tmpl": `{{ range .vars.monit_peers -}}
-{{ .name }} {{ .short }} {{ .address }} {{ join .groups "," }} mail={{ .vars.mail_server }}
+	"recipes/monit/templates/peers.tmpl": `{{ for peer in vars.monit_peers -}}
+{{ peer.name }} {{ peer.short }} {{ peer.address }} {{ join(peer.groups, ",") }} mail={{ peer.vars.mail_server }}
 {{ end -}}
 `,
 }
@@ -515,8 +515,8 @@ func TestMatchConstantPattern(t *testing.T) {
 			"winch.yaml": "name: acme\ninventory: test\nvars:\n  mail_server: false\n  role: !expr 'len(match(\"mon & !mon\"))'\n",
 		}, want: `winch.yaml:5:9: match("mon & !mon"): the host pattern matches no host`},
 		{name: "template", files: map[string]string{
-			"recipes/monit/templates/peers.tmpl": "{{ range .vars.monit_peers }}{{ .name }}{{ end }}\n{{ range match \"mial\" }}{{ .name }}{{ end }}\n",
-		}, want: `recipes/monit/templates/peers.tmpl:2:10: match("mial"): unknown host or group "mial"`},
+			"recipes/monit/templates/peers.tmpl": "{{ for peer in vars.monit_peers }}{{ peer.name }}{{ end }}\n{{ for x in match(\"mial\") }}{{ x.name }}{{ end }}\n",
+		}, want: `recipes/monit/templates/peers.tmpl:2:13: match("mial"): unknown host or group "mial"`},
 		{name: "default of a recipe outside the pipeline", files: map[string]string{
 			"recipes/other/recipe.yaml": "vars:\n  other_n: !expr 'len(match(\"mon & !mon\"))'\nsteps:\n  - file:\n      path: /x\n      content: !expr 'string(vars.other_n)'\n",
 		}},
@@ -572,25 +572,22 @@ func TestMatchComputedDefault(t *testing.T) {
 	}{
 		{name: "expression", content: `!expr 'string(match("mon")[0].vars.role)'`, want: node},
 		{name: "stored expression", content: `!expr 'string(vars.monit_peers[0].vars.role)'`, want: node},
-		{name: "template", tmpl: "{{ range .vars.monit_peers }}{{ .vars.role }}{{ end }}", want: node},
-		{name: "template condition", tmpl: "{{ range .vars.monit_peers }}{{ if .vars.role }}x{{ end }}{{ end }}", want: `data="x"`},
-		{name: "template get", tmpl: "{{ range .vars.monit_peers }}{{ with get .vars \"role\" }}{{ . }}{{ end }}{{ end }}", want: node},
-		{name: "template get prints", tmpl: "{{ range .vars.monit_peers }}{{ get .vars \"role\" }}{{ end }}", want: node},
-		{name: "template get into a function", tmpl: "{{ range .vars.monit_peers }}{{ get .vars \"role\" | quote }}{{ end }}", want: `data="'node'"`},
-		{name: "template get plain default", tmpl: "{{ range .vars.monit_peers }}{{ .name }} {{ with get .vars \"mail_server\" }}x{{ else }}-{{ end }}{{ end }}", want: `data="monitor.acme.com -"`},
+		{name: "template", tmpl: "{{ for peer in vars.monit_peers }}{{ peer.vars.role }}{{ end }}", want: node},
+		{name: "template condition", tmpl: "{{ for peer in vars.monit_peers }}{{ if peer.vars.role != \"\" }}x{{ end }}{{ end }}", want: `data="x"`},
+		{name: "template get", tmpl: "{{ for peer in vars.monit_peers }}{{ if get(peer.vars, \"role\") != nil }}{{ get(peer.vars, \"role\") }}{{ end }}{{ end }}", want: node},
+		{name: "template get prints", tmpl: "{{ for peer in vars.monit_peers }}{{ get(peer.vars, \"role\") }}{{ end }}", want: node},
+		{name: "template get into a function", tmpl: "{{ for peer in vars.monit_peers }}{{ quote(get(peer.vars, \"role\")) }}{{ end }}", want: `data="'node'"`},
+		{name: "template get plain default", tmpl: "{{ for peer in vars.monit_peers }}{{ peer.name }} {{ if get(peer.vars, \"mail_server\") != nil }}x{{ else }}-{{ end }}{{ end }}", want: `data="monitor.acme.com x"`},
 		{name: "comparison", content: `!expr 'string(match("mon")[0]?.vars?.role == nil)'`, want: `data="false"`},
 		{name: "whole map", content: "!expr 'string(match(\"mon\")[0][item])'\n    loop: [vars]", want: computed},
 		{name: "get", content: `!expr 'string(get(match("mon")[0].vars, "role") == nil)'`, want: `data="false"`},
 		{name: "json", content: `!expr 'json(match("mon"))'`, want: computed},
-		{name: "template json", tmpl: "{{ json .vars.monit_peers }}", want: computed},
-		{name: "template printf", tmpl: "{{ printf \"%v\" .vars.monit_peers }}", want: computed},
-		{name: "template peer", tmpl: "{{ range .vars.monit_peers }}{{ . }}{{ end }}", want: computed},
-		{name: "template printf quoted", tmpl: "{{ printf \"%q\" .vars.monit_peers }}", want: computed},
-		{name: "template html", tmpl: "{{ range .vars.monit_peers }}{{ html . }}{{ end }}", want: computed},
+		{name: "template json", tmpl: "{{ json(vars.monit_peers) }}", want: computed},
+		{name: "template peer", tmpl: "{{ for peer in vars.monit_peers }}{{ peer }}{{ end }}", want: computed},
 		{name: "values", content: "!expr 'string(len(filter(values(match(\"mon\")[0][item]), # != \"\")))'\n    loop: [vars]", want: computed},
 		{name: "toPairs", content: "!expr 'string(len(toPairs(match(\"mon\")[0][item])))'\n    loop: [vars]", want: computed},
 		{name: "keys", content: "!expr 'join(keys(match(\"mon\")[0][item]), \",\")'\n    loop: [vars]", want: `data="mail_server,monit_peers,role"`},
-		{name: "inline template", content: `!tpl "{{ range .vars.monit_peers }}{{ .vars.role }}{{ end }}"`, want: node},
+		{name: "inline template", content: `!tpl "{{ for peer in vars.monit_peers }}{{ peer.vars.role }}{{ end }}"`, want: node},
 		{name: "set value", content: `!expr 'match("mon")[0].vars.role'`, set: []string{"vars.role=x"}, want: `data="x"`},
 		{name: "inventory value", content: `!expr 'match("mail.acme.com")[0].vars.role'`, want: `data="relay"`},
 		{name: "plain default", content: `!expr 'string(match("mon")[0].vars.mail_server)'`, want: `data="false"`},
@@ -626,24 +623,21 @@ func TestPeerVarsByName(t *testing.T) {
 		tmpl string
 		want string
 	}{
-		{name: "json", tmpl: "{{ range .vars.monit_peers }}{{ json .vars }}{{ end }}", want: fmt.Sprintf(notByName, 38)},
-		{name: "printf", tmpl: "{{ range .vars.monit_peers }}{{ printf \"%v\" .vars }}{{ end }}", want: fmt.Sprintf(notByName, 45)},
-		{name: "range", tmpl: "{{ range .vars.monit_peers }}{{ range $k, $v := .vars }}{{ $k }}{{ end }}{{ end }}", want: fmt.Sprintf(notByName, 49)},
-		{name: "variable", tmpl: "{{ range $p := .vars.monit_peers }}{{ json $p.vars }}{{ end }}", want: fmt.Sprintf(notByName, 46)},
-		{name: "chain", tmpl: "{{ json (index .vars.monit_peers 0).vars }}", want: fmt.Sprintf(notByName, 36)},
-		{name: "get", tmpl: "{{ range .vars.monit_peers }}{{ json (get . \"vars\") }}{{ end }}", want: fmt.Sprintf(notByName, 45)},
-		{name: "index", tmpl: "{{ range .vars.monit_peers }}{{ json (index . \"vars\") }}{{ end }}", want: fmt.Sprintf(notByName, 47)},
-		{name: "get by a computed key", tmpl: "{{ range .vars.monit_peers }}{{ json (get .vars .name) }}{{ end }}", want: fmt.Sprintf(notByName, 43)},
-		{name: "defined template", tmpl: "{{ define \"p\" }}{{ json .vars }}{{ end }}{{ range .vars.monit_peers }}{{ template \"p\" . }}{{ end }}", want: fmt.Sprintf(notByName, 25)},
-		{name: "with", tmpl: "{{ range .vars.monit_peers }}{{ with .vars }}{{ .mail_server }}{{ end }}{{ end }}", want: fmt.Sprintf(notByName, 38)},
-		{name: "print", tmpl: "{{ range .vars.monit_peers }}{{ .vars }}{{ end }}", want: fmt.Sprintf(notByName, 33)},
-		{name: "top variable", tmpl: "{{ $h := index .vars.monit_peers 0 }}{{ json $h.vars }}", want: fmt.Sprintf(notByName, 48)},
-		{name: "get of a parenthesized map", tmpl: "{{ range .vars.monit_peers }}{{ get (.vars) \"mail_server\" }}{{ end }}", want: fmt.Sprintf(notByName, 38)},
-		{name: "by name", tmpl: "{{ range .vars.monit_peers }}{{ .vars.mail_server }}{{ end }}", want: `data="false"`},
-		{name: "index of vars by name", tmpl: "{{ range .vars.monit_peers }}{{ index . \"vars\" \"mail_server\" }}{{ end }}", want: `data="false"`},
-		{name: "variable named vars", tmpl: "{{ .vars.vars }}", want: `data="a"`},
-		{name: "index by name", tmpl: "{{ range .vars.monit_peers }}{{ index .vars \"mail_server\" }}{{ end }}", want: `data="false"`},
-		{name: "get by name", tmpl: "{{ range $p := .vars.monit_peers }}{{ get $p.vars \"mail_server\" }}{{ end }}", want: `data="false"`},
+		{name: "json", tmpl: "{{ for peer in vars.monit_peers }}{{ json(peer.vars) }}{{ end }}", want: fmt.Sprintf(notByName, 48)},
+		{name: "range", tmpl: "{{ for peer in vars.monit_peers }}{{ for k in keys(peer.vars) }}{{ k }}{{ end }}{{ end }}", want: fmt.Sprintf(notByName, 57)},
+		{name: "variable", tmpl: "{{ for p in vars.monit_peers }}{{ json(p.vars) }}{{ end }}", want: fmt.Sprintf(notByName, 42)},
+		{name: "chain", tmpl: "{{ json(vars.monit_peers[0].vars) }}", want: fmt.Sprintf(notByName, 29)},
+		{name: "get", tmpl: "{{ for peer in vars.monit_peers }}{{ json((get(peer, \"vars\"))) }}{{ end }}", want: fmt.Sprintf(notByName, 44)},
+		{name: "index", tmpl: "{{ for peer in vars.monit_peers }}{{ json((peer[\"vars\"])) }}{{ end }}", want: fmt.Sprintf(notByName, 48)},
+		{name: "get by a computed key", tmpl: "{{ for peer in vars.monit_peers }}{{ json((get(peer.vars, peer.name))) }}{{ end }}", want: fmt.Sprintf(notByName, 53)},
+		{name: "with", tmpl: "{{ for peer in vars.monit_peers }}{{ if peer.vars != nil }}{{ peer.vars.mail_server }}{{ end }}{{ end }}", want: fmt.Sprintf(notByName, 46)},
+		{name: "print", tmpl: "{{ for peer in vars.monit_peers }}{{ peer.vars }}{{ end }}", want: fmt.Sprintf(notByName, 43)},
+		{name: "get of a parenthesized map", tmpl: "{{ for peer in vars.monit_peers }}{{ get((peer.vars), \"mail_server\") }}{{ end }}", want: `data="false"`},
+		{name: "by name", tmpl: "{{ for peer in vars.monit_peers }}{{ peer.vars.mail_server }}{{ end }}", want: `data="false"`},
+		{name: "index of vars by name", tmpl: "{{ for peer in vars.monit_peers }}{{ peer[\"vars\"][\"mail_server\"] }}{{ end }}", want: `data="false"`},
+		{name: "variable named vars", tmpl: "{{ vars.vars }}", want: `data="a"`},
+		{name: "index by name", tmpl: "{{ for peer in vars.monit_peers }}{{ peer.vars[\"mail_server\"] }}{{ end }}", want: `data="false"`},
+		{name: "get by name", tmpl: "{{ for p in vars.monit_peers }}{{ get(p.vars, \"mail_server\") }}{{ end }}", want: `data="false"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -697,9 +691,9 @@ func TestMatchSecret(t *testing.T) {
       template: peers.tmpl
   - file:
       path: /etc/monit/token
-      content: !tpl "{{ .vars.monit_token }}\n"
+      content: !tpl "{{ vars.monit_token }}\n"
 `,
-		"recipes/monit/templates/peers.tmpl": "{{ range .vars.monit_peers }}{{ .name }} {{ .vars.token }}\n{{ end }}",
+		"recipes/monit/templates/peers.tmpl": "{{ for peer in vars.monit_peers }}{{ peer.name }} {{ peer.vars.token }}\n{{ end }}",
 	})
 	keys := k.keys()
 	p, err := Load(t.Context(), writeProject(t, k.sealFiles(t, files)), "", "site", nil, keys)

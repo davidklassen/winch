@@ -8,13 +8,14 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
-	"strings"
-	"text/template"
 	"unicode/utf8"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/builtin"
+	"github.com/expr-lang/expr/checker"
+	"github.com/expr-lang/expr/compiler"
+	"github.com/expr-lang/expr/conf"
 	"github.com/expr-lang/expr/file"
 	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
@@ -28,7 +29,12 @@ import (
 type computed struct {
 	pos  yamlx.Pos
 	prog *vm.Program
-	tmpl *template.Template
+	tmpl *template
+	readSet
+}
+
+// readSet is what an expression or a template reads.
+type readSet struct {
 	// reads are the variables that it reads by name.
 	reads []string
 	// values are the variables whose values it reads.
@@ -39,8 +45,8 @@ type computed struct {
 	// matches are the calls of match() with a constant pattern.
 	matches []matchCall
 	// data is true when it reads a name other than item, and hosts when it
-	// reads hosts.
-	data, hosts bool
+	// reads hosts. item is true when it reads item.
+	data, hosts, item bool
 }
 
 // matchCall is a call of match() with a constant pattern. snippet shows the
@@ -92,9 +98,10 @@ type exprEnv struct {
 	Hosts []any                       `expr:"hosts"`
 	Item  any                         `expr:"item"`
 	Match func(string) ([]any, error) `expr:"match"`
-	// Read checks the value of a member read. Its name cannot be written in
-	// an expression.
+	// Read checks the value of a member read.
 	Read func(any) (any, error) `expr:"$read"`
+	// Loop holds the elements of the loops of a template, outermost first.
+	Loop []any `expr:"$loop"`
 }
 
 type hostEnv struct {
@@ -146,10 +153,13 @@ var noExprFuncs = []string{"now", "toJSON"}
 
 func isExprFunc(name string) bool {
 	_, ok := builtin.Index[name]
-	return name == "match" || ok && !slices.Contains(noExprFuncs, name)
+	return slices.Contains([]string{"match", "quote", "sqlquote", "json"}, name) || ok && !slices.Contains(noExprFuncs, name)
 }
 
-const readFunc = "$read"
+const (
+	readFunc  = "$read"
+	loopField = "$loop"
+)
 
 // readCheck checks each member read and get() that gives a value of unknown
 // type: such a value can be the marker of a computed default of a host from
@@ -180,7 +190,7 @@ func sortedFunc(name string, pick func(k string, v any) any) expr.Option {
 		if len(args) != 1 || !ok {
 			return nil, fmt.Errorf("%s takes one map", name)
 		}
-		var out []any
+		out := []any{}
 		for _, k := range slices.Sorted(maps.Keys(m)) {
 			if err := computedError(m[k]); err != nil && name != "keys" {
 				return nil, err
@@ -199,63 +209,116 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.tmpl, c.reads, c.values, c.peerReads, c.matches, c.data, c.hosts = t.t, t.reads, t.values, t.peerReads, t.matches, t.data, t.hosts
+		c.tmpl, c.readSet = t, t.readSet
 		return c, nil
 	}
-	prog, err := expr.Compile(text, exprOptions...)
+	src := file.NewSource(text)
+	check, err := checkExpr(text, nil, sc, func(loc file.Location) (yamlx.Pos, string) {
+		return n.Pos, (&file.Error{Location: loc}).Bind(src).Snippet
+	})
 	if err != nil {
-		return nil, yamlx.Errorf(n.Pos, "%s", exprMessage(err, text, exprNames))
+		return nil, err
 	}
-	c.prog = prog
-	check := &exprCheck{sc: sc, pos: n.Pos, src: prog.Source(), named: map[ast.Node]bool{}}
+	c.prog, c.readSet = check.prog, check.readSet
+	return c, nil
+}
+
+// compileExpr compiles the expression src. Each name of loops reads the
+// element of that loop in the field $loop of exprEnv.
+func compileExpr(src string, loops []string) (*vm.Program, error) {
+	config := conf.CreateNew()
+	for _, op := range exprOptions {
+		op(config)
+	}
+	for name := range config.Disabled {
+		delete(config.Builtins, name)
+	}
+	config.Check()
+	tree, err := parser.ParseWithConfig(src, config)
+	if err != nil {
+		return nil, err
+	}
+	var own error
+	ast.Walk(&tree.Node, visitor(func(np *ast.Node) {
+		if id, ok := (*np).(*ast.IdentifierNode); ok && own == nil && (id.Value == loopField || id.Value == readFunc) {
+			own = (&file.Error{Location: id.Location(), Message: id.Value + " is not allowed"}).Bind(tree.Source)
+		}
+	}))
+	if own != nil {
+		return nil, own
+	}
+	for i, name := range slices.Backward(loops) {
+		tree.Node = &ast.VariableDeclaratorNode{
+			Name:  name,
+			Value: &ast.MemberNode{Node: &ast.IdentifierNode{Value: loopField}, Property: &ast.IntegerNode{Value: i}},
+			Expr:  tree.Node,
+		}
+	}
+	if _, err := new(checker.Checker).PatchAndCheck(tree, config); err != nil {
+		return nil, err
+	}
+	return compiler.Compile(tree, config)
+}
+
+// checkExpr compiles the expression src with the loop names loops and
+// checks what it reads. where gives the position and the snippet of a
+// location in src.
+func checkExpr(src string, loops []string, sc scope, where func(file.Location) (yamlx.Pos, string)) (*exprCheck, error) {
+	prog, err := compileExpr(src, loops)
+	if err != nil {
+		fe, ok := errors.AsType[*file.Error](err)
+		if !ok {
+			pos, _ := where(file.Location{})
+			return nil, yamlx.Errorf(pos, "%s", exprProblem(err, src, exprNames))
+		}
+		pos, snippet := where(fe.Location)
+		return nil, yamlx.Errorf(pos, "%s%s", exprProblem(err, src, exprNames), snippet)
+	}
+	check := &exprCheck{sc: sc, where: where, prog: prog, named: map[ast.Node]bool{}, keysOnly: map[ast.Node]bool{}}
+	ast.Walk(new(prog.Node()), visitor(func(np *ast.Node) {
+		if c, ok := (*np).(*ast.CallNode); ok && len(c.Arguments) == 1 {
+			if id, ok := c.Callee.(*ast.IdentifierNode); ok && id.Value == "keys" {
+				check.keysOnly[unpatched(c.Arguments[0])] = true
+			}
+		}
+	}))
 	ast.Walk(new(prog.Node()), check)
 	check.checkByName()
-	for _, r := range check.names {
-		r.pos = n.Pos
-		*sc.reads = append(*sc.reads, r)
-	}
+	*sc.reads = append(*sc.reads, check.names...)
 	if len(check.errs) > 0 {
 		var errs []error
-		for _, msg := range check.errs {
-			errs = append(errs, yamlx.Errorf(n.Pos, "%s", msg))
+		for _, e := range check.errs {
+			errs = append(errs, e)
 		}
 		return nil, errors.Join(errs...)
 	}
-	c.reads, c.values, c.peerReads, c.matches, c.data, c.hosts = check.reads, check.reads, check.peerReads, check.matches, check.data, check.hosts
-	return c, nil
+	return check, nil
 }
 
 // exprCheck finds the variables that an expression reads by name, and
 // reports $env, now(), an item that is not defined, and a read of vars other
 // than by name. get() with a constant key reads a peer's variable by name.
 type exprCheck struct {
-	sc  scope
-	pos yamlx.Pos
-	src file.Source
-	// reads are the variables of the host that it reads, peerReads those of
-	// other hosts, and names every read that names a variable.
-	reads     []string
-	peerReads []string
-	names     []varRead
-	matches   []matchCall
-	errs      []string
+	sc    scope
+	where func(file.Location) (yamlx.Pos, string)
+	prog  *vm.Program
+	readSet
+	// names holds every read that names a variable.
+	names []varRead
+	errs  []*yamlx.Error
 	// named are the nodes that a member access with a constant name reads.
 	named map[ast.Node]bool
+	// keysOnly are the nodes whose keys only are read: the argument of
+	// keys().
+	keysOnly map[ast.Node]bool
 	// whole are the nodes that hold vars: vars, host, host.vars, and the
 	// vars of a peer.
 	whole []ast.Node
-	// data is true when it reads a name other than item, and hosts when it
-	// reads hosts.
-	data, hosts bool
 }
 
 func (c *exprCheck) fail(n ast.Node, msg string) {
-	c.errs = append(c.errs, msg+c.snippet(n))
-}
-
-func (c *exprCheck) snippet(n ast.Node) string {
-	fe := &file.Error{Location: n.Location()}
-	return fe.Bind(c.src).Snippet
+	pos, snippet := c.where(n.Location())
+	c.errs = append(c.errs, yamlx.Errorf(pos, "%s%s", msg, snippet))
 }
 
 func (c *exprCheck) Visit(np *ast.Node) {
@@ -269,12 +332,16 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		}
 		if member && isVars(base) {
 			c.reads = append(c.reads, key)
+			if !c.keysOnly[*np] {
+				c.values = append(c.values, key)
+			}
 		}
 		if isPeerVars(base) {
 			c.peerReads = append(c.peerReads, key)
 		}
 		if member && isVars(base) || isPeerVars(base) {
-			c.names = append(c.names, varRead{name: key, snippet: c.snippet(*np)})
+			pos, snippet := c.where((*np).Location())
+			c.names = append(c.names, varRead{name: key, pos: pos, snippet: snippet})
 		}
 	}
 	switch n := (*np).(type) {
@@ -282,11 +349,17 @@ func (c *exprCheck) Visit(np *ast.Node) {
 		if slices.Contains(exprNames, n.Value) && n.Value != "item" {
 			c.data = true
 		}
+		if n.Value == "item" {
+			c.item = true
+		}
 		if n.Value == "item" && c.sc.noItem != "" {
 			c.fail(n, c.sc.noItem)
 		}
 		if n.Value == "$env" {
 			c.fail(n, "$env is not allowed")
+		}
+		if n.Value == "now" {
+			c.fail(n, "now() is not allowed")
 		}
 		if n.Value == "hosts" {
 			c.hosts = true
@@ -309,7 +382,8 @@ func (c *exprCheck) Visit(np *ast.Node) {
 			c.sc.reach.all = true
 			return
 		}
-		c.matches = append(c.matches, matchCall{pos: c.pos, pattern: pattern.Value, snippet: c.snippet(n)})
+		pos, snippet := c.where(n.Location())
+		c.matches = append(c.matches, matchCall{pos: pos, pattern: pattern.Value, snippet: snippet})
 		c.sc.reach.patterns = append(c.sc.reach.patterns, pattern.Value)
 	}
 }
@@ -415,6 +489,16 @@ var (
 // exprMessage returns the message of an expr error of the expression src,
 // with a suggestion for an unknown name, and the snippet.
 func exprMessage(err error, src string, names []string) string {
+	msg := exprProblem(err, src, names)
+	if fe, ok := errors.AsType[*file.Error](err); ok {
+		return msg + fe.Snippet
+	}
+	return msg
+}
+
+// exprProblem returns the message of an expr error of the expression src,
+// with a suggestion for an unknown name, without the snippet.
+func exprProblem(err error, src string, names []string) string {
 	fe, ok := errors.AsType[*file.Error](err)
 	if !ok {
 		if m := expectedBoolRe.FindStringSubmatch(err.Error()); m != nil && typeWords[m[1]] != "" {
@@ -438,7 +522,7 @@ func exprMessage(err error, src string, names []string) string {
 	} else if msg == `unexpected token Operator(":")` && fe.From <= utf8.RuneCountInString(src) && predicateKeyRe.MatchString(string([]rune(src)[:fe.From])) {
 		msg += "; put a map in parentheses: map(list, ({key: .x}))"
 	}
-	return msg + fe.Snippet
+	return msg
 }
 
 // mismatch is the message of the operator op at the offset at in src, whose
@@ -521,26 +605,21 @@ func fieldTags(v any) []string {
 // evalItem returns the value for item. It is for a computed scalar that reads
 // no name but item.
 func (c *computed) evalItem(item any) (any, error) {
+	env := exprEnv{Item: item, Read: func(v any) (any, error) { return v, nil }}
 	if c.tmpl != nil {
-		var b strings.Builder
-		err := c.tmpl.Execute(&b, map[string]any{"item": item})
-		return b.String(), err
+		return c.tmpl.exec(env)
 	}
-	return expr.Run(c.prog, exprEnv{Item: item, Read: func(v any) (any, error) { return v, nil }})
+	return expr.Run(c.prog, env)
 }
 
 // eval returns the value for the environment of a host.
 func (c *computed) eval(e *Env) (any, error) {
-	if c.tmpl != nil {
-		out, err := e.render(c.tmpl, c.peerReads, c.hosts)
-		if err != nil {
-			return nil, errors.New(templateMessage(c.tmpl.Name(), err))
-		}
-		return out, nil
-	}
 	env, err := e.exprEnv(c.hosts)
 	if err != nil {
 		return nil, err
+	}
+	if c.tmpl != nil {
+		return c.tmpl.exec(env)
 	}
 	out, err := expr.Run(c.prog, env)
 	if err != nil {

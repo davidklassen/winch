@@ -46,33 +46,33 @@ steps:
 
   - name: Write the home page
     file:
-      path: !tpl /var/www/{{ .vars.domain }}/index.html
+      path: !tpl /var/www/{{ vars.domain }}/index.html
       content: !tpl |
         <!doctype html>
-        <title>{{ .vars.domain }}</title>
-        <p>Hello from {{ .host.name }}.</p>
+        <title>{{ vars.domain }}</title>
+        <p>Hello from {{ host.name }}.</p>
   - name: Serve the site over HTTPS
     file:
-      path: !tpl /etc/nginx/sites-enabled/{{ .vars.domain }}
+      path: !tpl /etc/nginx/sites-enabled/{{ vars.domain }}
       validate: nginx -t
       content: !tpl |
         server {
         	listen 80;
         	listen [::]:80;
-        	server_name {{ .vars.domain }} www.{{ .vars.domain }};
+        	server_name {{ vars.domain }} www.{{ vars.domain }};
         	return 301 https://$host$request_uri;
         }
 
         server {
         	listen 443 ssl;
         	listen [::]:443 ssl;
-        	server_name {{ .vars.domain }} www.{{ .vars.domain }};
+        	server_name {{ vars.domain }} www.{{ vars.domain }};
 
-        	ssl_certificate /etc/letsencrypt/live/{{ .vars.domain }}/fullchain.pem;
-        	ssl_certificate_key /etc/letsencrypt/live/{{ .vars.domain }}/privkey.pem;
+        	ssl_certificate /etc/letsencrypt/live/{{ vars.domain }}/fullchain.pem;
+        	ssl_certificate_key /etc/letsencrypt/live/{{ vars.domain }}/privkey.pem;
         	ssl_protocols TLSv1.2 TLSv1.3;
 
-        	root /var/www/{{ .vars.domain }};
+        	root /var/www/{{ vars.domain }};
         }
     notify: reload_nginx
 

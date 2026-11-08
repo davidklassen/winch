@@ -252,7 +252,7 @@ func TestTags(t *testing.T) {
 		{"expr keeps the text", "x: !expr 010\n", `!expr "010"`},
 		{"expr on a list", "x: !expr [a]\n", `t.yaml:1:4: the !expr tag needs a string, got a list`},
 		{"expr on a map", "x: !expr {a: b}\n", `t.yaml:1:4: the !expr tag needs a string, got a map`},
-		{"tpl", "x: !tpl '{{ .host.name }}'\n", `!tpl "{{ .host.name }}"`},
+		{"tpl", "x: !tpl '{{ host.name }}'\n", `!tpl "{{ host.name }}"`},
 		{"tpl on a list", "x: !tpl [a]\n", `t.yaml:1:4: the !tpl tag needs a string, got a list`},
 		{"tpl on a map", "x: !tpl {a: b}\n", `t.yaml:1:4: the !tpl tag needs a string, got a map`},
 		{"other tag", "x: !foo a\n", `t.yaml:1:4: unknown tag; the tags are !expr, !tpl, and !secret; quote a value that starts with "!"`},
@@ -300,7 +300,7 @@ func TestDecodeLazy(t *testing.T) {
 	}{
 		{"static", "name: a\ncount: 3\n", `name="a" count=3 tags=[]`},
 		{"static runs Validate", "name: a\ncount: -11\n", `t.yaml:2:8: count: must not be less than -10`},
-		{"tagged required key", "name: !tpl '{{ .x }}'\ncount: -11\n", `name="" count=-11 tags=[]`},
+		{"tagged required key", "name: !tpl '{{ x }}'\ncount: -11\n", `name="" count=-11 tags=[]`},
 		{"tagged list item", "name: a\ntags: [x, !expr y]\n", `name="a" count=0 tags=["x" ""]`},
 		{"unknown key", "name: !expr x\nnmae: b\n", `t.yaml:2:1: unknown key "nmae"; did you mean "name"?`},
 		{"static type error", "name: !expr x\ncount: a\n", `t.yaml:2:8: count: expected an integer, got the string "a"`},

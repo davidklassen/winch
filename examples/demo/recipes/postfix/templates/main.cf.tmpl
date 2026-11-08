@@ -5,7 +5,7 @@ append_dot_mydomain = no
 readme_directory = no
 compatibility_level = 3.6
 
-myhostname = {{ .host.name }}
+myhostname = {{ host.name }}
 myorigin = /etc/mailname
 mydestination = $myhostname, localhost.localdomain, localhost
 relayhost =
@@ -31,7 +31,7 @@ smtp_tls_security_level = dane
 smtp_tls_loglevel = 1
 
 # Mailboxes in Dovecot
-virtual_mailbox_domains = {{ .vars.domain }}
+virtual_mailbox_domains = {{ vars.domain }}
 virtual_mailbox_maps = hash:/etc/postfix/vmailbox
 virtual_transport = lmtp:unix:private/dovecot-lmtp
 

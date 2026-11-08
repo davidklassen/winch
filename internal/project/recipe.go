@@ -8,16 +8,14 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"syscall"
-	"text/template"
-	tparse "text/template/parse"
 	"time"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
+	"github.com/expr-lang/expr/file"
 	"github.com/expr-lang/expr/vm"
 
 	"github.com/davidklassen/winch/internal/facts"
@@ -34,7 +32,7 @@ type Recipe struct {
 	// Handlers are in declared order.
 	Handlers  []*Handler
 	root      string
-	templates map[string]*tmplFile
+	templates map[string]*template
 	// inline is true for a recipe in winch.yaml.
 	inline bool
 }
@@ -219,7 +217,7 @@ func (l *loader) loadHandlers(n *yamlx.Node, r *Recipe) ([]*Handler, error) {
 
 // parseTemplates parses every file in the templates directory of r.
 func (l *loader) parseTemplates(r *Recipe) error {
-	r.templates = map[string]*tmplFile{}
+	r.templates = map[string]*template{}
 	root, err := os.OpenRoot(filepath.Join(r.root, "templates"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -267,7 +265,7 @@ func (l *loader) recipe(name string, pos yamlx.Pos) (*Recipe, error) {
 
 // content sets the data of a file step of r from content or source, or
 // returns its template. loops is true when the step has loop.
-func (r *Recipe) content(f *module.File, loops bool) (*tmplFile, error) {
+func (r *Recipe) content(f *module.File, loops bool) (*template, error) {
 	switch {
 	case f.Content != nil:
 		f.Data = []byte(*f.Content)
@@ -289,7 +287,7 @@ func (r *Recipe) content(f *module.File, loops bool) (*tmplFile, error) {
 		case !ok:
 			return nil, yamlx.Errorf(f.TemplatePos, "template: %s/templates/%s does not exist", r.Dir, f.Template)
 		case t.item && !loops:
-			return nil, yamlx.Errorf(f.TemplatePos, "template: %s reads .item; %s", f.Template, itemOutsideLoop)
+			return nil, yamlx.Errorf(f.TemplatePos, "template: %s reads item; %s", f.Template, itemOutsideLoop)
 		}
 		return t, nil
 	}
@@ -355,7 +353,7 @@ func (r *Recipe) key(k *module.Repo) ([]*yamlx.Error, error) {
 // arguments n. A computed template name gives all templates of the recipe,
 // unless it reads only item. Then a literal loop gives the templates that the
 // items name, and a !tpl name gives the templates that match its text.
-func (r *Recipe) fileTemplates(st Step, n *yamlx.Node) []*tmplFile {
+func (r *Recipe) fileTemplates(st Step, n *yamlx.Node) []*template {
 	i := slices.IndexFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "template" })
 	if i < 0 {
 		return nil
@@ -372,11 +370,11 @@ func (r *Recipe) fileTemplates(st Step, n *yamlx.Node) []*tmplFile {
 	} else {
 		names = slices.Collect(maps.Keys(r.templates))
 		if c.tmpl != nil {
-			re := namePattern(c.tmpl)
+			re := c.tmpl.namePattern()
 			names = slices.DeleteFunc(names, func(n string) bool { return !re.MatchString(n) })
 		}
 	}
-	var out []*tmplFile
+	var out []*template
 	for _, name := range names {
 		if t := r.templates[name]; t != nil {
 			out = append(out, t)
@@ -420,20 +418,6 @@ func loopNames(loop *value, c *computed) ([]string, bool) {
 		out = append(out, s)
 	}
 	return out, true
-}
-
-// namePattern returns a pattern for the values of the template t: each
-// action can give any text.
-func namePattern(t *template.Template) *regexp.Regexp {
-	var b strings.Builder
-	for _, n := range t.Root.Nodes {
-		if t, ok := n.(*tparse.TextNode); ok {
-			b.WriteString(regexp.QuoteMeta(string(t.Text)))
-		} else {
-			b.WriteString(".*")
-		}
-	}
-	return regexp.MustCompile("^" + b.String() + "$")
 }
 
 // readFile reads name in the directory sub of r. It does not follow a
@@ -486,10 +470,12 @@ func compileRequire(n *yamlx.Node) (Require, error) {
 	if err != nil {
 		return Require{}, yamlx.Errorf(n.Pos, "require: %s", exprMessage(err, text, []string{"facts"}))
 	}
-	check := &exprCheck{src: prog.Source(), named: map[ast.Node]bool{}}
+	check := &exprCheck{named: map[ast.Node]bool{}, where: func(loc file.Location) (yamlx.Pos, string) {
+		return n.Pos, (&file.Error{Location: loc}).Bind(prog.Source()).Snippet
+	}}
 	ast.Walk(new(prog.Node()), check)
 	if len(check.errs) > 0 {
-		return Require{}, yamlx.Errorf(n.Pos, "require: %s", check.errs[0])
+		return Require{}, yamlx.Errorf(n.Pos, "require: %s", check.errs[0].Msg)
 	}
 	return Require{Text: text, Pos: n.Pos, program: prog}, nil
 }

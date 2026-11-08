@@ -8,5 +8,5 @@ steps:
     file:
       path: /etc/cloud/cloud.cfg.d/99-hostname.cfg
       content: !tpl |
-        hostname: {{ .host.short }}
-        fqdn: {{ .host.name }}
+        hostname: {{ host.short }}
+        fqdn: {{ host.name }}

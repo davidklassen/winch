@@ -15,7 +15,7 @@ steps:
       recommends: false
   - file:
       path: /etc/mailname
-      content: !tpl "{{ .host.name }}\n"
+      content: !tpl "{{ host.name }}\n"
   - file:
       path: /etc/postfix/vmailbox
       template: vmailbox.tmpl
@@ -42,7 +42,7 @@ steps:
       running: true
   - name: Outbound port 25 is open
     assert:
-      command: !tpl "timeout 10 bash -c '</dev/tcp/$1/25' - {{ quote .vars.postfix_probe_host }}"
+      command: !tpl "timeout 10 bash -c '</dev/tcp/$1/25' - {{ quote(vars.postfix_probe_host) }}"
       message: outbound port 25 is blocked; open it at the provider
 
 handlers:

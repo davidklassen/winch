@@ -31,7 +31,6 @@ func Groups() []doc.Group {
 		"facts":     factKeys,
 	}
 	functions := map[string][]doc.Key{
-		"templates":   templateFunctions,
 		"expressions": expressionFunctions,
 	}
 	groups := []doc.Group{
@@ -50,37 +49,6 @@ func Groups() []doc.Group {
 		}
 	}
 	return groups
-}
-
-// templateFunctions are the functions of templates.
-var templateFunctions = []doc.Key{
-	{Name: "and", Text: "and x y: the first empty argument, or the last argument. In an expression, and is an operator."},
-	{Name: "call", Text: "call f args: the result of the function f. Project data holds no functions."},
-	{Name: "eq", Text: "eq a b: true when a equals b. With more arguments, true when a equals any of them. In an expression, use ==."},
-	{Name: "ge", Text: "ge a b: true when a >= b."},
-	{Name: "get", Text: "get m key: the value of key in the map m, or nothing when m has no such key. It reads a key that a map may leave out: {{ with get . \"endpoint\" }}Endpoint = {{ . }}{{ end }}. It does not read the host's own .vars: a variable that may have no value needs a default."},
-	{Name: "gt", Text: "gt a b: true when a > b."},
-	{Name: "has", Text: "has list v: true when list contains v. In an expression, use v in list."},
-	{Name: "html", Text: "html s: s with the special characters of HTML escaped."},
-	{Name: "index", Text: "index x k: the element of the map or the list x at the key or the index k. More keys read deeper. A missing map key is an error. Use get for a key that may be missing."},
-	{Name: "join", Text: "join list sep: the elements of list as text, joined with sep."},
-	{Name: "js", Text: "js s: s escaped for a JavaScript string."},
-	{Name: "json", Text: "json v: v as JSON on one line. Map keys are in sorted order, and non-ASCII characters stay UTF-8. The output is also a valid YAML value, so it writes a string into a JSON or a YAML file: \"data-root\": {{ json .vars.docker_root }}."},
-	{Name: "le", Text: "le a b: true when a <= b."},
-	{Name: "match", Text: "match pattern: the hosts of .hosts that match the host pattern, in inventory order, as match() in expressions: {{ range match \"backup\" }}{{ .facts.ssh.ed25519 }}{{ end }}. A constant pattern that matches no host is a load error."},
-	{Name: "len", Text: "len x: the length of a string, a list, or a map."},
-	{Name: "lt", Text: "lt a b: true when a < b."},
-	{Name: "ne", Text: "ne a b: true when a does not equal b."},
-	{Name: "not", Text: "not x: true when x is empty or false. In an expression, not and ! are operators."},
-	{Name: "or", Text: "or x y: the first argument that is not empty, or the last argument. In an expression, or is an operator."},
-	{Name: "print", Text: "print args: the arguments as text, as Go's fmt.Sprint gives them."},
-	{Name: "printf", Text: "printf format args: the arguments formatted as Go's fmt.Sprintf does: {{ printf \"%05d\" .vars.uid }}."},
-	{Name: "println", Text: "println args: the arguments as text, with spaces between them and a newline at the end."},
-	{Name: "quote", Text: "quote s: s in single quotes for sh, each ' as '\\''. A value goes into a command as it is. Quote a value that must stay one word: then: !tpl \"postmap {{ quote .vars.map }}\"."},
-	{Name: "slice", Text: "slice x i j: the part of the string or the list x from the index i up to j. In an expression, use x[i:j]."},
-	{Name: "sqlquote", Text: "sqlquote s: s as a string literal for MariaDB, or for PostgreSQL with E before it: in single quotes, each ' as '', each \\ as \\\\. It assumes the default SQL mode, without NO_BACKSLASH_ESCAPES, and a UTF-8 client."},
-	{Name: "title", Text: "title s: s with the first letter of each word in upper case."},
-	{Name: "urlquery", Text: "urlquery s: s escaped for the query of a URL."},
 }
 
 // expressionFunctions are the functions of expressions.

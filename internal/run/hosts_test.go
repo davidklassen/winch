@@ -83,7 +83,7 @@ func TestPlanFactsReadFails(t *testing.T) {
         when: !expr host.name == "web3"
 `,
 		"recipes/backup/recipe.yaml":       "steps:\n  - file:\n      path: /etc/backup-os\n      template: os.tmpl\n",
-		"recipes/backup/templates/os.tmpl": "{{ range match \"backup\" }}{{ .facts.os.codename }}{{ end }}\n",
+		"recipes/backup/templates/os.tmpl": "{{ for x in match(\"backup\") }}{{ x.facts.os.codename }}{{ end }}\n",
 	})
 	h := fakehost.New()
 	h.SetUnreachable("backup")

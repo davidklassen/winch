@@ -36,7 +36,7 @@ func jsonProject(t *testing.T) string {
 		"recipes/app/recipe.yaml": `steps:
   - name: Pages
     file:
-      path: !tpl /srv/{{ .item }}.html
+      path: !tpl /srv/{{ item }}.html
       content: "page\n"
     loop: [a, b]
     notify: reload
@@ -113,7 +113,7 @@ func TestJSON(t *testing.T) {
     steps:
       - recipe: app
       - file:
-          path: !tpl /etc/{{ .item }}
+          path: !tpl /etc/{{ item }}
           content: "x\n"
         loop: [a, b]
 `,
@@ -314,7 +314,7 @@ func TestJSONNumericSecret(t *testing.T) {
     steps:
       - file:
           path: /etc/pw
-          content: !tpl "pw={{ .vars.pw }}\n"
+          content: !tpl "pw={{ vars.pw }}\n"
 `
 	if err := os.WriteFile(filepath.Join(dir, "pipelines/site.yaml"), []byte(pipeline), 0o644); err != nil {
 		t.Fatal(err)

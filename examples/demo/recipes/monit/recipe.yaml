@@ -1,5 +1,8 @@
 # Each node checks itself (inside) and every other node (outside).
 # Alert only; restarts are systemd's job.
+# outside.tmpl sees each peer from outside. A mail server gets the mail
+# ports, the web sites, and DANE; any other node gets SSH. "protocol
+# smtps" on port 25 means STARTTLS.
 steps:
   - pkg:
       name: [monit, python3-dnspython]
@@ -13,8 +16,8 @@ steps:
       stock: true
     notify: reload
   - file:
-      path: !tpl /etc/monit/conf.d/{{ .item }}
-      template: !tpl '{{ .item }}.tmpl'
+      path: !tpl /etc/monit/conf.d/{{ item }}
+      template: !tpl '{{ item }}.tmpl'
       mode: "0600"
       validate: monit -t
     loop: [settings, inside, outside]

@@ -14,7 +14,7 @@ import (
 func FuzzValidate(f *testing.F) {
 	f.Add(base["winch.yaml"], base["inventories/test.yaml"], base["pipelines/site.yaml"], "steps: []\n")
 	f.Add(base["winch.yaml"], base["inventories/test.yaml"], stage("      - recipe: r\n"), recipe("  - pkg:\n      name: curl\n    notify: reload\n"))
-	f.Add(base["winch.yaml"], base["inventories/test.yaml"], stage("      - recipe: r\n"), "steps:\n  - cmd: !tpl \"echo {{ .x }}\"\nhandlers:\n  - name: reload\n    service:\n      name: nginx\n      state: reloaded\n")
+	f.Add(base["winch.yaml"], base["inventories/test.yaml"], stage("      - recipe: r\n"), "steps:\n  - cmd: !tpl \"echo {{ x }}\"\nhandlers:\n  - name: reload\n    service:\n      name: nginx\n      state: reloaded\n")
 	f.Add(base["winch.yaml"], "hosts:\n  web1:\n    vars:\n      a: &x [1, *x]\n", base["pipelines/site.yaml"], "")
 	f.Add(base["winch.yaml"], base["inventories/test.yaml"], stage("      - file:\n          path: /a\n          content: !expr 'vars.x +'\n        when: !expr 'host.name =='\n"), "")
 	read := func(name string) string {
@@ -84,11 +84,11 @@ func FuzzCompile(f *testing.F) {
 		`"/srv/" + host.name`,
 		`$env.facts.os.id == "x"`,
 		`get(vars, "a" + item)`,
-		`{{ .vars.nginx_port }}`,
-		`{{ range $k, $v := .vars.users }}{{ $k }}={{ $v }}{{ end }}`,
-		`{{ index .host.vars "x" | quote }}`,
-		`{{ define "x" }}{{ template "x" . }}{{ end }}`,
-		`{{ .item.name }`,
+		`{{ vars.nginx_port }}`,
+		`{{ for k in keys(vars.users) }}{{ k }}={{ vars.users[k] }}{{ end }}`,
+		`{{ quote(host.vars["x"]) }}`,
+		`{{- if item.a }}{{ else if "}}" }}{{ else }}{{ end -}}`,
+		`{{ item.name }`,
 	} {
 		for _, tpl := range []bool{false, true} {
 			f.Add(text, tpl, false)

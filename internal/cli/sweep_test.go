@@ -105,7 +105,7 @@ func TestSecretSweep(t *testing.T) {
           validate: !expr '"check " + vars.pw[6:]'
       - file:
           path: /srv/tpl
-          content: !tpl "a {{ .vars.pw }}\n"
+          content: !tpl "a {{ vars.pw }}\n"
       - file:
           path: /srv/upper
           content: !expr 'upper(vars.pw) + "\n"'

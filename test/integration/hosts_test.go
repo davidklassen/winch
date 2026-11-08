@@ -32,11 +32,11 @@ func TestOtherHostFacts(t *testing.T) {
     steps:
       - file:
           path: /etc/winch-facts
-          content: !tpl "{{ .facts.ssh.ed25519 }}\n{{ .facts.net.ipv4 }}\n"
+          content: !tpl "{{ facts.ssh.ed25519 }}\n{{ facts.net.ipv4 }}\n"
       - line:
           path: /root/.ssh/known_hosts
           match: '^hosts-backup '
-          line: !tpl 'hosts-backup {{ (index (match "hosts-backup") 0).facts.ssh.ed25519 }}'
+          line: !tpl 'hosts-backup {{ match("hosts-backup")[0].facts.ssh.ed25519 }}'
 `,
 	})
 

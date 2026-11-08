@@ -52,8 +52,8 @@ const secretPipeline = `stages:
     steps:
       - file:
           path: /etc/pw
-          content: !tpl "pw={{ .vars.pw }}\n"
-        then: !tpl "echo {{ .vars.pw }} | chpasswd"
+          content: !tpl "pw={{ vars.pw }}\n"
+        then: !tpl "echo {{ vars.pw }} | chpasswd"
 `
 
 // secretProject writes a project with the recipient of id and the variable
@@ -1012,7 +1012,7 @@ func TestSecretBase64Output(t *testing.T) {
     steps:
       - file:
           path: /etc/pw
-          content: !tpl "{{ .vars.pw }}"
+          content: !tpl "{{ vars.pw }}"
           mode: "0600"
         then: "` + command + `"
 `

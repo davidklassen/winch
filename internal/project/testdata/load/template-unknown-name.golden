@@ -1,1 +1,6 @@
-recipes/nginx/templates/bad.tmpl:3:32: unknown name "hots"; did you mean "host"?
+recipes/nginx/templates/bad.tmpl:3:37: unknown fact "x"
+ | {{ if facts.os != nil }}{{ facts.os.x }}{{ hots.name }}{{ end }}
+ | ....................................^
+recipes/nginx/templates/bad.tmpl:3:44: unknown name "hots"; did you mean "host"?
+ | {{ if facts.os != nil }}{{ facts.os.x }}{{ hots.name }}{{ end }}
+ | ...........................................^

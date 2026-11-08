@@ -2,17 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>{{ .vars.domain }}</title>
+    <title>{{ vars.domain }}</title>
   </head>
   <body>
-    <h1>{{ .vars.domain }}</h1>
+    <h1>{{ vars.domain }}</h1>
     <ul>
-{{- range .vars.website_pages }}
-      <li><a href="/{{ . }}">{{ title . }}</a></li>
+{{- for page in vars.website_pages }}
+      <li><a href="/{{ page }}">{{ upper(page[:1]) + page[1:] }}</a></li>
 {{- end }}
     </ul>
-{{- with .vars.website_peers }}
-    <p>Also served by:{{ range . }} {{ .name }}{{ end }}</p>
+{{- if len(vars.website_peers) > 0 }}
+    <p>Also served by:{{ for peer in vars.website_peers }} {{ peer.name }}{{ end }}</p>
 {{- end }}
   </body>
 </html>

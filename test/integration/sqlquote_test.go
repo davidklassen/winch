@@ -9,7 +9,7 @@ import (
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
-// spec: Templates and expressions/Template functions
+// spec: Templates and expressions/Functions
 func TestSQLQuote(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "sqlquote")
@@ -30,7 +30,7 @@ func TestSQLQuote(t *testing.T) {
           name: [mariadb-server, postgresql]
       - file:
           path: /root/q.mariadb
-          content: !tpl "{{ range .vars.values }}SELECT HEX({{ sqlquote . }});\n{{ end }}"
+          content: !tpl "{{ for value in vars.values }}SELECT HEX({{ sqlquote(value) }});\n{{ end }}"
       - file:
           path: /root/q.pg
           content: !expr 'join(map(vars.values, "SELECT encode(convert_to(E" + sqlquote(#) + ", ''UTF8''), ''hex'');\n"), "")'
