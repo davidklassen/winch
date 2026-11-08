@@ -258,6 +258,7 @@ func TestCmdPipeline(t *testing.T) {
 		"pipelines/site.yaml":     "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: app\n",
 		"pipelines/uptime.yaml":   "stages:\n  - name: s\n    hosts: all\n    steps:\n      - cmd:\n          command: uptime\n",
 		"pipelines/unless.yaml":   "stages:\n  - name: s\n    hosts: all\n    steps:\n      - cmd:\n          command: touch /root/unless\n          unless: test -e /root/unless\n",
+		"pipelines/changes.yaml":  changesPipeline,
 		"recipes/app/recipe.yaml": cmdRecipe,
 	})
 
@@ -296,7 +297,32 @@ func TestCmdPipeline(t *testing.T) {
 	if r := lab.Winch(t, dir, "plan", "unless", "--exit-code"); r.Code != 0 {
 		t.Errorf("a plan after the command of unless: exit %d, stdout %q", r.Code, r.Stdout)
 	}
+
+	r = lab.Winch(t, dir, "plan", "changes")
+	if want := "    ? cmd echo reacted >> /root/reacted (/srv/winch-build changes)\n"; r.Code != 0 || !strings.Contains(r.Stdout, want) {
+		t.Errorf("a plan with changes: exit %d, no %q in %q", r.Code, want, r.Stdout)
+	}
+	if r := lab.Winch(t, dir, "apply", "changes", "--yes"); r.Code != 0 {
+		t.Fatalf("apply changes: exit %d, stderr %q", r.Code, r.Stderr)
+	}
+	if out := vm.MustRun(t, "cat /root/reacted"); out != "reacted\n" {
+		t.Errorf("after apply changes: %q", out)
+	}
 }
+
+// changesPipeline has a cmd whose changes has no path that the access check
+// covers.
+const changesPipeline = `stages:
+  - name: s
+    hosts: all
+    steps:
+      - cmd:
+          command: mkdir -p /srv/winch-build && date >> /srv/winch-build/out
+          changes: [/srv/winch-build]
+      - cmd:
+          command: echo reacted >> /root/reacted
+        on_change: [/srv/winch-build]
+`
 
 // daemonPipeline starts processes that outlive the session: one keeps the
 // output of its cmd open, and one runs in a session of its own.

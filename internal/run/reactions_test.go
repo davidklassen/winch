@@ -1076,3 +1076,38 @@ func TestOnChangeWithAStepOfAnotherHost(t *testing.T) {
 		t.Errorf("notes %q, want %q", errOut.String(), want)
 	}
 }
+
+// spec: Modules/cmd (changes); Reactions
+func TestCmdChangesWithoutAccessPath(t *testing.T) {
+	p := loadWeb1(t, map[string]string{
+		"pipelines/site.yaml": `stages:
+  - name: web
+    hosts: web1
+    steps:
+      - cmd:
+          command: make build
+          changes: [/srv/app]
+      - service:
+          name: app
+          restarted: true
+        on_change: [/srv/app]
+`,
+	})
+	h := fakehost.New()
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	if strings.Contains(out.String(), "access") || strings.Contains(out.String(), "rollback") {
+		t.Errorf("the plan guards the cmd step:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "/srv/app") {
+		t.Errorf("the plan does not name the reason path:\n%s", out.String())
+	}
+	ok, got := applyAll(t, p, h)
+	if !ok {
+		t.Fatalf("apply failed:\n%s", got)
+	}
+	if want := []string{"cmd make build", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
+		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+	}
+}
