@@ -110,6 +110,9 @@ type State struct {
 	// Refreshed is true after a step of the run, also in the plan, refreshed
 	// winch's package index, and no later step changed a source.
 	Refreshed bool `json:"refreshed,omitempty"`
+	// Upgraded is true after an upgrade step of the run. Unlike Refreshed, apply
+	// does not start with it from the plan, so it holds only for later steps.
+	Upgraded bool `json:"upgraded,omitempty"`
 	// Sources is true after a repo step of the run changed a source or a key.
 	// Later checks read winch's package index of the sources that the run
 	// will have.

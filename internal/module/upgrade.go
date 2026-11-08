@@ -84,6 +84,7 @@ func (u *Upgrade) Check(ctx context.Context, st *State, say Say) (Result, error)
 	if err != nil {
 		return Result{}, err
 	}
+	st.Upgraded = true
 	pkgs, err := readDpkg(ctx, say.Progress)
 	if err != nil {
 		return Result{}, err

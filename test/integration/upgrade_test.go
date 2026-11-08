@@ -77,7 +77,7 @@ const downSource = "printf 'Types: deb\\nURIs: http://127.0.0.1:9/winch-down\\nS
 func TestUpgradeModule(t *testing.T) {
 	t.Parallel()
 	vm := upgradeVM(t, "upgrade")
-	fresh := module.State{Refreshed: true}
+	fresh := module.State{Refreshed: true, Upgraded: true}
 	safe := &module.Upgrade{Mode: "safe"}
 	full := &module.Upgrade{Mode: "full"}
 	vmtest.RunCases(t, vm, "upgrade", upgradeReset, []vmtest.Case{
@@ -299,7 +299,7 @@ systemctl daemon-reload && systemctl start winch-run`)
 	})
 }
 
-// spec: Running a pipeline/Plan; Modules/file, dir, link (stock, copy_from)
+// spec: Running a pipeline/Plan; Modules/file, dir, link (stock, copy_from); Modules/pkg
 func TestPlanAfterUpgrade(t *testing.T) {
 	t.Parallel()
 	vm := upgradeVM(t, "upgrade-plan")
@@ -315,7 +315,7 @@ func TestPlanAfterUpgrade(t *testing.T) {
 `,
 		})
 	}
-	reset := upgradeReset + "; rm -f /root/reloaded /etc/winch-up-copy.conf /etc/winch-example.conf; dpkg --purge winch-stock >/dev/null 2>&1; rm -f /etc/winch-stock.conf /var/cache/apt/archives/winch-stock_0_all.deb; true"
+	reset := upgradeReset + "; rm -f /root/reloaded /etc/winch-up-copy.conf /etc/winch-example.conf; dpkg --purge winch-stock winch-mta >/dev/null 2>&1; rm -rf /etc/winch-stock.conf /var/cache/apt/archives/winch-stock_0_all.deb /root/virt /etc/apt/sources.list.d/winch-virt.sources; true"
 	// plan plans the project, applies it, and plans it again. The first plan
 	// must hold each of want.
 	plan := func(t *testing.T, dir string, want ...string) {
@@ -439,6 +439,49 @@ sed -i "/^Package: winch-stock$/,/^$/{/^MD5sum:\|^SHA1:\|^SHA512:/d;s/^Size: .*/
 		r := lab.Winch(t, project(copyConf), "plan", "site")
 		if want := "content from /etc/winch-up.conf (does not exist yet)"; r.Code != 0 || !strings.Contains(r.Stdout, want) {
 			t.Errorf("plan: exit %d, stdout %q, stderr %q, want %q: dpkg keeps a removed conffile removed", r.Code, r.Stdout, r.Stderr, want)
+		}
+	})
+
+	t.Run("a name that only other packages provide after an upgrade step", func(t *testing.T) {
+		// Without apt's index of the test source, as on a new host, only
+		// winch's index knows winch-mta.
+		vm.MustRun(t, reset+" && "+installV1("winch-up")+" && rm -f /var/lib/apt/lists/10.0.2.100_test_*")
+		r := lab.Winch(t, project("  - upgrade:\n      mode: full\n  - pkg:\n      name: winch-mta\n"), "apply", "site", "--yes")
+		if want := "winch-mta is provided by winch-mta-a, winch-mta-b; name one of them"; r.Code == 0 || !strings.Contains(r.Stderr, want) {
+			t.Errorf("apply: exit %d, stdout %q, stderr %q, want an error with %q", r.Code, r.Stdout, r.Stderr, want)
+		}
+		vm.MustRun(t, version("winch-up", "1"))
+	})
+
+	t.Run("a name that winch's index does not know after an upgrade step", func(t *testing.T) {
+		vm.MustRun(t, reset)
+		r := lab.Winch(t, project("  - upgrade:\n      mode: safe\n  - pkg:\n      name: winch-no-such-package\n"), "plan", "site")
+		if r.Code != 0 || !strings.Contains(r.Stdout, module.OthersUnknown) {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want %q", r.Code, r.Stdout, r.Stderr, module.OthersUnknown)
+		}
+	})
+
+	t.Run("a real package of a source that a file step adds before an upgrade step", func(t *testing.T) {
+		// Only winch-mta-a and winch-mta-b of the test source provide
+		// winch-mta. The file step adds a source with a real winch-mta, which
+		// winch's index of the plan does not have.
+		vm.MustRun(t, reset+" && mkdir -p /root/virt/pkg/DEBIAN && "+
+			`printf 'Package: winch-mta\nVersion: 1\nArchitecture: all\nMaintainer: winch\nDescription: test\n' > /root/virt/pkg/DEBIAN/control && `+
+			"dpkg-deb -b /root/virt/pkg /root/virt/winch-mta.deb >/dev/null && cd /root/virt && "+
+			`{ cat pkg/DEBIAN/control && printf 'Filename: winch-mta.deb\nSize: %s\nSHA256: %s\n' "$(stat -c %s winch-mta.deb)" "$(sha256sum winch-mta.deb | cut -d' ' -f1)"; } > Packages`)
+		dir := project("  - file:\n      path: /etc/apt/sources.list.d/winch-virt.sources\n      content: |\n        Types: deb\n        URIs: file:/root/virt\n        Suites: ./\n        Trusted: yes\n" +
+			"  - pkg:\n      name: winch-mta\n  - upgrade:\n      mode: safe\n")
+		if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+			t.Errorf("apply: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+		}
+		vm.MustRun(t, version("winch-mta", "1"))
+	})
+
+	t.Run("a name that only other packages provide without an upgrade step", func(t *testing.T) {
+		vm.MustRun(t, reset+" && apt-get update -q >/dev/null")
+		r := lab.Winch(t, project("  - pkg:\n      name: winch-mta\n"), "plan", "site")
+		if want := "note: winch-mta may be provided by winch-mta-a, winch-mta-b; apply checks it after the refresh\n"; r.Code != 0 || !strings.Contains(r.Stderr, want) {
+			t.Errorf("plan: exit %d, stdout %q, stderr %q, want %q", r.Code, r.Stdout, r.Stderr, want)
 		}
 	})
 

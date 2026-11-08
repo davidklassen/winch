@@ -176,7 +176,8 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 		}
 	}
 	// winch's own index is fresh. Only an old index can miss a real package.
-	if p.Absent || st.Sources {
+	switch {
+	case p.Absent || st.Sources:
 		errs := []error{providedOnly(missing, providers)}
 		if !p.Absent {
 			errs = append(errs, unknownToApt(missing, providers, foreign, known))
@@ -184,7 +185,18 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 		if err := errors.Join(errs...); err != nil {
 			return Result{}, err
 		}
-	} else {
+	// An upgrade step refreshed winch's index with the host's sources. A
+	// source that a later file or cmd step adds is not in it, so a name that
+	// it does not know can still be real.
+	case st.Upgraded:
+		fresh, _, _, err := showpkg(ctx, winchIndex, missing)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := providedOnly(missing, fresh); err != nil {
+			return Result{}, err
+		}
+	default:
 		mayBeProvided(missing, providers, say.Note)
 	}
 	// apt-mark showauto with no names lists every automatic package.
