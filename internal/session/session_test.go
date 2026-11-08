@@ -1154,6 +1154,27 @@ func TestOpenHelperEndsSilently(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Failures
+func TestCloseAfterBrokenSession(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	helper := helperbin.New("arm64", []byte("#!/bin/sh\nread line\necho '{\"id\":1,\"result\":{}}'\nread line\necho 'restore /etc/ssh/sshd_config: no space left on device' >&2\nexit 1\n"))
+	s, err := Open(context.Background(), Config{
+		Host: "web1", Address: "web1", Dir: t.TempDir(),
+		Binaries: []helperbin.Binary{helper},
+		Hello:    protocol.Hello{Run: "r1"}, Progress: plain(&bytes.Buffer{}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "restore /etc/ssh/sshd_config: no space left on device"
+	if _, err := s.Facts(context.Background()); err == nil || err.Error() != want {
+		t.Errorf("facts error = %v, want %q", err, want)
+	}
+	if err := s.Close(); err != nil {
+		t.Errorf("close error = %v, want none: the facts call returned it", err)
+	}
+}
+
 // spec: CLI/Messages
 func TestOpenLoginShellTextWithQuotes(t *testing.T) {
 	fakeBin(t, "aarch64", "0", goodSudo)

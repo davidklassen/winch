@@ -864,6 +864,21 @@ func TestSessionErrorInApplyHasNoScope(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection; Running a pipeline/Failures
+func TestCloseErrorAfterFailedStep(t *testing.T) {
+	p := manyProject(t, motdStage)
+	h := fakehost.New()
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	h.FailApply("web1 /etc/motd")
+	h.FailCloseWith("web1", "restore /etc/ssh/sshd_config: no space left on device")
+	var out, errOut bytes.Buffer
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut)))
+	want := "base: failed: file /etc/motd: write /etc/motd: read-only file system\nrestore /etc/ssh/sshd_config: no space left on device"
+	if err := o.Failed["web1"]; err == nil || err.Error() != want {
+		t.Errorf("web1 error %v, want %q", err, want)
+	}
+}
+
 // spec: Running a pipeline/Plan; Running a pipeline/Failures
 func TestPlanCloseErrorFailsHost(t *testing.T) {
 	p := manyProject(t, motdStage+`  - name: next

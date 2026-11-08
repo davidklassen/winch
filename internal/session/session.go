@@ -97,6 +97,8 @@ type Session struct {
 
 	waitOnce sync.Once
 	waitErr  error
+	// ended is true after a call returned the error of the session end.
+	ended bool
 }
 
 // wait closes stdin and waits for ssh to end.
@@ -568,6 +570,7 @@ func (s *Session) fail(err error) error {
 	if err == nil && waitErr == nil {
 		return nil
 	}
+	s.ended = true
 	if msg := strings.TrimSpace(s.stderr.String()); msg != "" {
 		return errors.New(msg)
 	}
@@ -813,7 +816,7 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 			continue
 		}
 		s.cmd, s.stdin, s.stdout, s.stderr, s.id = n.cmd, n.stdin, n.stdout, n.stderr, n.id
-		s.waitOnce, s.waitErr = sync.Once{}, nil
+		s.waitOnce, s.waitErr, s.ended = sync.Once{}, nil, false
 		if b.State != "running" && b.State != "degraded" {
 			return b, fmt.Errorf("the host did not start within %s: systemctl is-system-running says %s", module.Seconds(wait), b.State)
 		}
@@ -914,8 +917,12 @@ func (s *Session) Prompted(ctx context.Context) bool {
 	return s.prompted
 }
 
-// Close ends the helper and waits for ssh.
+// Close ends the helper and waits for ssh. After a call returned the error of
+// the session end, it returns nil: the caller holds that error already.
 func (s *Session) Close() error {
+	if s.ended {
+		return nil
+	}
 	return s.fail(nil)
 }
 
