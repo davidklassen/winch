@@ -197,38 +197,6 @@ func TestCmdModule(t *testing.T) {
 	})
 }
 
-// spec: Modules/assert
-func TestAssertModule(t *testing.T) {
-	t.Parallel()
-	vm := lab.StartVM(t, "assert")
-	vmtest.RunCases(t, vm, "assert", "rm -f /root/ran /usr/local/bin/winch-tool", []vmtest.Case{
-		{
-			Name:       "a passing assert",
-			Args:       &module.Assert{Command: "touch /root/ran", Message: "x"},
-			Want:       module.Result{Status: module.OK, Deferred: true},
-			Unchanged:  "test ! -e /root/ran",
-			After:      "test -e /root/ran",
-			NoConverge: true,
-		},
-		{
-			Name:         "a failing assert",
-			Args:         &module.Assert{Command: "test -e /root/ran", Message: "the marker is missing"},
-			Want:         module.Result{Status: module.OK, Deferred: true},
-			WantApplyErr: "the marker is missing: exit status 1",
-			Fix:          "touch /root/ran",
-			NoConverge:   true,
-		},
-		{
-			Name:         "an assert that sh cannot find",
-			Args:         &module.Assert{Command: "winch-tool", Message: "the tool is missing"},
-			Want:         module.Result{Status: module.OK, Deferred: true},
-			WantApplyErr: "the tool is missing: exit status 127: sh: 1: eval: winch-tool: not found",
-			Fix:          "printf '#!/bin/sh\\n' > /usr/local/bin/winch-tool && chmod +x /usr/local/bin/winch-tool",
-			NoConverge:   true,
-		},
-	})
-}
-
 // spec: Modules (the environment of host commands); Modules/cmd
 func TestCmdCleanEnv(t *testing.T) {
 	t.Parallel()
@@ -282,22 +250,7 @@ handlers:
         command: echo restarted >> /root/handler
 `
 
-const gatePipeline = `stages:
-  - name: gate
-    hosts: all
-    steps:
-      - file:
-          path: /root/gate
-          content: "x\n"
-      - assert:
-          command: test -e /root/open
-          message: the gate is closed
-      - file:
-          path: /root/after
-          content: "x\n"
-`
-
-// spec: Modules/cmd; Modules/assert; Steps; CLI ("--exit-code"); Modules/reboot
+// spec: Modules/cmd; Steps; CLI ("--exit-code"); Modules/reboot
 func TestCmdPipeline(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "cmdpipe")
@@ -306,7 +259,6 @@ func TestCmdPipeline(t *testing.T) {
 		"inventories/test.yaml":   "hosts:\n  cmdpipe: {}\n",
 		"pipelines/site.yaml":     "stages:\n  - name: s\n    hosts: all\n    steps:\n      - recipe: app\n",
 		"pipelines/uptime.yaml":   "stages:\n  - name: s\n    hosts: all\n    steps:\n      - cmd:\n          command: uptime\n",
-		"pipelines/gate.yaml":     gatePipeline,
 		"pipelines/unless.yaml":   "stages:\n  - name: s\n    hosts: all\n    steps:\n      - cmd:\n          command: touch /root/unless\n          unless: test -e /root/unless\n",
 		"recipes/app/recipe.yaml": cmdRecipe,
 	})
@@ -345,27 +297,6 @@ func TestCmdPipeline(t *testing.T) {
 	}
 	if r := lab.Winch(t, dir, "plan", "unless", "--exit-code"); r.Code != 0 {
 		t.Errorf("a plan after the command of unless: exit %d, stdout %q", r.Code, r.Stdout)
-	}
-
-	r = lab.Winch(t, dir, "apply", "gate", "--yes")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "cmdpipe: gate: failed: assert test -e /root/open: the gate is closed: exit status 1\n") {
-		t.Errorf("a failing assert: exit %d, stderr %q", r.Code, r.Stderr)
-	}
-	if out := vm.MustRun(t, "test -e /root/gate && echo gate; test -e /root/after && echo after; true"); out != "gate\n" {
-		t.Errorf("after a failing assert: %q, want only /root/gate", out)
-	}
-	if r := lab.Winch(t, dir, "plan", "gate"); !strings.Contains(r.Stdout, "    ! assert test -e /root/open\n") {
-		t.Errorf("the plan after a failing assert does not show it as pending: %q", r.Stdout)
-	}
-	vm.MustRun(t, "touch /root/open")
-	if r := lab.Winch(t, dir, "apply", "gate", "--yes"); r.Code != 0 {
-		t.Errorf("a passing assert: exit %d, stderr %q", r.Code, r.Stderr)
-	}
-	vm.MustRun(t, "test -e /root/after && ! grep -qv '^version 1$' /var/lib/winch/checks/cmds && rm /root/open")
-	// Only the assert is left: the host has no change, and apply skips it.
-	r = lab.Winch(t, dir, "apply", "gate", "--yes")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "1 host: 0 to change, 1 unchanged, 0 unknown\n") {
-		t.Errorf("a plan with only an assert: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 }
 

@@ -885,7 +885,7 @@ func TestDamagedState(t *testing.T) {
 		}, "read the pending then records: DIR/then/acme:2 is not a record; delete the file, and the records in it are lost"},
 		{"truncated check record", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "checks", "acme"), "version 1\n{\"pipeline\":\n")
-		}, "read the pending health gates and asserts: DIR/checks/acme:2 is not a record; delete the file, and the records in it are lost"},
+		}, "read the pending health gates: DIR/checks/acme:2 is not a record; delete the file, and the records in it are lost"},
 		{"newer version", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "handlers", "acme"), "version 2\napp.restart\n")
 		}, "upgrade winch to read DIR/handlers/acme"},
@@ -1025,21 +1025,6 @@ func TestApplyUnknown(t *testing.T) {
 	}
 }
 
-// spec: Handlers; Modules/assert
-func TestDeferredRecordsNothing(t *testing.T) {
-	c := start(t, t.TempDir(), "")
-	h := hello("r1")
-	h.Project = "acme"
-	c.call(t, "hello", h)
-	args, _ := json.Marshal(module.Assert{Command: "true", Message: "x"})
-	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args, Notify: []string{"app.reload"}, Then: &protocol.Then{Recipe: "app", Module: "assert", Mains: []string{"1"}}}); r.Error != "" {
-		t.Fatal(r.Error)
-	}
-	if p := pendingAll(t, c); len(p.Handlers) != 0 || len(p.Then) != 0 {
-		t.Errorf("records after an assert: %+v", p)
-	}
-}
-
 // spec: Running a pipeline/Apply (the second check decides)
 func TestApplyChecksAgain(t *testing.T) {
 	c := start(t, t.TempDir(), "")
@@ -1053,26 +1038,6 @@ func TestApplyChecksAgain(t *testing.T) {
 	}
 	if _, err := os.Stat(ran); err == nil {
 		t.Error("the command ran although its creates exists")
-	}
-}
-
-// spec: Modules/assert
-func TestApplyDeferred(t *testing.T) {
-	c := start(t, t.TempDir(), "")
-	c.call(t, "hello", hello("r1"))
-	out := filepath.Join(t.TempDir(), "ran")
-	args, _ := json.Marshal(module.Assert{Command: "touch " + out, Message: "x"})
-	r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args})
-	var res protocol.StepResult
-	if err := json.Unmarshal(r.Result, &res); err != nil || r.Error != "" || res.Status != module.OK {
-		t.Errorf("apply = %s %q, want ok", r.Result, r.Error)
-	}
-	if _, err := os.Stat(out); err != nil {
-		t.Errorf("apply did not run the command: %v", err)
-	}
-	args, _ = json.Marshal(module.Assert{Command: "exit 1", Message: "the port is blocked"})
-	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args}); r.Error != "the port is blocked: exit status 1" {
-		t.Errorf("a failing assert: error %q, want the message and the exit status", r.Error)
 	}
 }
 
@@ -1119,7 +1084,7 @@ func TestDownloadOKRecordsNothing(t *testing.T) {
 	}
 }
 
-// spec: Running a pipeline/Health gates; Modules/assert; Remote execution/State on the host
+// spec: Running a pipeline/Health gates; Remote execution/State on the host
 func TestPendingChecks(t *testing.T) {
 	dir := t.TempDir()
 	c := start(t, dir, "")
@@ -1129,13 +1094,13 @@ func TestPendingChecks(t *testing.T) {
 		t.Fatal(r.Error)
 	}
 	gate := protocol.Check{Pipeline: "site", Stage: "base"}
-	assert := protocol.Check{Recipe: "mail", Step: 3}
-	for _, ch := range []protocol.Check{gate, assert, gate} {
+	web := protocol.Check{Pipeline: "site", Stage: "web"}
+	for _, ch := range []protocol.Check{gate, web, gate} {
 		if r := c.call(t, "pend", ch); r.Error != "" {
 			t.Fatal(r.Error)
 		}
 	}
-	if data, err := os.ReadFile(filepath.Join(dir, "checks", "acme")); err != nil || string(data) != "version 1\n{\"pipeline\":\"site\",\"stage\":\"base\"}\n{\"recipe\":\"mail\",\"step\":3}\n" {
+	if data, err := os.ReadFile(filepath.Join(dir, "checks", "acme")); err != nil || string(data) != "version 1\n{\"pipeline\":\"site\",\"stage\":\"base\"}\n{\"pipeline\":\"site\",\"stage\":\"web\"}\n" {
 		t.Errorf("checks/acme = %q, %v", data, err)
 	}
 	if r := c.call(t, "passed", gate); r.Error != "" {
@@ -1146,13 +1111,13 @@ func TestPendingChecks(t *testing.T) {
 	if err := json.Unmarshal(r.Result, &p); err != nil || r.Error != "" {
 		t.Fatalf("pending: %v %s", err, r.Error)
 	}
-	if !slices.Equal(p.Checks, []protocol.Check{assert}) {
-		t.Errorf("pending checks = %v, want %v", p.Checks, []protocol.Check{assert})
+	if !slices.Equal(p.Checks, []protocol.Check{web}) {
+		t.Errorf("pending checks = %v, want %v", p.Checks, []protocol.Check{web})
 	}
 }
 
-// spec: Running a pipeline/Health gates; Modules/assert
-func TestChecksRunAgain(t *testing.T) {
+// spec: Running a pipeline/Health gates
+func TestPassedGateDropsRecord(t *testing.T) {
 	dir := t.TempDir()
 	c := start(t, dir, "")
 	h := hello("r1")
@@ -1160,38 +1125,19 @@ func TestChecksRunAgain(t *testing.T) {
 	if r := c.call(t, "hello", h); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	marker := filepath.Join(t.TempDir(), "open")
-	args, _ := json.Marshal(module.Assert{Command: "test -e " + marker, Message: "closed"})
-	assert := protocol.Check{Pipeline: "site", Stage: "base", Step: 2}
 	gate := protocol.Check{Pipeline: "site", Stage: "base"}
-	checks := func() []protocol.Check {
-		t.Helper()
-		var p protocol.Pending
-		if err := json.Unmarshal(c.call(t, "pending", nil).Result, &p); err != nil {
-			t.Fatal(err)
-		}
-		return p.Checks
-	}
-	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args, Check: &assert}); r.Error != "closed: exit status 1" {
-		t.Fatalf("failing assert: error %q", r.Error)
-	}
 	if r := c.call(t, "pend", gate); r.Error != "" {
-		t.Fatal(r.Error)
-	}
-	if got, want := checks(), []protocol.Check{assert, gate}; !slices.Equal(got, want) {
-		t.Fatalf("records = %v, want %v", got, want)
-	}
-	if err := os.WriteFile(marker, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if r := c.call(t, "apply", protocol.Step{Module: "assert", Args: args, Check: &assert}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	if r := c.call(t, "health", protocol.Health{Command: "true", Timeout: 5 * time.Second, Check: gate}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	if got := checks(); len(got) != 0 {
-		t.Errorf("records after the assert and the gate passed = %v", got)
+	var p protocol.Pending
+	if err := json.Unmarshal(c.call(t, "pending", nil).Result, &p); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Checks) != 0 {
+		t.Errorf("records after the gate passed = %v", p.Checks)
 	}
 }
 

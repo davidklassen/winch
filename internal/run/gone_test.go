@@ -8,13 +8,13 @@ import (
 	"github.com/davidklassen/winch/internal/protocol"
 )
 
-// spec: Modules/assert ("when the step is gone from the project"); Running a pipeline/Health gates
+// spec: Running a pipeline/Health gates; State on the host
 func TestGoneCheckPlaces(t *testing.T) {
-	assert, file := project.Step{Module: "assert"}, project.Step{Module: "file"}
-	app := &project.Recipe{Name: "app", Steps: []project.Step{file, assert},
-		Handlers: []*project.Handler{{Name: "reload", Steps: []project.Step{assert, file}}}}
+	file := project.Step{Module: "file"}
+	app := &project.Recipe{Name: "app", Steps: []project.Step{file},
+		Handlers: []*project.Handler{{Name: "reload", Steps: []project.Step{file}}}}
 	pl := &project.Pipeline{Name: "site", Stages: []project.Stage{
-		{Name: "base", Pipeline: "site", Health: &project.Health{Command: "true"}, Steps: []project.Step{{Recipe: app}, assert}},
+		{Name: "base", Pipeline: "site", Health: &project.Health{Command: "true"}, Steps: []project.Step{{Recipe: app}, file}},
 		{Name: "web", Pipeline: "site", Steps: []project.Step{file}},
 	}}
 	tests := []struct {
@@ -26,25 +26,19 @@ func TestGoneCheckPlaces(t *testing.T) {
 		{"a stage without a gate", protocol.Check{Pipeline: "site", Stage: "web"}, true},
 		{"a stage that is gone", protocol.Check{Pipeline: "site", Stage: "db"}, true},
 		{"a gate of another pipeline", protocol.Check{Pipeline: "mail", Stage: "web"}, false},
-		{"an assert of another pipeline", protocol.Check{Pipeline: "mail", Stage: "base", Step: 1}, false},
-		{"a stage that another pipeline no longer has", protocol.Check{Pipeline: "mail", Stage: "db", Step: 1}, true},
+		{"a gate of a stage that another pipeline no longer has", protocol.Check{Pipeline: "mail", Stage: "db"}, true},
 		{"a pipeline that the project no longer has", protocol.Check{Pipeline: "old", Stage: "web"}, true},
-		{"an assert of a stage", protocol.Check{Pipeline: "site", Stage: "base", Step: 2}, false},
-		{"a stage step that is no assert", protocol.Check{Pipeline: "site", Stage: "base", Step: 1}, true},
-		{"an assert of a recipe", protocol.Check{Recipe: "app", Step: 2}, false},
-		{"a recipe step that is no assert", protocol.Check{Recipe: "app", Step: 1}, true},
-		{"a recipe step that is gone", protocol.Check{Recipe: "app", Step: 3}, true},
-		{"a recipe record without a step", protocol.Check{Recipe: "app"}, true},
-		{"a recipe of another pipeline", protocol.Check{Recipe: "mail", Step: 1}, false},
-		{"a recipe that no pipeline runs", protocol.Check{Recipe: "old", Step: 1}, true},
-		{"an assert of a handler", protocol.Check{Recipe: "app", Handler: "reload", Step: 1}, false},
-		{"a handler step that is no assert", protocol.Check{Recipe: "app", Handler: "reload", Step: 2}, true},
-		{"a handler that is gone", protocol.Check{Recipe: "app", Handler: "restart", Step: 1}, true},
+		{"an assert of a stage", protocol.Check{Pipeline: "site", Stage: "base", Step: 2}, true},
+		{"an assert of another pipeline", protocol.Check{Pipeline: "mail", Stage: "base", Step: 1}, true},
+		{"an assert of a recipe", protocol.Check{Recipe: "app", Step: 1}, true},
+		{"an assert of a recipe of another pipeline", protocol.Check{Recipe: "mail", Step: 1}, true},
+		{"an assert of a handler", protocol.Check{Recipe: "app", Handler: "reload", Step: 1}, true},
+		{"an assert of a stage handler", protocol.Check{Pipeline: "site", Stage: "base", Handler: "reload", Step: 1}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mail := &project.Pipeline{Name: "mail", Stages: []project.Stage{{Name: "web", Pipeline: "mail"}, {Name: "base", Pipeline: "mail"}}}
-			o := owners{pl: pl, pipelines: map[string]*project.Pipeline{"site": pl, "mail": mail}, recipes: map[string]*project.Recipe{"app": app, "mail": {Name: "mail", Steps: []project.Step{assert}}}, all: true}
+			o := owners{pl: pl, pipelines: map[string]*project.Pipeline{"site": pl, "mail": mail}, recipes: map[string]*project.Recipe{"app": app, "mail": {Name: "mail", Steps: []project.Step{file}}}, all: true}
 			got := o.goneChecks([]protocol.Check{tt.check})
 			if gone := slices.Contains(got, tt.check); gone != tt.gone {
 				t.Errorf("gone %v, want %v", gone, tt.gone)

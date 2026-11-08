@@ -265,7 +265,7 @@ func TestDebEntryStopsEarly(t *testing.T) {
 
 // spec: Modules/file, dir, link (dir purge: each module writes known paths)
 func TestEveryModuleDeclaresItsWrites(t *testing.T) {
-	writesNothing := []string{"assert", "debconf", "group", "pkg", "reboot", "service", "upgrade"}
+	writesNothing := []string{"debconf", "group", "pkg", "reboot", "service", "upgrade"}
 	for _, name := range Names() {
 		m, _ := New(name)
 		if _, ok := m.(Writer); ok == slices.Contains(writesNothing, name) {

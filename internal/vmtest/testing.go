@@ -321,7 +321,7 @@ func RunCases(t *testing.T, vm *VM, name, reset string, cases []Case) {
 				vm.MustRun(t, c.BeforeApply)
 			}
 			st = c.State
-			applied, err := s.Apply(ctx, name, c.Args, &st, nil, nil, nil, protocol.Guard{}, nil)
+			applied, err := s.Apply(ctx, name, c.Args, &st, nil, nil, protocol.Guard{}, nil)
 			// A guarded step started the rollback timer; the case keeps its
 			// change.
 			if err == nil && applied.Timer > 0 {
@@ -388,7 +388,7 @@ func checkRecovery(t *testing.T, vm *VM, s *session.Session, name string, c Case
 		t.Fatalf("check after the fix: %v", err)
 	}
 	st = c.State
-	applied, err := s.Apply(ctx, name, c.Args, &st, nil, nil, nil, protocol.Guard{}, nil)
+	applied, err := s.Apply(ctx, name, c.Args, &st, nil, nil, protocol.Guard{}, nil)
 	if err == nil && applied.Timer > 0 {
 		err = s.Confirm(ctx)
 	}

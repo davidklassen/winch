@@ -315,9 +315,6 @@ func (l *loader) commandPipeline(c Command) (*Pipeline, error) {
 	if _, ok := module.New(c.Module); !ok {
 		return nil, yamlx.Errorf(yamlx.Pos{}, "unknown module %q%s", c.Module, yamlx.Suggest(c.Module, module.Names()))
 	}
-	if c.Module == "assert" {
-		return nil, yamlx.Errorf(yamlx.Pos{}, "assert changes nothing; run a check with winch exec")
-	}
 	args := &yamlx.Node{Kind: yamlx.Map, Pos: yamlx.Pos{File: c.Module}}
 	var errs []error
 	for _, a := range c.Args {
@@ -1135,13 +1132,6 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 		for _, p := range n.Pairs {
 			if p.Key == "confirm_access" {
 				return Step{}, yamlx.Errorf(p.KeyPos, "confirm_access: only a service step can use it")
-			}
-		}
-	}
-	if st.Module == "assert" {
-		for _, p := range n.Pairs {
-			if p.Key == "then" || p.Key == "notify" {
-				return Step{}, yamlx.Errorf(p.KeyPos, "an assert changes nothing; it cannot use %s", p.Key)
 			}
 		}
 	}

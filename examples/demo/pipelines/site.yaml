@@ -1,6 +1,9 @@
 stages:
   - name: base
     hosts: all
+    # Postfix answers on port 25.
+    health:
+      command: bash -c '</dev/tcp/127.0.0.1/25'
     steps:
       - recipe: admin
       - recipe: leftovers

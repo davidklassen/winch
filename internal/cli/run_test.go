@@ -106,7 +106,7 @@ func TestRunKeepsRecords(t *testing.T) {
 	}
 }
 
-// spec: CLI (winch run); CLI/Errors; Modules/assert
+// spec: CLI (winch run); CLI/Errors
 func TestRunArgs(t *testing.T) {
 	dir := runProject(t)
 	tests := []struct {
@@ -130,8 +130,7 @@ func TestRunArgs(t *testing.T) {
 		{"a wrong type", []string{"web1", "pkg", "name=htop", "recommends=yes"}, `winch run: recommends=yes: recommends: expected true or false, got the string "yes"`},
 		{"template", []string{"web1", "file", "path=/x", "template=a.tmpl"}, "winch run: template=a.tmpl: works only in a recipe"},
 		{"source", []string{"web1", "file", "path=/x", "source=a"}, "winch run: source=a: works only in a recipe"},
-		{"assert", []string{"all", "assert", "command=systemctl is-active nginx", "message=down"}, "winch run: assert changes nothing; run a check with winch exec"},
-		{"assert with no argument", []string{"web1", "assert"}, "winch run: assert changes nothing; run a check with winch exec"},
+		{"assert", []string{"all", "assert", "command=systemctl is-active nginx", "message=down"}, `winch run: unknown module "assert"`},
 		{"a service step without an action", []string{"web1", "service", "name=nginx"}, "winch run: service: a service step needs running, enabled, reloaded, or restarted"},
 		{"unit source", []string{"web1", "unit", "name=app.service", "source=app.service"}, "winch run: source=app.service: works only in a recipe"},
 		{"unknown host", []string{"web9", "pkg", "name=htop"}, `winch run: unknown host or group "web9" in inventories/test.yaml; did you mean "web1"?`},

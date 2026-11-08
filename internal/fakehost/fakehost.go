@@ -1,8 +1,8 @@
 // Package fakehost is a test double for hosts: it keeps files, packages,
 // answers, and facts in memory and checks and applies file, dir, pkg,
 // service, user, group, and debconf steps against them. It keeps pending
-// handlers, then records, health gates, and asserts. It runs commands, cmd
-// steps, and asserts as records.
+// handlers, then records, and health gates. It runs commands and cmd steps
+// as records.
 package fakehost
 
 import (
@@ -281,14 +281,14 @@ func (h *Hosts) ThenOf(host string) []protocol.Then {
 	return slices.Clone(h.thens[host])
 }
 
-// Pend records a pending health gate or assert on a host.
+// Pend records a pending health gate on a host.
 func (h *Hosts) Pend(host string, c protocol.Check) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.checks[host] = append(h.checks[host], c)
 }
 
-// ChecksOf returns the pending health gates and asserts of a host.
+// ChecksOf returns the pending health gates of a host.
 func (h *Hosts) ChecksOf(host string) []protocol.Check {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -297,9 +297,9 @@ func (h *Hosts) ChecksOf(host string) []protocol.Check {
 
 func (h *Hosts) FailCommand(host, command string) { h.FailCommandWith(host, command, "") }
 
-// FailCommandWith makes command fail on host as FailCommand does. A health
-// gate with the command adds output to its error; an unless gives it as its
-// stderr.
+// FailCommandWith makes command fail on host as FailCommand does. A cmd step
+// or a health gate with the command adds output to its error; an unless gives
+// it as its stderr.
 func (h *Hosts) FailCommandWith(host, command, output string) {
 	h.failCmd[host+" "+command] = true
 	h.cmdOut[host+" "+command] = output
@@ -630,8 +630,6 @@ func (c *Conn) Check(ctx context.Context, name string, m module.Module, st *modu
 			res.Guard, res.Changes = true, []string{line}
 		}
 		return res, nil
-	case *module.Assert:
-		return module.Result{Status: module.OK, Deferred: true}, nil
 	case *module.Reboot:
 		c.hosts.mu.Lock()
 		required := c.hosts.facts[c.host].RebootRequired
@@ -887,11 +885,11 @@ func serviceAction(s *module.Service) string {
 
 // Apply starts a rollback timer that ends at once for a changed step with
 // confirm_access, or a result with Guard.
-func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard, masked *string) (module.Result, error) {
+func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard, masked *string) (module.Result, error) {
 	if err := c.dead(); err != nil {
 		return module.Result{}, err
 	}
-	res, err := c.apply(ctx, name, m, st, notify, then, check)
+	res, err := c.apply(ctx, name, m, st, notify, then)
 	c.hosts.mu.Lock()
 	c.hosts.Guards[c.host+" "+m.Main()] = guard
 	if _, ok := m.(module.WithText); ok && err == nil {
@@ -911,7 +909,7 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 	return res, err
 }
 
-func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check) (module.Result, error) {
+func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
 	if c.hosts.OnApply != nil {
 		c.hosts.OnApply(c.host, m.Main())
 	}
@@ -923,26 +921,6 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 	}
 	fresh := st.IndexFresh
 	res, err := c.Check(ctx, name, m, st)
-	if a, ok := m.(*module.Assert); ok {
-		c.hosts.mu.Lock()
-		defer c.hosts.mu.Unlock()
-		c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "assert "+a.Command)
-		failed := c.hosts.failCmd[c.host+" "+a.Command]
-		if check != nil {
-			c.hosts.checks[c.host] = slices.DeleteFunc(c.hosts.checks[c.host], func(k protocol.Check) bool { return k == *check })
-			if failed {
-				c.hosts.checks[c.host] = append(c.hosts.checks[c.host], *check)
-			}
-		}
-		if failed {
-			msg := a.Message + ": exit status 1"
-			if out := c.hosts.cmdOut[c.host+" "+a.Command]; out != "" {
-				msg += ": " + out
-			}
-			return module.Result{}, errors.New(msg)
-		}
-		return res, nil
-	}
 	if err != nil || res.Status == module.OK {
 		return res, err
 	}
@@ -973,11 +951,15 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 		defer c.hosts.mu.Unlock()
 		c.hosts.Log[c.host] = append(c.hosts.Log[c.host], "cmd "+cm.Command)
 		if c.hosts.failCmd[c.host+" "+cm.Command] {
+			msg := cm.Command + ": exit status 1"
+			if out := c.hosts.cmdOut[c.host+" "+cm.Command]; out != "" {
+				msg += ": " + out
+			}
 			if res.Guard {
-				res.Failed = cm.Command + ": exit status 1"
+				res.Failed = msg
 				return res, nil
 			}
-			return module.Result{}, fmt.Errorf("%s: exit status 1", cm.Command)
+			return module.Result{}, errors.New(msg)
 		}
 		return res, nil
 	}

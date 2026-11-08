@@ -673,8 +673,8 @@ func (s *Session) Check(ctx context.Context, name string, m module.Module, st *m
 
 // Apply checks a step again, makes its changes, and updates st. It sends the
 // content only when the helper must write it.
-func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard, masked *string) (module.Result, error) {
-	step := protocol.Step{Module: name, State: *st, Notify: notify, Then: then, Check: check, Guard: guard, Masked: masked}
+func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard, masked *string) (module.Result, error) {
+	step := protocol.Step{Module: name, State: *st, Notify: notify, Then: then, Guard: guard, Masked: masked}
 	res, err := s.step("apply", withoutContent(m), step, st)
 	if errors.Is(err, errNeedContent) {
 		return s.step("apply", m, step, st)
@@ -852,12 +852,12 @@ func (s *Session) Handled(ctx context.Context, handler string) error {
 	return s.call("handled", protocol.Handled{Name: handler}, nil)
 }
 
-// Pend records a pending health gate or assert on the host.
+// Pend records a pending health gate on the host.
 func (s *Session) Pend(ctx context.Context, c protocol.Check) error {
 	return s.call("pend", c, nil)
 }
 
-// Passed removes the record of a health gate or assert.
+// Passed removes the record of a health gate.
 func (s *Session) Passed(ctx context.Context, c protocol.Check) error {
 	return s.call("passed", c, nil)
 }

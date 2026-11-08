@@ -22,7 +22,6 @@ Running:
   remote       how winch reaches a host and runs there
 
 Modules:
-  assert    stop a host when a check command fails
   certbot   get a Let's Encrypt certificate
   cmd       run a command
   debconf   set a debconf answer
