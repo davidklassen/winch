@@ -58,6 +58,17 @@ func TestDocServiceWatch(t *testing.T) {
 	}
 }
 
+// spec: Modules/service and unit
+func TestDocServiceDaemonReload(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "service")
+	out := strings.Join(strings.Fields(r.out), " ")
+	for _, want := range []string{"the step runs systemctl daemon-reload first", "daemon-reload does not restart a running unit"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("winch doc service lacks %q:\n%s", want, r.out)
+		}
+	}
+}
+
 // spec: Modules/service and unit; Modules/repo
 func TestDocAbsent(t *testing.T) {
 	tests := []struct{ arg, want string }{
