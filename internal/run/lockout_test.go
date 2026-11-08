@@ -670,6 +670,51 @@ func TestAccessPassedAfterFailedStep(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (the passed check of a failed
+// guarded step prints after the error, before the check after the run)
+func TestAccessPassedAfterFailedGuardedCmd(t *testing.T) {
+	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/motd
+          content: hi
+      - cmd:
+          command: pam-auth-update
+          changes: [/etc/pam.d]
+`})
+	for _, tt := range []struct {
+		name     string
+		lostLast bool
+		want     string
+	}{
+		{"the check after the run passes", false, "web1: base: + file /etc/motd\nweb1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1\nweb1: base: access check passed\nweb1: access check after the run passed\n\n1 host: 0 changed, 0 unchanged, 1 failed\n"},
+		{"the check after the run fails", true, "web1: base: + file /etc/motd\nweb1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1\n  the access check after the run failed: ssh: connect to host web1 port 22: Connection timed out\nweb1: base: access check passed\n\n1 host: 0 changed, 0 unchanged, 1 failed\n"},
+	} {
+		h := fakehost.New()
+		h.FailCommand("web1", "pam-auth-update")
+		checks := 0
+		h.OnAccess = func(host string) {
+			if checks++; checks == 2 && tt.lostLast {
+				h.FailAccess(host)
+			}
+		}
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		var b bytes.Buffer
+		o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&b), plain(&b)))
+		if o.OK() {
+			t.Fatalf("%s: apply succeeded after a failed command", tt.name)
+		}
+		if want := []string{"cmd pam-auth-update", "access", "confirm", "access"}; len(h.Log["web1"]) < len(want) || !slices.Equal(h.Log["web1"][:len(want)], want) {
+			t.Errorf("%s: log %q, want it to start with %q", tt.name, h.Log["web1"], want)
+		}
+		if b.String() != tt.want {
+			t.Errorf("%s: output:\n%s\nwant:\n%s", tt.name, b.String(), tt.want)
+		}
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (the access check after the run
 // after the first Ctrl-C prints after the error)
 func TestAccessPassedAfterInterrupt(t *testing.T) {
