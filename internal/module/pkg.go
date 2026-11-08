@@ -203,7 +203,7 @@ func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 	if len(p.todo) > 0 {
 		changes = []string{p.verb() + " " + strings.Join(p.todo, ", ")}
 		if p.Absent {
-			out, err := p.simulate(ctx, say.Progress, index)
+			out, err := p.simulate(ctx, st, say.Progress, index)
 			if err != nil {
 				return Result{}, err
 			}
@@ -383,23 +383,35 @@ func (p *Pkg) verb() string {
 	return "install"
 }
 
-// candidateStanzas returns the package stanzas of the candidate versions of
-// the names that the package index of the apt flags index knows.
-func candidateStanzas(ctx context.Context, index, names []string) (string, error) {
-	_, _, known, err := showpkg(ctx, index, names)
-	if err != nil {
-		return "", err
-	}
-	var show []string
+// plannedStanzas returns the package stanzas of the names at the versions
+// that earlier steps of st plan, from the package index that each step read.
+// A step before a repo change reads another index than a step after it. A
+// name without a planned version is left out: at apply, dpkg has it.
+func plannedStanzas(ctx context.Context, st *State, names []string) (string, error) {
+	type group struct{ index, versions []string }
+	var groups []group
 	for _, n := range names {
-		if known[n] {
-			show = append(show, n)
+		bare, _, _ := strings.Cut(n, ":")
+		pp, ok := st.packages()[bare]
+		if !ok {
+			continue
 		}
+		i := slices.IndexFunc(groups, func(g group) bool { return slices.Equal(g.index, pp.Index) })
+		if i < 0 {
+			i = len(groups)
+			groups = append(groups, group{index: pp.Index})
+		}
+		groups[i].versions = append(groups[i].versions, n+"="+pp.Version)
 	}
-	if len(show) == 0 {
-		return "", nil
+	var shown []string
+	for _, g := range groups {
+		out, err := run(ctx, "apt-cache", slices.Concat([]string{"show"}, g.index, g.versions)...)
+		if err != nil {
+			return "", err
+		}
+		shown = append(shown, out)
 	}
-	return run(ctx, "apt-cache", slices.Concat([]string{"show", "--no-all-versions"}, index, show)...)
+	return strings.Join(shown, "\n\n"), nil
 }
 
 // writeStatus writes a copy of the dpkg status file with the candidates
@@ -479,16 +491,16 @@ func parseRemovals(out string, own []string) []string {
 // simulate runs the apt-get call of the step with -s on the package index of
 // the apt flags index. It holds the package
 // locks, so it does not see the half-done packages of a running apt. apt reads
-// a copy of the dpkg status in which p.Installed are installed and p.Removed
-// are gone.
-func (p *Pkg) simulate(ctx context.Context, progress func(string), index []string, flags ...string) (string, error) {
+// a copy of the dpkg status in which p.Installed are installed at the
+// versions of st and p.Removed are gone.
+func (p *Pkg) simulate(ctx context.Context, st *State, progress func(string), index []string, flags ...string) (string, error) {
 	// The copy has no stanza for a package that an earlier step removes, and
 	// apt fails on a name that neither the copy nor the index has.
 	todo := slices.DeleteFunc(slices.Clone(p.todo), func(n string) bool { return slices.Contains(p.Removed, n) })
 	if len(todo) == 0 && len(p.configure) == 0 {
 		return "", nil
 	}
-	candidates, err := candidateStanzas(ctx, index, p.Installed)
+	candidates, err := plannedStanzas(ctx, st, p.Installed)
 	if err != nil {
 		return "", err
 	}
@@ -513,7 +525,7 @@ func (p *Pkg) simulate(ctx context.Context, progress func(string), index []strin
 // upgrades with the step's packages. A held one fails.
 func (p *Pkg) others(ctx context.Context, st *State, progress func(string), index []string) ([]string, error) {
 	// apt does not upgrade a held package and fails without its name.
-	out, err := p.simulate(ctx, progress, index, append(p.installFlags(), "--remove", "-o", "APT::Ignore-Hold=true")...)
+	out, err := p.simulate(ctx, st, progress, index, append(p.installFlags(), "--remove", "-o", "APT::Ignore-Hold=true")...)
 	if err != nil {
 		return nil, err
 	}
