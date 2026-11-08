@@ -483,6 +483,13 @@ func TestMaskedDiffRecord(t *testing.T) {
 	secretLine := func(text, show string) Line { return Line{Text: text, Show: show, Secret: true} }
 	plain := func(text string) Line { return Line{Text: text, Show: text} }
 	keep := plain("keep\n")
+	const (
+		key1         = "-----BEGIN PRIVATE KEY----- AAAA -----END PRIVATE KEY-----"
+		key2         = "-----BEGIN PRIVATE KEY----- BBBB -----END PRIVATE KEY-----"
+		beginKeyLine = "-----BEGIN PRIVATE KEY-----\n"
+		endKeyLine   = "-----END PRIVATE KEY-----\n"
+		keyLines3    = beginKeyLine + "AAAA\n" + endKeyLine
+	)
 	tests := []struct {
 		name   string
 		old    string
@@ -525,6 +532,16 @@ func TestMaskedDiffRecord(t *testing.T) {
 			true, "@@ -1,1 +1,1 @@\n-(line hidden: may hold a secret)\n+workers = (secret)\n"},
 		{"no record, no secret", "workers = 2\nkeep\n", nil, []Line{plain("workers = 3\n"), keep},
 			false, "@@ -1,2 +1,2 @@\n-workers = 2\n+workers = 3\n keep\n"},
+		{"a key line fits the record", "k=" + key1 + " t=OLDPASSWORD\nkeep\n", new("k=" + key1 + " t=(secret)\nkeep\n"), []Line{secretLine("k="+key1+" t=NEWPASSWORD\n", "k="+key1+" t=(secret)\n"), keep},
+			false, "@@ -1,2 +1,2 @@\n-k=(secret) t=(secret)\n+k=(secret) t=(secret) (secret value changed)\n keep\n"},
+		{"a key line that fits no line of the record is hidden", "k=" + key2 + " t=OLDPASSWORD\nkeep\n", new("k=" + key1 + " t=(secret)\nkeep\n"), []Line{secretLine("k="+key1+" t=NEWPASSWORD\n", "k="+key1+" t=(secret)\n"), keep},
+			false, "@@ -1,2 +1,2 @@\n-(line hidden: may hold a secret)\n+k=(secret) t=(secret)\n keep\n"},
+		{"the key lines of a record", keyLines3 + "t=OLDPASSWORD\n", new(keyLines3 + "t=(secret)\n"), []Line{secretLine("t=NEWPASSWORD\n", "t=(secret)\n")},
+			false, "@@ -1,4 +1,1 @@\n-(secret)\n-(secret)\n-(secret)\n-t=(secret)\n+t=(secret) (secret value changed)\n"},
+		{"key lines in the context", "a\n" + keyLines3, nil, []Line{plain("A\n"), plain(beginKeyLine), plain("AAAA\n"), plain(endKeyLine)},
+			false, "@@ -1,4 +1,4 @@\n-a\n+A\n (secret)\n (secret)\n (secret)\n"},
+		{"key lines in the context after the header is gone", keyLines3, nil, []Line{plain("key:\n"), plain("AAAA\n"), plain(endKeyLine)},
+			false, "@@ -1,3 +1,3 @@\n-(secret)\n+key:\n (secret)\n (secret)\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

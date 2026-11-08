@@ -473,6 +473,46 @@ func TestLoadWarning(t *testing.T) {
 	}
 }
 
+// spec: Variables/Secrets/Secrets in output; CLI/Output
+func TestKeyInDiff(t *testing.T) {
+	oldKey, newKey := fakeSecret(t, "rsa.txt"), fakeSecret(t, "pkcs8.txt")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: acme\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  web1: {}\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: /etc/app.key\n          mode: \"0600\"\n          content: |\n            " + strings.ReplaceAll(newKey, "\n", "\n            ") + "\n",
+	})
+	h := fakehost.New()
+	h.SetFile("web1", "/etc/app.key", oldKey+"\n")
+	o, n := strings.Split(oldKey, "\n"), strings.Split(newKey, "\n")
+	bodies := []string{o[1], n[1], n[2]}
+	for _, tt := range []struct {
+		args           []string
+		added, removed string
+	}{
+		{[]string{"plan", "site"}, "+(secret)", "-(secret)"},
+		{[]string{"plan", "site", "--json"}, `"+(secret)"`, `"-(secret)"`},
+	} {
+		args := tt.args
+		r := winch(t, dir, h, false, "", args...)
+		if r.code != exitOK {
+			t.Fatalf("%v: exit %d, stdout %q, stderr %q", args, r.code, r.out, r.err)
+		}
+		for _, b := range bodies {
+			if strings.Contains(r.out+r.err, b[:16]) {
+				t.Errorf("%v: the output shows the key body %q:\n%s", args, b[:16], r.out)
+			}
+		}
+		if strings.Count(r.out, tt.added) != 4 || strings.Count(r.out, tt.removed) != 3 {
+			t.Errorf("%v: want 4 lines %s and 3 lines %s:\n%s", args, tt.added, tt.removed, r.out)
+		}
+		for line := range strings.Lines(r.out) {
+			if l := strings.TrimSpace(line); strings.HasPrefix(l, secret.Mark) {
+				t.Errorf("%v: a key line lost its sign: %q", args, line)
+			}
+		}
+	}
+}
+
 // spec: Variables/Secrets (WINCH_AGE_KEY)
 func TestAgeKey(t *testing.T) {
 	identity, id := newIdentity(t)
