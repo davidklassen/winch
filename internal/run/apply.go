@@ -441,10 +441,7 @@ func (a *hostApply) finish(ctx context.Context, changed bool, err error) error {
 			err = aerr
 		}
 	}
-	if cerr := a.close(); err == nil && cerr != nil {
-		err = cerr
-	}
-	return err
+	return errors.Join(err, a.close())
 }
 
 func (a *hostApply) close() error {

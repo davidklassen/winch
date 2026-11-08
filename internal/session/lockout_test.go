@@ -97,7 +97,8 @@ func TestAccessDestinationChanged(t *testing.T) {
 // second says that the host has not rebooted yet, and the third gives a
 // degraded system. With $REBOOT_ERROR, the third connection says that the
 // reboot command failed with it. A reconnect answers hello with
-// $RESUME_WELCOME when it is set.
+// $RESUME_WELCOME when it is set. With $END_ERROR, each connection prints it
+// and its number on stderr at its end, and exits with 1.
 const rebootHelper = `#!/bin/sh
 n=$(cat "$REBOOT_STATE" 2>/dev/null || echo 0)
 n=$((n+1))
@@ -117,6 +118,7 @@ while read -r line; do
   *) echo "{\"id\":$id,\"error\":\"unexpected $line\"}" ;;
   esac
 done
+[ -z "$END_ERROR" ] || { echo "$END_ERROR $n" >&2; exit 1; }
 `
 
 // spec: Modules/reboot (reboot, wait until the helper answers again);
@@ -162,6 +164,29 @@ func TestReboot(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(state + ".facts"); string(data) != "3\n" {
 		t.Errorf("facts read on connections %q, want 3", data)
+	}
+}
+
+// spec: Running a pipeline/Failures; Modules/reboot
+func TestCloseAfterReboot(t *testing.T) {
+	fakeBin(t, "aarch64", "0", goodSudo)
+	t.Setenv("REBOOT_STATE", filepath.Join(t.TempDir(), "state"))
+	t.Setenv("END_ERROR", "restore failed on connection")
+	s, err := Open(context.Background(), Config{
+		Host: "web1", Address: "web1", Dir: t.TempDir(),
+		Binaries:   []helperbin.Binary{helperbin.New("arm64", []byte(rebootHelper))},
+		Hello:      protocol.Hello{Run: "r1"},
+		Progress:   plain(&bytes.Buffer{}),
+		RetryDelay: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Reboot(context.Background(), time.Minute); err != nil {
+		t.Fatalf("Reboot: %v", err)
+	}
+	if err := s.Close(); err == nil || err.Error() != "restore failed on connection 3" {
+		t.Errorf("close error = %v, want the end of the connection after the reboot", err)
 	}
 }
 
