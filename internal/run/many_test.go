@@ -501,7 +501,7 @@ func TestHealthGate(t *testing.T) {
 		if !slices.Equal(h.Trace, want) {
 			t.Errorf("trace\n%q\nwant\n%q", h.Trace, want)
 		}
-		if !strings.Contains(out.String(), "web1: base: * health: curl -sf http://localhost/\n") {
+		if !strings.Contains(out.String(), "web1: base: health passed: curl -sf http://localhost/\n") {
 			t.Errorf("apply output does not show the gate:\n%s", out.String())
 		}
 	})

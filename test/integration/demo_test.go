@@ -51,7 +51,7 @@ func TestDemo(t *testing.T) {
 		t.Errorf("apply does not show the password file:\n%s", r.Stdout)
 	}
 	// parallelism: 1 runs the web stage on demo, then its gate, then on demo2.
-	gate := strings.Index(r.Stdout, "demo: web: * health: ")
+	gate := strings.Index(r.Stdout, "demo: web: health passed: ")
 	if gate < 0 || strings.Index(r.Stdout, "demo2: nginx: ") < gate {
 		t.Errorf("demo2 started the web stage before the health gate of demo:\n%s", r.Stdout)
 	}

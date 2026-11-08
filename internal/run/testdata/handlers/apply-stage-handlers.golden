@@ -5,7 +5,7 @@ web1: web: + file /etc/app/c.conf
 web1: web: ~ handler web.restart: service app
 web1: web: ~ handler web.reload: service app
 web1: web: access check passed
-web1: web: * health: healthy
+web1: web: health passed: healthy
 web1: other: + file /etc/other.conf
 web1: other: ~ handler other.reload: cmd other-reload
 web1: access check after the run passed

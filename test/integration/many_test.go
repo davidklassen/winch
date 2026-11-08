@@ -153,7 +153,7 @@ handlers:
 
 	t.Run("parallelism 1 changes one host at a time", func(t *testing.T) {
 		r := winch("apply", "site", "--yes")
-		if r.Code != 0 || !strings.Contains(r.Stdout, "many-a: web: * health: test -e /root/healthy\n") {
+		if r.Code != 0 || !strings.Contains(r.Stdout, "many-a: web: health passed: test -e /root/healthy\n") {
 			t.Fatalf("apply: exit %d", r.Code)
 		}
 		var times [2][2]float64

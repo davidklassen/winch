@@ -104,6 +104,15 @@ func TestDocFailedCommandOutput(t *testing.T) {
 	}
 }
 
+// spec: CLI/Output
+func TestDocHealthPassed(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "workflow")
+	want := "A health gate that passes prints health passed and its command."
+	if out := strings.Join(strings.Fields(r.out), " "); !strings.Contains(out, want) {
+		t.Errorf("winch doc workflow lacks %q:\n%s", want, r.out)
+	}
+}
+
 // spec: Modules/assert
 func TestDocAssert(t *testing.T) {
 	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "assert")

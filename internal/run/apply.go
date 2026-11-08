@@ -93,7 +93,7 @@ func (t text) Step(ev StepEvent) {
 	case ev.Address == rollbackEvent(ev.Host, nil).Address && ev.Status == "change":
 		markLine(&line, ev.Host+": ", "!", " "+rollbackLabel+"\n")
 	case ev.Health != "" && ev.Status == "ok":
-		markLine(&line, ev.Host+": "+ev.Stage+": ", "*", " health:"+command(ev.Health, "    ")+"\n")
+		line.Add(color.Plain, ev.Host+": "+ev.Stage+": health passed:"+command(ev.Health, "    ")+"\n")
 	case ev.Status != "change":
 	case ev.Then != "" && ev.ThenPending:
 		markLine(&line, ev.Host+": "+ev.scope()+": ", "!", " then:"+command(ev.Then, "    ")+"\n")
