@@ -745,7 +745,7 @@ func TestSecretInit(t *testing.T) {
 		}
 		keyData := read(t, key)
 		r = winchWith(t, dir, home, "", "", fakehost.New(), false, "", "secret", "init")
-		if r.code != exitOK || r.out != "public key: "+pub+"\n" {
+		if r.code != exitOK || r.out != "uses the age key "+key+"\npublic key: "+pub+"\n" {
 			t.Errorf("second run: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 		}
 		if got := read(t, filepath.Join(dir, "winch.yaml")); got != wantCfg {
@@ -764,7 +764,7 @@ func TestSecretInit(t *testing.T) {
 		}
 		before := read(t, path)
 		r := winchWith(t, dir, "", path, "", fakehost.New(), false, "", "secret", "init")
-		if r.code != exitOK || !strings.HasPrefix(r.out, "public key: "+id.Recipient().String()+"\n") {
+		if r.code != exitOK || r.out != "uses the age key "+path+"\npublic key: "+id.Recipient().String()+"\nadded the public key to recipients in winch.yaml\n" {
 			t.Fatalf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 		}
 		if got := read(t, path); got != before || mode(t, path) != 0o640 {
@@ -781,7 +781,7 @@ func TestSecretInit(t *testing.T) {
 		path, id := newIdentity(t)
 		home := t.TempDir()
 		r := winchWith(t, dir, home, "", "cat "+path, fakehost.New(), false, "", "secret", "init")
-		if r.code != exitOK || r.out != "public key: "+id.Recipient().String()+"\nadded the public key to recipients in winch.yaml\n" {
+		if r.code != exitOK || r.out != "uses the age key from WINCH_AGE_IDENTITY_CMD\npublic key: "+id.Recipient().String()+"\nadded the public key to recipients in winch.yaml\n" {
 			t.Fatalf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 		}
 		want := "name: acme\nvars: {}\nrecipients:\n  - " + id.Recipient().String() + "\n"
@@ -812,7 +812,7 @@ func TestSecretInit(t *testing.T) {
 			dir := vmtest.WriteProject(t, files)
 			path, id := newIdentity(t)
 			r := winchWith(t, dir, "", path, "", fakehost.New(), false, "", "secret", "init")
-			want := "public key: " + id.Recipient().String() + "\nadded the public key to recipients in winch.yaml\n" + c.hint
+			want := "uses the age key " + path + "\npublic key: " + id.Recipient().String() + "\nadded the public key to recipients in winch.yaml\n" + c.hint
 			if r.code != exitOK || r.out != want {
 				t.Errorf("exit %d, stdout %q, stderr %q; want stdout %q", r.code, r.out, r.err, want)
 			}

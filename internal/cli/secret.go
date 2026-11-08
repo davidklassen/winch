@@ -47,6 +47,8 @@ func secretInit(ctx context.Context, env Env, f *flags, args []string) int {
 			return exitInvalid
 		}
 		fmt.Fprintf(env.stdout, "made the age key %s\n", identity.Path)
+	} else {
+		fmt.Fprintf(env.stdout, "uses the age key %s\n", identity)
 	}
 	fmt.Fprintf(env.stdout, "public key: %s\n", key)
 	edit, err := project.AddRecipient(env.Dir, key)
