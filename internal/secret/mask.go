@@ -320,7 +320,7 @@ func RecordAdd(record *string, line string) string {
 // it fits. A removed line that fits none is hidden when a new line holds a
 // secret or when there is a record. With showOther, a record does not hide it:
 // a line step changes one line, and the record holds no plain line that this
-// step wrote.
+// step wrote. Each line of a private key block shows as Mark, after its sign.
 func Diff(old []byte, record *string, lines []Line, showOther bool) []byte {
 	x := diff.Lines(old)
 	y := make([]string, len(lines))
@@ -331,6 +331,12 @@ func Diff(old []byte, record *string, lines []Line, showOther bool) []byte {
 		return nil
 	}
 	hide := record != nil && !showOther || slices.ContainsFunc(lines, func(l Line) bool { return l.Secret })
+	oldKeys := keyLines(x)
+	shows := make([]string, len(lines))
+	for i, l := range lines {
+		shows[i] = l.Show
+	}
+	shows = keyLines(shows)
 	var known []recordLine
 	if record != nil {
 		known = recordLines(*record)
@@ -351,6 +357,8 @@ func Diff(old []byte, record *string, lines []Line, showOther bool) []byte {
 				other[m] = append(other[m], head)
 			case hide:
 				x[op.X] = hidden
+			default:
+				x[op.X] = oldKeys[op.X]
 			}
 		}
 	}
@@ -360,25 +368,52 @@ func Diff(old []byte, record *string, lines []Line, showOther bool) []byte {
 		for _, op := range h.Ops {
 			switch op.Kind {
 			case ' ':
-				out.WriteString(" " + lines[op.Y].Show)
+				show := shows[op.Y]
+				if oldKeys[op.X] != x[op.X] && show == lines[op.Y].Show {
+					show = withEnd(Mark, show)
+				}
+				out.WriteString(" " + show)
 			case '-':
 				out.WriteString("-" + x[op.X])
 			default:
 				l := lines[op.Y]
-				head, tail, _ := strings.Cut(l.Show, "\n")
+				head, tail, _ := strings.Cut(shows[op.Y], "\n")
 				text, _, _ := strings.Cut(l.Text, "\n")
 				if l.Secret && !l.Block && slices.ContainsFunc(other[head], func(s string) bool { return s != text }) {
 					out.WriteString("+" + head + changed + "\n" + tail)
 					continue
 				}
-				out.WriteString("+" + l.Show)
+				out.WriteString("+" + shows[op.Y])
 			}
 		}
 	}
 	return out.Bytes()
 }
 
-// recordLine is a line of a record, and its text between the marks.
+// keyLines returns lines with each private key block as Mark. A line keeps
+// the text after its first newline, such as the note of a missing newline.
+func keyLines(lines []string) []string {
+	heads := make([]string, len(lines))
+	for i, l := range lines {
+		head, _, _ := strings.Cut(l, "\n")
+		heads[i] = head + "\n"
+	}
+	s := strings.Join(heads, "")
+	marked := make([]bool, len(s))
+	keyBlocks(s, func(from, to int) {
+		for i := from; i < to; i++ {
+			marked[i] = true
+		}
+	})
+	out := split(s, marked, heads)
+	for i, l := range lines {
+		out[i] = withEnd(strings.TrimSuffix(out[i], "\n"), l)
+	}
+	return out
+}
+
+// recordLine is a line of a record: as the diff shows it, with each private
+// key block as Mark, and its text between the marks.
 type recordLine struct {
 	show   string
 	pieces []string
@@ -388,12 +423,14 @@ type recordLine struct {
 // first: a plain line wins over a line that is only a secret, which fits every
 // old line.
 func recordLines(record string) []recordLine {
+	text := slices.Collect(strings.Lines(record))
+	shows := keyLines(text)
 	var lines []recordLine
-	for l := range strings.Lines(record) {
-		show := strings.TrimSuffix(l, "\n")
-		lines = append(lines, recordLine{show, strings.Split(show, Mark)})
+	for i, l := range text {
+		show := strings.TrimSuffix(shows[i], "\n")
+		lines = append(lines, recordLine{show, strings.Split(strings.TrimSuffix(l, "\n"), Mark)})
 	}
-	plain := func(l recordLine) int { return len(l.show) - (len(l.pieces)-1)*len(Mark) }
+	plain := func(l recordLine) int { return len(strings.Join(l.pieces, "")) }
 	slices.SortStableFunc(lines, func(a, b recordLine) int { return plain(b) - plain(a) })
 	return lines
 }
