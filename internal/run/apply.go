@@ -236,8 +236,10 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			o.Failed[name] = err
 			delete(o.Changed, name)
 			rep.Host(HostEvent{Phase: "apply", Host: name, Status: hostStatus(err), Error: err.Error()})
-			if a := runs[name]; a != nil && a.passed {
-				rep.Access(name, "")
+			if a := runs[name]; a != nil {
+				for _, scope := range a.held {
+					rep.Access(name, scope)
+				}
 			}
 		}
 	}
@@ -424,9 +426,10 @@ type hostApply struct {
 	conn Conn
 	// rollback is the plan of the rollback of an earlier run, until it runs.
 	rollback []string
-	// passed is true when the access check after the run passed on a host
-	// that failed. Apply reports it after the error of the host.
-	passed bool
+	// held are the scopes of the access checks that passed on a host that
+	// failed, in the order they ran; "" is the check after the run. Apply
+	// reports them after the error of the host.
+	held []string
 }
 
 // finish ends the run of the host with the error err of the run. When the
@@ -449,10 +452,12 @@ func (a *hostApply) finish(ctx context.Context, changed bool, err error) error {
 		}
 	}
 	err = errors.Join(err, a.close())
-	if passed && err == nil {
+	switch {
+	case passed && err == nil:
 		a.rep.Access(a.host, "")
+	case passed:
+		a.held = append(a.held, "")
 	}
-	a.passed = passed && err != nil
 	return err
 }
 
@@ -847,8 +852,11 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 		ev.result(p.Step, res)
 	}
 	a.rep.Step(ev)
-	if passed {
+	switch {
+	case passed && err == nil:
 		a.rep.Access(a.host, ev.scope())
+	case passed:
+		a.held = append(a.held, ev.scope())
 	}
 	if err != nil {
 		return module.Result{}, fmt.Errorf("%s: failed: %s: %w", ev.scope(), l, err)
