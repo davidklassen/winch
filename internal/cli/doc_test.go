@@ -58,6 +58,43 @@ func TestDocServiceWatch(t *testing.T) {
 	}
 }
 
+// spec: Modules/service and unit
+func TestDocServiceDaemonReload(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "service")
+	out := strings.Join(strings.Fields(r.out), " ")
+	for _, want := range []string{"the step runs systemctl daemon-reload first", "daemon-reload does not restart a running unit"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("winch doc service lacks %q:\n%s", want, r.out)
+		}
+	}
+}
+
+// spec: Modules/user and group
+func TestDocUserSystem(t *testing.T) {
+	tests := []struct{ arg, want string }{
+		{"user", "A system user gets the home /nonexistent and the shell /usr/sbin/nologin."},
+		{"user.authorized_keys", "needs a login shell, such as /bin/sh"},
+		{"user.home", "A new home is owned by the user and its primary group, with mode 0700."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.arg, func(t *testing.T) {
+			r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", tt.arg)
+			if out := strings.Join(strings.Fields(r.out), " "); !strings.Contains(out, tt.want) {
+				t.Errorf("winch doc %s lacks %q:\n%s", tt.arg, tt.want, r.out)
+			}
+		})
+	}
+}
+
+// spec: Modules/firewall
+func TestDocFirewallForward(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "firewall")
+	want := "The step does not filter forwarded or outgoing traffic."
+	if out := strings.Join(strings.Fields(r.out), " "); !strings.Contains(out, want) {
+		t.Errorf("winch doc firewall lacks %q:\n%s", want, r.out)
+	}
+}
+
 // spec: Modules/service and unit; Modules/repo
 func TestDocAbsent(t *testing.T) {
 	tests := []struct{ arg, want string }{
