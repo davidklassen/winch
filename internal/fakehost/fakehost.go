@@ -799,7 +799,12 @@ func (c *Conn) checkDir(d *module.Dir) module.Result {
 	}
 	missing := c.hosts.noDirs[c.host][d.Path]
 	c.hosts.mu.Unlock()
-	if !missing {
+	switch {
+	case d.Absent && missing:
+		return module.Result{Status: module.OK}
+	case d.Absent:
+		return module.Result{Status: module.Change, Action: module.Remove}
+	case !missing:
 		return module.Result{Status: module.OK}
 	}
 	group, mode := cmp.Or(string(d.Group), "root"), cmp.Or(d.Mode, "0755")

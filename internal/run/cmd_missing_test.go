@@ -97,3 +97,48 @@ func TestCmdUnlessMissing(t *testing.T) {
 		})
 	}
 }
+
+// spec: Running a pipeline/Plan
+func TestAbsentMissingNote(t *testing.T) {
+	const pkg = "      - pkg: {name: nginx}\n"
+	const link = "      - link: {path: /etc/nginx/sites-enabled/default, absent: true}\n"
+	const file = "      - file: {path: /etc/nginx/sites-enabled/default, absent: true}\n"
+	const dir = "      - dir: {path: /etc/nginx/sites-enabled/default, absent: true}\n"
+	const note = "web1: note: /etc/nginx/sites-enabled/default does not exist yet; a package that s#1 pkg nginx installs can create it, and apply then removes it\n"
+	for _, tt := range []struct {
+		name  string
+		steps string
+		host  func(h *fakehost.Hosts)
+		want  string
+	}{
+		{"a link after a pkg install", pkg + link, nil, note},
+		{"a file after a pkg install", pkg + file, nil, note},
+		{"a dir after a pkg install", pkg + dir, func(h *fakehost.Hosts) { h.RemoveDir("web1", "/etc/nginx/sites-enabled/default") }, note},
+		{"after the last of two pkg installs", "      - pkg: {name: curl}\n" + pkg + link, nil, "web1: note: /etc/nginx/sites-enabled/default does not exist yet; a package that s#2 pkg nginx installs can create it, and apply then removes it\n"},
+		{"without a pkg step", link, nil, ""},
+		{"a pkg step that installs nothing", pkg + link, func(h *fakehost.Hosts) { h.SetPkg("web1", "nginx") }, ""},
+		{"a pkg step after it", link + pkg, nil, ""},
+		{"a link that exists", pkg + link, func(h *fakehost.Hosts) {
+			h.SetResult("web1", "/etc/nginx/sites-enabled/default", module.Result{Status: module.Change, Action: module.Remove})
+		}, ""},
+		{"a file that exists", pkg + file, func(h *fakehost.Hosts) { h.SetFile("web1", "/etc/nginx/sites-enabled/default", "x") }, ""},
+		{"a dir that exists", pkg + dir, nil, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := loadWeb1(t, map[string]string{"pipelines/site.yaml": steps(tt.steps)})
+			h := fakehost.New()
+			if tt.host != nil {
+				tt.host(h)
+			}
+			plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+			if len(plan.Failed) > 0 {
+				t.Fatal(plan.Failed)
+			}
+			var errOut bytes.Buffer
+			plan.WriteNotes(plain(&errOut))
+			if errOut.String() != tt.want {
+				t.Errorf("notes = %q, want %q", errOut.String(), tt.want)
+			}
+		})
+	}
+}
