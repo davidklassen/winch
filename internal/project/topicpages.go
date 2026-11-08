@@ -519,7 +519,7 @@ var secretsTopic = doc.Topic{
 		doc.Paragraph(`A !secret stands only in a variable value: in the vars of an inventory, and in the defaults of winch.yaml and of recipes, at any depth of a list or a map. --set cannot give a secret.`),
 		doc.Heading("Commands"),
 		doc.Table([][]string{
-			{"winch secret init", "make an age key, add it to recipients"},
+			{"winch secret init", "make an age key when there is none, add it to recipients"},
 			{"winch secret generate [<path>]", "make a random password as a secret: write it at the path, or print it"},
 			{"winch secret encrypt [<path>]", "encrypt a value from stdin or a prompt: write it at the path, or print it"},
 			{"winch secret decrypt [<path>]", "print the plaintext of the secret at the path, or of a secret on stdin"},
