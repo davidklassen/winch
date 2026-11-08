@@ -87,7 +87,7 @@ var expressionFunctions = []doc.Key{
 	{Name: "hasSuffix", Text: "hasSuffix(s, suffix): true when s ends with suffix. The operator endsWith does the same."},
 	{Name: "indexOf", Text: "indexOf(s, sub): the index of the first sub in s, or -1."},
 	{Name: "int", Text: "int(v): the number or the text v as an integer: int(\"8080\")."},
-	{Name: "join", Text: "join(list, sep): the strings of list joined with sep."},
+	{Name: "join", Text: "join(list, sep): the strings and numbers of list joined with sep."},
 	{Name: "json", Text: "json(v): v as JSON on one line. Map keys are in sorted order, and non-ASCII characters stay UTF-8. The output is also a valid YAML value."},
 	{Name: "keys", Text: "keys(m): the keys of the map m, in sorted order. It cannot read vars itself: name each variable."},
 	{Name: "last", Text: "last(list): the last element, or nil for an empty list."},

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/expr-lang/expr"
@@ -115,6 +116,8 @@ type hostEnv struct {
 
 // exprOptions add quote, sqlquote, and json, and replace keys, values, and toPairs, whose order
 // is random in expr, with versions in sorted key order. json replaces toJSON.
+// join replaces the join of expr, which takes only strings. $get is the get
+// of a value of unknown type; readCheck puts it in place of get.
 // The optimizer is off here and for require: it folds map(filter(...)) into a
 // node that ast.Walk does not visit, and exprCheck would miss what is in it.
 var exprOptions = []expr.Option{
@@ -124,9 +127,12 @@ var exprOptions = []expr.Option{
 	expr.DisableBuiltin("values"),
 	expr.DisableBuiltin("toPairs"),
 	expr.DisableBuiltin("toJSON"),
+	expr.DisableBuiltin("join"),
 	sortedFunc("keys", func(k string, v any) any { return k }),
 	sortedFunc("values", func(k string, v any) any { return v }),
 	sortedFunc("toPairs", func(k string, v any) any { return []any{k, v} }),
+	expr.Function("join", join, new(func(any, any) string), new(func(any) string)),
+	expr.Function(getFunc, get, new(func(any, any) any)),
 	expr.Patch(readCheck{}),
 	expr.Function("quote", func(args ...any) (any, error) {
 		s, ok := args[0].(string)
@@ -158,12 +164,14 @@ func isExprFunc(name string) bool {
 
 const (
 	readFunc  = "$read"
+	getFunc   = "$get"
 	loopField = "$loop"
 )
 
 // readCheck checks each member read and get() that gives a value of unknown
 // type: such a value can be the marker of a computed default of a host from
-// hosts or match().
+// hosts or match(). A get() becomes $get, which checks the type of the key,
+// where expr cannot check the key at load.
 type readCheck struct{}
 
 func (readCheck) Visit(n *ast.Node) {
@@ -173,7 +181,14 @@ func (readCheck) Visit(n *ast.Node) {
 			return
 		}
 	case *ast.BuiltinNode:
-		if m.Name != "get" {
+		if m.Name != "get" || len(m.Arguments) != 2 {
+			return
+		}
+		base, key := m.Arguments[0].Type().Kind(), m.Arguments[1].Type().Kind()
+		if base == reflect.Interface || key == reflect.Interface && slices.Contains([]reflect.Kind{reflect.Slice, reflect.Array, reflect.String, reflect.Map}, base) {
+			get := &ast.CallNode{Callee: &ast.IdentifierNode{Value: getFunc}, Arguments: m.Arguments}
+			get.SetLocation(m.Location())
+			ast.Patch(n, &ast.CallNode{Callee: &ast.IdentifierNode{Value: readFunc}, Arguments: []ast.Node{get}})
 			return
 		}
 	default:
@@ -199,6 +214,60 @@ func sortedFunc(name string, pick func(k string, v any) any) expr.Option {
 		}
 		return out, nil
 	})
+}
+
+func join(args ...any) (any, error) {
+	sep := ""
+	if len(args) == 2 {
+		s, ok := args[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("join: the separator must be a string, got %s", describeValue(args[1]))
+		}
+		sep = s
+	}
+	list := reflect.ValueOf(args[0])
+	if k := list.Kind(); k != reflect.Slice && k != reflect.Array {
+		return nil, fmt.Errorf("join: %s is not a list", describeValue(args[0]))
+	}
+	parts := make([]string, list.Len())
+	for i := range parts {
+		e := list.Index(i).Interface()
+		switch reflect.ValueOf(e).Kind() {
+		case reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+			parts[i] = fmt.Sprint(e)
+		default:
+			return nil, fmt.Errorf("join: the element at index %d is %s", i, describeValue(e))
+		}
+	}
+	return strings.Join(parts, sep), nil
+}
+
+// get checks the type of the key, then reads with the get of expr.
+func get(args ...any) (any, error) {
+	from, key := args[0], args[1]
+	keyKind := reflect.ValueOf(key).Kind()
+	var number bool
+	switch keyKind {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+		number = true
+	}
+	switch reflect.ValueOf(from).Kind() {
+	case reflect.Slice, reflect.Array:
+		if !number {
+			return nil, fmt.Errorf("get: a list takes a number, got %s", describeValue(key))
+		}
+	case reflect.String:
+		if !number {
+			return nil, fmt.Errorf("get: a string takes a number, got %s", describeValue(key))
+		}
+	case reflect.Map, reflect.Struct:
+		if keyKind != reflect.String {
+			return nil, fmt.Errorf("get: a map takes a string, got %s", describeValue(key))
+		}
+	}
+	return builtin.Builtins[builtin.Index["get"]].Func(from, key)
 }
 
 func compile(n *yamlx.Node, sc scope) (*computed, error) {
@@ -240,7 +309,7 @@ func compileExpr(src string, loops []string) (*vm.Program, error) {
 	}
 	var own error
 	ast.Walk(&tree.Node, visitor(func(np *ast.Node) {
-		if id, ok := (*np).(*ast.IdentifierNode); ok && own == nil && (id.Value == loopField || id.Value == readFunc) {
+		if id, ok := (*np).(*ast.IdentifierNode); ok && own == nil && (id.Value == loopField || id.Value == readFunc || id.Value == getFunc) {
 			own = (&file.Error{Location: id.Location(), Message: id.Value + " is not allowed"}).Bind(tree.Source)
 		}
 	}))
@@ -448,6 +517,13 @@ func constKey(n ast.Node) (ast.Node, string, bool) {
 		}
 	case *ast.BuiltinNode:
 		if len(n.Arguments) != 2 || n.Name != "get" {
+			return nil, "", false
+		}
+		if key, ok := n.Arguments[1].(*ast.StringNode); ok {
+			return unpatched(n.Arguments[0]), key.Value, true
+		}
+	case *ast.CallNode:
+		if id, ok := n.Callee.(*ast.IdentifierNode); !ok || id.Value != getFunc || len(n.Arguments) != 2 {
 			return nil, "", false
 		}
 		if key, ok := n.Arguments[1].(*ast.StringNode); ok {
