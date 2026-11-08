@@ -69,6 +69,23 @@ func TestDocServiceDaemonReload(t *testing.T) {
 	}
 }
 
+// spec: Modules/user and group
+func TestDocUserSystem(t *testing.T) {
+	tests := []struct{ arg, want string }{
+		{"user", "A system user gets the home /nonexistent and the shell /usr/sbin/nologin."},
+		{"user.authorized_keys", "needs a login shell, such as /bin/sh"},
+		{"user.home", "A new home is owned by the user and its primary group, with mode 0700."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.arg, func(t *testing.T) {
+			r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", tt.arg)
+			if out := strings.Join(strings.Fields(r.out), " "); !strings.Contains(out, tt.want) {
+				t.Errorf("winch doc %s lacks %q:\n%s", tt.arg, tt.want, r.out)
+			}
+		})
+	}
+}
+
 // spec: Modules/service and unit; Modules/repo
 func TestDocAbsent(t *testing.T) {
 	tests := []struct{ arg, want string }{

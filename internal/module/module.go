@@ -208,7 +208,7 @@ var modules = map[string]struct {
 	"timezone": {func() Module { return new(Timezone) }, "set the time zone", ""},
 	"unit":     {func() Module { return new(Unit) }, "manage a systemd unit file", "A change of the file, also of its owner or mode, runs systemctl daemon-reload. daemon-reload does not restart a running unit. A handler with restarted: true does.\n\nThe step also checks an ok file: systemd can still need a reload, as after a run that wrote the file and then failed. Then the step runs daemon-reload as a change, so its handlers run. A template unit, such as app@.service, skips this check."},
 	"upgrade":  {func() Module { return new(Upgrade) }, "upgrade the installed packages", "The step refreshes the package index, also during the plan, and checks for pending upgrades."},
-	"user":     {func() Module { return new(User) }, "manage a user account", "A step that creates a user also creates its home directory. Without group, it also creates a group with the name of the user. The defaults and system count only when the step creates the user."},
+	"user":     {func() Module { return new(User) }, "manage a user account", "A step that creates a user also creates its home directory, except /nonexistent. Without group, it also creates a group with the name of the user. A system user gets the home /nonexistent and the shell /usr/sbin/nologin. The defaults and system count only when the step creates the user."},
 }
 
 // New returns empty arguments for the module name.
