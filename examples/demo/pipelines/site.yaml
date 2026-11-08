@@ -55,5 +55,10 @@ stages:
       - recipe: website
         vars:
           website_peers: !expr 'filter(match("web"), .name != host.name)'
+      # After the nginx recipe and the site, which both change its config.
+      - service:
+          name: nginx
+          reloaded: true
+        on_change: [/etc/nginx]
       - recipe: dovecot
       - recipe: fail2ban

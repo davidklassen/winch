@@ -2,5 +2,5 @@ stdout:
 {"type":"version","time":"2026-10-26T12:00:00Z","version":1}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"cmd apt-get clean","module":"cmd","status":"unknown"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"unknown"}
-{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":0,"unchanged":0,"unknown":1,"failed":0},"hash":"0995af2da8f5476f","exit_code":2}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":1,"change":0,"unchanged":0,"unknown":1,"failed":0},"hash":"f9131cda07142083","exit_code":2}
 stderr:

@@ -8,6 +8,6 @@ web1, web2 (2 hosts)
         +world
 
 3 hosts: 2 to change, 0 unchanged, 0 unknown, 1 failed
-plan 8ecd94975b8ac880
+plan c3e1b8b8758c4674
 stderr:
 web3: ssh: connect to host unreachable: Connection refused

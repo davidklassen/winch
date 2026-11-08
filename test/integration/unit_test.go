@@ -113,16 +113,14 @@ const unitRecipe = `steps:
   - unit:
       name: winch-hb.service
       source: winch-hb.service
-    notify: restart
   - service:
       name: winch-hb
       running: true
       enabled: true
-handlers:
-  restart:
-    - service:
-        name: winch-hb
-        restarted: true
+  - service:
+      name: winch-hb
+      restarted: true
+    on_change: [/etc/systemd/system/winch-hb.service]
 `
 
 const hbUnit = "[Service]\nEnvironment=HB=%s\nExecStart=/bin/sleep infinity\n[Install]\nWantedBy=multi-user.target\n"
@@ -152,7 +150,7 @@ func TestUnitPipeline(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = lab.Winch(t, dir, "plan", "site")
-	for _, want := range []string{"~ unit winch-hb.service", "-Environment=HB=one", "+Environment=HB=two", "daemon-reload", "! handler app.restart"} {
+	for _, want := range []string{"~ unit winch-hb.service", "-Environment=HB=one", "+Environment=HB=two", "daemon-reload", "(/etc/systemd/system/winch-hb.service changes)\n"} {
 		if !strings.Contains(r.Stdout, want) {
 			t.Errorf("plan after a change: no %q in %q", want, r.Stdout)
 		}
@@ -165,7 +163,7 @@ func TestUnitPipeline(t *testing.T) {
 		t.Errorf("after the change: %q", out)
 	}
 	if got := vm.MustRun(t, "systemctl show -P MainPID winch-hb"); got == pid {
-		t.Errorf("the handler did not restart winch-hb: main PID %s", strings.TrimSpace(got))
+		t.Errorf("the step did not restart winch-hb: main PID %s", strings.TrimSpace(got))
 	}
 
 	r = lab.Winch(t, dir, "plan", "site")

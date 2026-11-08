@@ -126,3 +126,29 @@ func (z *Timezone) Writes() []string { return []string{localtime, TimezoneFile} 
 func (c *Certbot) Writes() []string {
 	return []string{renewalPath(letsencrypt, c.Name), path.Join(letsencrypt, "live", c.Name), path.Join(letsencrypt, "archive", c.Name)}
 }
+
+// ChangePaths returns the paths that the step m changes when it changes
+// something. A step with on_change reacts to a change of these paths.
+func ChangePaths(m Module) []string {
+	switch m := m.(type) {
+	case *File, *Dir, *Link, *Line:
+		return []string{m.Main()}
+	case *Unit:
+		return []string{m.Path()}
+	case *Repo:
+		return []string{m.SourcePath(), m.keyPath()}
+	case *User:
+		return append([]string{"/etc/passwd"}, m.Writes()...)
+	case *Group:
+		return []string{"/etc/group"}
+	case *Pkg, *Upgrade:
+		return []string{"/var/lib/dpkg/status"}
+	case *Firewall:
+		return []string{firewallFile}
+	case *Cmd:
+		return append(m.Writes(), m.Changes...)
+	case Writer:
+		return m.Writes()
+	}
+	return nil
+}

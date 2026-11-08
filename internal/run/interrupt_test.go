@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -26,15 +27,13 @@ func interruptProject(t *testing.T) *project.Project {
       path: /etc/a
       content: "a\n"
     then: echo a
-    notify: reload
   - file:
       path: /etc/b
       content: "b\n"
-handlers:
-  reload:
-    - service:
-        name: app
-        reloaded: true
+  - service:
+      name: app
+      reloaded: true
+    on_change: [/etc/a]
 `,
 	})
 }
@@ -73,8 +72,8 @@ func TestApplyInterrupted(t *testing.T) {
 	if _, ok := h.File("web2", "/etc/a"); ok || h.Connects["web2"] != 1 {
 		t.Errorf("a new host started after the interrupt: %d connects of web2, want 1 of the plan", h.Connects["web2"])
 	}
-	if got := h.PendingOf("web1"); !slices.Equal(got, []string{"app.reload"}) {
-		t.Errorf("pending handlers %q, want app.reload", got)
+	if got, want := h.ReactOf("web1"), []protocol.React{{Recipe: "app", Module: "service", Mains: mains("app")}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("records %v, want %v", got, want)
 	}
 	if h.Open != 0 {
 		t.Errorf("%d connections are still open", h.Open)

@@ -1,0 +1,16 @@
+stdout:
+web1
+  web
+    site
+      ~ file /var/www/index.html
+          @@ -1,1 +1,1 @@
+          -old
+          +hi
+          then: reindex
+  apps
+    app
+      ~ service app: restart (/var/www/index.html changes)
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+plan bcbbbb8c1ab03d2e
+stderr:

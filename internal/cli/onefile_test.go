@@ -38,12 +38,10 @@ recipes:
           content: !tpl |
             [Service]
             ExecStart=/usr/local/bin/app --port {{ vars.app_port }}
-        notify: restart
-    handlers:
-      restart:
-        - service:
-            name: app
-            restarted: true
+      - service:
+          name: app
+          restarted: true
+        on_change: [/etc/systemd/system/app.service]
 `
 
 var manyFiles = map[string]string{
@@ -57,12 +55,10 @@ steps:
   - unit:
       name: app.service
       source: app.service
-    notify: restart
-handlers:
-  restart:
-    - service:
-        name: app
-        restarted: true
+  - service:
+      name: app
+      restarted: true
+    on_change: [/etc/systemd/system/app.service]
 `,
 	"recipes/app/files/app.service": "[Service]\nExecStart=/usr/local/bin/app --port 8080\n",
 }
@@ -131,12 +127,10 @@ steps:
   - file:
       path: /etc/motd
       content: !tpl "{{ vars.domain }}\n"
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: nginx
-        reloaded: true
+  - service:
+      name: nginx
+      reloaded: true
+    on_change: [/etc/motd]
 `})
 	r := winch(t, dir, fakehost.New(), false, "", "plan")
 	if r.code != exitOK || !strings.Contains(r.out, "web1.example.com") || !strings.Contains(r.out, "/etc/motd") {

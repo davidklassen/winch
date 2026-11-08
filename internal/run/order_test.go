@@ -401,17 +401,15 @@ func TestPlanSameThing(t *testing.T) {
 		recipe   string
 		want     string
 	}{
-		{"a step and a handler on one unit", steps(`      - recipe: web
+		{"a step and a restart on one unit", steps(`      - recipe: web
 `), `steps:
   - service:
       name: nginx
       running: true
-    notify: restart
-handlers:
-  restart:
-    - service:
-        name: nginx
-        restarted: true
+  - service:
+      name: nginx
+      restarted: true
+    on_change: [/etc/nginx]
 `, ""},
 		{"two files on one path", steps(`      - file:
           path: /etc/a
@@ -1147,7 +1145,7 @@ handlers:
           path: /etc/systemd/system/app@a.service.d/override.conf
           content: ""
 `), "", "s: file /etc/systemd/system/app@a.service.d/override.conf: s#1 service app@a starts or enables app@a.service before this step changes its drop-in; move this step before it"},
-		{"a drop-in that notifies, after the service step of its unit", steps(`      - recipe: web
+		{"a drop-in after the service step of its unit, with a later restart", steps(`      - recipe: web
 `), `steps:
   - service:
       name: app
@@ -1155,29 +1153,33 @@ handlers:
   - file:
       path: /etc/systemd/system/app.service.d/override.conf
       content: ""
-    notify: restart
-handlers:
-  restart:
-    - service:
-        name: app
-        restarted: true
+  - service:
+      name: app
+      restarted: true
+    on_change: [/etc/systemd/system/app.service.d]
 `, ""},
-		{"a drop-in that notifies a handler of a recipe that does not run", steps(`      - recipe: web
-        when: !expr "false"
-      - service:
+		{"a drop-in after the service step of its unit, with a later reload", steps(`      - service:
           name: app
           running: true
       - file:
           path: /etc/systemd/system/app.service.d/override.conf
           content: ""
-        notify: web.restart
-`), `steps: []
-handlers:
-  restart:
-    - service:
-        name: app
-        restarted: true
-`, "s: file /etc/systemd/system/app.service.d/override.conf: s#2 service app starts or enables app.service before this step changes its drop-in; move this step before it"},
+      - service:
+          name: app
+          reloaded: true
+        on_change: [/etc/systemd/system/app.service.d]
+`), "", "s: file /etc/systemd/system/app.service.d/override.conf: s#1 service app starts or enables app.service before this step changes its drop-in; move this step before it"},
+		{"a drop-in after the service step of its unit, with a restart of other paths", steps(`      - service:
+          name: app
+          running: true
+      - file:
+          path: /etc/systemd/system/app.service.d/override.conf
+          content: ""
+      - service:
+          name: app
+          restarted: true
+        on_change: [/etc/app.conf]
+`), "", "s: file /etc/systemd/system/app.service.d/override.conf: s#1 service app starts or enables app.service before this step changes its drop-in; move this step before it"},
 		{"a drop-in removed after the service step of its unit", steps(`      - service:
           name: app.service
           running: true

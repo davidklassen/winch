@@ -397,10 +397,7 @@ type Env struct {
 	// secrets is true when the project has secrets. Without them, the three
 	// variants are the same.
 	secrets bool
-	// runs holds the stage of each recipe that runs on the host in the
-	// pipeline.
-	runs   map[string]*Stage
-	filter *secret.Filter
+	filter  *secret.Filter
 	// parent is the data of the host in the data of a recipe step with vars,
 	// else nil. host.vars reads it.
 	parent *Env
@@ -453,15 +450,11 @@ func (o *others) env(h Host) (*Env, error) {
 	if err != nil {
 		return nil, err
 	}
-	e := &Env{host: h, facts: f, secrets: o.p.secrets, runs: map[string]*Stage{}, filter: o.p.filter, steps: map[*Step]*Env{}, others: o}
+	e := &Env{host: h, facts: f, secrets: o.p.secrets, filter: o.p.filter, steps: map[*Step]*Env{}, others: o}
 	e.setHostValues()
 	o.envs[h.Name] = e
 	return e, nil
 }
-
-// RunsIn returns the stage of the host whose step for the recipe has a true
-// when, or nil when the recipe does not run on the host in the pipeline.
-func (e *Env) RunsIn(recipe string) *Stage { return e.runs[recipe] }
 
 // For returns the data of the recipe step st on the host of e: its own when
 // the step has vars, else e.
@@ -719,11 +712,11 @@ func (c computedDefault) Error() string {
 // Start returns the data of host h with facts f, where all holds the facts of
 // the other hosts that hosts and match() can reach: it evaluates the defaults
 // that h uses, and checks that h has a value for each variable without a
-// default that it reads. It checks the requirements of each recipe that runs
-// on h in the pipeline, also in later stages and in stages that the
-// selection leaves out.
+// default that it reads, also in stages that the selection leaves out: a step
+// there can react to a change of the run. It checks the requirements of each
+// recipe that runs on h in the pipeline.
 func (p *Project) Start(h Host, f facts.Facts, all map[string]HostFacts) (*Env, error) {
-	e := &Env{host: h, facts: f, secrets: p.secrets, runs: map[string]*Stage{}, filter: p.filter,
+	e := &Env{host: h, facts: f, secrets: p.secrets, filter: p.filter,
 		steps: map[*Step]*Env{}, others: &others{p: p, host: h.Name, f: f, all: all, envs: map[string]*Env{}, failed: map[string]error{}}}
 	e.setHostValues()
 	for i := range p.Pipeline.Stages {
@@ -731,18 +724,8 @@ func (p *Project) Start(h Host, f facts.Facts, all map[string]HostFacts) (*Env, 
 		if !slices.ContainsFunc(s.Targets, func(t Host) bool { return t.Name == h.Name }) {
 			continue
 		}
-		if !s.Skipped {
-			for _, hs := range s.handlerSteps() {
-				if err := p.use(e, hs); err != nil {
-					return nil, err
-				}
-			}
-		}
 		for j := range s.Steps {
 			st := &s.Steps[j]
-			if st.Recipe == nil && s.Skipped {
-				continue
-			}
 			if st.Recipe == nil {
 				if err := p.use(e, *st); err != nil {
 					return nil, err
@@ -764,12 +747,6 @@ func (p *Project) Start(h Host, f facts.Facts, all map[string]HostFacts) (*Env, 
 			if err := st.Recipe.Check(f); err != nil {
 				return nil, err
 			}
-			e.runs[st.Recipe.Name] = s
-			// A stage that the selection leaves out counts only for the
-			// requirements and the handlers of its recipes.
-			if s.Skipped {
-				continue
-			}
 			re := e
 			if st.vars != nil {
 				if re, err = p.stepEnv(e, st); err != nil {
@@ -780,13 +757,6 @@ func (p *Project) Start(h Host, f facts.Facts, all map[string]HostFacts) (*Env, 
 			for _, rs := range st.Recipe.Steps {
 				if err := p.use(re, rs); err != nil {
 					return nil, err
-				}
-			}
-			for _, hd := range st.Recipe.Handlers {
-				for _, hs := range hd.Steps {
-					if err := p.use(re, hs); err != nil {
-						return nil, err
-					}
 				}
 			}
 			if re != e {
@@ -828,7 +798,7 @@ func (p *Project) stepEnv(e *Env, st *Step) (*Env, error) {
 	if err := p.evalDefaults(e, reads, st.Pos); err != nil {
 		return nil, err
 	}
-	se := &Env{host: e.host, facts: e.facts, secrets: e.secrets, runs: e.runs, filter: e.filter,
+	se := &Env{host: e.host, facts: e.facts, secrets: e.secrets, filter: e.filter,
 		parent: e, others: e.others}
 	se.setHostValues()
 	for _, v := range st.vars {

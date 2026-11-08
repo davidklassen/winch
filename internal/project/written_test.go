@@ -45,11 +45,10 @@ groups:
       - file:
           path: /etc/x/db
           content: d
-    handlers:
-      reload:
-        - file:
-            path: /etc/x/db-handler
-            content: h
+      - file:
+          path: /etc/x/db-handler
+          content: h
+        on_change: [/etc/x/db]
   - name: late
     hosts: web
     steps:
@@ -78,11 +77,10 @@ groups:
   - file:
       path: !tpl "{{ vars.app_root }}/conf"
       content: c
-handlers:
-  restart:
-    - file:
-        path: /etc/x/handler
-        content: h
+  - file:
+      path: /etc/x/handler
+      content: h
+    on_change: [/srv/app]
 `,
 	"recipes/off/recipe.yaml": `steps:
   - file:

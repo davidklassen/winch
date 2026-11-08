@@ -1,0 +1,12 @@
+stdout:
+web1
+  web
+    site
+      ! then: reindex
+  apps
+    app
+      ! service app: restart (pending from an earlier run)
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+plan a6708c7b085b2021
+stderr:

@@ -17,8 +17,8 @@ import (
 	"github.com/davidklassen/winch/internal/vmtest"
 )
 
-// jsonProject has a stage step with then, a recipe with a handler and a
-// loop, and the unreachable host web3.
+// jsonProject has a stage step with then, a recipe with a loop and a step
+// with on_change, and the unreachable host web3.
 func jsonProject(t *testing.T) string {
 	return vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: test\n",
@@ -39,12 +39,10 @@ func jsonProject(t *testing.T) string {
       path: !tpl /srv/{{ item }}.html
       content: "page\n"
     loop: [a, b]
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: app
-        reloaded: true
+  - service:
+      name: app
+      reloaded: true
+    on_change: [/srv]
 `,
 	})
 }
@@ -63,8 +61,7 @@ func TestJSON(t *testing.T) {
 			h.SetFile("web2", "/etc/motd", "hello\n")
 			h.SetFile("web2", "/srv/a.html", "page\n")
 			h.SetFile("web2", "/srv/b.html", "page\n")
-			h.SetPending("web2", "app.reload")
-			h.SetThen("web2", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/motd")})
+			h.SetReact("web2", protocol.React{Recipe: "app", Module: "service", Mains: mains("app")}, protocol.React{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/motd"), Then: true})
 		}, args: []string{"plan", "site", "--json"}},
 		{name: "apply", dir: jsonProject, setup: func(h *fakehost.Hosts) {
 			h.SetFile("web2", "/srv/a.html", "page\n")

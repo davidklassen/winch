@@ -45,7 +45,7 @@ func TestDoc(t *testing.T) {
 }
 
 // docTopics are the topics of winch doc, in index order.
-var docTopics = []string{"project", "inventory", "pipeline", "recipe", "step", "handlers", "variables", "templates", "expressions", "facts", "secrets", "workflow", "remote"}
+var docTopics = []string{"project", "inventory", "pipeline", "recipe", "step", "reactions", "variables", "templates", "expressions", "facts", "secrets", "workflow", "remote"}
 
 // spec: Modules/service and unit
 func TestDocServiceWatch(t *testing.T) {

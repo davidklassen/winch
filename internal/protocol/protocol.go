@@ -3,6 +3,8 @@
 package protocol
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"slices"
 	"time"
@@ -33,7 +35,7 @@ type Response struct {
 // Hello is the first request of a session. The helper writes it into the
 // lock file, so a second session can name the run that holds the lock.
 type Hello struct {
-	// Project names the file of the pending handlers.
+	// Project names the files of the pending records.
 	Project string    `json:"project"`
 	Run     string    `json:"run"`
 	User    string    `json:"user"`
@@ -67,38 +69,32 @@ type Step struct {
 	Module string          `json:"module"`
 	Args   json.RawMessage `json:"args"`
 	State  module.State    `json:"state"`
-	// Notify are the handlers, as <recipe>.<handler>, that the helper records
-	// before an apply changes something.
-	Notify []string `json:"notify,omitempty"`
-	// Then is the then of the step, which the helper records before an
-	// apply changes something.
-	Then  *Then `json:"then,omitempty"`
-	Guard Guard `json:"guard,omitzero"`
+	// React are the records of the later steps that react to a path of the
+	// step, which the helper adds before an apply changes something.
+	React []React `json:"react,omitempty"`
+	Guard Guard   `json:"guard,omitzero"`
 	// Masked is the masked new content of a step whose content reads a
 	// secret. A step that writes content without it drops the record.
 	Masked *string `json:"masked,omitempty"`
 }
 
 // Guard tells the helper how to guard an apply against a lockout. The helper
-// keeps the old state of what a step changes in Store and in the stores of
-// Handlers.
+// keeps the old state of what a step changes in the stores of Guarded and
+// SSHD, and in Store when the step is guarded itself.
 type Guard struct {
-	// Store is the store of the step: its recipe, or <pipeline>\t<stage>.
+	// Store is the store of the step, as React.Store names it.
 	Store string `json:"store,omitempty"`
-	// Save keeps the old state in the store: the recipe or the stage has a
-	// step with confirm_access.
-	Save bool `json:"save,omitempty"`
-	// Handlers are the records of the handlers with confirm_access that the
-	// step notifies. The step keeps the old state in the store of each, which
-	// the timer of that handler puts back. When the session ends while one is
-	// pending, the helper puts back its store and drops its record.
-	Handlers []string `json:"handlers,omitempty"`
+	// Guarded are the records of the later steps with confirm_access that
+	// react to a path of the step. The step keeps the old state in the store
+	// of each, which the timer of that step puts back. When the session ends
+	// while one is pending, the helper puts back its store and drops its
+	// record.
+	Guarded []React `json:"guarded,omitempty"`
 	// SSHD are the stores of the later steps of the host with
-	// confirm_access that restart or reload sshd: a recipe, or
-	// <pipeline>\t<stage>. A step that changes sshd's config keeps its old
-	// state in each, so the rollback of such a step puts it back. When the
-	// session ends before such a step ran, the helper puts back the paths of
-	// the step.
+	// confirm_access that restart or reload sshd. A step that changes sshd's
+	// config keeps its old state in each, so the rollback of such a step puts
+	// it back. When the session ends before such a step ran, the helper puts
+	// back the paths of the step.
 	SSHD []string `json:"sshd,omitempty"`
 	// LoadsSSHD is set on a step with confirm_access that loads sshd. Its
 	// rollback timer tests the sshd files of its store.
@@ -132,30 +128,45 @@ type Boot struct {
 	Packages    []string `json:"packages,omitempty"`
 }
 
-// Then is a record of a then: the scope of its step, and its module and main
-// arguments, one for each element of a loop.
-type Then struct {
+// React is a record of a pending step with on_change: the scope of the step,
+// its module, and the SHA-256 of its main arguments, one for each element of
+// a loop. The record of a then has Then, and the module and the main
+// arguments of its step.
+type React struct {
 	Recipe   string   `json:"recipe,omitempty"`
 	Pipeline string   `json:"pipeline,omitempty"`
 	Stage    string   `json:"stage,omitempty"`
-	Handler  string   `json:"handler,omitempty"`
 	Module   string   `json:"module,omitempty"`
 	Mains    []string `json:"mains,omitempty"`
+	Then     bool     `json:"then,omitempty"`
 }
 
-// Matches reports whether o is a record of the same step as t: the same scope
-// and module, and a main argument in common.
-func (t Then) Matches(o Then) bool {
+// Matches reports whether o is a record of the same step as r: the same scope,
+// module, and kind, and a main argument in common.
+func (r React) Matches(o React) bool {
 	in := func(m string) bool { return slices.Contains(o.Mains, m) }
-	return t.Recipe == o.Recipe && t.Pipeline == o.Pipeline && t.Stage == o.Stage && t.Handler == o.Handler && t.Module == o.Module &&
-		slices.ContainsFunc(t.Mains, in)
+	return r.Recipe == o.Recipe && r.Pipeline == o.Pipeline && r.Stage == o.Stage && r.Module == o.Module && r.Then == o.Then &&
+		slices.ContainsFunc(r.Mains, in)
 }
 
-// Command is the params of command, which runs the command and then removes
-// the records that match its then.
+// Line is the record as a line of the record file.
+func (r React) Line() string {
+	// The record is plain data; it always encodes.
+	b, _ := json.Marshal(r)
+	return string(b)
+}
+
+// Store names the rollback store of the step of the record.
+func (r React) Store() string {
+	sum := sha256.Sum256([]byte(r.Line()))
+	return "step-" + hex.EncodeToString(sum[:8])
+}
+
+// Command is the params of command, which runs the command of a then and
+// then removes the records that match React.
 type Command struct {
 	Command string `json:"command"`
-	Then    Then   `json:"then"`
+	React   React  `json:"react"`
 }
 
 // Exec is the params of exec, which runs a command of winch exec. Its result
@@ -178,18 +189,14 @@ type Check struct {
 
 // Pending is the result of pending: the records of the project.
 type Pending struct {
-	Handlers []string `json:"handlers"`
-	Then     []Then   `json:"then"`
-	Checks   []Check  `json:"checks,omitempty"`
+	React  []React `json:"react"`
+	Checks []Check `json:"checks,omitempty"`
+	// Old are the record files of the project that an older winch wrote and
+	// that winch no longer reads.
+	Old []string `json:"old,omitempty"`
 	// Rollback is the plan of the rollback of an earlier run whose timer
 	// process is gone: the files that it puts back and what it runs.
 	Rollback []string `json:"rollback,omitempty"`
-}
-
-// Handled is the params of handled: the handler whose record the helper
-// removes.
-type Handled struct {
-	Name string `json:"name"`
 }
 
 // StepResult is the result of check and apply, with the new state.

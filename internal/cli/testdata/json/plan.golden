@@ -3,13 +3,13 @@ stdout:
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"change","action":"change","diff":["@@ -1,1 +1,1 @@","-hi","+hello"],"then":"echo done"}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:app#1[0]","stage":"base","recipe":"app","step":"Pages: file /srv/a.html","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+page"]}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:app#1[1]","stage":"base","recipe":"app","step":"Pages: file /srv/b.html","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+page"]}
-{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:app.reload","stage":"base","recipe":"app","handler":"app.reload","status":"change"}
-{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"ok","then":"echo done","then_pending":true}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web1","address":"web1:app#2","stage":"base","recipe":"app","step":"service app","module":"service","status":"change","action":"change","changes":["reload"]}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:base#1","stage":"base","step":"file /etc/motd","module":"file","status":"ok","then":"echo done","pending":true}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:app#1[0]","stage":"base","recipe":"app","step":"Pages: file /srv/a.html","module":"file","status":"ok"}
 {"type":"planned","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:app#1[1]","stage":"base","recipe":"app","step":"Pages: file /srv/b.html","module":"file","status":"ok"}
-{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:app.reload","stage":"base","recipe":"app","handler":"app.reload","status":"change"}
+{"type":"planned","time":"2026-10-26T12:00:00Z","host":"web2","address":"web2:app#2","stage":"base","recipe":"app","step":"service app","module":"service","status":"change","action":"change","changes":["reload"],"pending":true}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web1","status":"change"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web2","status":"change"}
 {"type":"host","time":"2026-10-26T12:00:00Z","phase":"plan","host":"web3","status":"unreachable","error":"ssh: connect to host unreachable: Connection refused"}
-{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":3,"change":2,"unchanged":0,"unknown":0,"failed":1},"hash":"0c09f0af3942ae95","exit_code":4}
+{"type":"summary","time":"2026-10-26T12:00:00Z","plan":{"hosts":3,"change":2,"unchanged":0,"unknown":0,"failed":1},"hash":"db221014192dbe1f","exit_code":4}
 stderr:

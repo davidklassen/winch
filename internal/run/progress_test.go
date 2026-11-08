@@ -46,11 +46,9 @@ var progressFiles = map[string]string{
       path: /etc/nginx/nginx.conf
       content: "a\n"
     then: nginx -t
-    notify: reload
-handlers:
-  reload:
-    - cmd:
-        command: systemctl reload nginx
+  - cmd:
+      command: systemctl reload nginx
+    on_change: [/etc/nginx]
 `,
 }
 
@@ -66,8 +64,8 @@ func TestProgress(t *testing.T) {
 			t.Fatalf("apply failed: %s", errOut.String())
 		}
 		step := "nginx: Configure: file /etc/nginx/nginx.conf"
-		want := []string{"connecting", step, "idle",
-			"connecting", step, step + ": then", "nginx: handler nginx.reload: cmd systemctl reload nginx", "web: health", "access check", "idle"}
+		want := []string{"connecting", step, "nginx: cmd systemctl reload nginx", "idle",
+			"connecting", step, step + ": then", "nginx: cmd systemctl reload nginx", "web: health", "access check", "idle"}
 		if !slices.Equal(p.calls["web1"], want) {
 			t.Errorf("serial %v: progress %q, want %q", serial, p.calls["web1"], want)
 		}

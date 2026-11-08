@@ -93,16 +93,16 @@ func TestRunKeepsRecords(t *testing.T) {
 	dir := runProject(t)
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/motd", "hi")
-	then := protocol.Then{Pipeline: "run", Stage: "web", Module: "file", Mains: mains("/etc/aliases")}
+	then := protocol.React{Pipeline: "run", Stage: "web", Module: "file", Mains: mains("/etc/aliases"), Then: true}
 	gate := protocol.Check{Pipeline: "run", Stage: "web"}
-	h.SetThen("web1", then)
+	h.SetReact("web1", then)
 	h.Pend("web1", gate)
 	r := winch(t, dir, h, false, "", "run", "web1", "file", "path=/etc/motd", "content=hi", "--yes")
 	if r.code != exitOK || r.err != "" {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
-	if len(h.ThenOf("web1")) != 1 || len(h.ChecksOf("web1")) != 1 {
-		t.Errorf("records after run: %v %v, want both", h.ThenOf("web1"), h.ChecksOf("web1"))
+	if len(h.ReactOf("web1")) != 1 || len(h.ChecksOf("web1")) != 1 {
+		t.Errorf("records after run: %v %v, want both", h.ReactOf("web1"), h.ChecksOf("web1"))
 	}
 }
 
@@ -438,7 +438,7 @@ func TestPlanSSHDWarning(t *testing.T) {
         then: systemctl restart ssh
 `,
 	})
-	const warning = "sshd loads a changed config without an access check; reload it in a service handler with confirm_access: true"
+	const warning = "sshd loads a changed config without an access check; reload it in a service step with on_change and confirm_access: true"
 	r := winch(t, dir, fakehost.New(), false, "", "plan", "site")
 	if want := "pipelines/site.yaml:5:9: warning: " + warning + "\n"; r.code != exitOK || !strings.Contains(r.err, want) {
 		t.Errorf("exit %d, stderr %q, want %q", r.code, r.err, want)

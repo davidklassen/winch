@@ -7,7 +7,7 @@ import (
 	"github.com/davidklassen/winch/internal/module"
 )
 
-// spec: Steps (confirm_access: service steps only, in steps or in handlers)
+// spec: Steps (confirm_access: service steps only)
 func TestConfirmAccess(t *testing.T) {
 	dir := writeProject(t, map[string]string{
 		"pipelines/site.yaml": `stages:
@@ -20,24 +20,16 @@ func TestConfirmAccess(t *testing.T) {
           name: nftables
           running: true
         confirm_access: true
-  - name: other
-    hosts: all
-    steps:
-      - file:
-          path: /etc/motd
-          content: hi
 `,
 		"recipes/ssh/recipe.yaml": `steps:
   - file:
       path: /etc/ssh/sshd_config.d/local.conf
       content: "PasswordAuthentication no\n"
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
+  - service:
+      name: ssh
+      reloaded: true
+    on_change: [/etc/ssh]
+    confirm_access: true
 `,
 		"recipes/plain/recipe.yaml": `steps:
   - service:
@@ -51,15 +43,9 @@ handlers:
 		t.Fatal(err)
 	}
 	stages := p.Pipeline.Stages
-	if !stages[0].Steps[2].ConfirmAccess || !stages[0].ConfirmsAccess() || stages[1].ConfirmsAccess() {
-		t.Errorf("stage steps: confirm_access %v, stage base %v, stage other %v", stages[0].Steps[2].ConfirmAccess, stages[0].ConfirmsAccess(), stages[1].ConfirmsAccess())
-	}
 	ssh, plain := stages[0].Steps[0].Recipe, stages[0].Steps[1].Recipe
-	if !ssh.Handlers[0].Steps[0].ConfirmAccess || !ssh.ConfirmsAccess() {
-		t.Errorf("recipe ssh: handler step confirm_access %v, recipe %v", ssh.Handlers[0].Steps[0].ConfirmAccess, ssh.ConfirmsAccess())
-	}
-	if plain.Steps[0].ConfirmAccess || plain.ConfirmsAccess() {
-		t.Error("confirm_access: false confirms")
+	if !stages[0].Steps[2].ConfirmAccess || !ssh.Steps[1].ConfirmAccess || plain.Steps[0].ConfirmAccess {
+		t.Errorf("confirm_access: stage step %v, ssh %v, plain %v", stages[0].Steps[2].ConfirmAccess, ssh.Steps[1].ConfirmAccess, plain.Steps[0].ConfirmAccess)
 	}
 }
 

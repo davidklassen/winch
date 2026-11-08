@@ -1,5 +1,0 @@
-stdout:
-2 hosts: 0 to change, 2 unchanged, 0 unknown
-plan fbad54a9b442c741
-stderr:
-web2: note: a pending handler app.restart waits until its recipe runs on this host

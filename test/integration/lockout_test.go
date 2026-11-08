@@ -21,18 +21,16 @@ steps:
       template: nftables.conf.tmpl
       mode: "0755"
       validate: nft -c -f /etc/nftables.conf
-    notify: reload
   - service:
       name: nftables
       enabled: true
       running: true
     confirm_access: true
-handlers:
-  reload:
-    - service:
-        name: nftables
-        reloaded: true
-      confirm_access: true
+  - service:
+      name: nftables
+      reloaded: true
+    on_change: [/etc/nftables.conf]
+    confirm_access: true
 `
 
 const nftablesTemplate = `#!/usr/sbin/nft -f
@@ -82,7 +80,7 @@ func TestLockoutFirewall(t *testing.T) {
 	start := time.Now()
 	r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.nftables_tcp_ports=[80]")
 	took := time.Since(start)
-	if r.Code != 1 || !strings.Contains(r.Stderr, "firewall: nftables: failed: handler nftables.reload: service nftables: the access check failed: ") ||
+	if r.Code != 1 || !strings.Contains(r.Stderr, "firewall: nftables: failed: service nftables: the access check failed: ") ||
 		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply with SSH dropped: exit %d", r.Code)
 	}
@@ -104,10 +102,9 @@ func TestLockoutFirewall(t *testing.T) {
 	}
 }
 
-// spec: Running a pipeline/Lockout protection (a step saves in the store of
-// its own recipe and in that of each recipe whose confirm_access handler it
-// notifies)
-func TestLockoutNotifiedStore(t *testing.T) {
+// spec: Running a pipeline/Lockout protection (a step saves each path that
+// it changes in the store of each later guarded step that reacts to it)
+func TestLockoutStoreOfALaterRecipe(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "notified-store")
 	dir := vmtest.WriteProject(t, map[string]string{
@@ -124,13 +121,6 @@ func TestLockoutNotifiedStore(t *testing.T) {
         		{{ if vars.ssh_drop }}ct state new tcp dport 22 drop{{ end }}
         	}
         }
-    notify: nftables.reload
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
 `,
 		"recipes/nftables/recipe.yaml": `steps:
   - pkg:
@@ -143,17 +133,15 @@ handlers:
         include "/etc/nftables-ssh.nft"
       mode: "0755"
       validate: nft -c -f /etc/nftables.conf
-    notify: reload
   - service:
       name: nftables
       enabled: true
       running: true
-handlers:
-  reload:
-    - service:
-        name: nftables
-        reloaded: true
-      confirm_access: true
+  - service:
+      name: nftables
+      reloaded: true
+    on_change: [/etc/nftables-ssh.nft, /etc/nftables.conf]
+    confirm_access: true
 `,
 	})
 	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
@@ -162,7 +150,7 @@ handlers:
 	good := vm.MustRun(t, "cat /etc/nftables-ssh.nft")
 
 	r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.ssh_drop=true")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "notified-store: nftables: failed: handler nftables.reload: service nftables: the access check failed: ") ||
+	if r.Code != 1 || !strings.Contains(r.Stderr, "notified-store: nftables: failed: service nftables: the access check failed: ") ||
 		!strings.HasSuffix(r.Stderr, "; the old files are back\n") || strings.Contains(r.Stderr, "the rollback failed") {
 		t.Fatalf("apply with SSH dropped: exit %d", r.Code)
 	}
@@ -253,13 +241,11 @@ func TestLockoutGroups(t *testing.T) {
   - file:
       path: /etc/ssh/sshd_config.d/port.conf
       content: "Port 2222\n"
-    notify: restart
-handlers:
-  restart:
-    - service:
-        name: ssh
-        restarted: true
-      confirm_access: true
+  - service:
+      name: ssh
+      restarted: true
+    on_change: [/etc/ssh/sshd_config.d/port.conf]
+    confirm_access: true
 `
 	dir = vmtest.WriteProject(t, files)
 	r = lab.Winch(t, dir, "apply", "site", "--yes")
@@ -277,13 +263,11 @@ steps:
   - file:
       path: /etc/ssh/sshd_config.d/port.conf
       content: !tpl "{{ for port in vars.sshd_ports }}Port {{ port }}\n{{ end }}"
-    notify: restart
-handlers:
-  restart:
-    - service:
-        name: ssh
-        restarted: true
-      confirm_access: true
+  - service:
+      name: ssh
+      restarted: true
+    on_change: [/etc/ssh/sshd_config.d/port.conf]
+    confirm_access: true
 `
 
 // spec: Running a pipeline/Lockout protection (a guarded reload of sshd puts
@@ -304,18 +288,16 @@ func TestLockoutSSHDConfigOfAnotherRecipe(t *testing.T) {
   - file:
       path: /etc/ssh/sshd_config.d/local.conf
       content: "MaxAuthTries 6\n"
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
+  - service:
+      name: ssh
+      reloaded: true
+    on_change: [/etc/ssh/sshd_config.d/local.conf]
+    confirm_access: true
 `,
 	})
 	// With ssh.socket, the drop-in step restarts it, and its own access check
 	// fails.
-	failed := "sshd-other-recipe: ssh: failed: handler ssh.reload: service ssh: the access check failed: "
+	failed := "sshd-other-recipe: ssh: failed: service ssh: the access check failed: "
 	if osRelease().id == "ubuntu" {
 		failed = "sshd-other-recipe: hardening: failed: file /etc/ssh/sshd_config.d/00-deny.conf: the access check failed: "
 	}
@@ -363,13 +345,11 @@ func TestLockoutSSHDConfigBeforeAReload(t *testing.T) {
   - file:
       path: /etc/ssh/winch-tries
       content: !tpl "{{ vars.tries }}\n"
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
+  - service:
+      name: ssh
+      reloaded: true
+    on_change: [/etc/ssh/winch-tries]
+    confirm_access: true
 `,
 	})
 	const conf = "cat /etc/ssh/sshd_config.d/hardening.conf"
@@ -434,7 +414,7 @@ func TestLockoutSSHPort(t *testing.T) {
 	// Only the new port: the access check fails, and the old port is back.
 	// With ssh.socket, the file step moves the port, and its own access
 	// check fails.
-	failed := "ssh-port: sshd: failed: handler sshd.restart: service ssh: the access check failed: "
+	failed := "ssh-port: sshd: failed: service ssh: the access check failed: "
 	if socket {
 		failed = "ssh-port: sshd: failed: file /etc/ssh/sshd_config.d/port.conf: the access check failed: "
 	}
@@ -556,12 +536,10 @@ func TestLockoutSSHSocketDropIn(t *testing.T) {
   - file:
       path: /etc/systemd/system/ssh.socket.d/port.conf
       content: "[Socket]\nListenStream=\nListenStream=2222\n"
-    notify: restart
-handlers:
-  restart:
-    - service:
-        name: ssh.socket
-        restarted: true
+  - service:
+      name: ssh.socket
+      restarted: true
+    on_change: [/etc/systemd/system/ssh.socket.d]
 `,
 	})
 	r := lab.Winch(t, dir, "plan", "site")
@@ -649,13 +627,11 @@ const rollbackStartPipeline = `stages:
       - file:
           path: /etc/winch-rb.conf
           content: !tpl "{{ vars.conf }}\n"
-        notify: restart
-    handlers:
-      restart:
-        - service:
-            name: winch-rb
-            restarted: true
-          confirm_access: true
+      - service:
+          name: winch-rb
+          restarted: true
+        on_change: [/etc/winch-rb.conf]
+        confirm_access: true
 `
 
 // spec: Running a pipeline/Lockout protection (the rollback reverses a
@@ -710,17 +686,15 @@ const failedRollbackPipeline = `stages:
       - service:
           name: winch-frb
           running: true
-        then: echo then >> /root/frb-then
+        on_change: [/etc/winch-frb.conf]
         confirm_access: true
-        notify: done
-    handlers:
-      done:
-        - cmd:
-            command: echo done >> /root/frb-done
+      - cmd:
+          command: echo done >> /root/frb-done
+        on_change: [/etc/winch-frb.conf]
 `
 
 // spec: Running a pipeline/Lockout protection (when a rollback fails, the
-// step's pending handlers and then commands stay recorded)
+// records of the steps that react to the changes stay)
 func TestLockoutFailedRollbackKeepsTheRecords(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "failed-rollback")
@@ -746,7 +720,7 @@ func TestLockoutFailedRollbackKeepsTheRecords(t *testing.T) {
 	if r.Code != 0 || strings.Contains(r.Stdout, "~ service") {
 		t.Errorf("plan after the fix by hand: exit %d, want only the records\n%s", r.Code, r.Stdout)
 	}
-	for _, want := range []string{"! then: echo then >> /root/frb-then\n", "! handler base.done\n"} {
+	for _, want := range []string{"! service winch-frb (pending from an earlier run)\n", "! cmd echo done >> /root/frb-done (pending from an earlier run)\n"} {
 		if !strings.Contains(r.Stdout, want) {
 			t.Errorf("plan after the failed rollback: want %q\n%s", want, r.Stdout)
 		}
@@ -761,7 +735,6 @@ const pendingConfirmPipeline = `stages:
           path: /etc/ssh/sshd_config.d/winch.conf
           content: !tpl "MaxAuthTries {{ vars.tries }}\n"
         then: !expr vars.wait
-        notify: reload
       - name: Fails on request
         cmd:
           command: exit 3
@@ -773,17 +746,16 @@ const pendingConfirmPipeline = `stages:
         cmd:
           command: exit 4
         when: !expr vars.fail_late
-    handlers:
-      reload:
-        - service:
-            name: ssh
-            reloaded: true
-          confirm_access: true
+      - service:
+          name: ssh
+          reloaded: true
+        on_change: [/etc/ssh/sshd_config.d/winch.conf]
+        confirm_access: true
 `
 
 // spec: Running a pipeline/Lockout protection (the run of a host ends before
-// a notified handler with confirm_access ran)
-func TestLockoutPendingHandler(t *testing.T) {
+// a guarded step that reacts to a change of the run ran)
+func TestLockoutPendingGuardedStep(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "pending-confirm")
 	dir := vmtest.WriteProject(t, map[string]string{
@@ -792,12 +764,13 @@ func TestLockoutPendingHandler(t *testing.T) {
 		"pipelines/site.yaml":   pendingConfirmPipeline,
 	})
 	const conf = "cat /etc/ssh/sshd_config.d/winch.conf"
-	const records = "sed '/^version 1$/d' /var/lib/winch/handlers/pdemo 2>/dev/null; true"
+	// records are the records of the reload of ssh.
+	const records = "grep -F '\"module\":\"service\"' /var/lib/winch/react/pdemo 2>/dev/null; true"
 	// The reboot loads a drop-in that no access check tested. On Ubuntu, the
 	// step's restart of ssh.socket tests it.
 	var warnings []string
 	if osRelease().id != "ubuntu" {
-		warnings = []string{"pipelines/site.yaml:14:9: warning: sshd loads a changed config without an access check; reload it in a service handler with confirm_access: true"}
+		warnings = []string{"pipelines/site.yaml:13:9: warning: sshd loads a changed config without an access check; reload it in a service step with on_change and confirm_access: true"}
 	}
 	if r := lab.WinchEnvWarnings(t, dir, nil, warnings, "apply", "site", "--yes"); r.Code != 0 {
 		t.Fatalf("first apply: exit %d\n%s", r.Code, r.Stderr)
@@ -812,7 +785,7 @@ func TestLockoutPendingHandler(t *testing.T) {
 			t.Errorf("sshd config after the failed run: %q, want the old file", out)
 		}
 		if out := vm.MustRun(t, records); out != "" {
-			t.Errorf("pending handlers = %q, want none", out)
+			t.Errorf("records of the reload = %q, want none", out)
 		}
 		r = lab.WinchEnvWarnings(t, dir, nil, warnings, "plan", "site", "--set", "vars.tries=7")
 		if r.Code != 0 || !strings.Contains(r.Stdout, "~ file /etc/ssh/sshd_config.d/winch.conf") {
@@ -822,7 +795,7 @@ func TestLockoutPendingHandler(t *testing.T) {
 
 	t.Run("a broken session puts back the file", func(t *testing.T) {
 		w := startWinch(t, dir, "apply", "site", "--yes", "--set", "vars.tries=8", "--set", "vars.wait=sleep 10")
-		vm.MustRun(t, `timeout 60 sh -c 'until grep -q reload /var/lib/winch/handlers/pdemo 2>/dev/null && grep -qx "MaxAuthTries 8" /etc/ssh/sshd_config.d/winch.conf; do sleep 0.2; done'`)
+		vm.MustRun(t, `timeout 60 sh -c 'until grep -qF "\"module\":\"service\"" /var/lib/winch/react/pdemo 2>/dev/null && grep -qx "MaxAuthTries 8" /etc/ssh/sshd_config.d/winch.conf; do sleep 0.2; done'`)
 		// The kill reaches ssh too, so the connection drops.
 		if err := syscall.Kill(-w.cmd.Process.Pid, syscall.SIGKILL); err != nil {
 			t.Fatal(err)
@@ -834,7 +807,7 @@ func TestLockoutPendingHandler(t *testing.T) {
 			t.Errorf("sshd config after the broken session: %q, want the old file", out)
 		}
 		if out := vm.MustRun(t, records); out != "" {
-			t.Errorf("pending handlers = %q, want none", out)
+			t.Errorf("records of the reload = %q, want none", out)
 		}
 	})
 
@@ -856,21 +829,21 @@ func TestLockoutPendingHandler(t *testing.T) {
 			t.Errorf("sshd config after the failed run: %q, want the old file", out)
 		}
 		if out := vm.MustRun(t, records); out != "" {
-			t.Errorf("pending handlers = %q, want none", out)
+			t.Errorf("records of the reload = %q, want none", out)
 		}
 	})
 
-	t.Run("a reboot keeps the file for the handler", func(t *testing.T) {
+	t.Run("a reboot keeps the file for the reload", func(t *testing.T) {
 		vm.MustRun(t, "touch /run/reboot-required")
 		r := lab.WinchEnvWarnings(t, dir, nil, warnings, "apply", "site", "--yes", "--set", "vars.tries=9")
-		if r.Code != 0 || !strings.Contains(r.Stdout, "~ handler base.reload: service ssh") {
+		if r.Code != 0 || !strings.Contains(r.Stdout, "base: ~ service ssh") {
 			t.Fatalf("apply: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
 		}
 		if out := vm.MustRun(t, conf); out != "MaxAuthTries 9\n" {
 			t.Errorf("sshd config after the reboot: %q, want the new file", out)
 		}
 		if out := vm.MustRun(t, records); out != "" {
-			t.Errorf("pending handlers = %q, want none", out)
+			t.Errorf("records of the reload = %q, want none", out)
 		}
 	})
 }
@@ -878,7 +851,7 @@ func TestLockoutPendingHandler(t *testing.T) {
 // spec: Running a pipeline/Lockout protection; Modules/download (the
 // rollback puts back the old tree of an unpack, and the next plan unpacks
 // again)
-func TestLockoutPendingHandlerUnpack(t *testing.T) {
+func TestLockoutPendingGuardedStepUnpack(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "pending-unpack")
 	v1 := tarGz(t, []entry{{name: "bin/tool", typ: tar.TypeReg, mode: 0o755, body: "#!/bin/sh\necho v1\n"}})
@@ -897,17 +870,15 @@ func TestLockoutPendingHandlerUnpack(t *testing.T) {
           url: ` + url + `
           sha256: ` + sum + `
           unpack: /opt/winch-test/app
-        notify: reload
       - name: Fails on request
         cmd:
           command: exit 3
         when: !expr vars.fail
-    handlers:
-      reload:
-        - service:
-            name: ssh
-            reloaded: true
-          confirm_access: true
+      - service:
+          name: ssh
+          reloaded: true
+        on_change: [/opt/winch-test/app]
+        confirm_access: true
 `,
 		})
 	}
@@ -1089,13 +1060,11 @@ const dueRollbackPipeline = `stages:
       - file:
           path: /etc/winch-due.conf
           content: !tpl "{{ vars.conf }}\n"
-        notify: reload
-    handlers:
-      reload:
-        - service:
-            name: winch-due
-            reloaded: true
-          confirm_access: true
+      - service:
+          name: winch-due
+          reloaded: true
+        on_change: [/etc/winch-due.conf]
+        confirm_access: true
 `
 
 // spec: Running a pipeline/Lockout protection (a timer whose process is gone
@@ -1138,5 +1107,56 @@ func TestLockoutDueRollback(t *testing.T) {
 	}
 	if r := lab.Winch(t, dir, "plan", "site"); r.Code != 0 || !unchanged(r.Stdout, 1) {
 		t.Errorf("plan after the apply: exit %d\n%s", r.Code, r.Stdout)
+	}
+}
+
+const putBackPipeline = `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/ssh/sshd_config.d/winch-pb.conf
+          content: !tpl "MaxAuthTries {{ vars.tries }}\n"
+      - file:
+          path: /etc/winch-pb
+          content: !tpl "{{ vars.tries }}\n"
+      - name: Fails on request
+        cmd:
+          command: exit 3
+        when: !expr vars.fail
+      - service:
+          name: ssh
+          reloaded: true
+        on_change: [/etc/ssh/sshd_config.d/winch-pb.conf]
+        confirm_access: true
+`
+
+// spec: Running a pipeline/Lockout protection (the store of a guarded step
+// holds the paths of the changes it reacts to; the line when it did not run)
+func TestLockoutPutBack(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "put-back")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: pbdemo\ninventory: test\nvars:\n  tries: 6\n  fail: false\n",
+		"inventories/test.yaml": "hosts:\n  put-back: {}\n",
+		"pipelines/site.yaml":   putBackPipeline,
+	})
+	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("first apply: exit %d\n%s", r.Code, r.Stderr)
+	}
+	r := lab.Winch(t, dir, "apply", "site", "--yes", "--set", "vars.tries=7", "--set", "vars.fail=true")
+	if r.Code != 1 || !strings.Contains(r.Stdout, "put-back: put back /etc/ssh/sshd_config.d/winch-pb.conf: service ssh did not run\n") {
+		t.Fatalf("apply: exit %d, want the put back line\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	// The other file of the run stays: the reload does not react to it.
+	if out := vm.MustRun(t, "cat /etc/ssh/sshd_config.d/winch-pb.conf /etc/winch-pb"); out != "MaxAuthTries 6\n7\n" {
+		t.Errorf("files after the failed run: %q, want the old drop-in and the new file", out)
+	}
+	if out := vm.MustRun(t, "sed '/^version 1$/d' /var/lib/winch/react/pbdemo 2>/dev/null; true"); out != "" {
+		t.Errorf("records = %q, want none", out)
+	}
+	r = lab.Winch(t, dir, "plan", "site", "--set", "vars.tries=7")
+	if r.Code != 0 || !strings.Contains(r.Stdout, "~ file /etc/ssh/sshd_config.d/winch-pb.conf") {
+		t.Errorf("plan after the failed run: exit %d, want the change again\n%s", r.Code, r.Stdout)
 	}
 }

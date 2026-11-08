@@ -285,7 +285,7 @@ systemctl daemon-reload && systemctl start winch-run`)
 			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - service:\n          name: winch-run\n          restarted: true\n",
 		})
 		r := lab.Winch(t, dir, "plan", "site")
-		if r.Code != 3 || !strings.Contains(r.Stderr, "restarted: only handler steps and winch run can use restarted") {
+		if r.Code != 3 || !strings.Contains(r.Stderr, "restarted: a step with restarted needs on_change; add on_change with the paths whose change it reacts to") {
 			t.Errorf("plan: exit %d", r.Code)
 		}
 	})
@@ -305,14 +305,10 @@ func TestPlanAfterUpgrade(t *testing.T) {
 	vm := upgradeVM(t, "upgrade-plan")
 	project := func(steps string) string {
 		return vmtest.WriteProject(t, map[string]string{
-			"winch.yaml":            "name: demo\ninventory: test\n",
-			"inventories/test.yaml": "hosts:\n  upgrade-plan: {}\n",
-			"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
-			"recipes/app/recipe.yaml": "steps:\n" + steps + `handlers:
-  reload:
-    - cmd:
-        command: touch /root/reloaded
-`,
+			"winch.yaml":              "name: demo\ninventory: test\n",
+			"inventories/test.yaml":   "hosts:\n  upgrade-plan: {}\n",
+			"pipelines/site.yaml":     "stages:\n  - name: base\n    hosts: all\n    steps:\n      - recipe: app\n",
+			"recipes/app/recipe.yaml": "steps:\n" + steps,
 		})
 	}
 	reset := upgradeReset + "; rm -f /root/reloaded /etc/winch-up-copy.conf /etc/winch-example.conf; dpkg --purge winch-stock winch-mta >/dev/null 2>&1; rm -rf /etc/winch-stock.conf /var/cache/apt/archives/winch-stock_0_all.deb /root/virt /etc/apt/sources.list.d/winch-virt.sources; true"
@@ -338,8 +334,8 @@ func TestPlanAfterUpgrade(t *testing.T) {
 
 	t.Run("copy_from of a file that the upgrade changes", func(t *testing.T) {
 		vm.MustRun(t, reset+" && "+installV1("winch-up")+" && cp /usr/share/winch-up/ucf.conf /etc/winch-up-copy.conf")
-		dir := project("  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up-copy.conf\n      copy_from: /usr/share/winch-up/ucf.conf\n    notify: reload\n")
-		plan(t, dir, "~ file /etc/winch-up-copy.conf\n          content from /usr/share/winch-up/ucf.conf\n          @@ -1,1 +1,1 @@\n          -version 1\n          +version 2\n", "! handler app.reload")
+		dir := project("  - upgrade:\n      mode: safe\n  - file:\n      path: /etc/winch-up-copy.conf\n      copy_from: /usr/share/winch-up/ucf.conf\n  - cmd:\n      command: touch /root/reloaded\n    on_change: [/etc/winch-up-copy.conf]\n")
+		plan(t, dir, "~ file /etc/winch-up-copy.conf\n          content from /usr/share/winch-up/ucf.conf\n          @@ -1,1 +1,1 @@\n          -version 1\n          +version 2\n", "? cmd touch /root/reloaded (/etc/winch-up-copy.conf changes)")
 		vm.MustRun(t, "[ \"$(cat /etc/winch-up-copy.conf)\" = 'version 2' ] && [ -e /root/reloaded ]")
 	})
 

@@ -1,0 +1,66 @@
+stdout:
+web1
+  web
+    site
+      ! then: reindex
+  apps
+    ! then: newaliases
+
+web2
+  web
+    nginx
+      + file /etc/nginx/a.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +a
+      + file /etc/nginx/b.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +b
+      + file /etc/nginx/c.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +c
+      ~ service nginx: restart (/etc/nginx/c.conf changes)
+      ~ service nginx: reload (/etc/nginx/a.conf changes)
+    site
+      + file /var/www/index.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+      + file /var/www/about.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+          then: reindex
+  apps
+    + file /etc/motd
+        owner root, group root, mode 0644
+        @@ -0,0 +1,1 @@
+        +hi
+        then: newaliases
+
+2 hosts: 2 to change, 0 unchanged, 0 unknown
+plan e5542c5c84264e36
+json:
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:nginx#1","stage":"web","recipe":"nginx","step":"file /etc/nginx/a.conf","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:nginx#2","stage":"web","recipe":"nginx","step":"file /etc/nginx/b.conf","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:nginx#3","stage":"web","recipe":"nginx","step":"file /etc/nginx/c.conf","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:nginx#4","stage":"web","recipe":"nginx","step":"service nginx","module":"service","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:nginx#5","stage":"web","recipe":"nginx","step":"service nginx","module":"service","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:site#1[0]","stage":"web","recipe":"site","step":"file /var/www/index.html","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:site#1[1]","stage":"web","recipe":"site","step":"file /var/www/about.html","module":"file","status":"ok","then":"reindex","pending":true}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:app#1","stage":"apps","recipe":"app","step":"file /etc/app.conf","module":"file","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:app#2","stage":"apps","recipe":"app","step":"service app","module":"service","status":"ok"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:apps#2","stage":"apps","step":"file /etc/motd","module":"file","status":"ok","then":"newaliases","pending":true}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:nginx#1","stage":"web","recipe":"nginx","step":"file /etc/nginx/a.conf","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+a"]}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:nginx#2","stage":"web","recipe":"nginx","step":"file /etc/nginx/b.conf","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+b"]}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:nginx#3","stage":"web","recipe":"nginx","step":"file /etc/nginx/c.conf","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+c"]}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:nginx#4","stage":"web","recipe":"nginx","step":"service nginx","module":"service","status":"change","action":"change","changes":["restart"]}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:nginx#5","stage":"web","recipe":"nginx","step":"service nginx","module":"service","status":"change","action":"change","changes":["reload"]}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:site#1[0]","stage":"web","recipe":"site","step":"file /var/www/index.html","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hi"]}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:site#1[1]","stage":"web","recipe":"site","step":"file /var/www/about.html","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hi"],"then":"reindex"}
+{"type":"planned","time":"0001-01-01T00:00:00Z","host":"web2","address":"web2:apps#2","stage":"apps","step":"file /etc/motd","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+hi"],"then":"newaliases"}
+{"type":"host","time":"0001-01-01T00:00:00Z","phase":"plan","host":"web1","status":"change"}
+{"type":"host","time":"0001-01-01T00:00:00Z","phase":"plan","host":"web2","status":"change"}
+stderr:

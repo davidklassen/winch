@@ -22,7 +22,7 @@ func main() {
 	login := module.State{LoginUID: helper.LoginUID(os.Getenv("SUDO_UID"), os.Getuid()), SSHConnection: os.Args[1]}
 	helper.ResetEnv()
 	// A write to a broken session fails instead of killing the helper, so
-	// that it can put back the files of a handler that did not run. Notify,
+	// that it can put back the files of a guarded step that did not run. Notify,
 	// unlike Ignore, does not pass to the commands that the helper starts.
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 	// The login user's umask reaches the helper through sudo.

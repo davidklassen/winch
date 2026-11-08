@@ -6,18 +6,14 @@ steps:
       path: /etc/dkimpy-milter/dkim.key
       content: !expr vars.dkimpy_milter_key
       mode: "0600"
-    notify: restart
   - file:
       path: /etc/dkimpy-milter/dkimpy-milter.conf
       template: dkimpy-milter.conf.tmpl
-    notify: restart
   - service:
       name: dkimpy-milter
       enabled: true
       running: true
-
-handlers:
-  restart:
-    - service:
-        name: dkimpy-milter
-        restarted: true
+  - service:
+      name: dkimpy-milter
+      restarted: true
+    on_change: [/etc/dkimpy-milter]

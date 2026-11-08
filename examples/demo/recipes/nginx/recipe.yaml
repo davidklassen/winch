@@ -1,4 +1,5 @@
-# nginx serves only the sites of the project.
+# nginx serves only the sites of the project. The web stage reloads nginx
+# after the sites, which change its config too.
 steps:
   - pkg:
       name: nginx
@@ -7,23 +8,14 @@ steps:
       path: /etc/nginx/nginx.conf
       stock: true
       validate: nginx -t
-    notify: reload
   - file:
       path: /etc/nginx/snippets/tls.conf
       source: tls.conf
-    notify: reload
   - name: Only our sites (removes Debian's default)
     dir:
       path: /etc/nginx/sites-enabled
       purge: true
-    notify: reload
   - service:
       name: nginx
       enabled: true
       running: true
-
-handlers:
-  reload:
-    - service:
-        name: nginx
-        reloaded: true

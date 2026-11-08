@@ -36,11 +36,9 @@ func TestPurgePostmap(t *testing.T) {
   - file:
       path: /etc/winch-maps/aliases
       content: "carol@example.org dave@example.org\n"
-    notify: rebuild
-handlers:
-  rebuild:
-    - cmd:
-        command: postmap /etc/winch-maps/aliases
+  - cmd:
+      command: postmap /etc/winch-maps/aliases
+    on_change: [/etc/winch-maps/aliases]
 `,
 	})
 	for run := 1; run <= 4; run++ {
@@ -55,7 +53,7 @@ handlers:
 			t.Fatalf("apply %d: map lookup = %q", run, got)
 		}
 		if got := vm.MustRun(t, "postmap -q carol@example.org /etc/winch-maps/aliases"); got != "dave@example.org\n" {
-			t.Fatalf("apply %d: handler map lookup = %q", run, got)
+			t.Fatalf("apply %d: aliases map lookup = %q", run, got)
 		}
 		vm.MustRun(t, "test ! -e /etc/winch-maps/stale")
 		if (run == 2 || run == 3) && !strings.Contains(r.Stdout, "1 host: 0 to change, 1 unchanged") {

@@ -8,11 +8,11 @@ stdout:
           [31m-listen 80;[0m
           [32m+listen 8080;[0m
           then: nginx -t
-      [36m![0m handler nginx.reload
+      [33m~[0m service nginx: reload (/etc/nginx/nginx.conf changes)
     [31m-[0m file /etc/issue
     [36m*[0m health: curl -sf http://localhost/
 
 3 hosts: 2 to change, 0 unchanged, 0 unknown, 1 failed
-plan 5ea6dc05a0555b3c
+plan 2665c7626423df5c
 stderr:
 [31mweb3: nginx: Configure nginx: file /etc/nginx/nginx.conf: permission denied[0m

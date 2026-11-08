@@ -392,7 +392,7 @@ func TestSecretSweep(t *testing.T) {
           content: "a\n"
 `, func(h *fakehost.Hosts) {
 			h.SetFile("web1", "/srv/f-zqxj", "a\n")
-			h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/srv/f-zqxj"}})
+			h.SetReact("web1", protocol.React{Pipeline: "site", Stage: "base", Module: "file", Mains: []string{"/srv/f-zqxj"}, Then: true})
 		}, planAll},
 		{"an encoded part", "key (secret)", `
       - dir:

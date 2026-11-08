@@ -68,12 +68,10 @@ var hashFiles = map[string]string{
   - file:
       path: /etc/app.conf
       template: app.tmpl
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: app
-        reloaded: true
+  - service:
+      name: app
+      reloaded: true
+    on_change: [/etc/app.conf]
 `,
 }
 
@@ -159,13 +157,15 @@ func TestHashChanges(t *testing.T) {
 		{name: "a then command", files: func(t *testing.T) map[string]string {
 			return edit(t, "pipelines/site.yaml", "then: echo done", "then: echo ok")
 		}},
-		{name: "a handler step", files: func(t *testing.T) map[string]string {
+		{name: "a step with on_change", files: func(t *testing.T) map[string]string {
 			return edit(t, "recipes/app/recipe.yaml", "reloaded: true", "restarted: true")
 		}},
 		{name: "a cmd whose creates exists", setup: func(h *fakehost.Hosts) { h.SetFile("web1", "/srv/built", "") }},
-		{name: "a pending handler", setup: func(h *fakehost.Hosts) { h.SetPending("web1", "app.reload") }},
+		{name: "a pending step", setup: func(h *fakehost.Hosts) {
+			h.SetReact("web1", protocol.React{Recipe: "app", Module: "service", Mains: mains("app")})
+		}},
 		{name: "a pending then", setup: func(h *fakehost.Hosts) {
-			h.SetThen("web2", protocol.Then{Pipeline: "site", Stage: "extra"})
+			h.SetReact("web2", protocol.React{Pipeline: "site", Stage: "extra", Then: true})
 		}},
 		{name: "the stage order", files: func(t *testing.T) map[string]string {
 			files := maps.Clone(hashFiles)
@@ -323,16 +323,14 @@ func TestHashSecret(t *testing.T) {
           content: "x\n"
         loop: !expr '[vars.pw]'
 `},
-		{name: "a handler step", pipeline: stage + "      - recipe: app\n", recipe: `steps:
+		{name: "a step with on_change", pipeline: stage + "      - recipe: app\n", recipe: `steps:
   - file:
       path: /etc/app.conf
       content: "a\n"
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: !tpl "app-{{ vars.pw }}"
-        reloaded: true
+  - service:
+      name: !tpl "app-{{ vars.pw }}"
+      reloaded: true
+    on_change: [/etc/app.conf]
 `},
 	}
 	for _, tt := range tests {
@@ -428,25 +426,19 @@ func TestHashOldContent(t *testing.T) {
 	}
 }
 
-// handlerFilesWith returns the files of a recipe whose file step is ok on
-// both hosts. Its notify and its handler steps never run in the plan.
-func handlerFilesWith(t *testing.T, notify, action string) map[string]string {
+// reactFilesWith returns the files of a recipe whose file step is ok on both
+// hosts. Its step with on_change never acts in the plan.
+func reactFilesWith(t *testing.T, onChange, action string) map[string]string {
 	t.Helper()
 	files := maps.Clone(hashFiles)
 	files["recipes/app/recipe.yaml"] = `steps:
   - file:
       path: /etc/app.conf
       content: "a\n"
-    notify: ` + notify + `
-handlers:
-  reload:
-    - service:
-        name: app
-        ` + action + `: true
-  restart:
-    - service:
-        name: app
-        restarted: true
+  - service:
+      name: app
+      ` + action + `: true
+    on_change: [` + onChange + `]
 `
 	return files
 }
@@ -457,12 +449,12 @@ func TestHashSteps(t *testing.T) {
 		h.SetFile("web1", "/etc/app.conf", "a\n")
 		h.SetFile("web2", "/etc/app.conf", "a\n")
 	}
-	base := withoutFiles(planHash(t, handlerFilesWith(t, "reload", "reloaded"), present))
-	if got := withoutFiles(planHash(t, handlerFilesWith(t, "restart", "reloaded"), present)); got == base {
-		t.Error("a new notify of a step without a change did not change the hash")
+	base := withoutFiles(planHash(t, reactFilesWith(t, "/etc/app.conf", "reloaded"), present))
+	if got := withoutFiles(planHash(t, reactFilesWith(t, "/etc", "reloaded"), present)); got == base {
+		t.Error("a new on_change of a step that does not act did not change the hash")
 	}
-	if got := withoutFiles(planHash(t, handlerFilesWith(t, "reload", "restarted"), present)); got == base {
-		t.Error("a new step of a handler that does not run did not change the hash")
+	if got := withoutFiles(planHash(t, reactFilesWith(t, "/etc/app.conf", "restarted"), present)); got == base {
+		t.Error("a new action of a step that does not act did not change the hash")
 	}
 }
 

@@ -34,7 +34,7 @@ func Groups() []doc.Group {
 		"expressions": expressionFunctions,
 	}
 	groups := []doc.Group{
-		{Title: "Project files", Topics: []doc.Topic{projectTopic, inventoryTopic, pipelineTopic, recipeTopic, stepTopic, handlersTopic}},
+		{Title: "Project files", Topics: []doc.Topic{projectTopic, inventoryTopic, pipelineTopic, recipeTopic, stepTopic, reactionsTopic}},
 		{Title: "Values", Topics: []doc.Topic{variablesTopic, templatesTopic, expressionsTopic, factsTopic, secretsTopic}},
 		{Title: "Running", Topics: []doc.Topic{workflowTopic, remoteTopic}},
 	}

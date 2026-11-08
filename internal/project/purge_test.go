@@ -14,7 +14,6 @@ func TestLoadPurgeWarning(t *testing.T) {
 		want                                bool
 	}{
 		{"then", "purge: true", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", true},
-		{"notify", "purge: true", "/etc/maps/virtual", "x", "notify: app.rebuild", false},
 		{"computed content", "purge: true", "/etc/maps/virtual", "!tpl '{{ host.name }}'", "then: postmap /etc/maps/virtual", true},
 		{"kept", "purge: true\n          keep: ['*.db']", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", false},
 		{"computed keep", "purge: true\n          keep: !expr '[\"*.db\"]'", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", false},
@@ -25,8 +24,7 @@ func TestLoadPurgeWarning(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, map[string]string{
-				"pipelines/site.yaml":     stage("      - dir:\n          path: /etc/maps\n          " + tt.purge + "\n      - file:\n          path: " + tt.path + "\n          content: " + tt.content + "\n        " + tt.command + "\n      - recipe: app\n"),
-				"recipes/app/recipe.yaml": "steps: []\nhandlers:\n  rebuild:\n    - cmd:\n        command: postmap /etc/maps/virtual\n",
+				"pipelines/site.yaml": stage("      - dir:\n          path: /etc/maps\n          " + tt.purge + "\n      - file:\n          path: " + tt.path + "\n          content: " + tt.content + "\n        " + tt.command + "\n"),
 			})
 			p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
 			if err != nil {
@@ -57,7 +55,6 @@ func TestPurgeWarningScope(t *testing.T) {
 	}{
 		{"same host", "web1", "steps:\n  - file:\n      path: /etc/maps/virtual\n      content: x\n    then: postmap /etc/maps/virtual\n", true},
 		{"other host", "web2", "steps:\n  - file:\n      path: /etc/maps/virtual\n      content: x\n    then: postmap /etc/maps/virtual\n", false},
-		{"handler source", "web1", "steps: []\nhandlers:\n  update:\n    - file:\n        path: /etc/maps/virtual\n        content: x\n      then: postmap /etc/maps/virtual\n", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := writeProject(t, map[string]string{
@@ -114,22 +111,6 @@ func TestPurgeWarningAbsent(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// spec: Modules/file, dir, link (purge and generated files load warning);
-// Pipelines (handlers of a stage)
-func TestLoadPurgeWarningOfAStageHandler(t *testing.T) {
-	dir := writeProject(t, map[string]string{
-		"pipelines/site.yaml": stage("      - dir:\n          path: /etc/maps\n          purge: true\n") +
-			"    handlers:\n      rebuild:\n        - file:\n            path: /etc/maps/virtual\n            content: x\n          then: postmap /etc/maps/virtual\n",
-	})
-	p, err := Load(t.Context(), dir, "", "site", nil, Keys{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0].Error(), "purge of /etc/maps may remove files that then makes; add keep") {
-		t.Errorf("warnings = %v, want one purge warning", p.Warnings)
 	}
 }
 

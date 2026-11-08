@@ -27,7 +27,7 @@ web1
             sleep 1
 
 1 host: 1 to change, 0 unchanged, 0 unknown
-plan 2a95e8434b4ea821
+plan d6aa0a6cfd23cccf
 json:
 {"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:base#1","stage":"base","step":"Clean: cmd true\nrm -rf /srv/x","module":"cmd","status":"unknown"}
 {"type":"planned","time":"0001-01-01T00:00:00Z","host":"web1","address":"web1:base#2","stage":"base","step":"file /etc/nginx/nginx.conf","module":"file","status":"change","action":"create","changes":["owner root, group root, mode 0644"],"diff":["@@ -0,0 +1,1 @@","+events {}"],"validate":"nginx -t"}

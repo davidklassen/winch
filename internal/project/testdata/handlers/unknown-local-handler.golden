@@ -1,1 +1,0 @@
-recipes/nginx/recipe.yaml:8:14: notify: recipe nginx has no handler "relaod"; did you mean "reload"?

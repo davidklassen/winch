@@ -177,12 +177,13 @@ steps:
   - pkg:
       name: nginx
     when: !expr 'vars.domain != ""'
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: nginx
-        reloaded: true
+  - file:
+      path: /etc/nginx/conf.d/gzip.conf
+      content: "gzip on;\n"
+  - service:
+      name: nginx
+      reloaded: true
+    on_change: [/etc/nginx]
 `
 
 // spec: Project layout
@@ -199,9 +200,8 @@ func TestTopLevel(t *testing.T) {
 		if h := p.Inventory.Hosts[0]; h.Vars["domain"] != "example.com" {
 			t.Errorf("vars: %v", h.Vars)
 		}
-		s := p.Pipeline.Stages[0]
-		if len(s.Handlers) != 1 || s.Handlers[0].Name != "reload" || s.Handlers[0].Stage != "simple" {
-			t.Errorf("handlers: %+v", s.Handlers)
+		if s := p.Pipeline.Stages[0]; len(s.Steps) != 3 {
+			t.Errorf("steps: %+v", s.Steps)
 		}
 	})
 	t.Run("--inventory and --stages take the project name", func(t *testing.T) {
@@ -261,9 +261,9 @@ func TestTopLevel(t *testing.T) {
 			want: "winch.yaml:6:1: groups: the groups at the top of winch.yaml and inventories.prod of winch.yaml are two inventories; keep one of the two"},
 		{name: "steps and a pipeline file", files: map[string]string{"winch.yaml": topLevel, "inventories/test.yaml": ""},
 			want: "winch.yaml:8:1: steps: the steps at the top of winch.yaml and pipelines/site.yaml are two pipelines; keep one of the two"},
-		{name: "handlers and a pipeline key", files: map[string]string{"winch.yaml": strings.Replace(topLevel, "steps:\n  - pkg:\n      name: nginx\n    when: !expr 'vars.domain != \"\"'\n    notify: reload\n", "pipelines:\n  other:\n    steps: []\n", 1), "inventories/test.yaml": "", "pipelines/site.yaml": ""},
-			want: "winch.yaml:11:1: handlers: the handlers at the top of winch.yaml and pipelines.other of winch.yaml are two pipelines; keep one of the two"},
-		{name: "handlers without steps", files: map[string]string{"winch.yaml": strings.Replace(topLevel, "steps:\n  - pkg:\n      name: nginx\n    when: !expr 'vars.domain != \"\"'\n    notify: reload\n", "", 1), "inventories/test.yaml": "", "pipelines/site.yaml": ""},
+		{name: "parallelism and a pipeline key", files: map[string]string{"winch.yaml": strings.Replace(topLevel, "steps:\n  - pkg:\n      name: nginx\n    when: !expr 'vars.domain != \"\"'\n  - file:\n      path: /etc/nginx/conf.d/gzip.conf\n      content: \"gzip on;\\n\"\n  - service:\n      name: nginx\n      reloaded: true\n    on_change: [/etc/nginx]\n", "parallelism: 1\npipelines:\n  other:\n    steps: []\n", 1), "inventories/test.yaml": "", "pipelines/site.yaml": ""},
+			want: "winch.yaml:8:1: parallelism: the parallelism at the top of winch.yaml and pipelines.other of winch.yaml are two pipelines; keep one of the two"},
+		{name: "parallelism without steps", files: map[string]string{"winch.yaml": strings.Replace(topLevel, "steps:\n  - pkg:\n      name: nginx\n    when: !expr 'vars.domain != \"\"'\n  - file:\n      path: /etc/nginx/conf.d/gzip.conf\n      content: \"gzip on;\\n\"\n  - service:\n      name: nginx\n      reloaded: true\n    on_change: [/etc/nginx]\n", "parallelism: 1\n", 1), "inventories/test.yaml": "", "pipelines/site.yaml": ""},
 			want: "winch.yaml:8:1: a pipeline needs steps or stages"},
 		{name: "no pipeline name", files: map[string]string{"winch.yaml": "name: acme\ninventory: test\n"},
 			want: "name a pipeline: site; only steps at the top of winch.yaml run without a name"},

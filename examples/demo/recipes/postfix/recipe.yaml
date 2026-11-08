@@ -16,18 +16,14 @@ steps:
       path: /etc/postfix/vmailbox
       template: vmailbox.tmpl
     then: postmap /etc/postfix/vmailbox
-    notify: reload
   - file:
       path: /etc/postfix/main.cf
       template: main.cf.tmpl
       validate: postfix check
-    # inet_interfaces takes effect only after a restart.
-    notify: restart
   - name: Debian's stock master.cf
     file:
       path: /etc/postfix/master.cf
       copy_from: /usr/share/postfix/master.cf.dist
-    notify: restart
   - file:
       path: /etc/aliases
       template: aliases.tmpl
@@ -36,13 +32,12 @@ steps:
       name: postfix
       enabled: true
       running: true
-
-handlers:
-  reload:
-    - service:
-        name: postfix
-        reloaded: true
-  restart:
-    - service:
-        name: postfix
-        restarted: true
+  - service:
+      name: postfix
+      reloaded: true
+    on_change: [/etc/postfix/vmailbox]
+  - service:
+      name: postfix
+      restarted: true
+    # inet_interfaces takes effect only after a restart.
+    on_change: [/etc/postfix/main.cf, /etc/postfix/master.cf]

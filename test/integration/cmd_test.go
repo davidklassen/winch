@@ -243,11 +243,9 @@ const cmdRecipe = `steps:
       creates: /root/built
   - cmd:
       command: date >> /root/runs
-    notify: restart
-handlers:
-  restart:
-    - cmd:
-        command: echo restarted >> /root/handler
+  - cmd:
+      command: echo restarted >> /root/restarted
+    on_change: [/root/built]
 `
 
 // spec: Modules/cmd; Steps; CLI ("--exit-code"); Modules/reboot
@@ -264,7 +262,7 @@ func TestCmdPipeline(t *testing.T) {
 	})
 
 	r := lab.Winch(t, dir, "plan", "site", "--exit-code")
-	for _, want := range []string{"+ cmd echo built > /root/built\n", "? cmd date >> /root/runs\n", "! handler app.restart\n", "1 host: 1 to change, 0 unchanged, 0 unknown\n"} {
+	for _, want := range []string{"+ cmd echo built > /root/built\n", "? cmd date >> /root/runs\n", "? cmd echo restarted >> /root/restarted (/root/built changes)\n", "1 host: 1 to change, 0 unchanged, 0 unknown\n"} {
 		if !strings.Contains(r.Stdout, want) {
 			t.Errorf("first plan: no %q in %q", want, r.Stdout)
 		}
@@ -275,11 +273,11 @@ func TestCmdPipeline(t *testing.T) {
 	if r := lab.Winch(t, dir, "apply", "site", "--yes"); r.Code != 0 {
 		t.Fatalf("apply: exit %d, stderr %q", r.Code, r.Stderr)
 	}
-	if out := vm.MustRun(t, "cat /root/built; wc -l < /root/runs; cat /root/handler"); out != "built\n1\nrestarted\n" {
+	if out := vm.MustRun(t, "cat /root/built; wc -l < /root/runs; cat /root/restarted"); out != "built\n1\nrestarted\n" {
 		t.Errorf("after apply: %q", out)
 	}
 	r = lab.Winch(t, dir, "plan", "site")
-	if strings.Contains(r.Stdout, "+ cmd") || !strings.Contains(r.Stdout, "? cmd date >> /root/runs\n") {
+	if strings.Contains(r.Stdout, "+ cmd") || strings.Contains(r.Stdout, "restarted") || !strings.Contains(r.Stdout, "? cmd date >> /root/runs\n") {
 		t.Errorf("second plan: %q", r.Stdout)
 	}
 
@@ -345,17 +343,15 @@ steps:
       question: winch-reconf/enabled
       type: boolean
       value: !tpl "{{ vars.reconf_enabled }}"
-    notify: reconfigure
   - pkg:
       name: winch-reconf
-handlers:
-  reconfigure:
-    - cmd:
-        command: dpkg-reconfigure -f noninteractive winch-reconf
+  - cmd:
+      command: dpkg-reconfigure -f noninteractive winch-reconf
+      unless: !tpl grep -qx {{ vars.reconf_enabled }} /etc/winch-reconf
 `
 
-// spec: Modules/debconf (a handler runs dpkg-reconfigure); Steps
-func TestCmdHandler(t *testing.T) {
+// spec: Modules/debconf (a cmd runs dpkg-reconfigure); Modules/cmd (unless)
+func TestCmdReconfigure(t *testing.T) {
 	t.Parallel()
 	vm := lab.StartVM(t, "cmdhandler")
 	dir := vmtest.WriteProject(t, map[string]string{
@@ -371,7 +367,7 @@ func TestCmdHandler(t *testing.T) {
 		t.Errorf("after the first apply: %q", out)
 	}
 	r := lab.Winch(t, dir, "plan", "site", "--set", "vars.reconf_enabled=true")
-	for _, want := range []string{"~ debconf winch-reconf/enabled\n", "! handler reconf.reconfigure\n"} {
+	for _, want := range []string{"~ debconf winch-reconf/enabled\n", "~ cmd dpkg-reconfigure -f noninteractive winch-reconf\n"} {
 		if !strings.Contains(r.Stdout, want) {
 			t.Errorf("plan of the new answer: no %q in %q", want, r.Stdout)
 		}

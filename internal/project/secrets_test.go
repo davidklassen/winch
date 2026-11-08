@@ -591,7 +591,6 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 		{"computed template name in a computed loop matches a secret", "template: !tpl \"{{ item.name }}.conf.tmpl\"\n    loop: !expr vars.zones", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
 		{"computed template name by expr in a computed loop", "template: !expr '\"zones/\" + item.name + \".zone\"'\n    loop: !expr vars.zones", with(loopTemplates, map[string]string{"recipes/r/templates/zones/a.zone": "x\n"}), "recipes/r/recipe.yaml:2:5: " + msg},
 		{"computed template name reads the host", "template: !tpl \"{{ host.short }}{{ item }}.conf.tmpl\"\n    loop: [http, https]", loopTemplates, "recipes/r/recipe.yaml:2:5: " + msg},
-		{"handler", "content: x\nhandlers:\n  h:\n    - file:\n        path: /etc/h\n        content: !expr vars.token", nil, "recipes/r/recipe.yaml:7:7: " + msg},
 		{"recipe step value", "", map[string]string{
 			"recipes/r/recipe.yaml": "steps:\n  - file:\n      path: /a\n      content: !expr vars.r_pw\n",
 			"pipelines/site.yaml":   stage("      - recipe: r\n        vars: {r_pw: !expr vars.pw}\n"),
@@ -599,9 +598,6 @@ func TestLoadSecretFileModeWarning(t *testing.T) {
 		{"stage step", "content: x", map[string]string{
 			"pipelines/site.yaml": stage("      - recipe: r\n      - file:\n          path: /a\n          content: !expr vars.pw\n"),
 		}, "pipelines/site.yaml:6:9: " + msg},
-		{"stage handler", "content: x", map[string]string{
-			"pipelines/site.yaml": stage("      - recipe: r\n") + "    handlers:\n      h:\n        - file:\n            path: /a\n            content: !expr vars.pw\n",
-		}, "pipelines/site.yaml:8:11: " + msg},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			k := newKey(t)
@@ -1371,6 +1367,7 @@ func TestSecretCommandOfSeveralLines(t *testing.T) {
 		"recipes/r/recipe.yaml": `steps:
   - cmd:
       command: !tpl "curl -H t:{{ vars.pw }}\nrm -rf /srv/x\nnotify {{ vars.pw }}"
+      creates: /srv/done
     then: !tpl "a {{ vars.pw }}\nrm -rf /srv/y\nb {{ vars.pw }}"
   - file:
       path: /a

@@ -85,6 +85,8 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 			}
 			header(b, "  ", sp.Stage.Name)
 			var in *project.Step
+			// shown is the step whose element the plan showed last.
+			shown := 0
 			for _, p := range hp.Steps {
 				if !p.shows() && !p.Result.Deferred {
 					continue
@@ -97,21 +99,16 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 					indent = "      "
 				}
 				in = p.In
-				if p.Handler != nil {
-					markLine(b, indent, "!", " handler "+p.Handler.Handler.FullName()+"\n")
-					for _, hs := range p.Handler.Steps {
-						if hs.PendingThen {
-							markLine(b, indent+"    ", "!", " then:"+command(hs.Step.Shown().Then, indent+"        ")+"\n")
-						}
-					}
-					continue
-				}
-				if p.Result.Status != module.OK || p.Result.Deferred {
+				if p.Result.Status != module.OK || p.Result.Deferred || p.Pending {
 					writeStep(b, indent, p)
+					shown = p.step
 				}
 				switch {
 				case p.PendingThen:
 					markLine(b, indent, "!", " then:"+command(p.Step.Shown().Then, indent+"    ")+"\n")
+				// A then that reacts only to a change of another step.
+				case p.ThenRuns && shown != p.step:
+					markLine(b, indent, "~", " then:"+command(p.Step.Shown().Then, indent+"    ")+"\n")
 				case p.ThenRuns:
 					fmt.Fprintf(b, "%s    then:%s\n", indent, command(p.Step.Shown().Then, indent+"      "))
 				}
@@ -201,23 +198,17 @@ func (p *Plan) Notes() []Note {
 		if p.Failed[h.Name] != nil {
 			continue
 		}
-		for _, n := range p.goneHandlers[h.Name] {
-			recipe, pipeline, stage, handler := project.ParseRecord(n)
-			add(h.Name, "a pending "+p.place(recipe, pipeline, stage, handler)+" matches no handler and will not run", false)
-		}
-		for _, t := range p.goneThens[h.Name] {
-			add(h.Name, goneThenNote(t, p.place(t.Recipe, t.Pipeline, t.Stage, t.Handler))+" and will not run", false)
+		for _, r := range p.goneReacts[h.Name] {
+			add(h.Name, "a pending "+recordNoun(r)+" of "+p.place(r.Recipe, r.Pipeline, r.Stage)+" matches no step and will not run", false)
 		}
 		for _, c := range p.gone[h.Name] {
-			add(h.Name, goneNote(c, p.place(c.Recipe, c.Pipeline, c.Stage, c.Handler))+" and will not run", false)
+			add(h.Name, goneNote(c, p.checkPlace(c))+" and will not run", false)
+		}
+		for _, f := range p.Pending[h.Name].Old {
+			add(h.Name, "the records in "+f+" are of an older winch and will not run", false)
 		}
 		for _, n := range p.waiting[h.Name] {
-			recipe, pipeline, stage, handler := project.ParseRecord(n)
-			owner := "stage"
-			if recipe != "" {
-				owner = "recipe"
-			}
-			add(h.Name, "a pending "+p.place(recipe, pipeline, stage, handler)+" waits until its "+owner+" runs on this host", false)
+			add(h.Name, n, false)
 		}
 	}
 	return notes
@@ -247,33 +238,26 @@ func goneNote(c protocol.Check, place string) string {
 	return fmt.Sprintf("a pending assert of %s step %d matches no assert", place, c.Step)
 }
 
-// goneThenNote names the module and the scope of then record t that no step
-// matches. A main argument can hold a secret: a record of winch 0.1.0 holds
-// the plain argument.
-func goneThenNote(t protocol.Then, place string) string {
-	noun := "a " + t.Module + " step"
-	if m, ok := module.New(t.Module); ok {
-		noun = m.(interface{ Noun() string }).Noun()
+// place names the recipe or the stage of a record, with the pipeline of a
+// stage when it is not the pipeline of the plan.
+func (p *Plan) place(recipe, pipeline, stage string) string {
+	if recipe != "" {
+		return "recipe " + recipe
 	}
-	return fmt.Sprintf("a pending then of %s in %s matches no step", noun, place)
-}
-
-// place names the recipe, stage, or handler of a record, with the pipeline of
-// a stage when it is not the pipeline of the plan.
-func (p *Plan) place(recipe, pipeline, stage, handler string) string {
-	var s string
-	switch {
-	case handler != "":
-		s = "handler " + cmp.Or(recipe, stage) + "." + handler
-	case recipe != "":
-		s = "recipe " + recipe
-	default:
-		s = "stage " + stage
-	}
-	if recipe == "" && pipeline != p.pipeline {
+	s := "stage " + stage
+	if pipeline != p.pipeline {
 		s += " of pipeline " + pipeline
 	}
 	return s
+}
+
+// checkPlace names the place of the record of a gate, or of an assert of an
+// older winch, which can be in a handler.
+func (p *Plan) checkPlace(c protocol.Check) string {
+	if c.Handler != "" {
+		return "handler " + cmp.Or(c.Recipe, c.Stage) + "." + c.Handler
+	}
+	return p.place(c.Recipe, c.Pipeline, c.Stage)
 }
 
 var markStyles = map[string]color.Style{"+": color.Green, "-": color.Red, "~": color.Yellow, "!": color.Cyan, "*": color.Cyan}
@@ -350,10 +334,15 @@ func linkNote(link string) string {
 	return " (link to " + secret.Printable(link) + ")"
 }
 
+// writeStep writes the line of a step and its changes. A step with on_change
+// shows its changes on its line, and the path that it reacts to, or that its
+// record is pending.
 func writeStep(t *color.Text, indent string, p Planned) {
 	st, res := p.Step, p.Result
 	mark := marks[res.Action]
 	switch {
+	case p.Pending && (p.Reason == "" || res.Status == module.OK):
+		mark = "!"
 	case res.Status == module.Unknown:
 		mark = "?"
 	case res.Deferred:
@@ -364,8 +353,20 @@ func writeStep(t *color.Text, indent string, p Planned) {
 	if m := shown.Args.Main(); m != "" {
 		main = command(m, indent+"    ")
 	}
-	markLine(t, indent, mark, " "+secret.Printable(stepHead(st))+main+linkNote(res.Link)+"\n")
-	for _, c := range res.Changes {
+	changes := res.Changes
+	reason := ""
+	if len(st.OnChange) > 0 {
+		if len(changes) > 0 && !strings.Contains(strings.Join(changes, ""), "\n") {
+			main += ": " + secret.Printable(strings.Join(changes, ", "))
+			changes = nil
+		}
+		reason = " (pending from an earlier run)"
+		if p.Reason != "" {
+			reason = " (" + secret.Printable(p.Reason) + " changes)"
+		}
+	}
+	markLine(t, indent, mark, " "+secret.Printable(stepHead(st))+main+linkNote(res.Link)+reason+"\n")
+	for _, c := range changes {
 		first, rest, _ := strings.Cut(c, "\n")
 		fmt.Fprintf(t, "%s    %s%s\n", indent, secret.Printable(first), lines(rest, indent+"        "))
 	}

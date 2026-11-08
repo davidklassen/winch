@@ -3,8 +3,6 @@ package helper
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +17,7 @@ import (
 	"time"
 
 	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/protocol"
 )
 
 // job is a rollback timer: at Deadline, the timer process puts back Restore
@@ -78,8 +77,8 @@ func decodeJob(path string, data []byte) (job, error) {
 // rollback.
 const timerTime = 60 * time.Second
 
-// rollbacks is the rollback store of a project: one directory per recipe or
-// stage, with an index of the saved paths and their tar files. It also holds
+// rollbacks is the rollback store of a project: one directory per guarded
+// step, with an index of the saved paths and their tar files. It also holds
 // the job of the rollback timer, which belongs to no project, so that no
 // session starts while a timer runs.
 type rollbacks struct {
@@ -91,7 +90,7 @@ type rollbacks struct {
 	masked    maskedRecords
 	// running holds the records that the guarded step added, while its timer
 	// runs.
-	running *guarded
+	running *guardedStep
 	// timer is closed when the timer process of this session ends. It is nil
 	// when no timer process of this session runs.
 	timer chan struct{}
@@ -100,8 +99,8 @@ type rollbacks struct {
 	due []string
 }
 
-type guarded struct {
-	handlers, thens []string
+type guardedStep struct {
+	added []string
 }
 
 func (r *rollbacks) job() string { return filepath.Join(r.dir, "timer.json") }
@@ -124,48 +123,22 @@ type untestedFile struct {
 	Path  string `json:"path"`
 }
 
-// store returns the directory of the store of a recipe, or of
-// <pipeline>\t<stage>.
+// store returns the directory of the store that protocol.React.Store names.
 func (r *rollbacks) store(name string) string {
-	if strings.Contains(name, "\t") {
-		return filepath.Join(r.dir, r.project, stageStore(name))
-	}
-	return filepath.Join(r.dir, r.project, "recipe-"+name)
+	return filepath.Join(r.dir, r.project, name)
 }
 
-// notified holds the records of the handlers with confirm_access that the
-// steps of the run notified. The reconnect after a reboot keeps it; the next
-// run's first session removes it with the stores.
+// notified holds the records of the steps with confirm_access that react to
+// a change of the run. The reconnect after a reboot keeps it; the next run's
+// first session removes it with the stores.
 func (r *rollbacks) notified() records {
-	return records{dir: filepath.Join(r.dir, r.project), project: "notified", what: "notified handlers"}
+	return records{dir: filepath.Join(r.dir, r.project), project: "notified", what: "guarded steps that react to a change"}
 }
 
 // sshOff holds the stops and disables of the SSH server units that the steps
 // of the run applied, as "stop <unit>" and "disable <unit>".
 func (r *rollbacks) sshOff() records {
 	return records{dir: filepath.Join(r.dir, r.project), project: "ssh-off", what: "stopped SSH units"}
-}
-
-func (r *rollbacks) handlerStore(h string) string {
-	return filepath.Join(r.dir, r.project, handlerStoreName(h))
-}
-
-// handlerStoreName is the directory name of the store of the handler with the
-// record h. A handler of a stage is <pipeline>\t<stage>\t<handler>, one of a
-// recipe <recipe>.<handler>.
-func handlerStoreName(h string) string {
-	if i := strings.LastIndex(h, "\t"); i >= 0 {
-		return stageStore(h[:i])
-	}
-	recipe, _, _ := strings.Cut(h, ".")
-	return "recipe-" + recipe
-}
-
-// stageStore is the directory name of the store of a stage, from
-// <pipeline>\t<stage>.
-func stageStore(stage string) string {
-	sum := sha256.Sum256([]byte(stage))
-	return "stage-" + hex.EncodeToString(sum[:8])
 }
 
 // idle fails while a rollback timer runs or puts back files. A job whose lock
@@ -271,7 +244,7 @@ func (r *rollbacks) dueChanges(ctx context.Context) ([]string, error) {
 
 // runDue runs the due jobs, then clears the stores of the project, as the
 // hello of a session without due jobs does.
-func (r *rollbacks) runDue(ctx context.Context, handlers records) error {
+func (r *rollbacks) runDue(ctx context.Context, reacts records) error {
 	for i, p := range r.due {
 		if err := errors.Join(runJob(ctx, p), os.Remove(p)); err != nil {
 			r.due = r.due[i:]
@@ -279,7 +252,7 @@ func (r *rollbacks) runDue(ctx context.Context, handlers records) error {
 		}
 	}
 	r.due = nil
-	return r.clear(handlers)
+	return r.clear(reacts)
 }
 
 // index returns the records of the saved paths of the store in dir.
@@ -494,12 +467,12 @@ func (r *rollbacks) timerResult(ctx context.Context) error {
 	return nil
 }
 
-// clear removes the stores of the project, except those of recipes and
-// stages with a pending handler. The caller checks that no timer runs.
-func (r *rollbacks) clear(handlers records) error {
-	// A damaged file of pending handlers fails the pending request; until
-	// then the stores stay.
-	pending, err := handlers.read()
+// clear removes the stores of the project, except those of pending steps.
+// The caller checks that no timer runs.
+func (r *rollbacks) clear(reacts records) error {
+	// A damaged file of pending steps fails the pending request; until then
+	// the stores stay.
+	pending, err := reacts.read()
 	if err != nil {
 		return nil
 	}
@@ -512,8 +485,11 @@ func (r *rollbacks) clear(handlers records) error {
 		return err
 	}
 	keep := map[string]bool{}
-	for _, h := range pending {
-		keep[handlerStoreName(h)] = true
+	for _, l := range pending {
+		var rec protocol.React
+		if json.Unmarshal([]byte(l), &rec) == nil {
+			keep[rec.Store()] = true
+		}
 	}
 	for _, e := range entries {
 		if keep[e.Name()] {
@@ -526,47 +502,46 @@ func (r *rollbacks) clear(handlers records) error {
 	return nil
 }
 
-// end runs when the session ends. The run of the host ended before each
-// handler with confirm_access that the run notified and that is still
-// pending: end puts back the store of the handler and drops its record. A
-// handler whose store does not come back stays pending. A timer that still
-// runs rolls back first. While jobs are due, the stores and records are
-// those of the earlier run, and end changes nothing.
-func (r *rollbacks) end(ctx context.Context, handlers, thens records) error {
+// end runs when the session ends. The run of the host ended before each step
+// with confirm_access that reacts to a change of the run and that is still
+// pending: end puts back the store of the step and drops its record. A step
+// whose store does not come back stays pending. A timer that still runs rolls
+// back first. While jobs are due, the stores and records are those of the
+// earlier run, and end changes nothing.
+func (r *rollbacks) end(ctx context.Context, reacts records) error {
 	if len(r.due) > 0 {
 		return nil
 	}
-	errs := []error{rollbackStep(ctx, r, handlers, thens), r.putBackUntested(ctx)}
+	errs := []error{rollbackStep(ctx, r, reacts), r.putBackUntested(ctx)}
 	notified, err := r.notified().read()
 	if err != nil || len(notified) == 0 {
 		return errors.Join(append(errs, err)...)
 	}
-	pending, err := handlers.read()
+	pending, err := reacts.read()
 	if err != nil {
 		return errors.Join(append(errs, err)...)
 	}
 	var drop []string
-	restored := map[string]error{}
-	for _, h := range notified {
-		if !slices.Contains(pending, h) {
+	for _, line := range notified {
+		if !slices.Contains(pending, line) {
 			continue
 		}
-		dir := r.handlerStore(h)
-		err, done := restored[dir]
-		if !done {
-			saved, rerr := readIndex(dir)
-			if rerr == nil {
-				rerr = restore(ctx, r.downloads, saved)
-			}
-			err, restored[dir] = rerr, rerr
+		var rec protocol.React
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			errs = append(errs, fmt.Errorf("read the guarded steps that react to a change: %w", err))
+			continue
+		}
+		saved, err := readIndex(r.store(rec.Store()))
+		if err == nil {
+			err = restore(ctx, r.downloads, saved)
 		}
 		if err != nil {
-			errs = append(errs, fmt.Errorf("put back the files of the handler %s that did not run: %w", h, err))
+			errs = append(errs, fmt.Errorf("put back the files of a %s step that did not run: %w", rec.Module, err))
 			continue
 		}
-		drop = append(drop, h)
+		drop = append(drop, line)
 	}
-	return errors.Join(append(errs, handlers.remove(drop...))...)
+	return errors.Join(append(errs, reacts.remove(drop...))...)
 }
 
 // tested drops the lines of the untested sshd files that the store in dir
@@ -628,24 +603,24 @@ func (r *rollbacks) putBackUntested(ctx context.Context) error {
 // rollbackStep ends the timer of the guarded step at once, and drops the
 // records that the step added. When the rollback fails, the records stay, so
 // that the next run applies them under the access check.
-func rollbackStep(ctx context.Context, r *rollbacks, handlers, thens records) error {
+func rollbackStep(ctx context.Context, r *rollbacks, reacts records) error {
 	g := r.running
 	if err := r.rollback(ctx); err != nil || g == nil {
 		return err
 	}
-	return errors.Join(handlers.remove(g.handlers...), thens.remove(g.thens...))
+	return reacts.remove(g.added...)
 }
 
 // confirmStep stops the timer of the guarded step. When the timer ended first
 // and put back the files, it drops the records that the step added, as
 // rollbackStep does.
-func confirmStep(ctx context.Context, r *rollbacks, handlers, thens records) error {
+func confirmStep(ctx context.Context, r *rollbacks, reacts records) error {
 	g := r.running
 	err := r.confirm(ctx)
 	if g == nil || !errors.Is(err, errTimerFirst) {
 		return err
 	}
-	return errors.Join(err, handlers.remove(g.handlers...), thens.remove(g.thens...))
+	return errors.Join(err, reacts.remove(g.added...))
 }
 
 // RunTimer is the timer process: it waits until the job is gone, which

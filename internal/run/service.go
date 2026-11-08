@@ -34,12 +34,8 @@ func (p *Plan) suppressMissingUnitFiles() {
 	for _, stage := range p.Stages {
 		for _, host := range stage.Hosts {
 			for _, step := range host.Steps {
-				if step.Handler == nil {
+				if step.Acts {
 					add(host.Host.Name, step.Step.Args)
-				} else if step.Handler.Runs {
-					for _, hs := range step.Handler.Steps {
-						add(host.Host.Name, hs.Step.Args)
-					}
 				}
 			}
 		}

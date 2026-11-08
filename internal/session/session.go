@@ -673,8 +673,8 @@ func (s *Session) Check(ctx context.Context, name string, m module.Module, st *m
 
 // Apply checks a step again, makes its changes, and updates st. It sends the
 // content only when the helper must write it.
-func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard, masked *string) (module.Result, error) {
-	step := protocol.Step{Module: name, State: *st, Notify: notify, Then: then, Guard: guard, Masked: masked}
+func (s *Session) Apply(ctx context.Context, name string, m module.Module, st *module.State, react []protocol.React, guard protocol.Guard, masked *string) (module.Result, error) {
+	step := protocol.Step{Module: name, State: *st, React: react, Guard: guard, Masked: masked}
 	res, err := s.step("apply", withoutContent(m), step, st)
 	if errors.Is(err, errNeedContent) {
 		return s.step("apply", m, step, st)
@@ -848,8 +848,15 @@ func (s *Session) Pending(ctx context.Context) (protocol.Pending, error) {
 	return p, err
 }
 
-func (s *Session) Handled(ctx context.Context, handler string) error {
-	return s.call("handled", protocol.Handled{Name: handler}, nil)
+// Reacted removes the records that match the record of a step that
+// succeeded.
+func (s *Session) Reacted(ctx context.Context, r protocol.React) error {
+	return s.call("reacted", r, nil)
+}
+
+// DropOld removes the record files of an older winch.
+func (s *Session) DropOld(ctx context.Context) error {
+	return s.call("dropold", nil, nil)
 }
 
 // Pend records a pending health gate on the host.
@@ -862,15 +869,15 @@ func (s *Session) Passed(ctx context.Context, c protocol.Check) error {
 	return s.call("passed", c, nil)
 }
 
-// DropThen removes the record of a then that matches no step.
-func (s *Session) DropThen(ctx context.Context, t protocol.Then) error {
-	return s.call("dropthen", t, nil)
+// Drop removes a record that matches no step.
+func (s *Session) Drop(ctx context.Context, r protocol.React) error {
+	return s.call("drop", r, nil)
 }
 
 // Command runs the command of a then as root on the host, and then removes
-// the records that match it.
-func (s *Session) Command(ctx context.Context, command string, then protocol.Then) error {
-	return s.call("command", protocol.Command{Command: command, Then: then}, nil)
+// the records that match r.
+func (s *Session) Command(ctx context.Context, command string, r protocol.React) error {
+	return s.call("command", protocol.Command{Command: command, React: r}, nil)
 }
 
 // Health runs a health gate on the host, and then removes its record.

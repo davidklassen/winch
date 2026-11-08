@@ -1,8 +1,8 @@
 // Package fakehost is a test double for hosts: it keeps files, packages,
 // answers, and facts in memory and checks and applies file, dir, pkg,
-// service, user, group, and debconf steps against them. It keeps pending
-// handlers, then records, and health gates. It runs commands and cmd steps
-// as records.
+// service, user, group, and debconf steps against them. It keeps the records
+// of pending steps and health gates. It runs commands and cmd steps as
+// records.
 package fakehost
 
 import (
@@ -45,8 +45,8 @@ type Hosts struct {
 	Refreshes  map[string]int
 	FactsReads map[string]int
 	facts      map[string]facts.Facts
-	pending    map[string][]string
-	thens      map[string][]protocol.Then
+	reacts     map[string][]protocol.React
+	old        map[string][]string
 	checks     map[string][]protocol.Check
 	failCmd    map[string]bool
 	// cmdOut holds the output of a command that fails, by host and command.
@@ -132,8 +132,8 @@ func New() *Hosts {
 		Refreshes:    map[string]int{},
 		FactsReads:   map[string]int{},
 		facts:        map[string]facts.Facts{},
-		pending:      map[string][]string{},
-		thens:        map[string][]protocol.Then{},
+		reacts:       map[string][]protocol.React{},
+		old:          map[string][]string{},
 		checks:       map[string][]protocol.Check{},
 		failCmd:      map[string]bool{},
 		cmdOut:       map[string]string{},
@@ -256,29 +256,32 @@ func (h *Hosts) SetGroup(host, name string) {
 	h.groups[host+" "+name] = true
 }
 
-func (h *Hosts) SetPending(host string, names ...string) {
+// SetReact sets the records of the pending steps of a host.
+func (h *Hosts) SetReact(host string, reacts ...protocol.React) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.pending[host] = names
+	h.reacts[host] = reacts
 }
 
-func (h *Hosts) PendingOf(host string) []string {
+// ReactOf returns the records of the pending steps of a host.
+func (h *Hosts) ReactOf(host string) []protocol.React {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return slices.Clone(h.pending[host])
+	return slices.Clone(h.reacts[host])
 }
 
-func (h *Hosts) SetThen(host string, thens ...protocol.Then) {
+// SetOld sets the record files of an older winch on a host.
+func (h *Hosts) SetOld(host string, files ...string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.thens[host] = thens
+	h.old[host] = files
 }
 
-// ThenOf returns the pending then records of a host.
-func (h *Hosts) ThenOf(host string) []protocol.Then {
+// OldOf returns the record files of an older winch on a host.
+func (h *Hosts) OldOf(host string) []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return slices.Clone(h.thens[host])
+	return slices.Clone(h.old[host])
 }
 
 // Pend records a pending health gate on a host.
@@ -885,11 +888,11 @@ func serviceAction(s *module.Service) string {
 
 // Apply starts a rollback timer that ends at once for a changed step with
 // confirm_access, or a result with Guard.
-func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard, masked *string) (module.Result, error) {
+func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *module.State, react []protocol.React, guard protocol.Guard, masked *string) (module.Result, error) {
 	if err := c.dead(); err != nil {
 		return module.Result{}, err
 	}
-	res, err := c.apply(ctx, name, m, st, notify, then)
+	res, err := c.apply(ctx, name, m, st, react)
 	c.hosts.mu.Lock()
 	c.hosts.Guards[c.host+" "+m.Main()] = guard
 	if _, ok := m.(module.WithText); ok && err == nil {
@@ -901,6 +904,11 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 		}
 	}
 	c.hosts.mu.Unlock()
+	if err == nil && (res.Status == module.Change || res.Status == module.Unknown) && len(guard.Guarded) > 0 {
+		for _, t := range module.Touches(m) {
+			res.Saved = append(res.Saved, t.Path)
+		}
+	}
 	if err == nil && (res.Status == module.Change || res.Status == module.Unknown) && (guard.Confirm || res.Guard) {
 		c.hosts.mu.Lock()
 		res.Timer = c.hosts.timer
@@ -909,7 +917,7 @@ func (c *Conn) Apply(ctx context.Context, name string, m module.Module, st *modu
 	return res, err
 }
 
-func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then) (module.Result, error) {
+func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *module.State, react []protocol.React) (module.Result, error) {
 	if c.hosts.OnApply != nil {
 		c.hosts.OnApply(c.host, m.Main())
 	}
@@ -935,14 +943,9 @@ func (c *Conn) apply(ctx context.Context, name string, m module.Module, st *modu
 		return module.Result{}, fmt.Errorf("write %s: read-only file system", f.Path)
 	}
 	c.hosts.mu.Lock()
-	for _, n := range notify {
-		if !slices.Contains(c.hosts.pending[c.host], n) {
-			c.hosts.pending[c.host] = append(c.hosts.pending[c.host], n)
-		}
-	}
-	if then != nil {
-		if !slices.ContainsFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return reflect.DeepEqual(t, *then) }) {
-			c.hosts.thens[c.host] = append(c.hosts.thens[c.host], *then)
+	for _, r := range react {
+		if !slices.ContainsFunc(c.hosts.reacts[c.host], func(o protocol.React) bool { return reflect.DeepEqual(o, r) }) {
+			c.hosts.reacts[c.host] = append(c.hosts.reacts[c.host], r)
 		}
 	}
 	c.hosts.mu.Unlock()
@@ -1132,7 +1135,7 @@ func (c *Conn) Pending(ctx context.Context) (protocol.Pending, error) {
 	if fails {
 		return protocol.Pending{}, errors.New(failed)
 	}
-	return protocol.Pending{Handlers: c.hosts.PendingOf(c.host), Then: c.hosts.ThenOf(c.host), Checks: c.hosts.ChecksOf(c.host), Rollback: due}, nil
+	return protocol.Pending{React: c.hosts.ReactOf(c.host), Checks: c.hosts.ChecksOf(c.host), Old: c.hosts.OldOf(c.host), Rollback: due}, nil
 }
 
 func (c *Conn) Pend(ctx context.Context, check protocol.Check) error {
@@ -1157,17 +1160,27 @@ func (c *Conn) Passed(ctx context.Context, check protocol.Check) error {
 	return nil
 }
 
-func (c *Conn) Handled(ctx context.Context, handler string) error {
+func (c *Conn) Reacted(ctx context.Context, r protocol.React) error {
 	if err := c.dead(); err != nil {
 		return err
 	}
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
-	c.hosts.pending[c.host] = slices.DeleteFunc(c.hosts.pending[c.host], func(n string) bool { return n == handler })
+	c.hosts.reacts[c.host] = slices.DeleteFunc(c.hosts.reacts[c.host], r.Matches)
 	return nil
 }
 
-func (c *Conn) Command(ctx context.Context, command string, then protocol.Then) error {
+func (c *Conn) DropOld(ctx context.Context) error {
+	if err := c.dead(); err != nil {
+		return err
+	}
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	delete(c.hosts.old, c.host)
+	return nil
+}
+
+func (c *Conn) Command(ctx context.Context, command string, r protocol.React) error {
 	if err := c.dead(); err != nil {
 		return err
 	}
@@ -1180,17 +1193,17 @@ func (c *Conn) Command(ctx context.Context, command string, then protocol.Then) 
 	if c.hosts.failCmd[c.host+" "+command] {
 		return fmt.Errorf("%s: exit status 1", command)
 	}
-	c.hosts.thens[c.host] = slices.DeleteFunc(c.hosts.thens[c.host], then.Matches)
+	c.hosts.reacts[c.host] = slices.DeleteFunc(c.hosts.reacts[c.host], r.Matches)
 	return nil
 }
 
-func (c *Conn) DropThen(ctx context.Context, then protocol.Then) error {
+func (c *Conn) Drop(ctx context.Context, r protocol.React) error {
 	if err := c.dead(); err != nil {
 		return err
 	}
 	c.hosts.mu.Lock()
 	defer c.hosts.mu.Unlock()
-	c.hosts.thens[c.host] = slices.DeleteFunc(c.hosts.thens[c.host], func(t protocol.Then) bool { return reflect.DeepEqual(t, then) })
+	c.hosts.reacts[c.host] = slices.DeleteFunc(c.hosts.reacts[c.host], func(o protocol.React) bool { return reflect.DeepEqual(o, r) })
 	return nil
 }
 

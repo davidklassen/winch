@@ -78,7 +78,7 @@ func readLayout(dir string, cfg *Config) (layout, error) {
 		addKeys(&ly.pipelines, cfg.Pipelines, cfg.file, "pipelines", "pipeline"),
 		addKeys(&ly.recipes, cfg.Recipes, cfg.file, "recipes", "recipe"),
 		addTop(&ly.inventories, cfg, "inventories", "hosts", "groups"),
-		addTop(&ly.pipelines, cfg, "pipelines", "steps", "handlers", "parallelism", "health"))
+		addTop(&ly.pipelines, cfg, "pipelines", "steps", "parallelism", "health"))
 	return ly, errors.Join(errs...)
 }
 

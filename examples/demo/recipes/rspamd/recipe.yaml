@@ -25,7 +25,6 @@ steps:
       source: !expr item
       validate: rspamadm configtest
     loop: [dmarc.conf, greylist.conf, milter_headers.conf, redis.conf]
-    notify: reload
   - dir:
       path: /var/lib/rspamd/dkim
       owner: _rspamd
@@ -38,15 +37,12 @@ steps:
       owner: _rspamd
       group: _rspamd
       mode: "0600"
-    notify: reload
   - service:
       name: !expr item
       enabled: true
       running: true
     loop: [valkey-server, rspamd]
-
-handlers:
-  reload:
-    - service:
-        name: rspamd
-        reloaded: true
+  - service:
+      name: rspamd
+      reloaded: true
+    on_change: [/etc/rspamd/local.d, /var/lib/rspamd/dkim]

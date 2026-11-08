@@ -23,14 +23,22 @@ const sshRecipe = `steps:
   - file:
       path: /etc/ssh/sshd_config.d/local.conf
       content: "PasswordAuthentication no\n"
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
+  - service:
+      name: ssh
+      reloaded: true
+    on_change: [/etc/ssh]
+    confirm_access: true
 `
+
+// recipeRecord is the record of a step of recipe with the module and the main
+// argument main, and stageRecord that of a step of a stage of pipeline site.
+func recipeRecord(recipe, module, main string) protocol.React {
+	return protocol.React{Recipe: recipe, Module: module, Mains: mains(main)}
+}
+
+func stageRecord(stage, module, main string) protocol.React {
+	return protocol.React{Pipeline: "site", Stage: stage, Module: module, Mains: mains(main)}
+}
 
 func lockoutProject(t *testing.T) *project.Project {
 	return loadWeb1(t, map[string]string{
@@ -51,6 +59,7 @@ func lockoutProject(t *testing.T) *project.Project {
       - service:
           name: nftables
           running: true
+        on_change: [/etc/nftables.conf]
         confirm_access: true
 `,
 		"recipes/ssh/recipe.yaml": sshRecipe,
@@ -65,8 +74,8 @@ func applyWeb1(t *testing.T, p *project.Project, h *fakehost.Hosts) (string, *ru
 	return out.String() + errOut.String(), o
 }
 
-// spec: Running a pipeline/Lockout protection (the store of the recipe, the
-// timer, the second connection)
+// spec: Running a pipeline/Lockout protection (the store of the guarded step,
+// the timer, the second connection)
 func TestConfirmAccess(t *testing.T) {
 	h := fakehost.New()
 	h.SetResult("web1", "nftables", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{"reload"}})
@@ -78,7 +87,7 @@ func TestConfirmAccess(t *testing.T) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
 	if want := `web1: ssh: + file /etc/ssh/sshd_config.d/local.conf
-web1: ssh: ~ handler ssh.reload: service ssh
+web1: ssh: ~ service ssh
 web1: ssh: access check passed
 web1: base: + file /etc/motd
 web1: firewall: + file /etc/nftables.conf
@@ -90,12 +99,13 @@ web1: access check after the run passed
 `; out != want {
 		t.Errorf("output:\n%s\nwant:\n%s", out, want)
 	}
+	reload, nftables := recipeRecord("ssh", "service", "ssh"), stageRecord("firewall", "service", "nftables")
 	want := map[string]protocol.Guard{
-		"web1 /etc/ssh/sshd_config.d/local.conf": {Store: "ssh", Save: true, Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}},
-		"web1 ssh":                               {Store: "ssh", Save: true, Confirm: true, LoadsSSHD: true},
-		"web1 /etc/motd":                         {Store: "site\tbase"},
-		"web1 /etc/nftables.conf":                {Store: "site\tfirewall", Save: true},
-		"web1 nftables":                          {Store: "site\tfirewall", Save: true, Confirm: true},
+		"web1 /etc/ssh/sshd_config.d/local.conf": {Store: recipeRecord("ssh", "file", "/etc/ssh/sshd_config.d/local.conf").Store(), Guarded: []protocol.React{reload}, SSHD: []string{reload.Store()}},
+		"web1 ssh":                               {Store: reload.Store(), Confirm: true, LoadsSSHD: true},
+		"web1 /etc/motd":                         {Store: stageRecord("base", "file", "/etc/motd").Store()},
+		"web1 /etc/nftables.conf":                {Store: stageRecord("firewall", "file", "/etc/nftables.conf").Store(), Guarded: []protocol.React{nftables}},
+		"web1 nftables":                          {Store: nftables.Store(), Confirm: true},
 	}
 	for k, g := range want {
 		if !reflect.DeepEqual(h.Guards[k], g) {
@@ -117,7 +127,7 @@ func TestAccessFails(t *testing.T) {
 	if want := []string{"ssh reload", "access", "rollback", "access", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
-	want := "web1: ssh: failed: handler ssh.reload: service ssh: the access check failed: ssh: connect to host web1 port 22: Connection timed out; the old files are back"
+	want := "web1: ssh: failed: service ssh: the access check failed: ssh: connect to host web1 port 22: Connection timed out; the old files are back"
 	if !strings.Contains(out, want) {
 		t.Errorf("output:\n%s\nwant %q", out, want)
 	}
@@ -170,7 +180,7 @@ func TestGuardedResult(t *testing.T) {
 	if want := []string{"access", "confirm", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("log %q, want %q", h.Log["web1"], want)
 	}
-	if g := h.Guards["web1 mail"]; !reflect.DeepEqual(g, protocol.Guard{Store: "site\tbase"}) {
+	if g := h.Guards["web1 mail"]; !reflect.DeepEqual(g, protocol.Guard{Store: stageRecord("base", "hostname", "mail").Store()}) {
 		t.Errorf("guard %+v: the step has no confirm_access", g)
 	}
 }
@@ -181,8 +191,8 @@ func rebootProject(t *testing.T, ifRequired string, more string) *project.Projec
 }
 
 // spec: Modules/reboot (also when an earlier step of the run requires the
-// reboot, and in a handler); CLI/Output (marks); roadmap phase 16 (the apply
-// line says that the host rebooted and names the failed units)
+// reboot, and with on_change); CLI/Output (marks); roadmap phase 16 (the
+// apply line says that the host rebooted and names the failed units)
 func TestRebootStep(t *testing.T) {
 	motd := "      - file:\n          path: /etc/motd\n          content: hi\n"
 	tests := []struct {
@@ -216,12 +226,14 @@ func TestRebootStep(t *testing.T) {
 		{name: "maybe, alone", ifRequired: "true", wantPlan: "0 to change, 1 unchanged", wantApply: "", noConnect: true},
 		{name: "an earlier step requires the reboot", ifRequired: "true", more: motd, requiredAfter: true, wantPlan: "    * reboot if required\n",
 			wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ reboot if required (rebooted)\nweb1: access check after the run passed\n", wantLog: []string{"reboot 30s", "access"}},
-		{name: "a reboot in a handler", pipeline: motd + "        notify: restart\n    handlers:\n      restart:\n        - reboot:\n            if_required: false\n            timeout: 30\n",
-			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ handler base.restart: reboot (rebooted)\nweb1: access check after the run passed\n", wantLog: []string{"reboot 30s", "access"}},
-		{name: "a handler reboot if required, required by an earlier step", requiredAfter: true, pipeline: motd + "        notify: restart\n    handlers:\n      restart:\n        - reboot:\n            if_required: true\n            timeout: 30\n",
-			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ handler base.restart: reboot if required (rebooted)\nweb1: access check after the run passed\n", wantLog: []string{"reboot 30s", "access"}},
-		{name: "a handler reboot if required, not required", pipeline: motd + "        notify: restart\n    handlers:\n      restart:\n        - reboot:\n            if_required: true\n            timeout: 30\n",
-			wantPlan: "    ! handler base.restart\n", wantApply: "web1: base: + file /etc/motd\nweb1: access check after the run passed\n", wantLog: []string{"access"}},
+		{name: "a reboot with on_change", pipeline: motd + "      - reboot:\n          if_required: false\n          timeout: 30\n        on_change: [/etc/motd]\n",
+			wantPlan: "    ~ reboot (/etc/motd changes)\n", wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ reboot (rebooted)\nweb1: access check after the run passed\n", wantLog: []string{"reboot 30s", "access"}},
+		{name: "a reboot with on_change that does not react", pipeline: "      - reboot:\n          if_required: false\n          timeout: 30\n        on_change: [/etc/motd]\n",
+			wantPlan: "0 to change, 1 unchanged", wantApply: "", noConnect: true},
+		{name: "a reboot if required with on_change, required by an earlier step", requiredAfter: true, pipeline: motd + "      - reboot:\n          if_required: true\n          timeout: 30\n        on_change: [/etc/motd]\n",
+			wantPlan: "    * reboot if required (/etc/motd changes)\n", wantApply: "web1: base: + file /etc/motd\nweb1: base: ~ reboot if required (rebooted)\nweb1: access check after the run passed\n", wantLog: []string{"reboot 30s", "access"}},
+		{name: "a reboot if required with on_change, not required", pipeline: motd + "      - reboot:\n          if_required: true\n          timeout: 30\n        on_change: [/etc/motd]\n",
+			wantPlan: "    * reboot if required (/etc/motd changes)\n", wantApply: "web1: base: + file /etc/motd\nweb1: access check after the run passed\n", wantLog: []string{"access"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -374,8 +386,9 @@ func TestSameCertificate(t *testing.T) {
 	}
 }
 
-// spec: Running a pipeline/Lockout protection (every file that the recipe
-// changed: a step in another recipe or a stage that notifies the handler)
+// spec: Running a pipeline/Lockout protection (a step saves each path that it
+// changes in the store of each later guarded step that reacts to it: a step
+// in another recipe or of a stage)
 func TestConfirmAccessAcrossRecipes(t *testing.T) {
 	h := fakehost.New()
 	p := loadWeb1(t, map[string]string{
@@ -387,77 +400,70 @@ func TestConfirmAccessAcrossRecipes(t *testing.T) {
       - file:
           path: /etc/ssh/sshd_config.d/stage.conf
           content: "X11Forwarding no\n"
-        notify: ssh.reload
       - recipe: ssh
 `,
 		"recipes/hardening/recipe.yaml": `steps:
   - file:
       path: /etc/ssh/sshd_config.d/hardening.conf
       content: "PermitRootLogin no\n"
-    notify: ssh.reload
 `,
 		"recipes/ssh/recipe.yaml": sshRecipe,
 	})
 	if _, o := applyWeb1(t, p, h); !o.OK() {
 		t.Fatalf("apply failed: %v", o.Failed)
 	}
+	reload := recipeRecord("ssh", "service", "ssh")
 	want := map[string]protocol.Guard{
-		"/etc/ssh/sshd_config.d/hardening.conf": {Store: "hardening", Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}},
-		"/etc/ssh/sshd_config.d/stage.conf":     {Store: "site\tbase", Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}},
+		"/etc/ssh/sshd_config.d/hardening.conf": {Store: recipeRecord("hardening", "file", "/etc/ssh/sshd_config.d/hardening.conf").Store(), Guarded: []protocol.React{reload}, SSHD: []string{reload.Store()}},
+		"/etc/ssh/sshd_config.d/stage.conf":     {Store: stageRecord("base", "file", "/etc/ssh/sshd_config.d/stage.conf").Store(), Guarded: []protocol.React{reload}, SSHD: []string{reload.Store()}},
 	}
 	for path, w := range want {
 		if g := h.Guards["web1 "+path]; !reflect.DeepEqual(g, w) {
-			t.Errorf("guard of %s = %+v, want its own store and that of the handler's recipe %+v", path, g, w)
+			t.Errorf("guard of %s = %+v, want the store of the guarded step %+v", path, g, w)
 		}
 	}
 }
 
-const notifyNftablesRecipes = `steps:
+const nftablesSSHRecipe = `steps:
   - file:
       path: /etc/nftables-ssh.nft
       content: "table inet ssh {}\n"
-    notify: [nftables.reload, nftables.restart]
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
 `
 
-const nftablesHandlersRecipe = `steps:
+const nftablesRecipe = `steps:
   - file:
       path: /etc/nftables.conf
       content: "flush ruleset\n"
-handlers:
-  reload:
-    - service:
-        name: nftables
-        reloaded: true
-      confirm_access: true
-  restart:
-    - service:
-        name: nftables
-        restarted: true
-      confirm_access: true
+  - service:
+      name: nftables
+      reloaded: true
+    on_change: [/etc/nftables-ssh.nft, /etc/nftables.conf]
+    confirm_access: true
+  - service:
+      name: nftables
+      restarted: true
+    on_change: [/etc/nftables-ssh.nft]
+    confirm_access: true
 `
 
 // spec: Running a pipeline/Lockout protection (a step saves in the store of
-// its own recipe and in that of each other recipe whose confirm_access handler
-// it notifies)
-func TestConfirmAccessOwnAndNotifiedStores(t *testing.T) {
+// each later guarded step that reacts to its path; two steps of one record
+// share a store)
+func TestConfirmAccessStoresOfLaterSteps(t *testing.T) {
+	own := recipeRecord("ssh", "file", "/etc/nftables-ssh.nft").Store()
+	nftables := recipeRecord("nftables", "service", "nftables")
 	for _, tt := range []struct {
 		name, steps string
 		want        protocol.Guard
 	}{
-		{"both recipes run", "      - recipe: ssh\n      - recipe: nftables\n", protocol.Guard{Store: "ssh", Save: true, Handlers: []string{"nftables.reload", "nftables.restart"}}},
-		{"nftables does not run", "      - recipe: ssh\n      - recipe: nftables\n        when: !expr host.name == \"db1\"\n", protocol.Guard{Store: "ssh", Save: true}},
+		{"both recipes run", "      - recipe: ssh\n      - recipe: nftables\n", protocol.Guard{Store: own, Guarded: []protocol.React{nftables}}},
+		{"nftables does not run", "      - recipe: ssh\n      - recipe: nftables\n        when: !expr host.name == \"db1\"\n", protocol.Guard{Store: own}},
 	} {
 		h := fakehost.New()
 		p := loadWeb1(t, map[string]string{
 			"pipelines/site.yaml":          "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.steps,
-			"recipes/ssh/recipe.yaml":      notifyNftablesRecipes,
-			"recipes/nftables/recipe.yaml": nftablesHandlersRecipe,
+			"recipes/ssh/recipe.yaml":      nftablesSSHRecipe,
+			"recipes/nftables/recipe.yaml": nftablesRecipe,
 			"inventories/test.yaml":        "hosts:\n  web1: {}\n  db1: {}\n",
 		})
 		if _, o := applyWeb1(t, p, h); !o.OK() {
@@ -780,23 +786,21 @@ func TestApplyAfterPrompt(t *testing.T) {
 // a changed config without confirm_access)
 func TestSSHDWarning(t *testing.T) {
 	const (
-		warning  = "sshd loads a changed config without an access check; reload it in a service handler with confirm_access: true"
+		warning  = "sshd loads a changed config without an access check; reload it in a service step with on_change and confirm_access: true"
 		untested = "sshd's config changes, and no step reloads sshd with confirm_access: true; the new config loads untested at the next restart"
 	)
-	recipe := func(path, handler string) string {
-		return `steps:
-  - file:
-      path: ` + path + `
-      content: "UsePAM no\n"
-    notify: restart
-handlers:
-  restart:
-    - service:
-        name: ` + handler + `
-`
+	// recipe changes path, and a service step that reacts to it runs svc,
+	// the name of the unit and the lines after it.
+	recipe := func(path, svc string) string {
+		return "steps:\n  - file:\n      path: " + path + "\n      content: \"UsePAM no\\n\"\n  - service:\n      name: " + svc + "\n    on_change: [" + path + "]\n"
 	}
 	then := func(cmd string) string {
 		return "steps:\n  - file:\n      path: /etc/ssh/sshd_config\n      content: \"UsePAM no\\n\"\n    then: " + cmd + "\n"
+	}
+	// reacts is a recipe that changes sshd's config and /etc/motd, with a
+	// service step svc that reacts to /etc/motd.
+	reacts := func(svc string) string {
+		return "steps:\n  - file:\n      path: /etc/ssh/sshd_config\n      content: \"UsePAM no\\n\"\n  - file:\n      path: /etc/motd\n      content: hi\n  - service:\n      name: " + svc + "\n    on_change: [/etc/motd]\n"
 	}
 	tests := []struct {
 		name, recipe, want string
@@ -809,16 +813,16 @@ handlers:
 		// recipe.
 		pipeline string
 	}{
-		{"restart", recipe("/etc/ssh/sshd_config", "ssh\n        restarted: true"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
-		{"reload of sshd in sshd_config.d", recipe("/etc/ssh/sshd_config.d/local.conf", "sshd.service\n        reloaded: true"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
-		{"confirm_access", recipe("/etc/ssh/sshd_config", "ssh\n        restarted: true\n      confirm_access: true"), "", "", nil, ""},
-		{"drop-in of ssh.service", recipe("/etc/systemd/system/ssh.service.d/override.conf", "ssh\n        restarted: true"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
-		{"drop-in of ssh.socket", recipe("/etc/systemd/system/ssh.socket.d/port.conf", "ssh.socket\n        restarted: true"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
-		{"drop-in of ssh.socket with confirm_access", recipe("/etc/systemd/system/ssh.socket.d/port.conf", "ssh.socket\n        restarted: true\n      confirm_access: true"), "", "", nil, ""},
-		{"reload of ssh.socket", recipe("/etc/ssh/sshd_config", "ssh.socket\n        reloaded: true"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
-		{"drop-in of another unit", recipe("/etc/systemd/system/nginx.service.d/override.conf", "ssh\n        restarted: true"), "", "", nil, ""},
-		{"no sshd config change", recipe("/etc/motd", "ssh\n        restarted: true"), "", "", nil, ""},
-		{"restart of another unit", recipe("/etc/ssh/sshd_config", "nginx\n        restarted: true"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"restart", recipe("/etc/ssh/sshd_config", "ssh\n      restarted: true"), "recipes/ssh/recipe.yaml:5:5", "", nil, ""},
+		{"reload of sshd in sshd_config.d", recipe("/etc/ssh/sshd_config.d/local.conf", "sshd.service\n      reloaded: true"), "recipes/ssh/recipe.yaml:5:5", "", nil, ""},
+		{"confirm_access", recipe("/etc/ssh/sshd_config", "ssh\n      restarted: true\n    confirm_access: true"), "", "", nil, ""},
+		{"drop-in of ssh.service", recipe("/etc/systemd/system/ssh.service.d/override.conf", "ssh\n      restarted: true"), "recipes/ssh/recipe.yaml:5:5", "", nil, ""},
+		{"drop-in of ssh.socket", recipe("/etc/systemd/system/ssh.socket.d/port.conf", "ssh.socket\n      restarted: true"), "recipes/ssh/recipe.yaml:5:5", "", nil, ""},
+		{"drop-in of ssh.socket with confirm_access", recipe("/etc/systemd/system/ssh.socket.d/port.conf", "ssh.socket\n      restarted: true\n    confirm_access: true"), "", "", nil, ""},
+		{"reload of ssh.socket", recipe("/etc/ssh/sshd_config", "ssh.socket\n      reloaded: true"), "recipes/ssh/recipe.yaml:5:5", "", nil, ""},
+		{"drop-in of another unit", recipe("/etc/systemd/system/nginx.service.d/override.conf", "ssh\n      restarted: true"), "", "", nil, ""},
+		{"no sshd config change", recipe("/etc/motd", "ssh\n      restarted: true"), "", "", nil, ""},
+		{"restart of another unit", recipe("/etc/ssh/sshd_config", "nginx\n      restarted: true"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
 		{"then", `steps:
   - file:
       path: /etc/ssh/sshd_config
@@ -834,44 +838,18 @@ handlers:
 		{"then that stops ssh.socket", then("systemctl stop ssh.socket"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
 		{"then of ssh-agent", then("systemctl restart ssh-agent"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
 		{"then of two lines", then(`"systemctl restart caddy\nsshd -T"`), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
-		{"config already in place", recipe("/etc/ssh/sshd_config", "ssh\n        restarted: true"), "", "", []string{"/etc/ssh/sshd_config"}, ""},
-		{"handler not notified", `steps:
-  - file:
-      path: /etc/ssh/sshd_config
-      content: "UsePAM no\n"
-  - file:
-      path: /etc/motd
-      content: hi
-    notify: restart
-handlers:
-  restart:
-    - service:
-        name: ssh
-        restarted: true
-`, "", "recipes/ssh/recipe.yaml:2:5", []string{"/etc/motd"}, ""},
-		{"handler notified by another step", `steps:
-  - file:
-      path: /etc/ssh/sshd_config
-      content: "UsePAM no\n"
-  - file:
-      path: /etc/motd
-      content: hi
-    notify: restart
-handlers:
-  restart:
-    - service:
-        name: ssh
-        restarted: true
-`, "", "", []string{"/etc/ssh/sshd_config"}, ""},
+		{"config already in place", recipe("/etc/ssh/sshd_config", "ssh\n      restarted: true"), "", "", []string{"/etc/ssh/sshd_config"}, ""},
+		{"restart that does not react", reacts("ssh\n      restarted: true"), "", "recipes/ssh/recipe.yaml:2:5", []string{"/etc/motd"}, ""},
+		{"restart that reacts to another step", reacts("ssh\n      restarted: true"), "", "", []string{"/etc/ssh/sshd_config"}, ""},
 		{"then of a later step", `steps:
   - file:
       path: /etc/ssh/sshd_config
       content: "UsePAM no\n"
-  - cmd: {command: "true"}
+  - cmd: {command: "true", creates: /x}
     then: systemctl restart ssh
 `, "recipes/ssh/recipe.yaml:5:5", "", nil, ""},
 		{"then before the change", `steps:
-  - cmd: {command: "true"}
+  - cmd: {command: "true", creates: /x}
     then: systemctl restart ssh
   - file:
       path: /etc/ssh/sshd_config
@@ -886,44 +864,27 @@ handlers:
       content: hi
     then: systemctl restart ssh
 `, "", "recipes/ssh/recipe.yaml:2:5", []string{"/etc/motd"}, ""},
-		{"then of a handler step", `steps:
-  - file:
-      path: /etc/ssh/sshd_config
-      content: "UsePAM no\n"
-    notify: restart
-handlers:
-  restart:
-    - file:
-        path: /etc/motd
-        content: hi
-      then: service ssh reload
-`, "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
-		{"drop-in without a reload", `steps:
-  - file:
-      path: /etc/ssh/sshd_config.d/local.conf
-      content: "UsePAM no\n"
-`, "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
-		{"cmd whose changes names sshd's config", "steps:\n  - cmd:\n      command: sed -i s/yes/no/ /etc/ssh/sshd_config\n      changes: [/etc/pam.d, /etc/ssh/sshd_config]\n", "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
-		{"drop-in with a confirm_access reload", recipe("/etc/ssh/sshd_config.d/local.conf", "ssh\n        reloaded: true\n      confirm_access: true"), "", "", nil, ""},
-		{"confirm_access reload not notified", `steps:
+		{"then of a step with on_change", `steps:
   - file:
       path: /etc/ssh/sshd_config
       content: "UsePAM no\n"
   - file:
       path: /etc/motd
       content: hi
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
-`, "", "recipes/ssh/recipe.yaml:2:5", []string{"/etc/motd"}, ""},
-		{"confirm_access on running", recipe("/etc/ssh/sshd_config", "ssh\n        running: true\n      confirm_access: true"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
-		{"confirm_access restart of another unit", recipe("/etc/ssh/sshd_config", "nginx\n        restarted: true\n      confirm_access: true"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
-		{"then of a guarded handler of another unit", recipe("/etc/ssh/sshd_config", "nginx\n        restarted: true\n      confirm_access: true\n      then: systemctl restart ssh"), "recipes/ssh/recipe.yaml:8:7", "", nil, ""},
-		{"confirm_access reload in an earlier stage", recipe("/etc/motd", "ssh\n        reloaded: true\n      confirm_access: true"), "", "pipelines/site.yaml:9:9", nil, `stages:
+    on_change: [/etc/ssh/sshd_config]
+    then: service ssh reload
+`, "recipes/ssh/recipe.yaml:5:5", "", nil, ""},
+		{"drop-in without a reload", `steps:
+  - file:
+      path: /etc/ssh/sshd_config.d/local.conf
+      content: "UsePAM no\n"
+`, "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"cmd whose changes names sshd's config", "steps:\n  - cmd:\n      command: sed -i s/yes/no/ /etc/ssh/sshd_config\n      changes: [/etc/pam.d, /etc/ssh/sshd_config]\n", "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"drop-in with a confirm_access reload", recipe("/etc/ssh/sshd_config.d/local.conf", "ssh\n      reloaded: true\n    confirm_access: true"), "", "", nil, ""},
+		{"confirm_access reload that does not react", reacts("ssh\n      reloaded: true\n    confirm_access: true"), "", "recipes/ssh/recipe.yaml:2:5", []string{"/etc/motd"}, ""},
+		{"confirm_access on running", recipe("/etc/ssh/sshd_config", "ssh\n      running: true\n    confirm_access: true"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"confirm_access restart of another unit", recipe("/etc/ssh/sshd_config", "nginx\n      restarted: true\n    confirm_access: true"), "", "recipes/ssh/recipe.yaml:2:5", nil, ""},
+		{"confirm_access reload in an earlier stage", recipe("/etc/motd", "ssh\n      reloaded: true\n    confirm_access: true"), "", "pipelines/site.yaml:9:9", nil, `stages:
   - name: base
     hosts: all
     steps:
@@ -978,13 +939,11 @@ func TestSSHDUntestedWarning(t *testing.T) {
   - file:
       path: /etc/motd
       content: hi
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
+  - service:
+      name: ssh
+      reloaded: true
+    on_change: [/etc/motd]
+    confirm_access: true
 `
 	tests := []struct {
 		name     string
@@ -1015,13 +974,11 @@ handlers:
   - file:
       path: /etc/motd
       content: hi
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
+  - service:
+      name: ssh
+      reloaded: true
+    on_change: [/etc/motd]
+    confirm_access: true
 `,
 		}, func(h *fakehost.Hosts) { h.SetFile("web1", "/etc/motd", "hi") }, []string{"recipes/ssh/recipe.yaml:2:5: " + untested}},
 		{"guarded reload of another recipe after a stage step", map[string]string{
@@ -1041,7 +998,7 @@ handlers:
 			"recipes/hardening/recipe.yaml": "steps:\n  - file:\n      path: /etc/ssh/sshd_config.d/hardening.conf\n      content: \"PermitRootLogin no\\n\"\n",
 			"recipes/ssh/recipe.yaml":       guarded,
 		}, nil, nil},
-		{"guarded reload that the change notifies", map[string]string{
+		{"guarded reload that reacts to the change", map[string]string{
 			"pipelines/site.yaml": `stages:
   - name: base
     hosts: all
@@ -1049,10 +1006,9 @@ handlers:
       - file:
           path: /etc/ssh/sshd_config
           content: "UsePAM no\n"
-        notify: ssh.reload
       - recipe: ssh
 `,
-			"recipes/ssh/recipe.yaml": guarded,
+			"recipes/ssh/recipe.yaml": "steps:\n  - service:\n      name: ssh\n      reloaded: true\n    on_change: [/etc/ssh]\n    confirm_access: true\n",
 		}, nil, nil},
 	}
 	for _, tt := range tests {
@@ -1079,15 +1035,15 @@ handlers:
 // a switch load sshd)
 func TestSSHDLoads(t *testing.T) {
 	const (
-		loaded   = "sshd loads a changed config without an access check; reload it in a service handler with confirm_access: true"
+		loaded   = "sshd loads a changed config without an access check; reload it in a service step with on_change and confirm_access: true"
 		untested = "sshd's config changes, and no step reloads sshd with confirm_access: true; the new config loads untested at the next restart"
 		// Steps of the pipeline start at line 5.
 		head = "stages:\n  - name: base\n    hosts: all\n    steps:\n"
-		// conf takes lines 5 to 7, and change lines 5 to 8.
+		// conf takes lines 5 to 7.
 		conf   = "      - file:\n          path: /etc/ssh/sshd_config\n          content: \"UsePAM no\\n\"\n"
 		dropIn = "      - file:\n          path: /etc/ssh/sshd_config.d/local.conf\n          content: \"UsePAM no\\n\"\n"
-		change = conf + "        notify: reload\n"
-		reload = "    handlers:\n      reload:\n        - service:\n            name: ssh\n            reloaded: true\n          confirm_access: true\n"
+		change = conf
+		reload = "      - service:\n          name: ssh\n          reloaded: true\n        on_change: [/etc/ssh]\n        confirm_access: true\n"
 		reboot = "      - reboot:\n          if_required: false\n"
 		safe   = "      - upgrade:\n          mode: safe\n"
 		socket = "      - service:\n          name: ssh.socket\n          running: true\n          enabled: true\n"
@@ -1115,15 +1071,15 @@ func TestSSHDLoads(t *testing.T) {
 		setup          func(h *fakehost.Hosts)
 		want           []string
 	}{
-		{"reboot before the guarded reload", change + reboot + reload, nil, []string{at("9:9", loaded)}},
-		{"reboot if required before the guarded reload", change + "      - reboot:\n          if_required: true\n" + reload, nil, []string{at("9:9", loaded)}},
+		{"reboot before the guarded reload", change + reboot + reload, nil, []string{at("8:9", loaded)}},
+		{"reboot if required before the guarded reload", change + "      - reboot:\n          if_required: true\n" + reload, nil, []string{at("8:9", loaded)}},
 		{"reboot without a reload", conf + reboot, nil, []string{at("8:9", loaded)}},
 		{"reboot before the change", reboot + change + reload, nil, nil},
 		{"reboot after the guarded reload", change + reload + "  - name: late\n    hosts: all\n    steps:\n" + reboot, nil, nil},
 		{"reboot after a restart of ssh.socket under the access check", conf + reboot, func(h *fakehost.Hosts) {
 			h.SetResult("web1", "/etc/ssh/sshd_config", module.Result{Status: module.Change, Action: module.Modify, Changes: []string{module.SSHSocketRestart}})
 		}, nil},
-		{"upgrade of openssh-server before the guarded reload", change + safe + reload, upgrades("upgrade openssh-server 1:10.0p1-7 → 1:10.0p1-8"), []string{at("9:9", loaded)}},
+		{"upgrade of openssh-server before the guarded reload", change + safe + reload, upgrades("upgrade openssh-server 1:10.0p1-7 → 1:10.0p1-8"), []string{at("8:9", loaded)}},
 		{"upgrade of another package", change + safe + reload, upgrades("upgrade openssh-sftp-server 1:10.0p1-7 → 1:10.0p1-8"), nil},
 		{"upgrade that changes nothing", change + safe + reload, nil, nil},
 		{"guarded start of ssh.socket", conf + socket + guard, nil, nil},
@@ -1132,8 +1088,8 @@ func TestSSHDLoads(t *testing.T) {
 		{"guarded start during a switch", off + dropIn + sshOn + guard, socketOff, nil},
 		{"guarded start after a stop of ssh.socket", off + conf + sshOn + guard, func(h *fakehost.Hosts) { socketChanges(h, "stop") }, nil},
 		{"guarded start after a disable of ssh.socket", off + conf + sshOn + guard, func(h *fakehost.Hosts) { socketChanges(h, "disable") }, nil},
-		{"reboot in a handler", conf + "        notify: reload\n    handlers:\n      reload:\n        - reboot:\n            if_required: false\n", nil, []string{at("11:11", loaded)}},
-		{"guarded start of ssh.socket in a handler, which the plan does not check", conf + "        notify: reload\n    handlers:\n      reload:\n        - service:\n            name: ssh.socket\n            running: true\n          confirm_access: true\n", nil, []string{at("5:9", untested)}},
+		{"reboot with on_change", conf + reboot + "        on_change: [/etc/ssh]\n", nil, []string{at("8:9", loaded)}},
+		{"guarded start of ssh.socket with on_change", conf + socket + "        on_change: [/etc/ssh]\n" + guard, nil, nil},
 		{"start during a switch", off + conf + sshOn, socketOff, []string{at("9:9", untested)}},
 		{"guarded start before the stop of ssh.socket", conf + sshOn + guard + off, socketOff, []string{at("5:9", untested)}},
 		{"guarded start without a switch", conf + "      - service:\n          name: ssh\n          running: true\n" + guard, nil, []string{at("5:9", untested)}},
@@ -1188,42 +1144,45 @@ func TestSSHDLoads(t *testing.T) {
 func TestSSHDStores(t *testing.T) {
 	const dropIn = "/etc/ssh/sshd_config.d/hardening.conf"
 	const hardening = "steps:\n  - file:\n      path: " + dropIn + "\n      content: \"PermitRootLogin no\\n\"\n"
-	// ssh returns a recipe whose handler runs service with the lines svc.
+	// ssh returns a recipe whose step that reacts to /etc/motd runs service
+	// with the lines svc.
 	ssh := func(svc string) string {
-		return "steps:\n  - file:\n      path: /etc/motd\n      content: hi\n    notify: reload\nhandlers:\n  reload:\n    - service:\n" + svc
+		return "steps:\n  - file:\n      path: /etc/motd\n      content: hi\n  - service:\n" + svc + "    on_change: [/etc/motd]\n"
 	}
-	const reload = "        name: ssh\n        reloaded: true\n      confirm_access: true\n"
-	const stageHandler = "    steps:\n      - file:\n          path: /etc/issue\n          content: hi\n        notify: reload\n    handlers:\n      reload:\n        - service:\n            name: ssh\n            restarted: true\n          confirm_access: true\n"
+	const reload = "      name: ssh\n      reloaded: true\n    confirm_access: true\n"
+	const stageReload = "    steps:\n      - file:\n          path: /etc/issue\n          content: hi\n      - service:\n          name: ssh\n          restarted: true\n        on_change: [/etc/issue]\n        confirm_access: true\n"
 	const both = "  - name: base\n    hosts: all\n    steps:\n      - recipe: hardening\n      - recipe: ssh\n"
+	own := recipeRecord("hardening", "file", dropIn).Store()
+	sshReload := recipeRecord("ssh", "service", "ssh")
 	for _, tt := range []struct {
 		name, pipeline string
 		recipes        map[string]string
 		want           protocol.Guard
 	}{
-		{"handler of a later recipe", both, map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}},
-		{"restart of sshd.service", both, map[string]string{"ssh": ssh("        name: sshd.service\n        restarted: true\n      confirm_access: true\n")}, protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}},
-		{"handler in a later stage", "  - name: base\n    hosts: all\n    steps:\n      - recipe: hardening\n  - name: ssh\n    hosts: all\n    steps:\n      - recipe: ssh\n",
-			map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}},
-		{"handler of a stage", "  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: " + dropIn + "\n          content: hi\n  - name: ssh\n    hosts: all\n" + stageHandler,
-			nil, protocol.Guard{Store: "site\tbase", SSHD: []string{"site\tssh"}}},
-		{"two later stores", both + "  - name: late\n    hosts: all\n" + stageHandler, map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: "hardening", SSHD: []string{"site\tlate", "ssh"}}},
-		{"handler before the change", "  - name: base\n    hosts: all\n    steps:\n      - recipe: ssh\n      - recipe: hardening\n",
-			map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: "hardening"}},
-		{"handler without confirm_access", both, map[string]string{"ssh": ssh("        name: ssh\n        reloaded: true\n")}, protocol.Guard{Store: "hardening"}},
-		{"handler that does not run", both, map[string]string{"ssh": strings.Replace(ssh(reload), "content: hi", "content: same", 1)}, protocol.Guard{Store: "hardening"}},
-		{"handler of another unit", both, map[string]string{"ssh": ssh("        name: nginx\n        reloaded: true\n      confirm_access: true\n")}, protocol.Guard{Store: "hardening"}},
-		{"handler of the same recipe", "  - name: base\n    hosts: all\n    steps:\n      - recipe: hardening\n",
-			map[string]string{"hardening": hardening + "  - file:\n      path: /etc/motd\n      content: hi\n    notify: reload\nhandlers:\n  reload:\n    - service:\n" + reload}, protocol.Guard{Store: "hardening", Save: true, SSHD: []string{"hardening"}}},
-		{"notified handler", both, map[string]string{"hardening": hardening + "    notify: ssh.reload\n", "ssh": ssh(reload)}, protocol.Guard{Store: "hardening", Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}}},
-		{"guarded start of ssh.socket", both, map[string]string{"ssh": "steps:\n  - service:\n      name: ssh.socket\n      running: true\n    confirm_access: true\n"}, protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}},
-		{"guarded restart of ssh.socket", both, map[string]string{"ssh": ssh("        name: ssh.socket\n        restarted: true\n      confirm_access: true\n")}, protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}},
+		{"reload of a later recipe", both, map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: own, SSHD: []string{sshReload.Store()}}},
+		{"restart of sshd.service", both, map[string]string{"ssh": ssh("      name: sshd.service\n      restarted: true\n    confirm_access: true\n")}, protocol.Guard{Store: own, SSHD: []string{recipeRecord("ssh", "service", "sshd.service").Store()}}},
+		{"reload in a later stage", "  - name: base\n    hosts: all\n    steps:\n      - recipe: hardening\n  - name: ssh\n    hosts: all\n    steps:\n      - recipe: ssh\n",
+			map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: own, SSHD: []string{sshReload.Store()}}},
+		{"restart of a stage", "  - name: base\n    hosts: all\n    steps:\n      - file:\n          path: " + dropIn + "\n          content: hi\n  - name: ssh\n    hosts: all\n" + stageReload,
+			nil, protocol.Guard{Store: stageRecord("base", "file", dropIn).Store(), SSHD: []string{stageRecord("ssh", "service", "ssh").Store()}}},
+		{"two later stores", both + "  - name: late\n    hosts: all\n" + stageReload, map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: own, SSHD: []string{stageRecord("late", "service", "ssh").Store(), sshReload.Store()}}},
+		{"reload before the change", "  - name: base\n    hosts: all\n    steps:\n      - recipe: ssh\n      - recipe: hardening\n",
+			map[string]string{"ssh": ssh(reload)}, protocol.Guard{Store: own}},
+		{"reload without confirm_access", both, map[string]string{"ssh": ssh("      name: ssh\n      reloaded: true\n")}, protocol.Guard{Store: own}},
+		{"reload that does not act", both, map[string]string{"ssh": strings.Replace(ssh(reload), "content: hi", "content: same", 1)}, protocol.Guard{Store: own}},
+		{"reload of another unit", both, map[string]string{"ssh": ssh("      name: nginx\n      reloaded: true\n    confirm_access: true\n")}, protocol.Guard{Store: own}},
+		{"reload of the same recipe", "  - name: base\n    hosts: all\n    steps:\n      - recipe: hardening\n",
+			map[string]string{"hardening": hardening + "  - file:\n      path: /etc/motd\n      content: hi\n  - service:\n" + reload + "    on_change: [/etc/motd]\n"}, protocol.Guard{Store: own, SSHD: []string{recipeRecord("hardening", "service", "ssh").Store()}}},
+		{"reload that reacts to the change", both, map[string]string{"ssh": "steps:\n  - service:\n" + reload + "    on_change: [/etc/ssh]\n"}, protocol.Guard{Store: own, Guarded: []protocol.React{sshReload}, SSHD: []string{sshReload.Store()}}},
+		{"guarded start of ssh.socket", both, map[string]string{"ssh": "steps:\n  - service:\n      name: ssh.socket\n      running: true\n    confirm_access: true\n"}, protocol.Guard{Store: own, SSHD: []string{recipeRecord("ssh", "service", "ssh.socket").Store()}}},
+		{"guarded restart of ssh.socket", both, map[string]string{"ssh": ssh("      name: ssh.socket\n      restarted: true\n    confirm_access: true\n")}, protocol.Guard{Store: own, SSHD: []string{recipeRecord("ssh", "service", "ssh.socket").Store()}}},
 	} {
 		files := map[string]string{"pipelines/site.yaml": "stages:\n" + tt.pipeline, "recipes/hardening/recipe.yaml": hardening}
 		for name, r := range tt.recipes {
 			files["recipes/"+name+"/recipe.yaml"] = r
 		}
 		h := fakehost.New()
-		// A handler notified by a step that writes "same" does not run.
+		// A step that reacts to a step that writes "same" does not act.
 		h.SetFile("web1", "/etc/motd", "same")
 		if _, o := applyWeb1(t, loadWeb1(t, files), h); !o.OK() {
 			t.Fatalf("%s: apply failed: %v", tt.name, o.Failed)
@@ -1266,10 +1225,11 @@ func TestSSHDGuardLoads(t *testing.T) {
 		}
 	}
 
-	// The plan expects no handler, but the file changes before apply.
+	// The plan does not expect the reload to act, but the file changes before
+	// apply.
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/motd", "hi")
-	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": head + "      - file:\n          path: /etc/issue\n          content: hi\n      - file:\n          path: /etc/motd\n          content: hi\n        notify: reload\n    handlers:\n      reload:\n        - service:\n            name: ssh\n            reloaded: true\n          confirm_access: true\n"})
+	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": head + "      - file:\n          path: /etc/issue\n          content: hi\n      - file:\n          path: /etc/motd\n          content: hi\n      - service:\n          name: ssh\n          reloaded: true\n        on_change: [/etc/motd]\n        confirm_access: true\n"})
 	plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
 	h.SetFile("web1", "/etc/motd", "other")
 	var out bytes.Buffer
@@ -1277,58 +1237,52 @@ func TestSSHDGuardLoads(t *testing.T) {
 		t.Fatalf("apply failed: %v", o.Failed)
 	}
 	if !h.Guards["web1 ssh"].LoadsSSHD {
-		t.Errorf("handler that the plan does not expect: LoadsSSHD = false, want true\n%s", out.String())
+		t.Errorf("a reload that the plan does not expect: LoadsSSHD = false, want true\n%s", out.String())
 	}
 }
 
 // spec: Running a pipeline/Lockout protection (the plan fails a step that
-// notifies a handler with confirm_access in a stage that --stages leaves out)
-func TestConfirmAccessHandlerLeftOut(t *testing.T) {
+// changes a path that a guarded step reacts to in a stage that --stages
+// leaves out)
+func TestConfirmAccessReactionLeftOut(t *testing.T) {
 	files := map[string]string{
 		"pipelines/site.yaml": `stages:
-  - name: base
-    hosts: all
-    steps:
-      - recipe: ssh
   - name: mail
     hosts: all
     steps:
       - file:
           path: /etc/ssh/sshd_config.d/10-mail.conf
           content: "PasswordAuthentication no\n"
-        notify: ssh.NOTIFY
+  - name: base
+    hosts: all
+    steps:
+      - recipe: ssh
 `,
 		"recipes/ssh/recipe.yaml": `steps:
   - pkg:
       name: openssh-server
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
-  restart:
-    - service:
-        name: ssh
-        restarted: true
-`,
+  - service:
+      name: ssh
+      reloaded: true
+    on_change: [/etc/ssh]
+GUARD`,
 	}
-	const leftOut = "mail: file /etc/ssh/sshd_config.d/10-mail.conf: the confirm_access handler ssh.reload runs in stage base, which --stages leaves out"
+	const leftOut = "mail: file /etc/ssh/sshd_config.d/10-mail.conf: ssh#2 service ssh reacts to this change in stage base, which --stages leaves out"
 	for _, tt := range []struct {
-		name, stages, notify string
-		same                 bool
-		want                 string
+		name, stages, guard string
+		same                bool
+		want                string
 	}{
-		{"all stages", "", "reload", false, ""},
-		{"both stages", "base,mail", "reload", false, ""},
-		{"the stage of the handler left out", "mail", "reload", false, leftOut},
-		{"no change", "mail", "reload", true, ""},
-		{"a handler without confirm_access", "mail", "restart", false, ""},
+		{"all stages", "", "    confirm_access: true\n", false, ""},
+		{"both stages", "base,mail", "    confirm_access: true\n", false, ""},
+		{"the stage of the guarded step left out", "mail", "    confirm_access: true\n", false, leftOut},
+		{"no change", "mail", "    confirm_access: true\n", true, ""},
+		{"a step without confirm_access", "mail", "", false, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := loadWeb1(t, map[string]string{
-				"pipelines/site.yaml":     strings.Replace(files["pipelines/site.yaml"], "NOTIFY", tt.notify, 1),
-				"recipes/ssh/recipe.yaml": files["recipes/ssh/recipe.yaml"],
+				"pipelines/site.yaml":     files["pipelines/site.yaml"],
+				"recipes/ssh/recipe.yaml": strings.Replace(files["recipes/ssh/recipe.yaml"], "GUARD", tt.guard, 1),
 			})
 			if tt.stages != "" {
 				if err := p.Select(project.Selection{Stages: tt.stages}); err != nil {

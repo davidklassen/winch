@@ -18,7 +18,7 @@ func (layoutError) Error() string { return errLayout.Error() }
 
 // Format returns data with two-space indentation, list items indented under
 // their key, and the keys of each step sorted by rank. steps are the paths of
-// the step lists, such as "handlers.*" or "stages.*.steps". Format moves
+// the step lists, such as "steps" or "stages.*.steps". Format moves
 // whole lines only, so comments, blank lines, and the text of each value
 // stay. It fails when the result would not hold the same values.
 func Format(file string, data []byte, steps []string, rank func(key string) int) ([]byte, error) {

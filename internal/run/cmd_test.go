@@ -81,8 +81,8 @@ func TestApplyCmd(t *testing.T) {
 	}
 }
 
-// spec: Steps (a step that runs a command counts as changed); Handlers
-func TestCmdNotifies(t *testing.T) {
+// spec: Steps (a step that runs a command counts as changed); Reactions
+func TestCmdChangesItsCreates(t *testing.T) {
 	files := map[string]string{
 		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
@@ -90,13 +90,12 @@ func TestCmdNotifies(t *testing.T) {
 		"recipes/app/recipe.yaml": `steps:
   - cmd:
       command: app migrate
+      creates: /var/lib/app/migrated
     then: echo done
-    notify: restart
-handlers:
-  restart:
-    - service:
-        name: app
-        restarted: true
+  - service:
+      name: app
+      restarted: true
+    on_change: [/var/lib/app]
 `,
 	}
 	h := fakehost.New()
@@ -104,7 +103,7 @@ handlers:
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
-	for _, line := range []string{"      ? cmd app migrate\n          then: echo done\n", "      ! handler app.restart\n", "1 host: 1 to change, 0 unchanged, 0 unknown\n"} {
+	for _, line := range []string{"      + cmd app migrate\n          then: echo done\n", "      ~ service app: restart (/var/lib/app/migrated changes)\n", "1 host: 1 to change, 0 unchanged, 0 unknown\n"} {
 		if !strings.Contains(out.String(), line) {
 			t.Errorf("no %q in the plan:\n%s", line, out.String())
 		}
@@ -118,8 +117,8 @@ handlers:
 	if want := []string{"cmd app migrate", "command echo done", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
-	if p := h.PendingOf("web1"); len(p) != 0 {
-		t.Errorf("pending handlers after the run: %v", p)
+	if r := h.ReactOf("web1"); len(r) != 0 {
+		t.Errorf("records after the run: %v", r)
 	}
 }
 
@@ -138,17 +137,18 @@ func TestPendingThenOfCmdCounts(t *testing.T) {
 			files := map[string]string{
 				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
-				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: " + tt.command + "\n        then: echo done\n",
+				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: " + tt.command + "\n          creates: /done\n        then: echo done\n",
 			}
 			h := fakehost.New()
+			h.SetFile("web1", "/done", "")
 			sum := sha256.Sum256([]byte(tt.record))
-			h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "cmd", Mains: []string{hex.EncodeToString(sum[:])}})
+			h.SetReact("web1", protocol.React{Pipeline: "site", Stage: "base", Module: "cmd", Mains: []string{hex.EncodeToString(sum[:])}, Then: true})
 			plan := run.MakePlan(context.Background(), loadWeb1(t, files), h.Connector(), run.Options{})
 			change, _, unknown, _ := plan.Counts()
 			if tt.pending && (change != 1 || unknown != 0) {
 				t.Errorf("counts: %d to change, %d unknown; want a pending then to count as a change", change, unknown)
 			}
-			if !tt.pending && (change != 0 || unknown != 1) {
+			if !tt.pending && (change != 0 || unknown != 0) {
 				t.Errorf("counts: %d to change, %d unknown; want a record that matches no step", change, unknown)
 			}
 		})
@@ -282,7 +282,7 @@ func TestThenRecordOfCmd(t *testing.T) {
 	files := map[string]string{
 		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
-		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: \"true\\nnotify --token abc\"\n        then: echo done\n",
+		"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: \"true\\nnotify --token abc\"\n          creates: /done\n        then: echo done\n",
 	}
 	h := fakehost.New()
 	h.FailCommand("web1", "echo done")
@@ -290,9 +290,9 @@ func TestThenRecordOfCmd(t *testing.T) {
 		t.Fatalf("apply passed:\n%s", got)
 	}
 	sum := sha256.Sum256([]byte("true\nnotify --token abc"))
-	want := protocol.Then{Pipeline: "site", Stage: "base", Module: "cmd", Mains: []string{hex.EncodeToString(sum[:])}}
-	if got := h.ThenOf("web1"); len(got) != 1 || !reflect.DeepEqual(got[0], want) {
-		t.Errorf("then records = %+v, want %+v", got, want)
+	want := protocol.React{Pipeline: "site", Stage: "base", Module: "cmd", Mains: []string{hex.EncodeToString(sum[:])}, Then: true}
+	if got := h.ReactOf("web1"); len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Errorf("records = %+v, want %+v", got, want)
 	}
 }
 

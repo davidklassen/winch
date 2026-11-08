@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -143,7 +144,7 @@ func TestMaskedRecordOfAStepThatSetsAttributes(t *testing.T) {
 
 // spec: Remote execution/State on the host (a failed removal of the record
 // keeps the records of the step)
-func TestFailedRemovalOfTheRecordKeepsTheHandler(t *testing.T) {
+func TestFailedRemovalOfTheRecordKeepsTheReaction(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can remove the record from a read-only directory")
 	}
@@ -154,15 +155,16 @@ func TestFailedRemovalOfTheRecordKeepsTheHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "plain\n"), Notify: []string{"ssh.reload"}})
+	reload := protocol.React{Recipe: "ssh", Module: "service", Mains: []string{"1"}}
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "plain\n"), React: []protocol.React{reload}})
 	if r.Error == "" {
 		t.Fatal("apply: no error from the removal of the record")
 	}
 	if got := content(t, l.a); got != "plain\n" {
 		t.Errorf("file = %q, want the new content", got)
 	}
-	if p := pendingAll(t, l.c); !slices.Equal(p.Handlers, []string{"ssh.reload"}) {
-		t.Errorf("pending handlers %v, want ssh.reload", p.Handlers)
+	if p := pendingAll(t, l.c); !reflect.DeepEqual(p.React, []protocol.React{reload}) {
+		t.Errorf("records %v, want %v", p.React, reload)
 	}
 }
 
@@ -181,7 +183,7 @@ func TestFailedRecordStopsTheTimer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-	g := protocol.Guard{Store: "ssh", Save: true, Confirm: true}
+	g := protocol.Guard{Store: "ssh", Confirm: true}
 	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "pw=one\n"), Guard: g, Masked: new("pw=(secret)\n")})
 	if !strings.Contains(r.Error, "the old files are back") {
 		t.Errorf("apply: error %q, want the rollback", r.Error)
@@ -327,7 +329,7 @@ func TestRollbackPutsBackTheMaskedRecord(t *testing.T) {
 	const rec = "pw=(secret)\n"
 	record := l.maskedPath(&module.File{Path: l.a})
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "pw=one\n"), Masked: new(rec)})
-	g := protocol.Guard{Store: "ssh", Save: true, Confirm: true}
+	g := protocol.Guard{Store: "ssh", Confirm: true}
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "plain\n"), Guard: g})
 	if _, err := os.Lstat(record); !os.IsNotExist(err) {
 		t.Fatalf("the record stays after a write without a secret: %v", err)
@@ -350,7 +352,7 @@ func TestRollbackOfARotationPutsBackTheMaskedRecord(t *testing.T) {
 	const rec = "pw=(secret)\n"
 	record := l.maskedPath(&module.File{Path: l.a})
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "pw=one\n"), Masked: new(rec)})
-	g := protocol.Guard{Store: "ssh", Save: true, Confirm: true}
+	g := protocol.Guard{Store: "ssh", Confirm: true}
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "workers=2\npw=two\n"), Guard: g, Masked: new("workers=2\npw=(secret)\n")})
 	if r := l.c.call(t, "rollback", nil); r.Error != "" {
 		t.Fatalf("rollback: %s", r.Error)
@@ -384,7 +386,7 @@ func TestPutBackUntestedPutsBackTheMaskedRecord(t *testing.T) {
 func TestDueRollbackDoesNotListTheMaskedRecord(t *testing.T) {
 	l := startLockout(t)
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "pw=one\n"), Masked: new("pw=(secret)\n")})
-	g := protocol.Guard{Store: "ssh", Save: true, Confirm: true}
+	g := protocol.Guard{Store: "ssh", Confirm: true}
 	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "plain\n"), Guard: g})
 	for _, project := range []string{"acme", "other"} {
 		rb := &rollbacks{dir: filepath.Join(l.dir, "rollback"), project: project, masked: maskedRecords{dir: filepath.Join(l.dir, "masked", project)}, due: []string{l.job()}}

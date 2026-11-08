@@ -46,6 +46,15 @@ func (e *Events) Step(ev StepEvent) {
 
 func (e *Events) Access(string, string) {}
 
+// PutBack writes a note on the files that the session end puts back.
+func (e *Events) PutBack(host, line string) {
+	e.Write("diagnostic", struct {
+		Severity string `json:"severity"`
+		Host     string `json:"host"`
+		Message  string `json:"message"`
+	}{"note", host, secret.Printable(line)})
+}
+
 func (e *Events) Host(ev HostEvent) {
 	ev.Error = secret.PrintableLines(ev.Error)
 	e.Write("host", ev)
@@ -53,8 +62,8 @@ func (e *Events) Host(ev HostEvent) {
 
 func (e *Events) Done(*Outcome) {}
 
-// WriteJSON writes a planned event for each checked step and each handler
-// that will run, of the hosts that did not fail, then a host event per host.
+// WriteJSON writes a planned event for each checked step and each then that
+// will run, of the hosts that did not fail, then a host event per host.
 func (p *Plan) WriteJSON(e *Events) {
 	for _, h := range p.Hosts {
 		if p.Failed[h.Name] != nil {
@@ -88,28 +97,15 @@ func (p *Plan) WriteJSON(e *Events) {
 func writePlanned(e *Events, host string, stage *project.Stage, steps []Planned) {
 	for _, p := range steps {
 		ev := stepEvent(host, stage, p)
-		if s := p.Handler; s != nil {
-			if s.Runs {
-				ev.Handler, ev.Status = s.Handler.FullName(), "change"
-				e.Write("planned", ev)
-				for _, hs := range s.Steps {
-					if hs.PendingThen {
-						tev := stepEvent(host, stage, hs)
-						tev.Handler, tev.Status = ev.Handler, "change"
-						tev.Then, tev.ThenPending = secret.PrintableLines(hs.Step.Shown().Then), true
-						e.Write("planned", tev)
-					}
-				}
-			}
-			continue
-		}
 		ev.Step, ev.Module = label(p.Step), p.Step.Module
 		ev.result(p.Step, p.Result)
 		if p.Result.Status == module.Change {
 			ev.Diff = diffLines(p)
 		}
+		ev.Pending = p.Pending
 		if p.ThenRuns {
-			ev.Then, ev.ThenPending = secret.PrintableLines(p.Step.Shown().Then), p.PendingThen
+			ev.Then = secret.PrintableLines(p.Step.Shown().Then)
+			ev.Pending = ev.Pending || p.PendingThen
 		}
 		e.Write("planned", ev)
 	}

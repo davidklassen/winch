@@ -1,0 +1,12 @@
+stage web on web1
+  pkg nginx on_change=[] then=""
+  file /etc/nginx/nginx.conf on_change=[] then=""
+  service nginx on_change=["/etc/nginx" "/var/lib/dpkg/status"] then=""
+  file /var/www/a.html on_change=[] then="echo 2"
+  file /var/www/b.html on_change=[] then="echo 2"
+  cmd reindex a on_change=["/var/www/a.html"] then=""
+  cmd reindex b on_change=["/var/www/b.html"] then=""
+  service nginx on_change=["/etc/nginx"] then=""
+stage db on web2
+  file /etc/db.conf on_change=[] then="echo db"
+  cmd initdb on_change=[] then="echo done"

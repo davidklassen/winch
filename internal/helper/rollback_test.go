@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -70,16 +71,26 @@ func failingFileArgs(p string) json.RawMessage {
 	return args
 }
 
-// applyBoth applies "new" to a with the store of recipe ssh, and to b with
-// confirm_access, and returns the result of the second apply.
+// The records of steps of recipe ssh: sshReload has confirm_access and names
+// the store sshStore. sshRestart and sshThen are later steps.
+var (
+	sshReload  = protocol.React{Recipe: "ssh", Module: "service", Mains: []string{"1"}}
+	sshStore   = sshReload.Store()
+	sshRestart = protocol.React{Recipe: "ssh", Module: "service", Mains: []string{"2"}}
+	sshThen    = protocol.React{Recipe: "ssh", Module: "file", Mains: []string{"3"}, Then: true}
+)
+
+// applyBoth applies "new" to a, which saves in the store of sshReload, and to
+// b as the step sshReload with confirm_access, and returns the result of the
+// second apply.
 func (l *lockout) applyBoth(t *testing.T) protocol.StepResult {
 	t.Helper()
-	g := protocol.Guard{Store: "ssh", Save: true}
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"ssh.reload"}}); r.Error != "" {
+	g := protocol.Guard{Guarded: []protocol.React{sshReload}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, React: []protocol.React{sshReload}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	g.Confirm = true
-	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: g, Notify: []string{"ssh.restart"}, Then: &protocol.Then{Recipe: "ssh", Module: "file", Mains: []string{"2"}}})
+	g = protocol.Guard{Store: sshStore, Confirm: true}
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: g, React: []protocol.React{sshRestart, sshThen}})
 	if r.Error != "" {
 		t.Fatal(r.Error)
 	}
@@ -160,7 +171,7 @@ func TestConfirmStopsTheTimer(t *testing.T) {
 		paths = append(paths, s.Path)
 	}
 	if want := []string{l.a, l.b}; !slices.Equal(paths, want) {
-		t.Errorf("the timer puts back %v, want the store of the recipe %v", paths, want)
+		t.Errorf("the timer puts back %v, want the store of the step %v", paths, want)
 	}
 	if r := l.c.call(t, "confirm", nil); r.Error != "" {
 		t.Fatalf("confirm: %s", r.Error)
@@ -198,12 +209,8 @@ func TestRollbackNow(t *testing.T) {
 	if _, err := os.Lstat(l.job()); !os.IsNotExist(err) {
 		t.Errorf("the timer job stays after the rollback: %v", err)
 	}
-	p := pendingAll(t, l.c)
-	if want := []string{"ssh.reload"}; !slices.Equal(p.Handlers, want) {
-		t.Errorf("pending handlers %v, want %v: the rolled-back step's record goes", p.Handlers, want)
-	}
-	if len(p.Then) != 0 {
-		t.Errorf("then records %v, want none", p.Then)
+	if got, want := pending(t, l.c), []protocol.React{sshReload}; !reflect.DeepEqual(got, want) {
+		t.Errorf("records %v, want %v: the records of the rolled-back step go", got, want)
 	}
 }
 
@@ -222,9 +229,8 @@ func TestTimerFires(t *testing.T) {
 	if r := l.c.call(t, "confirm", nil); !strings.Contains(r.Error, "the rollback timer ended first; the old files are back") {
 		t.Errorf("confirm after the timer: %q", r.Error)
 	}
-	p := pendingAll(t, l.c)
-	if want := []string{"ssh.reload"}; !slices.Equal(p.Handlers, want) || len(p.Then) != 0 {
-		t.Errorf("records after the confirm: %+v, want the handler %v", p, want)
+	if got, want := pending(t, l.c), []protocol.React{sshReload}; !reflect.DeepEqual(got, want) {
+		t.Errorf("records after the confirm: %v, want %v", got, want)
 	}
 }
 
@@ -243,9 +249,8 @@ func TestRollbackAfterTimer(t *testing.T) {
 	if r := l.c.call(t, "rollback", nil); r.Error != "" {
 		t.Errorf("rollback after the timer: %q", r.Error)
 	}
-	p := pendingAll(t, l.c)
-	if want := []string{"ssh.reload"}; !slices.Equal(p.Handlers, want) || len(p.Then) != 0 {
-		t.Errorf("records after the rollback: %+v, want the handler %v", p, want)
+	if got, want := pending(t, l.c), []protocol.React{sshReload}; !reflect.DeepEqual(got, want) {
+		t.Errorf("records after the rollback: %v, want %v", got, want)
 	}
 }
 
@@ -266,8 +271,8 @@ func TestTimerRollbackFails(t *testing.T) {
 			if !strings.HasPrefix(r.Error, want) {
 				t.Errorf("%s after the timer: %q, want the rollback failure of the timer %q", method, r.Error, want)
 			}
-			if p := pendingAll(t, l.c); !slices.Equal(p.Handlers, []string{"ssh.reload", "ssh.restart"}) || len(p.Then) != 1 {
-				t.Errorf("records after the failed rollback: %+v, want both handlers and the then record", p)
+			if got, want := pending(t, l.c), []protocol.React{sshReload, sshRestart, sshThen}; !reflect.DeepEqual(got, want) {
+				t.Errorf("records after the failed rollback: %v, want %v", got, want)
 			}
 		})
 	}
@@ -486,19 +491,20 @@ func TestTimerCommandsHaveNoLock(t *testing.T) {
 	}
 }
 
-// spec: Remote execution/State on the host (rollback/: during a run); roadmap
-// phase 16 (a pending handler has its files)
+// spec: Remote execution/State on the host (rollback/: during a run);
+// Reactions (a pending step has its files)
 func TestStoresAfterTheSession(t *testing.T) {
 	l := startLockout(t)
-	g := protocol.Guard{Store: "ssh", Save: true}
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"ssh.reload"}}); r.Error != "" {
+	g := protocol.Guard{Guarded: []protocol.React{sshReload}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, React: []protocol.React{sshReload}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	g = protocol.Guard{Store: "nginx", Save: true}
+	nginx := protocol.React{Recipe: "nginx", Module: "service", Mains: []string{"1"}}
+	g = protocol.Guard{Guarded: []protocol.React{nginx}}
 	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: g}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	g = protocol.Guard{Store: "\tbase", Save: true}
+	g = protocol.Guard{Guarded: []protocol.React{{Pipeline: "site", Stage: "base", Module: "service", Mains: []string{"1"}}}}
 	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b+"2", "new\n"), Guard: g}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
@@ -506,7 +512,9 @@ func TestStoresAfterTheSession(t *testing.T) {
 		entries, _ := os.ReadDir(filepath.Join(l.dir, "rollback", "acme"))
 		var names []string
 		for _, e := range entries {
-			names = append(names, e.Name())
+			if e.IsDir() {
+				names = append(names, e.Name())
+			}
 		}
 		return names
 	}
@@ -530,17 +538,21 @@ func TestStoresAfterTheSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The next run keeps only the store of the recipe with a pending handler.
+	// The session end put back the store of sshReload and dropped its
+	// record. A record whose restore failed stays pending.
+	write(t, filepath.Join(l.dir, "react", "acme"), "version 1\n"+nginx.Line()+"\n")
+
+	// The next run keeps only the store of the pending step.
 	c = start(t, l.dir, "")
 	h = hello("r2")
 	h.Project = "acme"
 	if r := c.call(t, "hello", h); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	if got, want := stores(), []string{"recipe-ssh"}; !slices.Equal(got, want) {
-		t.Errorf("stores at the next hello: %v, want %v: the pending handler keeps its store", got, want)
+	if got, want := stores(), []string{nginx.Store()}; !slices.Equal(got, want) {
+		t.Errorf("stores at the next hello: %v, want %v: the pending step keeps its store", got, want)
 	}
-	if r := c.call(t, "handled", protocol.Handled{Name: "ssh.reload"}); r.Error != "" {
+	if r := c.call(t, "reacted", nginx); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	c.w.Close()
@@ -554,23 +566,27 @@ func TestStoresAfterTheSession(t *testing.T) {
 		t.Fatal(r.Error)
 	}
 	if got := stores(); len(got) != 0 {
-		t.Errorf("stores after the handler ran: %v", got)
+		t.Errorf("stores after the step ran: %v", got)
 	}
 }
 
-// spec: Running a pipeline/Lockout protection; Handlers (a pending handler
-// of a stage keeps the store of that stage of that pipeline)
-func TestStageStoreOfAPendingHandler(t *testing.T) {
+// spec: Running a pipeline/Lockout protection; Reactions (a pending step of
+// a stage keeps its store, not that of a step of the same stage name in
+// another pipeline)
+func TestStageStoreOfAPendingStep(t *testing.T) {
 	l := startLockout(t)
-	g := protocol.Guard{Store: "site\tweb", Save: true}
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"site\tweb\treload"}}); r.Error != "" {
+	web := protocol.React{Pipeline: "site", Stage: "web", Module: "service", Mains: []string{"1"}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: protocol.Guard{Guarded: []protocol.React{web}}, React: []protocol.React{web}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	g.Store = "deploy\tweb"
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: g}); r.Error != "" {
+	deploy := web
+	deploy.Pipeline = "deploy"
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: protocol.Guard{Guarded: []protocol.React{deploy}}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	l.end(t)
+	// The record of a step whose restore failed stays pending.
+	write(t, filepath.Join(l.dir, "react", "acme"), "version 1\n"+web.Line()+"\n")
 	c := start(t, l.dir, "")
 	h := hello("r2")
 	h.Project = "acme"
@@ -591,7 +607,7 @@ func TestStageStoreOfAPendingHandler(t *testing.T) {
 // changes nothing)
 func TestLockedHelloKeepsTheStores(t *testing.T) {
 	l := startLockout(t)
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: protocol.Guard{Store: "ssh", Save: true}}); r.Error != "" {
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: protocol.Guard{Guarded: []protocol.React{sshReload}}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	other := start(t, l.dir, "")
@@ -604,7 +620,7 @@ func TestLockedHelloKeepsTheStores(t *testing.T) {
 	if err := <-other.done; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(l.dir, "rollback", "acme", "recipe-ssh", "index")); err != nil {
+	if _, err := os.Stat(filepath.Join(l.dir, "rollback", "acme", sshStore, "index")); err != nil {
 		t.Errorf("the store of the running session is gone: %v", err)
 	}
 }
@@ -619,7 +635,7 @@ func TestDeadTimer(t *testing.T) {
 			p, q := filepath.Join(t.TempDir(), "f"), filepath.Join(t.TempDir(), "g")
 			write(t, p, "old\n")
 			write(t, q, "new\n")
-			store := filepath.Join(dir, "rollback", "acme", "recipe-ssh")
+			store := filepath.Join(dir, "rollback", "acme", sshStore)
 			mkdir(t, store)
 			saved, err := module.Save(module.Touch{Path: p, Tree: true}, filepath.Join(store, "1.tar"))
 			if err != nil {
@@ -694,15 +710,14 @@ func TestDeadTimer(t *testing.T) {
 func TestStoreKeepsTheFirstState(t *testing.T) {
 	l := startLockout(t)
 	// A file that a failed save left behind.
-	write(t, filepath.Join(l.dir, "rollback", "acme", "recipe-ssh", "1.tar"), "junk")
-	g := protocol.Guard{Store: "ssh", Save: true}
+	write(t, filepath.Join(l.dir, "rollback", "acme", sshStore, "1.tar"), "junk")
+	g := protocol.Guard{Guarded: []protocol.React{sshReload}}
 	for _, c := range []string{"one\n", "two\n"} {
 		if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, c), Guard: g}); r.Error != "" {
 			t.Fatal(r.Error)
 		}
 	}
-	g.Confirm = true
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: g}); r.Error != "" {
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: protocol.Guard{Store: sshStore, Confirm: true}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	if r := l.c.call(t, "rollback", nil); r.Error != "" {
@@ -746,7 +761,7 @@ func TestStoreSavesATreeAfterAttributes(t *testing.T) {
 }
 
 // spec: Running a pipeline/Lockout protection (the timer job: the store of
-// the recipe and the undo step for confirm_access; the step's own paths for
+// the step and the undo step for confirm_access; the step's own paths for
 // another guarded step)
 func TestTimerJob(t *testing.T) {
 	l := startLockout(t)
@@ -764,14 +779,14 @@ func TestTimerJob(t *testing.T) {
 		}
 		return j
 	}
-	if _, err := startTimer(rb, protocol.Guard{Store: "ssh", Confirm: true}, &module.Service{Name: "ssh", Restarted: true}, saved, all); err != nil {
+	if _, err := startTimer(rb, protocol.Guard{Store: sshStore, Confirm: true}, &module.Service{Name: "ssh", Restarted: true}, saved, all); err != nil {
 		t.Fatal(err)
 	}
 	j := read()
 	if len(j.Restore) != 2 || len(j.Undo) != 1 || j.Undo[0].Module != "service" || string(j.Undo[0].Args) != `{"name":"ssh","restarted":true}` {
 		t.Errorf("confirm_access job: %+v", j)
 	}
-	if _, err := startTimer(rb, protocol.Guard{Store: "\tbase"}, &module.File{Path: "/b"}, saved, all); err != nil {
+	if _, err := startTimer(rb, protocol.Guard{Store: "step-0"}, &module.File{Path: "/b"}, saved, all); err != nil {
 		t.Fatal(err)
 	}
 	if j := read(); len(j.Restore) != 1 || j.Restore[0].Path != "/b" || len(j.Undo) != 0 {
@@ -783,12 +798,10 @@ func TestTimerJob(t *testing.T) {
 // the old files at once)
 func TestFailedGuardedApplyRollsBack(t *testing.T) {
 	l := startLockout(t)
-	g := protocol.Guard{Store: "ssh", Save: true}
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g}); r.Error != "" {
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: protocol.Guard{Guarded: []protocol.React{sshReload}}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	g.Confirm = true
-	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: failingFileArgs(l.b), Guard: g, Notify: []string{"ssh.restart"}, Then: &protocol.Then{Recipe: "ssh", Module: "file", Mains: []string{"2"}}})
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: failingFileArgs(l.b), Guard: protocol.Guard{Store: sshStore, Confirm: true}, React: []protocol.React{sshRestart, sshThen}})
 	if !strings.Contains(r.Error, "validate failed, and the old file is back: false") || !strings.HasSuffix(r.Error, "; the old files are back") {
 		t.Errorf("apply error %q, want the validate error and the rollback", r.Error)
 	}
@@ -798,8 +811,8 @@ func TestFailedGuardedApplyRollsBack(t *testing.T) {
 	if _, err := os.Lstat(l.job()); !os.IsNotExist(err) {
 		t.Errorf("the timer job stays: %v", err)
 	}
-	if p := pendingAll(t, l.c); len(p.Handlers) != 0 || len(p.Then) != 0 {
-		t.Errorf("records after the rollback: %+v, want none", p)
+	if got := pending(t, l.c); len(got) != 0 {
+		t.Errorf("records after the rollback: %v, want none", got)
 	}
 }
 
@@ -828,7 +841,7 @@ func TestFailedCmdKeepsTheTimer(t *testing.T) {
 	l := startLockout(t)
 	args, _ := json.Marshal(module.Cmd{Command: "echo new > " + l.b + "; exit 3", Changes: []string{l.b}})
 	g := protocol.Guard{Store: "app", Confirm: true}
-	r := l.c.call(t, "apply", protocol.Step{Module: "cmd", Args: args, Guard: g, Notify: []string{"app.restart"}, Then: &protocol.Then{Recipe: "app", Module: "cmd", Mains: []string{"1"}}})
+	r := l.c.call(t, "apply", protocol.Step{Module: "cmd", Args: args, Guard: g, React: []protocol.React{{Recipe: "app", Module: "service", Mains: []string{"1"}}, {Recipe: "app", Module: "cmd", Mains: []string{"2"}, Then: true}}})
 	if r.Error != "" {
 		t.Fatalf("apply error %q, want a result with the failure", r.Error)
 	}
@@ -842,8 +855,8 @@ func TestFailedCmdKeepsTheTimer(t *testing.T) {
 	if content(t, l.b) != "new\n" {
 		t.Errorf("b = %q before the access check, want new", content(t, l.b))
 	}
-	if p := pendingAll(t, l.c); len(p.Handlers) != 0 || len(p.Then) != 0 {
-		t.Errorf("records of the failed step: %+v, want none", p)
+	if got := pending(t, l.c); len(got) != 0 {
+		t.Errorf("records of the failed step: %v, want none", got)
 	}
 	if r := l.c.call(t, "rollback", nil); r.Error != "" {
 		t.Fatalf("rollback: %s", r.Error)
@@ -934,58 +947,74 @@ func TestGuardedCmdTimerStartFails(t *testing.T) {
 		t.Fatal(r.Error)
 	}
 	args, _ := json.Marshal(module.Cmd{Command: "echo new > " + b, Changes: []string{b}})
-	r := c.call(t, "apply", protocol.Step{Module: "cmd", Args: args, Guard: protocol.Guard{Store: "app", Confirm: true}, Notify: []string{"app.restart"}})
+	r := c.call(t, "apply", protocol.Step{Module: "cmd", Args: args, Guard: protocol.Guard{Store: "app", Confirm: true}, React: []protocol.React{{Recipe: "app", Module: "service", Mains: []string{"1"}}}})
 	if !strings.Contains(r.Error, "start the rollback timer: ") || !strings.HasSuffix(r.Error, "; the old files are back") {
 		t.Errorf("apply error %q, want the timer error and the old files back", r.Error)
 	}
 	if content(t, b) != "old\n" {
 		t.Errorf("b = %q, want old", content(t, b))
 	}
-	if p := pendingAll(t, c); len(p.Handlers) != 0 {
-		t.Errorf("records of the failed step: %+v, want none", p)
+	if got := pending(t, c); len(got) != 0 {
+		t.Errorf("records of the failed step: %v, want none", got)
 	}
 }
 
-// spec: Running a pipeline/Lockout protection (a step saves in the store of
-// its own recipe and in that of each recipe whose confirm_access handler it
-// notifies)
-func TestStepSavesInTheNotifiedStores(t *testing.T) {
+// spec: Running a pipeline/Lockout protection (a step saves each path that
+// it changes in the store of each later guarded step that reacts to it)
+func TestStepSavesInTheStoresOfTheGuardedSteps(t *testing.T) {
 	l := startLockout(t)
-	g := protocol.Guard{Store: "ssh", Save: true, Handlers: []string{"nftables.reload"}}
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"nftables.reload"}}); r.Error != "" {
+	nftables := protocol.React{Recipe: "nftables", Module: "service", Mains: []string{"1"}}
+	g := protocol.Guard{Store: "own", Guarded: []protocol.React{sshReload, nftables}}
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g})
+	if r.Error != "" {
 		t.Fatal(r.Error)
 	}
+	var res protocol.StepResult
+	if err := json.Unmarshal(r.Result, &res); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{l.a}; !slices.Equal(res.Saved, want) {
+		t.Errorf("saved %q, want %q", res.Saved, want)
+	}
 	rb := &rollbacks{dir: filepath.Join(l.dir, "rollback"), project: "acme"}
-	for _, recipe := range []string{"ssh", "nftables"} {
-		saved, err := readIndex(rb.store(recipe))
+	for _, store := range []string{sshStore, nftables.Store()} {
+		saved, err := readIndex(rb.store(store))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(saved) != 1 || saved[0].Path != l.a {
-			t.Errorf("the store of %s holds %+v, want %s", recipe, saved, l.a)
+			t.Errorf("the store %s holds %+v, want %s", store, saved, l.a)
 		}
+	}
+	// A step that is not guarded saves nothing in its own store.
+	if _, err := os.Lstat(rb.store("own")); !os.IsNotExist(err) {
+		t.Errorf("the store of the step: %v, want none", err)
+	}
+	lines, err := rb.notified().read()
+	if want := []string{sshReload.Line(), nftables.Line()}; err != nil || !slices.Equal(lines, want) {
+		t.Errorf("notified %q, %v; want %q", lines, err, want)
 	}
 }
 
 // spec: Running a pipeline/Lockout protection (a failed copy into the store of
-// a notified recipe fails the step and drops its records)
-func TestFailedNotifiedSaveFailsTheStep(t *testing.T) {
+// a guarded step fails the step and drops its records)
+func TestFailedGuardedSaveFailsTheStep(t *testing.T) {
 	l := startLockout(t)
 	// A file in place of the store directory fails the save.
 	rb := &rollbacks{dir: filepath.Join(l.dir, "rollback"), project: "acme"}
-	store := rb.store("nftables")
+	store := rb.store(sshStore)
 	mkdir(t, filepath.Dir(store))
 	write(t, store, "")
-	g := protocol.Guard{Store: "app", Handlers: []string{"nftables.reload"}}
-	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"nftables.reload"}, Then: &protocol.Then{Recipe: "app", Module: "file", Mains: []string{"1"}}})
+	g := protocol.Guard{Store: "app", Guarded: []protocol.React{sshReload}}
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, React: []protocol.React{sshReload, sshThen}})
 	if !strings.Contains(r.Error, "not a directory") {
 		t.Fatalf("apply error %q, want the failed save", r.Error)
 	}
 	if content(t, l.a) != "old\n" {
 		t.Error("the step changed the file after the failed save")
 	}
-	if p := pendingAll(t, l.c); len(p.Handlers) != 0 || len(p.Then) != 0 {
-		t.Errorf("pending %+v, want no records of the failed step", p)
+	if got := pending(t, l.c); len(got) != 0 {
+		t.Errorf("records %v, want none of the failed step", got)
 	}
 }
 
@@ -1018,46 +1047,43 @@ func (l *lockout) end(t *testing.T) {
 }
 
 // spec: Running a pipeline/Lockout protection (the run of a host ends before
-// a notified handler with confirm_access ran)
-func TestEndPutsBackTheStoreOfAPendingHandler(t *testing.T) {
+// a guarded step that reacts to a change of the run ran)
+func TestEndPutsBackTheStoreOfAPendingGuardedStep(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
-		guard   protocol.Guard
-		handler string
+		guarded protocol.React
 	}{
-		{"recipe", protocol.Guard{Store: "ssh", Save: true}, "ssh.reload"},
-		{"stage", protocol.Guard{Store: "site\tbase", Save: true}, "site\tbase\treload"},
-		{"other recipe", protocol.Guard{Store: "app"}, "nftables.reload"},
+		{"recipe", sshReload},
+		{"stage", protocol.React{Pipeline: "site", Stage: "base", Module: "service", Mains: []string{"1"}}},
 	} {
 		l := startLockout(t)
-		g := tt.guard
-		g.Handlers = []string{tt.handler}
-		notify := []string{tt.handler, "app.restart"}
-		if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: notify}); r.Error != "" {
+		other := protocol.React{Recipe: "app", Module: "service", Mains: []string{"9"}}
+		g := protocol.Guard{Store: "app", Guarded: []protocol.React{tt.guarded}}
+		if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, React: []protocol.React{tt.guarded, other}}); r.Error != "" {
 			t.Fatal(r.Error)
 		}
 		l.end(t)
 		if got := content(t, l.a); got != "old\n" {
 			t.Errorf("%s: a = %q, want the old file", tt.name, got)
 		}
-		lines, err := records{dir: filepath.Join(l.dir, "handlers"), project: "acme"}.read()
+		lines, err := records{dir: filepath.Join(l.dir, "react"), project: "acme"}.read()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := []string{"app.restart"}; !slices.Equal(lines, want) {
-			t.Errorf("%s: pending %q, want %q", tt.name, lines, want)
+		if want := []string{other.Line()}; !slices.Equal(lines, want) {
+			t.Errorf("%s: records %q, want %q", tt.name, lines, want)
 		}
 	}
 }
 
 // spec: Running a pipeline/Lockout protection
-func TestEndKeepsTheFilesOfAHandlerThatRan(t *testing.T) {
+func TestEndKeepsTheFilesOfAGuardedStepThatRan(t *testing.T) {
 	l := startLockout(t)
-	g := protocol.Guard{Store: "ssh", Save: true, Handlers: []string{"ssh.reload"}}
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"ssh.reload"}}); r.Error != "" {
+	g := protocol.Guard{Guarded: []protocol.React{sshReload}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, React: []protocol.React{sshReload}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	if r := l.c.call(t, "handled", protocol.Handled{Name: "ssh.reload"}); r.Error != "" {
+	if r := l.c.call(t, "reacted", sshReload); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	l.end(t)
@@ -1070,8 +1096,8 @@ func TestEndKeepsTheFilesOfAHandlerThatRan(t *testing.T) {
 // old files come back)
 func TestEndRollsBackARunningTimer(t *testing.T) {
 	l := startLockout(t)
-	g := protocol.Guard{Store: "ssh", Save: true, Confirm: true}
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"ssh.restart"}}); r.Error != "" {
+	g := protocol.Guard{Store: sshStore, Confirm: true}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, React: []protocol.React{sshRestart}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	l.end(t)
@@ -1081,21 +1107,25 @@ func TestEndRollsBackARunningTimer(t *testing.T) {
 	if _, err := os.Lstat(l.job()); !os.IsNotExist(err) {
 		t.Errorf("the timer job stays: %v", err)
 	}
-	lines, err := records{dir: filepath.Join(l.dir, "handlers"), project: "acme"}.read()
+	lines, err := records{dir: filepath.Join(l.dir, "react"), project: "acme"}.read()
 	if err != nil || len(lines) != 0 {
-		t.Errorf("pending %q, %v; want none", lines, err)
+		t.Errorf("records %q, %v; want none", lines, err)
 	}
 }
 
-// spec: Running a pipeline/Lockout protection (only the store of the handler
-// comes back)
-func TestEndPutsBackOnlyTheStoreOfThePendingHandler(t *testing.T) {
+// spec: Running a pipeline/Lockout protection (only the store of the guarded
+// step that did not run comes back)
+func TestEndPutsBackOnlyTheStoreOfThePendingStep(t *testing.T) {
 	l := startLockout(t)
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: protocol.Guard{Store: "nginx", Save: true}, Notify: []string{"nginx.reload"}}); r.Error != "" {
+	nginx := protocol.React{Recipe: "nginx", Module: "service", Mains: []string{"1"}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: protocol.Guard{Guarded: []protocol.React{nginx}}, React: []protocol.React{nginx}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	g := protocol.Guard{Store: "app", Handlers: []string{"nftables.reload"}}
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"nftables.reload"}}); r.Error != "" {
+	if r := l.c.call(t, "reacted", nginx); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	g := protocol.Guard{Store: "app", Guarded: []protocol.React{sshReload}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, React: []protocol.React{sshReload}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	l.end(t)
@@ -1104,12 +1134,12 @@ func TestEndPutsBackOnlyTheStoreOfThePendingHandler(t *testing.T) {
 	}
 }
 
-// spec: Running a pipeline/Lockout protection (a handler whose files did not
-// come back stays pending)
-func TestEndKeepsTheHandlerWhenTheRestoreFails(t *testing.T) {
+// spec: Running a pipeline/Lockout protection (a guarded step whose files did
+// not come back stays pending)
+func TestEndKeepsTheRecordWhenTheRestoreFails(t *testing.T) {
 	l := startLockout(t)
-	g := protocol.Guard{Store: "ssh", Save: true, Handlers: []string{"ssh.reload"}}
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"ssh.reload"}}); r.Error != "" {
+	g := protocol.Guard{Guarded: []protocol.React{sshReload}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, React: []protocol.React{sshReload}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	// A read-only directory fails the restore.
@@ -1118,17 +1148,17 @@ func TestEndKeepsTheHandlerWhenTheRestoreFails(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(filepath.Dir(l.a), 0o700) }) //nolint:errcheck // the test cleans up
 	l.c.w.Close()
-	if err := <-l.c.done; err == nil || !strings.Contains(err.Error(), "put back the files of the handler ssh.reload") {
+	if err := <-l.c.done; err == nil || !strings.Contains(err.Error(), "put back the files of a service step that did not run") {
 		t.Fatalf("the helper ended with %v, want the failed restore", err)
 	}
-	lines, err := records{dir: filepath.Join(l.dir, "handlers"), project: "acme"}.read()
-	if err != nil || !slices.Equal(lines, []string{"ssh.reload"}) {
-		t.Errorf("pending %q, %v; want ssh.reload", lines, err)
+	lines, err := records{dir: filepath.Join(l.dir, "react"), project: "acme"}.read()
+	if err != nil || !slices.Equal(lines, []string{sshReload.Line()}) {
+		t.Errorf("records %q, %v; want %s", lines, err, sshReload.Line())
 	}
 }
 
 // spec: Running a pipeline/Lockout protection (when a rollback fails, the
-// step's pending handlers and then commands stay recorded)
+// records of the steps that react to the changes of the step stay)
 func TestFailedRollbackKeepsTheRecords(t *testing.T) {
 	for _, how := range []string{"rollback", "failed step", "timer", "end"} {
 		t.Run(how, func(t *testing.T) {
@@ -1143,8 +1173,8 @@ func TestFailedRollbackKeepsTheRecords(t *testing.T) {
 			if how == "failed step" {
 				readOnly()
 			}
-			g := protocol.Guard{Store: "ssh", Save: true, Confirm: true}
-			r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"ssh.restart"}, Then: &protocol.Then{Recipe: "ssh", Module: "file", Mains: []string{"1"}}})
+			g := protocol.Guard{Store: sshStore, Confirm: true}
+			r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, React: []protocol.React{sshRestart, sshThen}})
 			if how != "failed step" {
 				readOnly()
 			}
@@ -1169,16 +1199,12 @@ func TestFailedRollbackKeepsTheRecords(t *testing.T) {
 					t.Fatal("the helper ended without an error, want the failed restore")
 				}
 			}
-			handlers, err := records{dir: filepath.Join(l.dir, "handlers"), project: "acme"}.read()
+			lines, err := records{dir: filepath.Join(l.dir, "react"), project: "acme"}.read()
 			if err != nil {
 				t.Fatal(err)
 			}
-			thens, err := records{dir: filepath.Join(l.dir, "then"), project: "acme"}.read()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(handlers, []string{"ssh.restart"}) || len(thens) != 1 {
-				t.Errorf("pending handlers %q, then records %q; want ssh.restart and the then record", handlers, thens)
+			if want := []string{sshRestart.Line(), sshThen.Line()}; !slices.Equal(lines, want) {
+				t.Errorf("records %q, want %q", lines, want)
 			}
 		})
 	}
@@ -1242,8 +1268,8 @@ func TestRestoreDropsTheUnpackRecords(t *testing.T) {
 		restore func(t *testing.T, l *lockout)
 	}{
 		{"session end", func(t *testing.T, l *lockout) {
-			g := protocol.Guard{Store: "ssh", Save: true, Handlers: []string{"ssh.reload"}}
-			if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"ssh.reload"}}); r.Error != "" {
+			g := protocol.Guard{Guarded: []protocol.React{sshReload}}
+			if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, React: []protocol.React{sshReload}}); r.Error != "" {
 				t.Fatal(r.Error)
 			}
 			l.end(t)
@@ -1383,11 +1409,11 @@ func TestRollbackOfASwitchOfTheSSHUnits(t *testing.T) {
 			state := fakeSystemd(t, map[string]string{"ssh.service": c.service, "ssh.socket": c.socket})
 			l := startLockout(t)
 			off, _ := json.Marshal(c.off)
-			if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: off, Guard: protocol.Guard{Store: "ssh", Save: true}}); r.Error != "" {
+			if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: off}); r.Error != "" {
 				t.Fatal(r.Error)
 			}
 			start, _ := json.Marshal(c.guarded)
-			if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: start, Guard: protocol.Guard{Store: "ssh", Save: true, Confirm: true}}); r.Error != "" {
+			if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: start, Guard: protocol.Guard{Store: sshStore, Confirm: true}}); r.Error != "" {
 				t.Fatal(r.Error)
 			}
 			if r := l.c.call(t, "rollback", nil); r.Error != "" {
@@ -1409,7 +1435,7 @@ func TestDeadTimerWithoutChanges(t *testing.T) {
 	dir := t.TempDir()
 	q := filepath.Join(t.TempDir(), "g")
 	write(t, q, "undone\n")
-	write(t, filepath.Join(dir, "rollback", "acme", "recipe-ssh", "index"), "version 1\n")
+	write(t, filepath.Join(dir, "rollback", "acme", sshStore, "index"), "version 1\n")
 	data, _ := json.Marshal(job{Version: jobVersion, Deadline: time.Now().Add(-time.Minute),
 		Undo: []undo{{Module: "file", Args: fileArgs(q, "undone\n")}}, Downloads: filepath.Join(dir, "downloads", "acme")})
 	write(t, filepath.Join(dir, "rollback", "timer.json"), string(data))
@@ -1427,7 +1453,7 @@ func TestDeadTimerWithoutChanges(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(dir, "rollback", "timer.json")); !os.IsNotExist(err) {
 		t.Errorf("the job stays: %v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(dir, "rollback", "acme", "recipe-ssh")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(dir, "rollback", "acme", sshStore)); !os.IsNotExist(err) {
 		t.Errorf("the store of the earlier run stays: %v", err)
 	}
 }
@@ -1505,17 +1531,17 @@ func TestHelloFailsOnANewerTimerJob(t *testing.T) {
 func TestRollbackPutsBackTheSSHDConfigOfOtherRecipes(t *testing.T) {
 	l := startLockout(t)
 	dropIn := filepath.Join(filepath.Dir(l.a), "drop-in.conf")
-	g := protocol.Guard{Store: "hardening", SSHD: []string{"ssh", "site\tbase"}}
+	g := protocol.Guard{Store: "hardening", SSHD: []string{sshStore, "step-base"}}
 	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(dropIn, "DenyUsers *\n"), Guard: g}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	rb := &rollbacks{dir: filepath.Join(l.dir, "rollback"), project: "acme"}
-	for name, want := range map[string]int{"hardening": 0, "ssh": 1, "site\tbase": 1} {
+	for name, want := range map[string]int{"hardening": 0, sshStore: 1, "step-base": 1} {
 		if saved, err := readIndex(rb.store(name)); err != nil || len(saved) != want {
 			t.Errorf("the store of %q holds %+v, %v; want %d paths", name, saved, err, want)
 		}
 	}
-	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: protocol.Guard{Store: "ssh", Save: true, Confirm: true}})
+	r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: protocol.Guard{Store: sshStore, Confirm: true}})
 	if r.Error != "" {
 		t.Fatal(r.Error)
 	}
@@ -1540,14 +1566,14 @@ func TestEndPutsBackTheSSHDFilesOfAReloadThatDidNotRun(t *testing.T) {
 		stays  bool
 	}{
 		{"no reload ran", nil, false},
-		{"the reload ran", &protocol.Guard{Store: "ssh", Save: true, Confirm: true, LoadsSSHD: true}, true},
-		{"the reload of another store ran", &protocol.Guard{Store: "site\tlate", Save: true, Confirm: true, LoadsSSHD: true}, true},
-		{"another guarded step of the store ran", &protocol.Guard{Store: "ssh", Save: true, Confirm: true}, false},
-		{"the reload of a store without the file ran", &protocol.Guard{Store: "site\tother", Save: true, Confirm: true, LoadsSSHD: true}, false},
+		{"the reload ran", &protocol.Guard{Store: sshStore, Confirm: true, LoadsSSHD: true}, true},
+		{"the reload of another store ran", &protocol.Guard{Store: "step-late", Confirm: true, LoadsSSHD: true}, true},
+		{"another guarded step of the store ran", &protocol.Guard{Store: sshStore, Confirm: true}, false},
+		{"the reload of a store without the file ran", &protocol.Guard{Store: "step-other", Confirm: true, LoadsSSHD: true}, false},
 	} {
 		l := startLockout(t)
 		dropIn := filepath.Join(filepath.Dir(l.a), "drop-in.conf")
-		g := protocol.Guard{Store: "hardening", SSHD: []string{"ssh", "site\tlate"}}
+		g := protocol.Guard{Store: "hardening", SSHD: []string{sshStore, "step-late"}}
 		if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(dropIn, "DenyUsers *\n"), Guard: g}); r.Error != "" {
 			t.Fatal(r.Error)
 		}
@@ -1616,15 +1642,15 @@ func TestRollbackOfASwitchPutsBackTheSSHDConfigOfOtherRecipes(t *testing.T) {
 	state := fakeSystemd(t, map[string]string{"ssh.service": "inactive disabled", "ssh.socket": "active enabled"})
 	l := startLockout(t)
 	dropIn := filepath.Join(filepath.Dir(l.a), "drop-in.conf")
-	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(dropIn, "DenyUsers *\n"), Guard: protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}}); r.Error != "" {
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(dropIn, "DenyUsers *\n"), Guard: protocol.Guard{Store: "hardening", SSHD: []string{sshStore}}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	off, _ := json.Marshal(module.Service{Name: "ssh.socket", Running: &no, Enabled: &no})
-	if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: off, Guard: protocol.Guard{Store: "ssh", Save: true}}); r.Error != "" {
+	if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: off}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	start, _ := json.Marshal(module.Service{Name: "ssh", Running: &yes, Enabled: &yes})
-	if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: start, Guard: protocol.Guard{Store: "ssh", Save: true, Confirm: true, LoadsSSHD: true}}); r.Error != "" {
+	if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: start, Guard: protocol.Guard{Store: sshStore, Confirm: true, LoadsSSHD: true}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	if r := l.c.call(t, "rollback", nil); r.Error != "" {
@@ -1654,11 +1680,11 @@ func TestRestartOfAStoppedUnitTestsNoSSHDFile(t *testing.T) {
 		fakeSystemd(t, map[string]string{"ssh.socket": tt.state})
 		l := startLockout(t)
 		dropIn := filepath.Join(filepath.Dir(l.a), "drop-in.conf")
-		if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(dropIn, "DenyUsers *\n"), Guard: protocol.Guard{Store: "hardening", SSHD: []string{"ssh"}}}); r.Error != "" {
+		if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(dropIn, "DenyUsers *\n"), Guard: protocol.Guard{Store: "hardening", SSHD: []string{sshStore}}}); r.Error != "" {
 			t.Fatal(r.Error)
 		}
 		restart, _ := json.Marshal(module.Service{Name: "ssh.socket", Restarted: true})
-		if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: restart, Guard: protocol.Guard{Store: "ssh", Save: true, Confirm: true, LoadsSSHD: true}}); r.Error != "" {
+		if r := l.c.call(t, "apply", protocol.Step{Module: "service", Args: restart, Guard: protocol.Guard{Store: sshStore, Confirm: true, LoadsSSHD: true}}); r.Error != "" {
 			t.Fatal(r.Error)
 		}
 		if r := l.c.call(t, "confirm", nil); r.Error != "" {

@@ -22,19 +22,19 @@ type Service struct {
 	Name      string `yaml:"name,required" json:"name" line:"unit, with or without .service" doc:"Unit, with or without .service, such as nginx or certbot.timer."`
 	Running   *bool  `yaml:"running" json:"running,omitempty" line:"start or stop; unset leaves it" doc:"Start or stop; unset leaves it. Without running, the step does not start or stop the unit."`
 	Enabled   *bool  `yaml:"enabled" json:"enabled,omitempty" line:"start at boot; unset leaves it" doc:"Start at boot; unset leaves it. Without enabled, the step does not change it."`
-	Reloaded  bool   `yaml:"reloaded" json:"reloaded,omitempty" line:"reload, in handlers and winch run only" doc:"Reload, in handlers and winch run only. A unit that cannot reload restarts."`
-	Restarted bool   `yaml:"restarted" json:"restarted,omitempty" line:"restart, in handlers and winch run only" doc:"Restart, in handlers and winch run only. A stopped unit stays stopped."`
+	Reloaded  bool   `yaml:"reloaded" json:"reloaded,omitempty" line:"reload, with on_change or in winch run" doc:"Reload, in a step with on_change or in winch run. A unit that cannot reload restarts. The step checks as ok when the run started the unit after the change it reacts to."`
+	Restarted bool   `yaml:"restarted" json:"restarted,omitempty" line:"restart, with on_change or in winch run" doc:"Restart, in a step with on_change or in winch run. A stopped unit stays stopped. The step checks as ok when the run started the unit after the change it reacts to."`
 	// NewFile is the unit file that an earlier unit step of the host writes
 	// in the run. For an instance, it is the file of the template. The
 	// controller sets it.
 	NewFile []byte `json:"new_file,omitempty"`
-	// Started is set on a handler step when a service step of the run
-	// started the unit after the handler's last notify, no earlier step of
-	// the handler changed anything, and the step has no confirm_access. A
-	// restart or a reload then checks as ok. The controller sets it.
+	// Started is set on a step with on_change when a service step of the run
+	// started the unit after the last change that the step reacts to, and
+	// the step has no confirm_access. A restart or a reload then checks as
+	// ok. The controller sets it.
 	Started bool `json:"started,omitempty"`
-	// Actions is set on a handler step and on the step of winch run, which
-	// can use reloaded and restarted. The loader sets it.
+	// Actions is set on a step with on_change and on the step of winch run,
+	// which can use reloaded and restarted. The loader sets it.
 	Actions bool `json:"-"`
 
 	// Check sets these for Apply: the systemctl commands, in order.

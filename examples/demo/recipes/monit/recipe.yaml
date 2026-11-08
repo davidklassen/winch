@@ -14,25 +14,20 @@ steps:
     file:
       path: /etc/monit/monitrc
       stock: true
-    notify: reload
   - file:
       path: !tpl /etc/monit/conf.d/{{ item }}
       template: !tpl '{{ item }}.tmpl'
       mode: "0600"
       validate: monit -t
     loop: [settings, inside, outside]
-    notify: reload
   - dir:
       path: /etc/monit/conf.d
       purge: true
-    notify: reload
   - service:
       name: monit
       enabled: true
       running: true
-
-handlers:
-  reload:
-    - service:
-        name: monit
-        reloaded: true
+  - service:
+      name: monit
+      reloaded: true
+    on_change: [/etc/monit]

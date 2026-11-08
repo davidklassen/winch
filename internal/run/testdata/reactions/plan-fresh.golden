@@ -1,0 +1,67 @@
+stdout:
+web1
+  web
+    nginx
+      + file /etc/nginx/a.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +a
+      + file /etc/nginx/b.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +b
+      + file /etc/nginx/c.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +c
+      ~ service nginx: restart (/etc/nginx/c.conf changes)
+      ~ service nginx: reload (/etc/nginx/a.conf changes)
+    site
+      + file /var/www/index.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+      + file /var/www/about.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+          then: reindex
+  apps
+    app
+      + file /etc/app.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +app
+      ~ service app: restart (/var/www/index.html changes)
+
+web2
+  web
+    nginx
+      + file /etc/nginx/a.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +a
+      + file /etc/nginx/b.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +b
+      + file /etc/nginx/c.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +c
+      ~ service nginx: restart (/etc/nginx/c.conf changes)
+      ~ service nginx: reload (/etc/nginx/a.conf changes)
+    site
+      + file /var/www/index.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+      + file /var/www/about.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+          then: reindex
+
+2 hosts: 2 to change, 0 unchanged, 0 unknown
+plan cc61cf78a053ac90
+stderr:

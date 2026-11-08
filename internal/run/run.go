@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net"
 	"path"
 	"regexp"
@@ -41,9 +40,9 @@ type Conn interface {
 	Facts(ctx context.Context) (facts.Facts, error)
 	Pending(ctx context.Context) (protocol.Pending, error)
 	Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
-	// Apply records the handlers in notify and then on the host before it
-	// changes something. It guards the step against a lockout as guard says.
-	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard, masked *string) (module.Result, error)
+	// Apply adds the records in react on the host before it changes
+	// something. It guards the step against a lockout as guard says.
+	Apply(ctx context.Context, name string, m module.Module, st *module.State, react []protocol.React, guard protocol.Guard, masked *string) (module.Result, error)
 	// Access opens a second SSH connection and runs a command that needs the
 	// login and sudo.
 	Access(ctx context.Context) error
@@ -55,17 +54,20 @@ type Conn interface {
 	Due(ctx context.Context) error
 	// Reboot reboots the host and connects again within wait.
 	Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error)
-	// Handled removes the record of a handler that succeeded.
-	Handled(ctx context.Context, handler string) error
+	// Reacted removes the records that match the record of a step that
+	// succeeded.
+	Reacted(ctx context.Context, r protocol.React) error
 	// Pend records a pending health gate.
 	Pend(ctx context.Context, c protocol.Check) error
 	// Passed removes the record of a health gate.
 	Passed(ctx context.Context, c protocol.Check) error
-	// DropThen removes the record of a then that matches no step.
-	DropThen(ctx context.Context, t protocol.Then) error
+	// Drop removes a record that matches no step.
+	Drop(ctx context.Context, r protocol.React) error
+	// DropOld removes the record files of an older winch.
+	DropOld(ctx context.Context) error
 	// Command runs the command of a then, and then removes the records that
-	// match it.
-	Command(ctx context.Context, command string, then protocol.Then) error
+	// match r.
+	Command(ctx context.Context, command string, r protocol.React) error
 	// Health runs a health gate, and then removes its record.
 	Health(ctx context.Context, h protocol.Health) error
 	Exec(ctx context.Context, e protocol.Exec) (module.ExecResult, error)
@@ -137,15 +139,12 @@ type Plan struct {
 	// gone are the records of each host for gates, and of asserts, that the
 	// pipeline no longer has.
 	gone map[string][]protocol.Check
-	// goneThens are the then records of each host that match no step.
-	goneThens map[string][]protocol.Then
+	// goneReacts are the records of each host that match no step.
+	goneReacts map[string][]protocol.React
 	// pipeline is the name of the pipeline of the plan.
 	pipeline string
-	// goneHandlers are the pending handlers of each host that the project no
-	// longer has.
-	goneHandlers map[string][]string
-	// waiting are the handlers of each host, pending or notified by a changed
-	// step, whose recipe or stage the plan does not reach on the host.
+	// waiting are the notes of each host on the records, pending or added by
+	// a changed step, whose step the plan does not check on the host.
 	waiting map[string][]string
 	// refreshed are the hosts whose package index a step refreshed in the
 	// plan.
@@ -176,9 +175,8 @@ type HostPlan struct {
 	PendingHealth bool
 }
 
-// Planned is a module step for one host, or a slot for a handler. In is the
-// recipe step that the step or slot belongs to, or nil for a module step of
-// the stage.
+// Planned is a module step for one host. In is the recipe step that the step
+// belongs to, or nil for a module step of the stage.
 type Planned struct {
 	Step   project.Step
 	In     *project.Step
@@ -186,53 +184,70 @@ type Planned struct {
 	// Last is true on the last element of a step with loop, and on a step
 	// without loop.
 	Last bool
-	// Notify are the handlers that the step notifies on the host, as
-	// <recipe>.<handler>.
-	Notify []string
-	// Handler is set on a slot. A slot has no step of its own.
-	Handler *Slot
-	// Then is the record of the step's then, or nil.
-	Then *protocol.Then
+	// Record is the record of the step: its scope, module, and main
+	// arguments, of all elements of a step with loop. It names the rollback
+	// store of the step.
+	Record protocol.React
+	// React are the records of the later steps of the host that react to a
+	// path of the step, also of a then.
+	React []protocol.React
+	// Guarded are the records of React whose step has confirm_access, and
+	// guardedLabels the labels of those steps.
+	Guarded       []protocol.React
+	guardedLabels []string
+	// Acts is false on a step with on_change that the plan does not expect to
+	// act. Reason is the path that the step reacts to, or "" when only its
+	// record is pending.
+	Acts   bool
+	Reason string
+	// Pending is true on a step with on_change whose record is pending on
+	// the host.
+	Pending bool
 	// PendingThen is true on the last element of a step whose then is
 	// pending on the host.
 	PendingThen bool
 	// ThenRuns is true on the last element of a step whose then the plan
-	// expects to run: an element changes, or the then is pending.
+	// expects to run: a path of the step changes, or the then is pending.
 	ThenRuns bool
 	// Address is the scope, the number of the step in its list, and the loop
-	// index: nginx#3[0]. A slot has the full name of its handler.
+	// index: nginx#3[0].
 	Address string
 	// parts are the secret parts of the steps of the host. Text from the host
 	// of one step can hold a value that another step built from a secret.
 	parts []string
 	// missing are the notes on the users, groups, and dirs of the step that
-	// do not exist yet.
+	// do not exist yet, and the warnings on its on_change.
 	missing []Note
 	// SSHD is set on a step that changes sshd's config: the stores of the
 	// later steps of the host with confirm_access that restart or reload
 	// sshd.
-	SSHD []store
+	SSHD []string
 	// LoadsSSHD is true on a step that the plan counts as a load of sshd.
 	LoadsSSHD bool
+	// step counts the steps of the host in pipeline order; the elements of a
+	// step with loop share it.
+	step int
+	// paths are the paths that the element changes, and thenPaths those of
+	// all elements of a step with then, on its last element.
+	paths, thenPaths []string
+	stage            *project.Stage
 }
 
 // hostText returns text from the host of the step with each secret part of
 // the steps of its host as secret.Mark.
 func (p Planned) hostText(s string) string { return p.Step.HostText(s, p.parts) }
 
-// Slot is a place where a handler runs when a step notified it, or when it is
-// pending on the host.
-type Slot struct {
-	Handler *project.Handler
-	Steps   []Planned
-	// Runs is true when the plan expects the handler to run.
-	Runs bool
+// thenRecord is the record of the then of the step.
+func (p Planned) thenRecord() protocol.React {
+	r := p.Record
+	r.Then = true
+	return r
 }
 
 // shows reports whether the plan shows p as something that apply changes or
-// runs: a change, an unknown step, a handler, or a then.
+// runs: a change, an unknown step, a pending step, or a then.
 func (p Planned) shows() bool {
-	return p.Result.Status == module.Change || p.Result.Status == module.Unknown || p.Handler != nil && p.Handler.Runs || p.ThenRuns
+	return p.Result.Status == module.Change || p.Result.Status == module.Unknown || p.Pending || p.ThenRuns
 }
 
 func (h HostPlan) changes() bool {
@@ -242,7 +257,7 @@ func (h HostPlan) changes() bool {
 // known reports whether the plan shows a line other than an unknown step.
 func (h HostPlan) known() bool {
 	return h.PendingHealth || slices.ContainsFunc(h.Steps, func(p Planned) bool {
-		return p.shows() && (p.Result.Status != module.Unknown || p.PendingThen)
+		return p.shows() && (p.Result.Status != module.Unknown || p.Pending || p.PendingThen)
 	})
 }
 
@@ -260,12 +275,22 @@ type hostRun struct {
 	// dirs are the directories that checked steps create, and the parents of
 	// the paths they create.
 	dirs map[string]bool
-	// ran are the recipe steps that ran on the host, in order.
+	// ran are the recipe steps that run on the host, in order, also in
+	// stages that the selection leaves out.
 	ran []*project.Step
-	// notified are the handlers that the plan expects to run later.
-	notified map[string]bool
-	// thens are the pending then records.
-	thens []*pendingThen
+	// reacts are the pending records.
+	reacts []*pendingReact
+	// steps counts the evaluated steps.
+	steps int
+	// reactors are the steps of the host with on_change, and the thens, in
+	// pipeline order.
+	reactors []reactor
+	// changed are the paths that the checked steps change, each with the
+	// count of changed steps up to it; startedAt holds the count at the last
+	// start of each unit.
+	changed   []changeAt
+	startedAt map[string]int
+	clock     int
 	// checks are the pending gates.
 	checks map[protocol.Check]bool
 	// pending are the records that the host reported at the first contact.
@@ -332,22 +357,20 @@ type hostRun struct {
 	written func() (project.Writes, error)
 }
 
-// pendingThen is a pending then record. matched is set when a step of the
-// plan matches it, and ran when the plan runs its then.
-type pendingThen struct {
-	protocol.Then
+// pendingReact is a pending record. matched is set when a checked step of the
+// plan matches it, and ran when the plan runs that step.
+type pendingReact struct {
+	protocol.React
 	matched, ran bool
 }
 
-// matchThen marks the pending records that match t as matched, and with run
-// as run. It reports whether one of them had not run yet.
-func (hr *hostRun) matchThen(t *protocol.Then, run bool) bool {
-	if t == nil {
-		return false
-	}
+// matchReact marks the pending records that match r as matched, and with run
+// as run. It reports whether one of them had not run yet. Apply runs a
+// pending step once, also when two steps match its record.
+func (hr *hostRun) matchReact(r protocol.React, run bool) bool {
 	pending := false
-	for _, p := range hr.thens {
-		if !t.Matches(p.Then) {
+	for _, p := range hr.reacts {
+		if !r.Matches(p.React) {
 			continue
 		}
 		p.matched = true
@@ -355,6 +378,61 @@ func (hr *hostRun) matchThen(t *protocol.Then, run bool) bool {
 		p.ran = p.ran || run
 	}
 	return pending
+}
+
+// reactor is a step with on_change, or the then of a step: the paths that it
+// reacts to, and its record. then is the step of a then; such a reactor
+// comes after all elements of its step.
+type reactor struct {
+	onChange []string
+	record   protocol.React
+	step     int
+	then     bool
+	// name is the address of the step without the loop index, and label its
+	// label for the messages.
+	name, label string
+	stage       *project.Stage
+	guarded     bool
+}
+
+// after reports whether r comes after the elements of the step n.
+func (r reactor) after(n int) bool { return r.step > n || r.then && r.step == n }
+
+// changeAt is a path that a step changes, with the count of changed steps up
+// to that step.
+type changeAt struct {
+	path string
+	at   int
+}
+
+// covers reports whether a path of paths is a path of onChange or below one.
+func covers(onChange, paths []string) bool {
+	return slices.ContainsFunc(paths, func(p string) bool { return coveredBy(onChange, p) != "" })
+}
+
+// coveredBy returns the path of onChange that p is or is below, or "".
+func coveredBy(onChange []string, p string) string {
+	for _, q := range onChange {
+		if p == q || q == "/" || strings.HasPrefix(p, q+"/") {
+			return q
+		}
+	}
+	return ""
+}
+
+// reaction returns the first changed path that onChange covers, and the count
+// of changed steps at the last such path. ok is false when it covers none.
+func reaction(changed []changeAt, onChange []string) (first string, at int, ok bool) {
+	for _, c := range changed {
+		if coveredBy(onChange, c.path) == "" {
+			continue
+		}
+		if !ok {
+			first, ok = c.path, true
+		}
+		at = c.at
+	}
+	return first, at, ok
 }
 
 type managed struct {
@@ -544,8 +622,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 		}
 	}
 	plan.gone = map[string][]protocol.Check{}
-	plan.goneThens = map[string][]protocol.Then{}
-	plan.goneHandlers = map[string][]string{}
+	plan.goneReacts = map[string][]protocol.React{}
 	plan.waiting = map[string][]string{}
 	plan.refreshed = map[string]bool{}
 	plan.parts = map[string][]string{}
@@ -557,8 +634,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 			plan.Pending[name] = *hr.pending
 			if !p.Pipeline.AdHoc {
 				plan.gone[name] = o.goneChecks(hr.pending.Checks)
-				plan.goneThens[name] = o.goneThens(name, hr)
-				plan.goneHandlers[name], plan.waiting[name] = o.pendingHandlers(hr.pending.Handlers, hr.notified)
+				plan.goneReacts[name], plan.waiting[name] = plan.pendingReacts(o, hr)
 			}
 		}
 		plan.Destinations[name] = hr.dest
@@ -596,7 +672,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 }
 
 func newHostRun() *hostRun {
-	return &hostRun{dirs: map[string]bool{}, notified: map[string]bool{}, checks: map[protocol.Check]bool{}, needs: map[string]need{}, created: map[string]bool{}, reported: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, gone: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}, texts: map[string]sourceText{}}
+	return &hostRun{dirs: map[string]bool{}, startedAt: map[string]int{}, checks: map[protocol.Check]bool{}, needs: map[string]need{}, created: map[string]bool{}, reported: map[string]bool{}, units: map[string]bool{}, services: map[string]string{}, started: map[string]string{}, gone: map[string]string{}, sshOn: map[string]bool{}, unitFiles: map[string][]byte{}, sources: map[string]string{}, managed: map[string]managed{}, lines: map[string][]lineStep{}, texts: map[string]sourceText{}}
 }
 
 // readFacts reads the facts of hosts, the hosts that hosts and match() can
@@ -673,7 +749,7 @@ func sharedDestinations(ctx context.Context, hosts []project.Host, resolve func(
 }
 
 // check checks the steps of a stage on one host. At the first contact, it
-// reads the facts and the pending handlers, and evaluates all stages of the
+// reads the facts and the pending records, and evaluates all stages of the
 // host: the text from the host then passes the secret parts of all its steps.
 // other holds the facts that the plan read before, also of h.
 func check(ctx context.Context, conn Conn, progress Progress, p *project.Project, h project.Host, stage *project.Stage, hr *hostRun, other map[string]project.HostFacts) ([]Planned, error) {
@@ -692,25 +768,23 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		}
 		hr.written = sync.OnceValues(func() (project.Writes, error) { return p.Written(h, f, other) })
 		hr.stages = map[*project.Stage][]Planned{}
+		var order []*Planned
 		for i := range p.Pipeline.Stages {
 			s := &p.Pipeline.Stages[i]
-			if s.Skipped || !slices.ContainsFunc(s.Targets, func(t project.Host) bool { return t.Name == h.Name }) {
+			if !slices.ContainsFunc(s.Targets, func(t project.Host) bool { return t.Name == h.Name }) {
 				continue
 			}
 			steps, err := evaluate(s, hr)
 			if err != nil {
 				return nil, err
 			}
-			for _, p := range steps {
-				hr.addParts(p.Step.Parts)
-				if s := p.Handler; s != nil {
-					for _, hs := range s.Steps {
-						hr.addParts(hs.Step.Parts)
-					}
-				}
+			for j := range steps {
+				hr.addParts(steps[j].Step.Parts)
+				order = append(order, &steps[j])
 			}
 			hr.stages[s] = steps
 		}
+		hr.link(h.Name, order)
 		pending, err := conn.Pending(context.WithoutCancel(ctx))
 		if err != nil {
 			return nil, err
@@ -719,31 +793,15 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 			pending.Rollback[i] = hr.hide(l)
 		}
 		hr.pending = &pending
-		for _, n := range pending.Handlers {
-			hr.notified[n] = true
-		}
-		for _, t := range pending.Then {
-			hr.thens = append(hr.thens, &pendingThen{Then: t})
+		for _, r := range pending.React {
+			hr.reacts = append(hr.reacts, &pendingReact{React: r})
 		}
 		for _, c := range pending.Checks {
 			hr.checks[c] = true
 		}
 	}
 	steps := hr.stages[stage]
-	changed := false
 	for i, p := range steps {
-		if s := p.Handler; s != nil {
-			name := s.Handler.Record()
-			s.Runs = hr.notified[name]
-			delete(hr.notified, name)
-			for j, hs := range s.Steps {
-				if hs.Last {
-					pending := hr.matchThen(hs.Then, s.Runs)
-					s.Steps[j].PendingThen = s.Runs && pending
-				}
-			}
-			continue
-		}
 		if ctx.Err() != nil {
 			return nil, ErrInterrupted
 		}
@@ -767,21 +825,26 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 			return nil, err
 		}
 		hr.newUnitFile(&steps[i].Step)
-		progress.Busy(h.Name, where)
-		mask := func(s string) string { return p.Step.HostText(s, hr.parts) }
-		conn.Mask(mask)
-		var err error
-		steps[i].Result, err = conn.Check(context.WithoutCancel(ctx), p.Step.Module, steps[i].Step.Args, &hr.state)
-		conn.Mask(hr.hide)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", where, maskError(err, mask))
+		checked := hr.react(&steps[i])
+		if steps[i].Acts {
+			progress.Busy(h.Name, where)
+			mask := func(s string) string { return p.Step.HostText(s, hr.parts) }
+			conn.Mask(mask)
+			var err error
+			steps[i].Result, err = conn.Check(context.WithoutCancel(ctx), p.Step.Module, checked.Args, &hr.state)
+			conn.Mask(hr.hide)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", where, maskError(err, mask))
+			}
+		} else {
+			steps[i].Result = module.Result{Status: module.OK}
 		}
 		hr.refreshed = hr.refreshed || hr.state.Refreshed
 		hr.newText(p.Step, &steps[i].Result)
 		hr.trackRemoved(p.Step.Args)
 		hr.trackUnitFile(p.Step.Args, steps[i].Result)
 		hr.dropCreated(&steps[i].Result)
-		steps[i].missing = hr.missingNotes(h.Name, steps[i].Step, steps[i].Result)
+		steps[i].missing = append(steps[i].missing, hr.missingNotes(h.Name, steps[i].Step, steps[i].Result)...)
 		if err := hr.order(p.Step, steps[i].Result, where); err != nil {
 			return nil, err
 		}
@@ -794,37 +857,127 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
 		hr.trackUnits(p.Step.Args, steps[i].Result, where)
 		if steps[i].Result.Status != module.OK {
-			if err := hr.leftOut(p.Step, where); err != nil {
+			if err := hr.changes(steps[i], where); err != nil {
 				return nil, err
 			}
-			changed = true
-			for _, n := range p.Notify {
-				hr.notified[n] = true
-			}
 		}
-		if !p.Last {
+		if !p.Last || p.Step.Then == "" {
 			continue
 		}
-		steps[i].PendingThen = hr.matchThen(p.Then, true)
-		steps[i].ThenRuns = p.Then != nil && (changed || steps[i].PendingThen)
-		changed = false
+		steps[i].PendingThen = hr.matchReact(p.thenRecord(), true)
+		_, _, hit := reaction(hr.changed, p.thenPaths)
+		steps[i].ThenRuns = hit || steps[i].PendingThen
 	}
 	return steps, nil
 }
 
-// leftOut fails a changed step that notifies a handler with confirm_access
-// whose recipe runs in a stage that the selection leaves out. The session end
-// would put back the step's files.
-func (hr *hostRun) leftOut(st project.Step, where string) error {
-	for _, h := range st.Notify {
-		if h.Recipe == nil || !h.ConfirmsAccess() {
-			continue
-		}
-		if s := hr.env.RunsIn(h.Recipe.Name); s != nil && s.Skipped {
-			return fmt.Errorf("%s: the confirm_access handler %s runs in stage %s, which --stages leaves out", where, h.FullName(), s.Name)
+// react decides whether the step p with on_change acts: an earlier checked
+// step changes a path that it reacts to, or its record is pending. It returns
+// the step to check: a restart or a reload without confirm_access checks as ok
+// when the run started the unit after the last such change. Apply decides
+// that again from its own starts.
+func (hr *hostRun) react(p *Planned) project.Step {
+	p.Acts = true
+	if len(p.Step.OnChange) == 0 {
+		return p.Step
+	}
+	first, at, hit := reaction(hr.changed, p.Step.OnChange)
+	// The elements of a step with loop share its record.
+	p.Pending = hr.matchReact(p.Record, p.Last)
+	p.Acts, p.Reason = hit || p.Pending, hr.hide(first)
+	return afterStart(p.Step, hr.startedAt, at)
+}
+
+// afterStart marks a restart or a reload without confirm_access as Started
+// when a service step of the run started the unit after at, the count of
+// changed steps at the last change that the step reacts to. The access check
+// of a step with confirm_access guards the files that the start used.
+func afterStart(st project.Step, started map[string]int, at int) project.Step {
+	sv, ok := st.Args.(*module.Service)
+	if !ok || st.ConfirmAccess || !sv.Restarted && !sv.Reloaded || started[sv.Unit()] <= at {
+		return st
+	}
+	c := *sv
+	c.Started = true
+	st.Args = &c
+	return st
+}
+
+// changes records the paths of the checked step p that changes something. It
+// fails the step when a step with on_change that reacts to such a path came
+// before it, or when a step with confirm_access that reacts to it is in a
+// stage that the selection leaves out: the session end would put back the
+// step's files.
+func (hr *hostRun) changes(p Planned, where string) error {
+	for _, path := range p.paths {
+		for _, r := range hr.reactors {
+			if r.step < p.step && !r.stage.Skipped && coveredBy(r.onChange, path) != "" {
+				return fmt.Errorf("%s: %s changes %s after %s reacts to it; add a step with on_change after %[2]s", where, baseAddress(p), path, r.name)
+			}
 		}
 	}
+	for _, g := range p.Guarded {
+		i := slices.IndexFunc(hr.reactors, func(r reactor) bool { return r.record.Line() == g.Line() })
+		if r := hr.reactors[i]; r.stage.Skipped {
+			return fmt.Errorf("%s: %s %s reacts to this change in stage %s, which --stages leaves out", where, r.name, r.label, r.stage.Name)
+		}
+	}
+	hr.clock++
+	for _, path := range p.paths {
+		hr.changed = append(hr.changed, changeAt{path, hr.clock})
+	}
+	if sv, ok := p.Step.Args.(*module.Service); ok && p.Result.Starts {
+		hr.clock++
+		hr.startedAt[sv.Unit()] = hr.clock
+	}
 	return nil
+}
+
+// link sets the paths and the records of each evaluated step of host in
+// order, the steps of all its stages in pipeline order. It warns at a step
+// with on_change when no step of the host changes any of its paths.
+func (hr *hostRun) link(host string, order []*Planned) {
+	for i, p := range order {
+		p.paths = module.ChangePaths(p.Step.Args)
+		if len(p.Step.OnChange) > 0 {
+			hr.reactors = append(hr.reactors, reactor{onChange: p.Step.OnChange, record: p.Record, step: p.step, name: baseAddress(*p), label: p.label(), stage: p.stage, guarded: p.Step.ConfirmAccess})
+		}
+		if !p.Last || p.Step.Then == "" {
+			continue
+		}
+		for j := i; j >= 0 && order[j].step == p.step; j-- {
+			p.thenPaths = append(p.thenPaths, module.ChangePaths(order[j].Step.Args)...)
+		}
+		hr.reactors = append(hr.reactors, reactor{onChange: p.thenPaths, record: p.thenRecord(), step: p.step, then: true, name: "the then of " + baseAddress(*p), label: p.label(), stage: p.stage})
+	}
+	for _, p := range order {
+		for _, r := range hr.reactors {
+			if !r.after(p.step) || !covers(r.onChange, p.paths) || slices.ContainsFunc(p.React, func(o protocol.React) bool { return o.Line() == r.record.Line() }) {
+				continue
+			}
+			p.React = append(p.React, r.record)
+			if r.guarded {
+				p.Guarded, p.guardedLabels = append(p.Guarded, r.record), append(p.guardedLabels, r.label)
+			}
+		}
+		if len(p.Step.OnChange) == 0 || slices.ContainsFunc(order, func(o *Planned) bool { return covers(p.Step.OnChange, o.paths) }) {
+			continue
+		}
+		var shown []string
+		for _, q := range p.Step.OnChange {
+			shown = append(shown, hr.hide(q))
+		}
+		p.missing = append(p.missing, Note{host, fmt.Sprintf("on_change: no step of %s changes %s", host, strings.Join(shown, ", ")), true})
+	}
+}
+
+// label is the label of the step for the messages of other steps.
+func (p Planned) label() string { return oneLine(label(p.Step)) }
+
+// baseAddress is the address of the step of p without the loop index.
+func baseAddress(p Planned) string {
+	addr, _, _ := strings.Cut(p.Address, "[")
+	return addr
 }
 
 // need is a step that needs a user, a group, or a directory, and that need as
@@ -1126,6 +1279,11 @@ func (hr *hostRun) same(st project.Step, where string) error {
 			}
 		}
 	case *module.Service:
+		// A restart or a reload changes no state of the unit that a step
+		// declares.
+		if m.Restarted || m.Reloaded {
+			return nil
+		}
 		c := *m
 		c.Name = m.Unit()
 		return add("the unit "+c.Name, &c)
@@ -1252,8 +1410,8 @@ func otherOwner(tree, o module.Owned) bool {
 // start or enable the unit. Such a step fails on a new host. It fails a
 // service step that starts or enables a unit that a unit step removes, in
 // either order. It also fails a step that changes a drop-in of a unit that an
-// earlier service step starts or enables, when the step notifies no handler on
-// the host: daemon-reload does not restart the unit.
+// earlier service step starts or enables, when no later restart of the unit
+// reacts to the drop-in: daemon-reload does not restart the unit.
 func (hr *hostRun) unitOrder(p Planned, where string) error {
 	var dropIn string
 	switch m := p.Step.Args.(type) {
@@ -1294,14 +1452,28 @@ func (hr *hostRun) unitOrder(p Planned, where string) error {
 		dropIn = m.Path
 	}
 	unit, ok := strings.CutPrefix(path.Dir(dropIn), "/etc/systemd/system/")
-	if !ok || len(p.Notify) > 0 {
+	if !ok {
 		return nil
 	}
 	unit, ok = strings.CutSuffix(unit, ".d")
-	if w, found := hr.started[unit]; ok && found {
+	if w, found := hr.started[unit]; ok && found && !hr.restartsLater(p, unit, dropIn) {
 		return fmt.Errorf("%s: %s starts or enables %s before this step changes its drop-in; move this step before it", where, w, unit)
 	}
 	return nil
+}
+
+// restartsLater reports whether a later step of the host restarts unit with
+// an on_change that covers the drop-in path of the step p.
+func (hr *hostRun) restartsLater(p Planned, unit, dropIn string) bool {
+	for _, steps := range hr.stages {
+		for _, s := range steps {
+			sv, ok := s.Step.Args.(*module.Service)
+			if ok && s.step > p.step && sv.Restarted && sv.Unit() == unit && coveredBy(s.Step.OnChange, dropIn) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // overlap fails a line step when its match finds the line of an earlier line
@@ -1539,14 +1711,10 @@ func (hr *hostRun) dropCreatedParents(m module.Module, res *module.Result) {
 }
 
 // evaluate returns the module steps of a stage for one host, with recipe
-// steps, when, and loop applied. A slot for each handler of a recipe follows
-// the recipe's steps. A handler of a recipe that ran before a step of the
-// stage notifies it gets a slot at the end of the stage. The slots of the
-// stage's own handlers come last.
+// steps, when, and loop applied.
 func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 	var out []Planned
-	late := map[*project.Handler]bool{}
-	add := func(env *project.Env, st project.Step, in *project.Step, addr string, place protocol.Check) error {
+	add := func(env *project.Env, st project.Step, in *project.Step, addr string, place protocol.React) error {
 		steps, err := st.Eval(env)
 		if err != nil {
 			return err
@@ -1554,27 +1722,17 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 		if err := hr.keep(steps); err != nil {
 			return err
 		}
-		var notify []string
-		for _, h := range st.Notify {
-			// A recipe that does not run on the host never runs its handler.
-			if h.Recipe != nil && hr.env.RunsIn(h.Recipe.Name) == nil {
-				continue
-			}
-			notify = append(notify, h.Record())
-			if h.Recipe != nil && slices.ContainsFunc(hr.ran, func(r *project.Step) bool { return r.Recipe == h.Recipe }) {
-				late[h] = true
-			}
-		}
-		then := thenRecord(steps, place)
+		hr.steps++
+		r := record(steps, place)
 		for i, s := range steps {
-			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify, Then: then, Address: address(addr, st, i)})
+			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Record: r, Address: address(addr, st, i), step: hr.steps, stage: stage})
 		}
 		return nil
 	}
 	for i := range stage.Steps {
 		st := &stage.Steps[i]
 		if st.Recipe == nil {
-			if err := add(hr.env, *st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1), protocol.Check{Pipeline: stage.Pipeline, Stage: stage.Name}); err != nil {
+			if err := add(hr.env, *st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1), protocol.React{Pipeline: stage.Pipeline, Stage: stage.Name}); err != nil {
 				return nil, err
 			}
 			continue
@@ -1588,37 +1746,11 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 		}
 		env := hr.env.For(st)
 		for j, rs := range st.Recipe.Steps {
-			if err := add(env, rs, st, fmt.Sprintf("%s#%d", st.Recipe.Name, j+1), protocol.Check{Recipe: st.Recipe.Name}); err != nil {
+			if err := add(env, rs, st, fmt.Sprintf("%s#%d", st.Recipe.Name, j+1), protocol.React{Recipe: st.Recipe.Name}); err != nil {
 				return nil, err
 			}
-		}
-		for _, h := range st.Recipe.Handlers {
-			slot, err := handlerSlot(h, env, st, hr)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, Planned{In: st, Handler: slot, Address: h.FullName()})
 		}
 		hr.ran = append(hr.ran, st)
-	}
-	for _, r := range hr.ran {
-		for _, h := range r.Recipe.Handlers {
-			if !late[h] {
-				continue
-			}
-			slot, err := handlerSlot(h, hr.env.For(r), r, hr)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, Planned{In: r, Handler: slot, Address: h.FullName()})
-		}
-	}
-	for _, h := range stage.Handlers {
-		slot, err := handlerSlot(h, hr.env, nil, hr)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, Planned{Handler: slot, Address: h.FullName()})
 	}
 	return out, nil
 }
@@ -1659,31 +1791,6 @@ func address(addr string, st project.Step, i int) string {
 	return addr
 }
 
-// handlerSlot evaluates the steps of a handler for a host. in is the recipe
-// step of a handler of a recipe, or nil for a handler of a stage.
-func handlerSlot(h *project.Handler, env *project.Env, in *project.Step, hr *hostRun) (*Slot, error) {
-	slot := &Slot{Handler: h}
-	place := protocol.Check{Pipeline: h.Pipeline, Stage: h.Stage, Handler: h.Name}
-	if h.Recipe != nil {
-		place.Recipe = h.Recipe.Name
-	}
-	for j, hs := range h.Steps {
-		steps, err := hs.Eval(env)
-		if err != nil {
-			return nil, err
-		}
-		if err := hr.keep(steps); err != nil {
-			return nil, err
-		}
-		addr := fmt.Sprintf("%s#%d", h.FullName(), j+1)
-		then := thenRecord(steps, place)
-		for i, s := range steps {
-			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1, Then: then, Address: address(addr, hs, i)})
-		}
-	}
-	return slot, nil
-}
-
 // HasChanges reports whether a host that did not fail has changes.
 func (p *Plan) HasChanges() bool {
 	for name := range p.hostKinds() {
@@ -1702,7 +1809,7 @@ func (p *Plan) HasWork() bool {
 
 // removes reports whether apply removes gone records on host.
 func (p *Plan) removes(host string) bool {
-	return p.Failed[host] == nil && (len(p.gone[host]) > 0 || len(p.goneThens[host]) > 0 || len(p.goneHandlers[host]) > 0)
+	return p.Failed[host] == nil && (len(p.gone[host]) > 0 || len(p.goneReacts[host]) > 0 || len(p.Pending[host].Old) > 0)
 }
 
 // scope is the recipe of a step, or the stage for a module step of a stage.
@@ -1713,17 +1820,17 @@ func scope(stage *project.Stage, p Planned) string {
 	return stage.Name
 }
 
-// thenRecord is the record of the then of the evaluated steps at place, or nil
-// for a step without then.
-func thenRecord(steps []project.Step, place protocol.Check) *protocol.Then {
-	if len(steps) == 0 || steps[0].Then == "" {
-		return nil
+// record is the record of the evaluated steps of one step at place: the
+// scope, with the module and the main arguments of the steps.
+func record(steps []project.Step, place protocol.React) protocol.React {
+	r := place
+	if len(steps) > 0 {
+		r.Module = steps[0].Module
 	}
-	t := &protocol.Then{Recipe: place.Recipe, Pipeline: place.Pipeline, Stage: place.Stage, Handler: place.Handler, Module: steps[0].Module}
 	for _, st := range steps {
-		t.Mains = append(t.Mains, sum(st.Args.Main()))
+		r.Mains = append(r.Mains, sum(st.Args.Main()))
 	}
-	return t
+	return r
 }
 
 // owners are the pipelines and recipes of the project, which own the records
@@ -1754,75 +1861,101 @@ func newOwners(p *project.Project) owners {
 }
 
 // has reports whether the project has the recipe, or the pipeline and the
-// stage, and the handler of a record. When a pipeline did not load, a recipe
-// or a pipeline that the project lacks counts as there.
-func (o owners) has(c protocol.Check) bool {
-	var handlers []*project.Handler
-	if c.Recipe != "" {
-		r := o.recipes[c.Recipe]
-		if r == nil {
-			return !o.all
-		}
-		handlers = r.Handlers
-	} else {
-		pl := o.pipelines[c.Pipeline]
-		if pl == nil {
-			return !o.all
-		}
-		i := slices.IndexFunc(pl.Stages, func(s project.Stage) bool { return s.Name == c.Stage })
-		if i < 0 {
-			return false
-		}
-		handlers = pl.Stages[i].Handlers
+// stage, of a record. When a pipeline did not load, a recipe or a pipeline
+// that the project lacks counts as there.
+func (o owners) has(recipe, pipeline, stage string) bool {
+	if recipe != "" {
+		return o.recipes[recipe] != nil || !o.all
 	}
-	return c.Handler == "" || slices.ContainsFunc(handlers, func(h *project.Handler) bool { return h.Name == c.Handler })
+	pl := o.pipelines[pipeline]
+	if pl == nil {
+		return !o.all
+	}
+	return slices.ContainsFunc(pl.Stages, func(s project.Stage) bool { return s.Name == stage })
 }
 
-// pendingHandlers returns the pending handlers whose recipe, pipeline, stage,
-// or handler the project no longer has, and the other handlers that no slot of
-// the plan took from notified, the records first.
-func (o owners) pendingHandlers(records []string, notified map[string]bool) (gone, waiting []string) {
-	for _, n := range records {
-		recipe, pipeline, stage, handler := project.ParseRecord(n)
+// pendingReacts returns the records of the host that no checked step matches
+// and that are gone, and the notes on the records that wait: pending, or
+// added by a changed step, for a step that the plan does not check. A record
+// is gone when the plan evaluates its recipe or stage on the host and no step
+// matches it, or when the project no longer has its recipe or stage.
+func (p *Plan) pendingReacts(o owners, hr *hostRun) (gone []protocol.React, waiting []string) {
+	wait := func(r protocol.React, label string) {
+		owner := "stage"
+		if r.Recipe != "" {
+			owner = "recipe"
+		}
+		note := "a pending " + label + " of " + p.place(r.Recipe, r.Pipeline, r.Stage) + " waits until its " + owner + " runs on this host"
+		if !slices.Contains(waiting, note) {
+			waiting = append(waiting, note)
+		}
+	}
+	for _, r := range hr.reacts {
+		if r.matched {
+			continue
+		}
+		i := slices.IndexFunc(hr.reactors, func(x reactor) bool { return x.record.Matches(r.React) })
 		switch {
-		case !o.has(protocol.Check{Recipe: recipe, Pipeline: pipeline, Stage: stage, Handler: handler}):
-			gone = append(gone, n)
-		case notified[n]:
-			waiting = append(waiting, n)
+		case i >= 0:
+			wait(r.React, hr.reactors[i].reactLabel())
+		case hr.evaluates(o.pl, r.React) || !o.has(r.Recipe, r.Pipeline, r.Stage):
+			gone = append(gone, r.React)
+		default:
+			wait(r.React, recordNoun(r.React))
 		}
 	}
-	for _, n := range slices.Sorted(maps.Keys(notified)) {
-		if !slices.Contains(records, n) {
-			waiting = append(waiting, n)
+	for _, steps := range hr.stages {
+		for _, s := range steps {
+			if s.Result.Status == module.OK || s.Result.Status == "" {
+				continue
+			}
+			for _, rec := range s.React {
+				i := slices.IndexFunc(hr.reactors, func(x reactor) bool { return x.record.Line() == rec.Line() })
+				if r := hr.reactors[i]; r.stage.Skipped {
+					wait(rec, r.reactLabel())
+				}
+			}
 		}
 	}
+	slices.Sort(waiting)
 	return gone, waiting
 }
 
-// goneThens returns the then records of host that no step of the plan
-// matches, in a recipe that runs on the host, or in a stage of pl that the
-// plan checks on the host. A record whose recipe, pipeline, stage, or handler
-// the project no longer has is gone too. A record of a recipe or stage that
-// the plan does not check stays.
-func (o owners) goneThens(host string, hr *hostRun) []protocol.Then {
-	var gone []protocol.Then
-	for _, t := range hr.thens {
-		if t.matched {
-			continue
-		}
-		reach := false
-		switch {
-		case t.Recipe != "":
-			reach = slices.ContainsFunc(hr.ran, func(r *project.Step) bool { return r.Recipe.Name == t.Recipe })
-		case t.Pipeline == o.pl.Name:
-			i := slices.IndexFunc(o.pl.Stages, func(s project.Stage) bool { return s.Name == t.Stage })
-			reach = i < 0 || !o.pl.Stages[i].Skipped && slices.ContainsFunc(o.pl.Stages[i].Targets, func(h project.Host) bool { return h.Name == host })
-		}
-		if reach || !o.has(protocol.Check{Recipe: t.Recipe, Pipeline: t.Pipeline, Stage: t.Stage, Handler: t.Handler}) {
-			gone = append(gone, t.Then)
+// reactLabel names the step of a reactor in a note, or its then.
+func (r reactor) reactLabel() string {
+	if r.then {
+		return "then of " + r.label
+	}
+	return r.label
+}
+
+// recordNoun names the step of a record that no evaluated step matches.
+func recordNoun(r protocol.React) string {
+	noun := r.Module + " step"
+	if m, ok := module.New(r.Module); ok {
+		noun = strings.TrimPrefix(m.(interface{ Noun() string }).Noun(), "a ")
+	}
+	if r.Then {
+		return "then of a " + noun
+	}
+	return noun
+}
+
+// evaluates reports whether the plan evaluates the recipe, or the stage of
+// pl, of the record r on the host.
+func (hr *hostRun) evaluates(pl *project.Pipeline, r protocol.React) bool {
+	if r.Recipe != "" {
+		return slices.ContainsFunc(hr.ran, func(st *project.Step) bool { return st.Recipe.Name == r.Recipe })
+	}
+	if r.Pipeline != pl.Name {
+		return false
+	}
+	for s := range hr.stages {
+		if s.Name == r.Stage {
+			return true
 		}
 	}
-	return gone
+	return false
 }
 
 // goneChecks returns the records that match no gate: the record of an
@@ -1839,7 +1972,7 @@ func (o owners) goneChecks(records []protocol.Check) []protocol.Check {
 			if i < 0 || o.pl.Stages[i].Health == nil {
 				gone = append(gone, c)
 			}
-		case !o.has(c):
+		case !o.has(c.Recipe, c.Pipeline, c.Stage):
 			gone = append(gone, c)
 		}
 	}
@@ -1913,10 +2046,6 @@ func (hr *hostRun) addParts(parts []string) {
 // results.
 func maskHost(steps []Planned, parts []string) {
 	for i := range steps {
-		if s := steps[i].Handler; s != nil {
-			maskHost(s.Steps, parts)
-			continue
-		}
 		steps[i].parts = parts
 		maskResult(steps[i].Step, parts, &steps[i].Result)
 	}

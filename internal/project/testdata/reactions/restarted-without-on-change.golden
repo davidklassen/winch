@@ -1,0 +1,1 @@
+recipes/db/recipe.yaml:4:7: restarted: a step with restarted needs on_change; add on_change with the paths whose change it reacts to

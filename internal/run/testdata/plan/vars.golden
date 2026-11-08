@@ -32,7 +32,7 @@ web2
           +81
 
 3 hosts: 2 to change, 0 unchanged, 0 unknown, 1 failed
-plan b3ce109d7d8bfa6c
+plan 00f21dd777214dc3
 stderr:
 web3: recipes/site/recipe.yaml:14:16: content: + cannot take a string and a number
    | string(vars.port + 1) + "\n"

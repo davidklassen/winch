@@ -39,9 +39,7 @@ steps:
       path: !tpl /etc/nginx/sites-available/{{ vars.domain }}
       template: site.tmpl
       validate: nginx -t
-    notify: nginx.reload
   - link:
       path: !tpl /etc/nginx/sites-enabled/{{ vars.domain }}
       target: !tpl /etc/nginx/sites-available/{{ vars.domain }}
       validate: nginx -t
-    notify: nginx.reload

@@ -437,9 +437,9 @@ func TestCheckTree(t *testing.T) {
 		want  string
 	}{
 		{"a correct tree", me, func(t *testing.T, dir string) {
-			write(t, filepath.Join(dir, "handlers", "demo"), "version 1\n")
+			write(t, filepath.Join(dir, "react", "demo"), "version 1\n")
 			write(t, filepath.Join(dir, "lock"), "")
-			if err := os.Chmod(filepath.Join(dir, "handlers", "demo"), 0o644); err != nil {
+			if err := os.Chmod(filepath.Join(dir, "react", "demo"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}, ""},
@@ -447,17 +447,17 @@ func TestCheckTree(t *testing.T) {
 			mkdir(t, filepath.Join(dir, "rollback"))
 		}, "rollback is not owned by root, or the group or others can write it"},
 		{"a record the group can write", me, func(t *testing.T, dir string) {
-			write(t, filepath.Join(dir, "handlers", "demo"), "version 1\n")
-			if err := os.Chmod(filepath.Join(dir, "handlers", "demo"), 0o620); err != nil {
+			write(t, filepath.Join(dir, "react", "demo"), "version 1\n")
+			if err := os.Chmod(filepath.Join(dir, "react", "demo"), 0o620); err != nil {
 				t.Fatal(err)
 			}
-		}, "handlers/demo is not owned by root, or the group or others can write it"},
+		}, "react/demo is not owned by root, or the group or others can write it"},
 		{"a directory others can write", me, func(t *testing.T, dir string) {
-			mkdir(t, filepath.Join(dir, "then"))
-			if err := os.Chmod(filepath.Join(dir, "then"), 0o703); err != nil {
+			mkdir(t, filepath.Join(dir, "checks"))
+			if err := os.Chmod(filepath.Join(dir, "checks"), 0o703); err != nil {
 				t.Fatal(err)
 			}
-		}, "then is not owned by root, or the group or others can write it"},
+		}, "checks is not owned by root, or the group or others can write it"},
 		{"a symbolic link", me, func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "rollback", "a"), "")
 			if err := os.Symlink("a", filepath.Join(dir, "rollback", "timer.json")); err != nil {
@@ -665,13 +665,13 @@ func pendingAll(t *testing.T, c *client) protocol.Pending {
 	return p
 }
 
-func pending(t *testing.T, c *client) []string {
+func pending(t *testing.T, c *client) []protocol.React {
 	t.Helper()
-	return pendingAll(t, c).Handlers
+	return pendingAll(t, c).React
 }
 
-// spec: Handlers; Remote execution/State on the host
-func TestPendingHandlers(t *testing.T) {
+// spec: Reactions; Remote execution/State on the host
+func TestPendingReacts(t *testing.T) {
 	dir := t.TempDir()
 	c := start(t, dir, "")
 	h := hello("r1")
@@ -688,39 +688,55 @@ func TestPendingHandlers(t *testing.T) {
 		args, _ := json.Marshal(module.File{Path: p, Absent: true})
 		return args
 	}
+	reload := protocol.React{Recipe: "nginx", Module: "service", Mains: []string{"1"}}
+	restart := protocol.React{Stage: "web", Pipeline: "site", Module: "service", Mains: []string{"2"}}
+	postmap := protocol.React{Recipe: "postfix", Module: "file", Mains: []string{"3", "4"}, Then: true}
 
 	// A check records nothing, also for a change.
-	if r := c.call(t, "check", protocol.Step{Module: "file", Args: remove("a"), Notify: []string{"web.check"}}); r.Error != "" {
+	if r := c.call(t, "check", protocol.Step{Module: "file", Args: remove("a"), React: []protocol.React{reload}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	// An apply that finds nothing to change records nothing.
 	gone, _ := json.Marshal(module.File{Path: filepath.Join(work, "gone"), Absent: true})
-	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: gone, Notify: []string{"web.ok"}}); r.Error != "" {
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: gone, React: []protocol.React{reload}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 	if got := pending(t, c); len(got) != 0 {
 		t.Fatalf("pending after a check and an ok apply = %v, want none", got)
 	}
 
-	args := remove("b")
-	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: args, Notify: []string{"nginx.reload", "nginx.restart"}}); r.Error != "" {
+	// Two elements of a loop record a step once.
+	for _, name := range []string{"b", "c"} {
+		if r := c.call(t, "apply", protocol.Step{Module: "file", Args: remove(name), React: []protocol.React{reload, postmap}}); r.Error != "" {
+			t.Fatal(r.Error)
+		}
+	}
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: remove("d"), React: []protocol.React{restart}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: remove("b"), Notify: []string{"nginx.reload"}}); r.Error != "" {
-		t.Fatal(r.Error)
-	}
-	if got, want := pending(t, c), []string{"nginx.reload", "nginx.restart"}; !slices.Equal(got, want) {
+	if got, want := pending(t, c), []protocol.React{reload, postmap, restart}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("pending = %v, want %v", got, want)
 	}
-	if data, err := os.ReadFile(filepath.Join(dir, "handlers", "acme")); err != nil || string(data) != "version 1\nnginx.reload\nnginx.restart\n" {
-		t.Errorf("handlers/acme = %q, %v", data, err)
+	want := `version 1
+{"recipe":"nginx","module":"service","mains":["1"]}
+{"recipe":"postfix","module":"file","mains":["3","4"],"then":true}
+{"pipeline":"site","stage":"web","module":"service","mains":["2"]}
+`
+	if data, err := os.ReadFile(filepath.Join(dir, "react", "acme")); err != nil || string(data) != want {
+		t.Errorf("react/acme = %q, %v; want %q", data, err, want)
 	}
 
-	if r := c.call(t, "handled", protocol.Handled{Name: "nginx.reload"}); r.Error != "" {
+	// A step that succeeded removes the records that match it: a step whose
+	// loop lost an element still matches. A record of a then is not the
+	// record of the step.
+	if r := c.call(t, "reacted", protocol.React{Recipe: "postfix", Module: "file", Mains: []string{"4", "5"}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	if got, want := pending(t, c), []string{"nginx.restart"}; !slices.Equal(got, want) {
-		t.Errorf("pending after handled = %v, want %v", got, want)
+	if r := c.call(t, "reacted", reload); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if got, want := pending(t, c), []protocol.React{postmap, restart}; !reflect.DeepEqual(got, want) {
+		t.Errorf("pending after reacted = %v, want %v", got, want)
 	}
 
 	// Another project keeps its own records.
@@ -736,82 +752,28 @@ func TestPendingHandlers(t *testing.T) {
 	}
 }
 
-// spec: Steps; Remote execution/State on the host
-func TestPendingThen(t *testing.T) {
+// spec: Reactions (then); Remote execution/State on the host
+func TestCommandRemovesItsRecords(t *testing.T) {
 	dir := t.TempDir()
+	failing := protocol.React{Recipe: "postfix", Module: "file", Mains: []string{"3"}, Then: true}
+	done := protocol.React{Recipe: "postfix", Module: "file", Mains: []string{"4"}, Then: true}
+	step := protocol.React{Recipe: "postfix", Module: "file", Mains: []string{"4"}}
+	write(t, filepath.Join(dir, "react", "acme"), "version 1\n"+failing.Line()+"\n"+done.Line()+"\n"+step.Line()+"\n")
 	c := start(t, dir, "")
 	h := hello("r1")
 	h.Project = "acme"
 	if r := c.call(t, "hello", h); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	work := t.TempDir()
-	remove := func(name string) json.RawMessage {
-		p := filepath.Join(work, name)
-		if err := os.WriteFile(p, nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		args, _ := json.Marshal(module.File{Path: p, Absent: true})
-		return args
-	}
-	postmap := protocol.Then{Recipe: "postfix", Module: "file", Mains: []string{"1"}}
-	reload := protocol.Then{Stage: "postfix", Module: "file", Mains: []string{"2"}}
-
-	if r := c.call(t, "check", protocol.Step{Module: "file", Args: remove("a"), Then: &postmap}); r.Error != "" {
-		t.Fatal(r.Error)
-	}
-	gone, _ := json.Marshal(module.File{Path: filepath.Join(work, "gone"), Absent: true})
-	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: gone, Then: &postmap}); r.Error != "" {
-		t.Fatal(r.Error)
-	}
-	if got := pendingAll(t, c).Then; len(got) != 0 {
-		t.Fatalf("then records after a check and an ok apply = %v, want none", got)
-	}
-
-	// Two elements of a loop record the then once.
-	for _, name := range []string{"b", "c"} {
-		if r := c.call(t, "apply", protocol.Step{Module: "file", Args: remove(name), Then: &postmap}); r.Error != "" {
-			t.Fatal(r.Error)
-		}
-	}
-	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: remove("d"), Then: &reload}); r.Error != "" {
-		t.Fatal(r.Error)
-	}
-	if got, want := pendingAll(t, c).Then, []protocol.Then{postmap, reload}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("then records = %v, want %v", got, want)
-	}
-	if got := pending(t, c); len(got) != 0 {
-		t.Errorf("pending handlers = %v, want none", got)
-	}
-
 	// A failed command keeps its record; a command that succeeds removes it.
-	failing := protocol.Then{Recipe: "postfix", Module: "file", Mains: []string{"3"}}
-	done := protocol.Then{Recipe: "postfix", Module: "file", Mains: []string{"4"}}
-	for _, th := range []protocol.Then{failing, done} {
-		if r := c.call(t, "apply", protocol.Step{Module: "file", Args: remove("e"), Then: &th}); r.Error != "" {
-			t.Fatal(r.Error)
-		}
-	}
-	if r := c.call(t, "command", protocol.Command{Command: "false", Then: failing}); r.Error == "" {
+	if r := c.call(t, "command", protocol.Command{Command: "false", React: failing}); r.Error == "" {
 		t.Fatal("command false succeeded")
 	}
-	if r := c.call(t, "command", protocol.Command{Command: "true\necho '<a &b>' >/dev/null", Then: done}); r.Error != "" {
+	if r := c.call(t, "command", protocol.Command{Command: "true\necho '<a &b>' >/dev/null", React: done}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	if got, want := pendingAll(t, c).Then, []protocol.Then{postmap, reload, failing}; !reflect.DeepEqual(got, want) {
-		t.Errorf("then records after the commands = %v, want %v", got, want)
-	}
-	b, err := os.ReadFile(filepath.Join(dir, "then", "acme"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := `version 1
-{"recipe":"postfix","module":"file","mains":["1"]}
-{"stage":"postfix","module":"file","mains":["2"]}
-{"recipe":"postfix","module":"file","mains":["3"]}
-`
-	if string(b) != want {
-		t.Errorf("then/acme = %q, want %q", b, want)
+	if got, want := pending(t, c), []protocol.React{failing, step}; !reflect.DeepEqual(got, want) {
+		t.Errorf("records after the commands = %v, want %v", got, want)
 	}
 }
 
@@ -834,7 +796,7 @@ func TestPendingStaysInTheStateDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "secret"), []byte("root:x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(dir, "handlers"), 0o700); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, "react"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	c := start(t, dir, "")
@@ -846,58 +808,77 @@ func TestPendingStaysInTheStateDirectory(t *testing.T) {
 	}
 }
 
-// spec: Handlers; Remote execution/State on the host
+// spec: Remote execution/State on the host
 func TestEmptyLinesInRecords(t *testing.T) {
 	dir := t.TempDir()
-	for sub, data := range map[string]string{"handlers": "version 1\nnginx.reload\n\napp.restart\n", "then": "version 1\n\n{\"recipe\":\"a\",\"module\":\"file\",\"mains\":[\"1\"]}\n"} {
-		if err := os.Mkdir(filepath.Join(dir, sub), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, sub, "acme"), []byte(data), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	write(t, filepath.Join(dir, "react", "acme"), "version 1\n\n{\"recipe\":\"a\",\"module\":\"file\",\"mains\":[\"1\"]}\n\n")
 	c := start(t, dir, "")
 	h := hello("r1")
 	h.Project = "acme"
 	c.call(t, "hello", h)
-	p := pendingAll(t, c)
-	if want := []string{"nginx.reload", "app.restart"}; !slices.Equal(p.Handlers, want) {
-		t.Errorf("handlers = %q, want %q", p.Handlers, want)
-	}
-	if want := []protocol.Then{{Recipe: "a", Module: "file", Mains: []string{"1"}}}; !reflect.DeepEqual(p.Then, want) {
-		t.Errorf("then = %v, want %v", p.Then, want)
+	if got, want := pending(t, c), []protocol.React{{Recipe: "a", Module: "file", Mains: []string{"1"}}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("records = %v, want %v", got, want)
 	}
 }
 
-// spec: Handlers; Steps; Remote execution/State on the host
+// spec: Remote execution/State on the host (records of the old kinds stop
+// matching; the plan shows them as gone)
+func TestOldRecords(t *testing.T) {
+	dir := t.TempDir()
+	handlers, then := filepath.Join(dir, "handlers", "acme"), filepath.Join(dir, "then", "acme")
+	write(t, handlers, "version 1\nnginx.reload\n")
+	write(t, then, "version 2\n{\"recipe\":\"a\"}\n")
+	write(t, filepath.Join(dir, "handlers", "other"), "version 1\napp.restart\n")
+	c := start(t, dir, "")
+	h := hello("r1")
+	h.Project = "acme"
+	if r := c.call(t, "hello", h); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if got, want := pendingAll(t, c).Old, []string{handlers, then}; !slices.Equal(got, want) {
+		t.Errorf("old records = %v, want %v", got, want)
+	}
+	// An older winch kept the file of handlers with no record left.
+	write(t, handlers, "version 1\n")
+	if got, want := pendingAll(t, c).Old, []string{then}; !slices.Equal(got, want) {
+		t.Errorf("old records = %v, want %v: a file without records holds nothing", got, want)
+	}
+	if r := c.call(t, "dropold", nil); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if got := pendingAll(t, c).Old; len(got) != 0 {
+		t.Errorf("old records after dropold = %v, want none", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "handlers", "other")); err != nil {
+		t.Errorf("the records of another project: %v", err)
+	}
+}
+
+// spec: Steps; Remote execution/State on the host
 func TestDamagedState(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, dir string)
 		want  string
 	}{
-		{"truncated then record", func(t *testing.T, dir string) {
-			write(t, filepath.Join(dir, "then", "acme"), "version 1\n{\"recipe\":\"a\",\"step\":1}\n\n{\"recipe\":\n")
-		}, "read the pending then records: DIR/then/acme:4 is not a record; delete the file, and the records in it are lost"},
-		{"then line that is not JSON", func(t *testing.T, dir string) {
-			write(t, filepath.Join(dir, "then", "acme"), "version 1\npostmap /etc/postfix/virtual\n")
-		}, "read the pending then records: DIR/then/acme:2 is not a record; delete the file, and the records in it are lost"},
+		{"truncated record", func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "react", "acme"), "version 1\n{\"recipe\":\"a\",\"module\":\"file\"}\n\n{\"recipe\":\n")
+		}, "read the pending steps: DIR/react/acme:4 is not a record; delete the file, and the records in it are lost"},
+		{"line that is not JSON", func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "react", "acme"), "version 1\npostmap /etc/postfix/virtual\n")
+		}, "read the pending steps: DIR/react/acme:2 is not a record; delete the file, and the records in it are lost"},
 		{"truncated check record", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "checks", "acme"), "version 1\n{\"pipeline\":\n")
 		}, "read the pending health gates: DIR/checks/acme:2 is not a record; delete the file, and the records in it are lost"},
 		{"newer version", func(t *testing.T, dir string) {
-			write(t, filepath.Join(dir, "handlers", "acme"), "version 2\napp.restart\n")
-		}, "upgrade winch to read DIR/handlers/acme"},
+			write(t, filepath.Join(dir, "react", "acme"), "version 2\n{}\n")
+		}, "upgrade winch to read DIR/react/acme"},
 		{"no version", func(t *testing.T, dir string) {
-			write(t, filepath.Join(dir, "handlers", "acme"), "app.restart\n")
-		}, "read the pending handlers: DIR/handlers/acme has no format version; delete it, and the records in it are lost"},
-		{"directory in place of the handlers", func(t *testing.T, dir string) {
-			mkdir(t, filepath.Join(dir, "handlers", "acme"))
-		}, "read the pending handlers: read DIR/handlers/acme: is a directory"},
-		{"directory in place of the then records", func(t *testing.T, dir string) {
-			mkdir(t, filepath.Join(dir, "then", "acme"))
-		}, "read the pending then records: read DIR/then/acme: is a directory"},
+			write(t, filepath.Join(dir, "react", "acme"), "{}\n")
+		}, "read the pending steps: DIR/react/acme has no format version; delete it, and the records in it are lost"},
+		{"directory in place of the records", func(t *testing.T, dir string) {
+			mkdir(t, filepath.Join(dir, "react", "acme"))
+		}, "read the pending steps: read DIR/react/acme: is a directory"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -934,7 +915,7 @@ func TestEmptyLockFile(t *testing.T) {
 	}
 }
 
-// spec: Handlers; Steps
+// spec: Reactions
 func TestRecordsBeforeApply(t *testing.T) {
 	dir := t.TempDir()
 	c := start(t, dir, "")
@@ -944,16 +925,16 @@ func TestRecordsBeforeApply(t *testing.T) {
 		t.Fatal(r.Error)
 	}
 	// The validate command runs inside Apply and sees the records.
-	validate := "grep -qxF nginx.reload '" + filepath.Join(dir, "handlers", "acme") + "' && grep -qF '\"mains\":[\"1\"]' '" + filepath.Join(dir, "then", "acme") + "'"
+	validate := "grep -qF '\"mains\":[\"1\"]' '" + filepath.Join(dir, "react", "acme") + "'"
 	uid, gid := yamlx.NameOrID(strconv.Itoa(os.Getuid())), yamlx.NameOrID(strconv.Itoa(os.Getgid()))
 	args, _ := json.Marshal(module.File{Path: filepath.Join(t.TempDir(), "f"), Data: []byte("x\n"), Owner: uid, Group: gid, Validation: &validate})
-	r := c.call(t, "apply", protocol.Step{Module: "file", Args: args, Notify: []string{"nginx.reload"}, Then: &protocol.Then{Recipe: "nginx", Module: "file", Mains: []string{"1"}}})
+	r := c.call(t, "apply", protocol.Step{Module: "file", Args: args, React: []protocol.React{{Recipe: "nginx", Module: "service", Mains: []string{"1"}}}})
 	if r.Error != "" {
 		t.Errorf("apply: %s", r.Error)
 	}
 }
 
-// spec: Handlers; Steps
+// spec: Reactions
 func TestFailedApplyRemovesItsRecords(t *testing.T) {
 	dir := t.TempDir()
 	c := start(t, dir, "")
@@ -968,25 +949,17 @@ func TestFailedApplyRemovesItsRecords(t *testing.T) {
 		args, _ := json.Marshal(module.File{Path: path, Data: []byte(validate + "\n"), Owner: uid, Group: gid, Validation: &validate})
 		return args
 	}
-	earlier := protocol.Then{Recipe: "nginx", Module: "file", Mains: []string{"1"}}
-	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("true"), Notify: []string{"nginx.reload"}, Then: &earlier}); r.Error != "" {
+	earlier := protocol.React{Recipe: "nginx", Module: "service", Mains: []string{"1"}}
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("true"), React: []protocol.React{earlier}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
 
-	failing := protocol.Then{Recipe: "nginx", Module: "file", Mains: []string{"2"}}
-	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("false"), Notify: []string{"nginx.reload", "nginx.restart"}, Then: &failing}); !strings.Contains(r.Error, "validate failed, and the old file is back: false") {
+	failing := protocol.React{Recipe: "nginx", Module: "service", Mains: []string{"2"}}
+	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("false"), React: []protocol.React{earlier, failing}}); !strings.Contains(r.Error, "validate failed, and the old file is back: false") {
 		t.Fatalf("apply error = %q, want the validate error", r.Error)
 	}
-	// A failed apply of the same then keeps the record of the earlier apply.
-	if r := c.call(t, "apply", protocol.Step{Module: "file", Args: file("false"), Then: &earlier}); !strings.Contains(r.Error, "validate failed, and the old file is back: false") {
-		t.Fatalf("apply error = %q, want the validate error", r.Error)
-	}
-	p := pendingAll(t, c)
-	if want := []string{"nginx.reload"}; !slices.Equal(p.Handlers, want) {
-		t.Errorf("pending handlers = %v, want %v", p.Handlers, want)
-	}
-	if want := []protocol.Then{earlier}; !reflect.DeepEqual(p.Then, want) {
-		t.Errorf("then records = %v, want %v", p.Then, want)
+	if got, want := pending(t, c), []protocol.React{earlier}; !reflect.DeepEqual(got, want) {
+		t.Errorf("records = %v, want %v", got, want)
 	}
 }
 
@@ -1058,7 +1031,7 @@ func TestForget(t *testing.T) {
 	}
 }
 
-// spec: Modules/download; Handlers
+// spec: Modules/download; Reactions
 func TestDownloadOKRecordsNothing(t *testing.T) {
 	c := start(t, t.TempDir(), "")
 	h := hello("r1")
@@ -1071,12 +1044,12 @@ func TestDownloadOKRecordsNothing(t *testing.T) {
 	}
 	args, _ := json.Marshal(module.Download{URL: "http://127.0.0.1:1/tool", SHA256: "67948dd9afd6afe5043b0029d5aa7cf0f8b2824baf16f4f097d40d830edb686d", Path: p,
 		Owner: yamlx.NameOrID(strconv.Itoa(os.Getuid())), Group: yamlx.NameOrID(strconv.Itoa(os.Getgid()))})
-	r := c.call(t, "apply", protocol.Step{Module: "download", Args: args, Notify: []string{"app.reload"}, Then: &protocol.Then{Recipe: "app", Module: "download", Mains: []string{"1"}}})
+	r := c.call(t, "apply", protocol.Step{Module: "download", Args: args, React: []protocol.React{{Recipe: "app", Module: "download", Mains: []string{"1"}, Then: true}}})
 	var res protocol.StepResult
 	if err := json.Unmarshal(r.Result, &res); err != nil || r.Error != "" || res.Status != module.OK || len(res.Changes) != 0 {
 		t.Fatalf("apply = %s %q, want ok without a record", r.Result, r.Error)
 	}
-	if p := pendingAll(t, c); len(p.Handlers) != 0 || len(p.Then) != 0 {
+	if p := pendingAll(t, c); len(p.React) != 0 {
 		t.Errorf("records after an unchanged download: %+v", p)
 	}
 	if r := c.call(t, "check", protocol.Step{Module: "download", Args: args}); !strings.Contains(string(r.Result), `"status":"ok"`) {
@@ -1141,13 +1114,12 @@ func TestPassedGateDropsRecord(t *testing.T) {
 	}
 }
 
-// spec: Steps
-func TestThenRecordsMatchAndDrop(t *testing.T) {
+// spec: Reactions; Running a pipeline/Apply (gone records)
+func TestRecordsDrop(t *testing.T) {
 	dir := t.TempDir()
-	// The second line is a record of an earlier format.
-	write(t, filepath.Join(dir, "then", "acme"), `version 1
+	write(t, filepath.Join(dir, "react", "acme"), `version 1
 {"recipe":"site","module":"file","mains":["/a","/b"]}
-{"recipe":"old","step":2,"module":"file","main":"/x"}
+{"recipe":"old","module":"file"}
 {"recipe":"site","module":"file","mains":["/c"]}
 `)
 	c := start(t, dir, "")
@@ -1156,14 +1128,14 @@ func TestThenRecordsMatchAndDrop(t *testing.T) {
 	if r := c.call(t, "hello", h); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	// The loop lost its element /b; the record still matches.
-	if r := c.call(t, "command", protocol.Command{Command: "true", Then: protocol.Then{Recipe: "site", Module: "file", Mains: []string{"/a"}}}); r.Error != "" {
+	if r := c.call(t, "drop", protocol.React{Recipe: "old", Module: "file"}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	if r := c.call(t, "dropthen", protocol.Then{Recipe: "old", Module: "file"}); r.Error != "" {
+	// drop removes only the exact record.
+	if r := c.call(t, "drop", protocol.React{Recipe: "site", Module: "file", Mains: []string{"/a"}}); r.Error != "" {
 		t.Fatal(r.Error)
 	}
-	if got, want := pendingAll(t, c).Then, []protocol.Then{{Recipe: "site", Module: "file", Mains: []string{"/c"}}}; !reflect.DeepEqual(got, want) {
-		t.Errorf("then records = %v, want %v", got, want)
+	if got, want := pending(t, c), []protocol.React{{Recipe: "site", Module: "file", Mains: []string{"/a", "/b"}}, {Recipe: "site", Module: "file", Mains: []string{"/c"}}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("records = %v, want %v", got, want)
 	}
 }

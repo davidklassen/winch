@@ -182,13 +182,11 @@ func TestPromptedJump(t *testing.T) {
   - file:
       path: /etc/winch-jump
       content: "x\n"
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
+  - service:
+      name: ssh
+      reloaded: true
+    on_change: [/etc/winch-jump]
+    confirm_access: true
 `,
 		// The hop then wants the other key, which is not in the agent.
 		"pipelines/keys.yaml": `stages:
@@ -204,13 +202,11 @@ handlers:
       owner: hop
       group: hop
       mode: "0600"
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
-      confirm_access: true
+  - service:
+      name: ssh
+      reloaded: true
+    on_change: [/home/hop/.ssh/authorized_keys]
+    confirm_access: true
 `,
 	})
 

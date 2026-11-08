@@ -29,7 +29,6 @@ steps:
     dir:
       path: /etc/nginx/sites-enabled
       purge: true
-    notify: reload_nginx
   - name: Run nginx
     service:
       name: nginx
@@ -74,11 +73,9 @@ steps:
 
         	root /var/www/{{ vars.domain }};
         }
-    notify: reload_nginx
 
-handlers:
-  reload_nginx:
-    - name: Reload nginx
-      service:
-        name: nginx
-        reloaded: true
+  - name: Reload nginx
+    service:
+      name: nginx
+      reloaded: true
+    on_change: [/etc/nginx/sites-enabled]

@@ -627,12 +627,10 @@ func TestPlanCopyFromAnEarlierFile(t *testing.T) {
   - file:
       path: /etc/app/app.conf
       copy_from: /etc/app/default.conf
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: app
-        reloaded: true
+  - service:
+      name: app
+      reloaded: true
+    on_change: [/etc/app/app.conf]
 `,
 	})
 	h := fakehost.New()
@@ -642,7 +640,7 @@ handlers:
 	plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
-	for _, want := range []string{"~ file /etc/app/app.conf\n          content from /etc/app/default.conf\n          @@ -1,1 +1,1 @@\n          -A\n          +B\n", "! handler app.reload"} {
+	for _, want := range []string{"~ file /etc/app/app.conf\n          content from /etc/app/default.conf\n          @@ -1,1 +1,1 @@\n          -A\n          +B\n", "~ service app: reload (/etc/app/app.conf changes)"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("plan = %q, want %q", out.String(), want)
 		}

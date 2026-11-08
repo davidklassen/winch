@@ -11,8 +11,7 @@ import (
 // spec: Running a pipeline/Health gates; State on the host
 func TestGoneCheckPlaces(t *testing.T) {
 	file := project.Step{Module: "file"}
-	app := &project.Recipe{Name: "app", Steps: []project.Step{file},
-		Handlers: []*project.Handler{{Name: "reload", Steps: []project.Step{file}}}}
+	app := &project.Recipe{Name: "app", Steps: []project.Step{file}}
 	pl := &project.Pipeline{Name: "site", Stages: []project.Stage{
 		{Name: "base", Pipeline: "site", Health: &project.Health{Command: "true"}, Steps: []project.Step{{Recipe: app}, file}},
 		{Name: "web", Pipeline: "site", Steps: []project.Step{file}},

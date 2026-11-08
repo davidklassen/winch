@@ -1,3 +1,0 @@
-pipelines/site.yaml:18:22: match("nosuch"): unknown host or group "nosuch" in inventories/test.yaml
- | match("nosuch")[0].name
- | ^

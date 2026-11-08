@@ -1,7 +1,0 @@
-stdout:
-web1: site: ~ file /var/www/index.html
-web1: access check after the run passed
-
-2 hosts: 0 changed, 1 unchanged, 1 failed
-stderr:
-web1: site: failed: file /var/www/index.html: then: reindex: exit status 1

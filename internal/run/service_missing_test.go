@@ -38,16 +38,16 @@ func TestMissingUnitNoteSelection(t *testing.T) {
 		{"parent removal is not explicit", stage("services", "web1", stop+"      - dir: {path: /etc/systemd/system, absent: true}\n"), "", true},
 		{"recipe loop removal", stage("services", "web1", stop+"      - recipe: cleanup\n"), "", false},
 		{"skipped recipe", stage("services", "web1", stop+"      - recipe: cleanup\n        when: !expr false\n"), "", true},
-		{"notified removal handler", stage("services", "web1", stop+"      - recipe: notified\n"), "", false},
-		{"unnotified removal handler", stage("services", "web1", stop+"      - recipe: unnotified\n"), "", true},
+		{"removal that reacts", stage("services", "web1", stop+"      - recipe: reacts\n"), "", false},
+		{"removal that does not react", stage("services", "web1", stop+"      - recipe: waits\n"), "", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := loadWeb1(t, map[string]string{
-				"inventories/test.yaml":          "hosts:\n  web1: {}\n  web2: {}\n",
-				"pipelines/site.yaml":            "stages:\n" + tt.pipeline,
-				"recipes/cleanup/recipe.yaml":    "steps:\n  - file:\n      path: !expr item\n      absent: true\n    loop: [/etc/systemd/system/app.service]\n",
-				"recipes/notified/recipe.yaml":   "steps:\n  - file: {path: /tmp/notify, content: notify}\n    notify: cleanup\nhandlers:\n  cleanup:\n    - file: {path: /etc/systemd/system/app.service, absent: true}\n",
-				"recipes/unnotified/recipe.yaml": "steps:\n  - file: {path: /tmp/notify, content: notify}\nhandlers:\n  cleanup:\n    - file: {path: /etc/systemd/system/app.service, absent: true}\n",
+				"inventories/test.yaml":       "hosts:\n  web1: {}\n  web2: {}\n",
+				"pipelines/site.yaml":         "stages:\n" + tt.pipeline,
+				"recipes/cleanup/recipe.yaml": "steps:\n  - file:\n      path: !expr item\n      absent: true\n    loop: [/etc/systemd/system/app.service]\n",
+				"recipes/reacts/recipe.yaml":  "steps:\n  - file: {path: /tmp/notify, content: notify}\n  - file: {path: /etc/systemd/system/app.service, absent: true}\n    on_change: [/tmp/notify]\n",
+				"recipes/waits/recipe.yaml":   "steps:\n  - file: {path: /tmp/notify, content: notify}\n  - file: {path: /etc/systemd/system/app.service, absent: true}\n    on_change: [/tmp/other]\n",
 			})
 			if err := p.Select(project.Selection{Stages: tt.selection}); err != nil {
 				t.Fatal(err)

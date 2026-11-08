@@ -18,8 +18,8 @@ type Selection struct {
 
 // Select sets the users of the hosts, marks the stages that the selection
 // leaves out as skipped, and keeps in each stage only the hosts of the host
-// pattern. A skipped stage keeps its hosts: the requirements and the
-// handlers of its recipes still count. A run in which no stage has a host is
+// pattern. A skipped stage keeps its hosts: its requirements count, and
+// its steps can react to a change of the run. A run in which no stage has a host is
 // an error.
 func (p *Project) Select(sel Selection) error {
 	if err := p.setUsers(sel.Users); err != nil {

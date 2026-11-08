@@ -22,14 +22,12 @@ import (
 // next step.
 var ErrInterrupted = errors.New("interrupted")
 
-// StepEvent is a step that the plan or apply checked, a handler that will
-// run, or a then that ran.
+// StepEvent is a step that the plan or apply checked, or a then.
 type StepEvent struct {
 	Host    string `json:"host"`
 	Address string `json:"address"`
 	Stage   string `json:"stage"`
 	Recipe  string `json:"recipe,omitempty"`
-	Handler string `json:"handler,omitempty"`
 	// Health is the command of a health gate.
 	Health string `json:"health,omitempty"`
 	// Step is the label of the step in the plan.
@@ -46,9 +44,9 @@ type StepEvent struct {
 	// Validate is the validate command that apply runs.
 	Validate string `json:"validate,omitempty"`
 	Unless   string `json:"unless,omitempty"`
-	// ThenPending is true for a then that a run before left pending.
-	ThenPending bool   `json:"then_pending,omitempty"`
-	Error       string `json:"error,omitempty"`
+	// Pending is true for a step or a then that a run before left pending.
+	Pending bool   `json:"pending,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // HostEvent is a host that finished or failed.
@@ -65,6 +63,10 @@ type Reporter interface {
 	// Access reports an access check that passed: after a step of scope, or
 	// after the run when scope is "".
 	Access(host, scope string)
+	// PutBack reports the files that the session end puts back on host,
+	// because the step with confirm_access that reacts to their change did
+	// not run.
+	PutBack(host, line string)
 	Host(HostEvent)
 	Done(*Outcome)
 }
@@ -95,14 +97,14 @@ func (t text) Step(ev StepEvent) {
 	case ev.Health != "" && ev.Status == "ok":
 		line.Add(color.Plain, ev.Host+": "+ev.Stage+": health passed:"+command(ev.Health, "    ")+"\n")
 	case ev.Status != "change":
-	case ev.Then != "" && ev.ThenPending:
+	case ev.Then != "" && ev.Pending:
 		markLine(&line, ev.Host+": "+ev.scope()+": ", "!", " then:"+command(ev.Then, "    ")+"\n")
 	case ev.Then == "":
 		note := ""
 		if ev.Note != "" {
 			note = " (" + ev.Note + ")"
 		}
-		markLine(&line, ev.Host+": "+ev.scope()+": ", marks[module.Action(ev.Action)], " "+oneLine(ev.label())+linkNote(ev.Link)+note+"\n")
+		markLine(&line, ev.Host+": "+ev.scope()+": ", marks[module.Action(ev.Action)], " "+oneLine(ev.Step)+linkNote(ev.Link)+note+"\n")
 	}
 	if line != nil {
 		color.Fprint(t.out, line)
@@ -115,6 +117,10 @@ func (t text) Access(host, scope string) {
 		return
 	}
 	fmt.Fprintf(t.out, "%s: %s: access check passed\n", host, scope)
+}
+
+func (t text) PutBack(host, line string) {
+	fmt.Fprintf(t.out, "%s: %s\n", host, secret.Printable(line))
 }
 
 func (t text) Host(ev HostEvent) {
@@ -131,8 +137,8 @@ func (t text) Done(o *Outcome) {
 // Apply applies every stage of a plan on the hosts with a change in the plan,
 // and only removes the gone records on the other hosts. A stage can undo what
 // an earlier stage does, so a stage without a change runs too. Each step is
-// checked again right before it is applied, and the handlers follow what apply
-// changes. The hosts of a stage run at the same time, at most the stage's
+// checked again right before it is applied, and the steps with on_change
+// follow what apply changes. The hosts of a stage run at the same time, at most the stage's
 // parallelism.
 func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outcome {
 	rep = &lockedReporter{rep: rep}
@@ -171,14 +177,14 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 				return nil, err
 			}
 		}
-		for _, gone := range plan.goneThens[h.Name] {
-			if err := c.DropThen(context.WithoutCancel(ctx), gone); err != nil {
+		for _, gone := range plan.goneReacts[h.Name] {
+			if err := c.Drop(context.WithoutCancel(ctx), gone); err != nil {
 				c.Close() //nolint:errcheck // the host fails already
 				return nil, err
 			}
 		}
-		for _, gone := range plan.goneHandlers[h.Name] {
-			if err := c.Handled(context.WithoutCancel(ctx), gone); err != nil {
+		if len(plan.Pending[h.Name].Old) > 0 {
+			if err := c.DropOld(context.WithoutCancel(ctx)); err != nil {
 				c.Close() //nolint:errcheck // the host fails already
 				return nil, err
 			}
@@ -267,10 +273,7 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			hp := planned[name]
 			hps, hosts = append(hps, hp), append(hosts, hp.Host)
 			if runs[name] == nil {
-				runs[name] = &hostApply{host: name, hide: plan.hide(name), rep: rep, progress: plan.opts.progress(), state: module.State{Refreshed: plan.refreshed[name]}, notified: map[string]bool{}, notifiedAt: map[string]int{}, started: map[string]int{}, thens: slices.Clone(plan.Pending[name].Then), rollback: plan.Pending[name].Rollback}
-				for _, n := range plan.Pending[name].Handlers {
-					runs[name].notified[n] = true
-				}
+				runs[name] = &hostApply{host: name, hide: plan.hide(name), rep: rep, progress: plan.opts.progress(), state: module.State{Refreshed: plan.refreshed[name]}, started: map[string]int{}, pending: slices.Clone(plan.Pending[name].React), rollback: plan.Pending[name].Rollback}
 			}
 		}
 		changed := make([]bool, len(hps))
@@ -380,6 +383,12 @@ func (r *lockedReporter) Access(host, scope string) {
 	r.rep.Access(host, scope)
 }
 
+func (r *lockedReporter) PutBack(host, line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rep.PutBack(host, line)
+}
+
 func (r *lockedReporter) Host(ev HostEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -408,17 +417,17 @@ type hostApply struct {
 	rep      Reporter
 	progress Progress
 	state    module.State
-	// notified are the handlers that wait for their slot: notified in this
-	// run, or pending on the host.
-	notified map[string]bool
-	// clock counts the notifies and the starts of the run. notifiedAt holds
-	// the time of each handler's last notify in this run, and started the
-	// time of each unit's last start by a service step.
-	clock      int
-	notifiedAt map[string]int
-	started    map[string]int
-	// thens are the pending then records that no step ran yet.
-	thens []protocol.Then
+	// clock counts the changed steps and the starts of the run. changed are
+	// the paths that the steps changed, with the clock of their step, and
+	// started holds the clock of each unit's last start by a service step.
+	clock   int
+	changed []changeAt
+	started map[string]int
+	// pending are the records of an earlier run that no step ran yet.
+	pending []protocol.React
+	// putBack are the steps with confirm_access that react to a change of
+	// the run and did not run yet.
+	putBack []*putBack
 	// gate is the gate of the current stage while it is not recorded and
 	// will run after a change.
 	gate *protocol.Check
@@ -432,9 +441,24 @@ type hostApply struct {
 	held []string
 }
 
+// putBack is a step with confirm_access that reacts to a change of the run:
+// the line of its record, its label, and the paths whose old state its store
+// keeps.
+type putBack struct {
+	line  string
+	label string
+	paths []string
+}
+
 // finish ends the run of the host with the error err of the run. When the
-// run changed the host, it runs the access check after the run first.
+// run changed the host, it runs the access check after the run first. After
+// an error, it reports the files that the session end puts back.
 func (a *hostApply) finish(ctx context.Context, changed bool, err error) error {
+	if err != nil {
+		for _, b := range a.putBack {
+			a.rep.PutBack(a.host, "put back "+strings.Join(b.paths, ", ")+": "+b.label+" did not run")
+		}
+	}
 	passed := false
 	if changed {
 		a.progress.Busy(a.host, "access check")
@@ -503,9 +527,9 @@ func (a *hostApply) due(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// apply runs the steps and the handlers of a stage on one host, then its
-// health gate when the plan or apply has a change in the stage. It reports
-// whether a step changed something.
+// apply runs the steps of a stage on one host, then its health gate when the
+// plan or apply has a change in the stage. It reports whether a step changed
+// something.
 func (a *hostApply) apply(ctx context.Context, stage *project.Stage, hp HostPlan) (bool, error) {
 	gate := protocol.Check{Pipeline: stage.Pipeline, Stage: stage.Name}
 	a.gate = nil
@@ -517,7 +541,7 @@ func (a *hostApply) apply(ctx context.Context, stage *project.Stage, hp HostPlan
 			}
 		}
 	}
-	changed, err := a.steps(ctx, stage, nil, hp.Steps)
+	changed, err := a.steps(ctx, stage, hp.Steps)
 	if err != nil {
 		return changed, err
 	}
@@ -601,77 +625,80 @@ func (ev *StepEvent) result(st project.Step, res module.Result) {
 	}
 }
 
-// label is the label of the step of an event, with its handler.
-func (ev StepEvent) label() string {
-	if ev.Handler != "" {
-		return "handler " + ev.Handler + ": " + ev.Step
-	}
-	return ev.Step
-}
-
-// steps applies steps and runs the handlers of their slots. A step runs its
-// then after its last element when an element changed something, or when its
-// then is pending on the host. h is the handler of the steps, or nil.
-func (a *hostApply) steps(ctx context.Context, stage *project.Stage, h *project.Handler, steps []Planned) (changed bool, err error) {
-	// changedLabel is the label of the last element of the current step that
-	// changed something, or "".
-	changedLabel := ""
+// steps applies steps. A step with on_change acts only when an earlier step
+// of the run changed a path that it reacts to, or when its record is pending.
+// A step runs its then after its last element when a path of the step
+// changed, or when its then is pending on the host.
+func (a *hostApply) steps(ctx context.Context, stage *project.Stage, steps []Planned) (changed bool, err error) {
+	// reacted is true when an element of the current step acted on a
+	// change.
+	reacted := false
 	for _, p := range steps {
 		if ctx.Err() != nil {
 			return changed, ErrInterrupted
 		}
-		if p.Handler != nil {
-			c, err := a.handler(ctx, stage, p.Handler)
-			changed = changed || c
+		ev := stepEvent(a.host, stage, p)
+		ev.Step, ev.Module = label(p.Step), p.Step.Module
+		l := oneLine(ev.Step)
+		acts := true
+		if len(p.Step.OnChange) > 0 {
+			_, at, hit := reaction(a.changed, p.Step.OnChange)
+			acts = hit || slices.ContainsFunc(a.pending, p.Record.Matches)
+			if acts {
+				p.Step = afterStart(p.Step, a.started, at)
+				reacted = true
+				a.putBack = slices.DeleteFunc(a.putBack, func(b *putBack) bool { return b.line == p.Record.Line() })
+			}
+		}
+		if acts {
+			a.progress.Busy(a.host, ev.scope()+": "+l)
+			res, err := a.step(ctx, ev, l, p, guard(p))
+			changed = changed || res.Status == module.Change
 			if err != nil {
 				return changed, err
 			}
-			continue
-		}
-		ev := stepEvent(a.host, stage, p)
-		if h != nil {
-			ev.Handler = h.FullName()
-			if !changed {
-				p.Step = a.afterStart(p.Step, h.Record())
-			}
-		}
-		ev.Step, ev.Module = label(p.Step), p.Step.Module
-		l := oneLine(ev.label())
-		a.progress.Busy(a.host, ev.scope()+": "+l)
-		res, err := a.step(ctx, ev, l, p, guard(stage, p))
-		changed = changed || res.Status == module.Change
-		if err != nil {
-			return changed, err
-		}
-		if res.Status == module.Change {
-			changedLabel = l
+		} else {
+			ev.Status = string(module.OK)
+			a.rep.Step(ev)
 		}
 		if !p.Last {
 			continue
 		}
-		t := p.Then
-		failLabel := cmp.Or(changedLabel, l)
-		pending := t != nil && slices.ContainsFunc(a.thens, t.Matches)
-		run := t != nil && (changedLabel != "" || pending)
-		changedLabel = ""
-		if !run {
+		if reacted {
+			reacted = false
+			if err := a.conn.Reacted(context.WithoutCancel(ctx), p.Record); err != nil {
+				return changed, fmt.Errorf("%s: failed: %s: %w", ev.scope(), l, err)
+			}
+			a.pending = slices.DeleteFunc(a.pending, p.Record.Matches)
+		}
+		if p.Step.Then == "" {
 			continue
 		}
+		t := p.thenRecord()
+		pending := slices.ContainsFunc(a.pending, t.Matches)
+		if _, _, hit := reaction(a.changed, p.thenPaths); !hit && !pending {
+			continue
+		}
+		thenLabel := l
+		if p.Step.Loops() {
+			thenLabel = p.Step.Module + " (loop)"
+			if p.Step.Name != "" {
+				thenLabel = stepHead(p.Step)
+			}
+		}
 		tev := ev
-		tev.Step, tev.Module, tev.Then, tev.ThenPending = "", "", secret.PrintableLines(p.Step.Shown().Then), pending
-		a.progress.Busy(a.host, ev.scope()+": "+failLabel+": then")
-		if err := a.conn.Command(context.WithoutCancel(ctx), p.Step.Then, *t); err != nil {
+		tev.Step, tev.Module, tev.Then, tev.Pending = "", "", secret.PrintableLines(p.Step.Shown().Then), pending
+		a.progress.Busy(a.host, ev.scope()+": "+thenLabel+": then")
+		if err := a.conn.Command(context.WithoutCancel(ctx), p.Step.Then, t); err != nil {
 			err = maskError(err, p.hostText)
 			tev.Status, tev.Error = "failed", err.Error()
 			a.rep.Step(tev)
-			return changed, fmt.Errorf("%s: failed: %s: then: %w", ev.scope(), failLabel, err)
+			return changed, fmt.Errorf("%s: failed: %s: then: %w", ev.scope(), thenLabel, err)
 		}
 		tev.Status = "change"
 		a.rep.Step(tev)
-		if pending {
-			a.thens = slices.DeleteFunc(a.thens, t.Matches)
-			changed = true
-		}
+		a.pending = slices.DeleteFunc(a.pending, t.Matches)
+		changed = true
 	}
 	return changed, nil
 }
@@ -756,62 +783,11 @@ func (a *hostApply) reboot(ctx context.Context, r *module.Reboot) (string, error
 	return "rebooted", nil
 }
 
-// handler runs the steps of a slot's handler when it was notified, and then
-// removes its record on the host.
-func (a *hostApply) handler(ctx context.Context, stage *project.Stage, s *Slot) (bool, error) {
-	h := s.Handler
-	record := h.Record()
-	if !a.notified[record] {
-		return false, nil
-	}
-	changed, err := a.steps(ctx, stage, h, s.Steps)
-	if err != nil {
-		return changed, err
-	}
-	if err := a.conn.Handled(context.WithoutCancel(ctx), record); err != nil {
-		return changed, fmt.Errorf("%s: failed: handler %s: %w", h.Owner(), h.FullName(), err)
-	}
-	delete(a.notified, record)
-	return changed, nil
-}
-
-// afterStart marks a restart or a reload of a handler step as Started when a
-// service step of the run started the unit after the handler's last notify.
-// A step with confirm_access still runs: its access check guards the files
-// that the start used.
-func (a *hostApply) afterStart(st project.Step, record string) project.Step {
-	sv, ok := st.Args.(*module.Service)
-	if !ok || st.ConfirmAccess || !sv.Restarted && !sv.Reloaded || a.started[sv.Unit()] <= a.notifiedAt[record] {
-		return st
-	}
-	c := *sv
-	c.Started = true
-	st.Args = &c
-	return st
-}
-
-// guard returns how the helper guards the step p of stage: it saves in the
-// store of the recipe, or of the stage for a module step of the stage, when
-// that has a step with confirm_access. It also saves in the store of each
-// confirm_access handler that the step notifies on the host, and in each
+// guard returns how the helper guards the step p: it saves in the store of
+// each later step with confirm_access that reacts to a path of p, and in each
 // store of p.SSHD.
-func guard(stage *project.Stage, p Planned) protocol.Guard {
-	g := protocol.Guard{Store: ownStore(stage, p).name(), Confirm: p.Step.ConfirmAccess}
-	if p.In != nil {
-		g.Save = p.In.Recipe.ConfirmsAccess()
-	} else {
-		g.Save = stage.ConfirmsAccess()
-	}
-	for _, h := range p.Step.Notify {
-		if h.ConfirmsAccess() && slices.Contains(p.Notify, h.Record()) {
-			g.Handlers = append(g.Handlers, h.Record())
-		}
-	}
-	for _, s := range p.SSHD {
-		g.SSHD = append(g.SSHD, s.name())
-	}
-	g.LoadsSSHD = p.LoadsSSHD && p.Step.ConfirmAccess
-	return g
+func guard(p Planned) protocol.Guard {
+	return protocol.Guard{Store: p.Record.Store(), Confirm: p.Step.ConfirmAccess, Guarded: p.Guarded, SSHD: p.SSHD, LoadsSSHD: p.LoadsSSHD && p.Step.ConfirmAccess}
 }
 
 // step applies one element of a step with the label l. A step that runs a
@@ -819,7 +795,7 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 // checks the access. After a changed reboot step, it reboots the host.
 func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned, g protocol.Guard) (module.Result, error) {
 	a.conn.Mask(p.hostText)
-	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, g, p.Step.MaskedContent())
+	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.React, g, p.Step.MaskedContent())
 	a.conn.Mask(a.hide)
 	if res.Failed != "" {
 		err = errors.New(res.Failed)
@@ -862,11 +838,30 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 		return module.Result{}, fmt.Errorf("%s: failed: %s: %w", ev.scope(), l, err)
 	}
 	if res.Status == module.Change {
-		// The helper records the notifies before the step changes anything.
 		a.clock++
-		for _, n := range p.Notify {
-			a.notified[n] = true
-			a.notifiedAt[n] = a.clock
+		for _, path := range p.paths {
+			a.changed = append(a.changed, changeAt{path, a.clock})
+		}
+		var saved []string
+		for _, s := range res.Saved {
+			saved = append(saved, a.hide(s))
+		}
+		for i, g := range p.Guarded {
+			if len(saved) == 0 {
+				break
+			}
+			line := g.Line()
+			j := slices.IndexFunc(a.putBack, func(b *putBack) bool { return b.line == line })
+			if j < 0 {
+				a.putBack = append(a.putBack, &putBack{line: line, label: p.guardedLabels[i]})
+				j = len(a.putBack) - 1
+			}
+			b := a.putBack[j]
+			for _, s := range saved {
+				if !slices.Contains(b.paths, s) {
+					b.paths = append(b.paths, s)
+				}
+			}
 		}
 		if res.Starts {
 			a.clock++

@@ -178,7 +178,7 @@ func TestSecrets(t *testing.T) {
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/monit/conf.d/settings", "set httpd port 2812\n  allow admin:old-pass\n# Old-Pass\n")
 	h.SetMasked("web1", "/etc/monit/conf.d/settings", "set httpd port 2812\n  allow admin:(secret)\n# (secret)\n")
-	h.SetThen("web1", protocol.Then{Recipe: "monit", Module: "file", Mains: mains("/etc/monit/hunter2.key")})
+	h.SetReact("web1", protocol.React{Recipe: "monit", Module: "file", Mains: mains("/etc/monit/hunter2.key"), Then: true})
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
@@ -572,8 +572,8 @@ func TestSecretThenRecord(t *testing.T) {
 		{name: "file", step: "      - file:\n          path: !tpl \"/etc/{{ vars.pw }}.key\"\n          content: \"k\\n\"\n        then: echo done\n",
 			ok: func(h *fakehost.Hosts) { h.SetFile("web1", "/etc/hunter2.key", "k\n") }},
 		// The placeholder in enabled is not true or false.
-		{name: "a failed placeholder variant", step: "      - service:\n          name: !tpl \"app-{{ vars.pw }}\"\n          running: true\n          enabled: !expr 'vars.pw == \"hunter2\" || int(vars.pw) > 0'\n        then: echo done\n",
-			ok: func(h *fakehost.Hosts) { h.SetResult("web1", "app-hunter2", module.Result{Status: module.OK}) }},
+		{name: "a failed placeholder variant", step: "      - file:\n          path: !tpl \"/etc/{{ vars.pw }}.k\"\n          content: \"k\\n\"\n          mode: !expr 'vars.pw == \"hunter2\" || int(vars.pw) > 0 ? \"0600\" : \"0644\"'\n        then: echo done\n",
+			ok: func(h *fakehost.Hosts) { h.SetFile("web1", "/etc/hunter2.k", "k\n") }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -586,7 +586,7 @@ func TestSecretThenRecord(t *testing.T) {
 			if ok, got := applyAll(t, p, h); ok {
 				t.Fatalf("apply passed:\n%s", got)
 			}
-			recs := h.ThenOf("web1")
+			recs := h.ReactOf("web1")
 			b, err := json.Marshal(recs)
 			if err != nil {
 				t.Fatal(err)
@@ -605,8 +605,8 @@ func TestSecretThenRecord(t *testing.T) {
 			if got := ran(h); got != 2 {
 				t.Errorf("the then ran %d times, want 2:\n%s", got, strings.Join(h.Log["web1"], "\n"))
 			}
-			if got := h.ThenOf("web1"); len(got) != 0 {
-				t.Errorf("then records after the then ran = %+v", got)
+			if got := h.ReactOf("web1"); len(got) != 0 {
+				t.Errorf("records after the then ran = %+v", got)
 			}
 		})
 	}
@@ -614,7 +614,7 @@ func TestSecretThenRecord(t *testing.T) {
 
 // spec: Steps
 func TestThenRecordHash(t *testing.T) {
-	record := func(t *testing.T, secrets map[string]string, step string) protocol.Then {
+	record := func(t *testing.T, secrets map[string]string, step string) protocol.React {
 		t.Helper()
 		h := fakehost.New()
 		h.FailCommand("web1", "echo done")
@@ -622,7 +622,7 @@ func TestThenRecordHash(t *testing.T) {
 		if ok, got := applyAll(t, p, h); ok {
 			t.Fatalf("apply passed:\n%s", got)
 		}
-		recs := h.ThenOf("web1")
+		recs := h.ReactOf("web1")
 		if len(recs) != 1 {
 			t.Fatalf("then records = %+v, want one", recs)
 		}
@@ -637,7 +637,7 @@ func TestThenRecordHash(t *testing.T) {
 	if pw.Matches(pw2) {
 		t.Errorf("the pw and pw2 steps have records that match: %+v and %+v", pw, pw2)
 	}
-	if want := (protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/app/hunter2.key")}); !reflect.DeepEqual(pw, want) {
+	if want := (protocol.React{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/app/hunter2.key"), Then: true}); !reflect.DeepEqual(pw, want) {
 		t.Errorf("record of the pw step = %+v, want %+v", pw, want)
 	}
 	changed := record(t, map[string]string{"pw": "hunter4"}, file(`!tpl "/etc/app/{{ vars.pw }}.key"`))
@@ -648,7 +648,7 @@ func TestThenRecordHash(t *testing.T) {
 	if want := mains("/etc/motd"); !reflect.DeepEqual(plain.Mains, want) {
 		t.Errorf("main arguments of a plain step = %q, want %q", plain.Mains, want)
 	}
-	cmd := record(t, one, "      - cmd:\n          command: !tpl \"setpw {{ vars.pw }}\"\n        then: echo done\n")
+	cmd := record(t, one, "      - cmd:\n          command: !tpl \"setpw {{ vars.pw }}\"\n          creates: /srv/done\n        then: echo done\n")
 	if want := mains("setpw hunter2"); !reflect.DeepEqual(cmd.Mains, want) {
 		t.Errorf("main arguments of a cmd step = %q, want %q", cmd.Mains, want)
 	}
@@ -780,14 +780,14 @@ func TestSecretStepMask(t *testing.T) {
 		{"a gone then record", "hunter2", "      - file:\n          path: !expr '\"/srv/f-\" + trimPrefix(vars.pw, \"hun\")'\n          content: \"a\\n\"\n",
 			func(h *fakehost.Hosts) {
 				h.SetFile("web1", "/srv/f-ter2", "a\n")
-				h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "s", Module: "file", Mains: []string{"/srv/f-ter2"}})
-			}, "a pending then of a file step in stage s matches no step", "ter2"},
+				h.SetReact("web1", protocol.React{Pipeline: "site", Stage: "s", Module: "file", Mains: []string{"/srv/f-ter2"}, Then: true})
+			}, "a pending then of a file step of stage s matches no step", "ter2"},
 		// A record of winch 0.1.0 holds the plain main argument of a step
 		// that is gone, so no part of a checked step covers it.
 		{"a gone then record of a deleted step", "hunter2", "      - pkg:\n          name: !expr '\"lib\" + vars.pw[0:3]'\n",
 			func(h *fakehost.Hosts) {
-				h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "s", Module: "file", Mains: []string{"/srv/hunter2"}})
-			}, "web1: note: a pending then of a file step in stage s matches no step and will not run\n", "hunter2"},
+				h.SetReact("web1", protocol.React{Pipeline: "site", Stage: "s", Module: "file", Mains: []string{"/srv/hunter2"}, Then: true})
+			}, "web1: note: a pending then of a file step of stage s matches no step and will not run\n", "hunter2"},
 		{"a base64 part", "hunter2", dir, change("key dGVyMg"), "        key (secret)\n", "dGVyMg"},
 		{"a JSON-escaped part", "hunt<er2", strings.ReplaceAll(validate, "vars.pw", `trimPrefix(vars.pw, "hu")`), change(`body {"a":"` + jsonPart + `"}`),
 			`        body {"a":"(secret)"}` + "\n", jsonPart},
@@ -1035,11 +1035,10 @@ func TestSecretPublicFile(t *testing.T) {
 	secretLine := lineStep(`!tpl "TOKEN={{ vars.token }}"`, "^TOKEN=")
 	for _, tt := range []struct {
 		name, steps string
-		// handlers are the handlers of the stage, with a step that notifies
-		// them.
-		handlers string
-		res      *module.Result
-		want     []string
+		// later are steps after the token file.
+		later string
+		res   *module.Result
+		want  []string
 	}{
 		{name: "line change", steps: secretLine, res: &module.Result{Status: module.Change, Action: module.Modify, OthersRead: true}, want: []string{"5:9: " + line}},
 		{name: "line ok", steps: secretLine, res: &module.Result{Status: module.OK, OthersRead: true}, want: []string{"5:9: " + line}},
@@ -1055,7 +1054,7 @@ func TestSecretPublicFile(t *testing.T) {
 		{name: "password answer", steps: debconfStep("password", "!expr vars.token")},
 		{name: "computed password type", steps: debconfStep(`!expr '"password"'`, "!expr vars.token")},
 		{name: "plain answer", steps: debconfStep("string", "x")},
-		{name: "handler", steps: "      - file:\n          path: /etc/a\n          content: x\n        notify: h\n", handlers: "    handlers:\n      h:\n" + "        - debconf:\n            package: app\n            question: app/token\n            type: string\n            value: !expr vars.token\n", want: []string{"15:11: " + answer}},
+		{name: "step with on_change", steps: "      - file:\n          path: /etc/a\n          content: x\n", later: "      - debconf:\n          package: app\n          question: app/token\n          type: string\n          value: !expr vars.token\n        on_change: [/etc/a]\n", want: []string{"12:9: " + answer}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := vmtest.WriteProject(t, map[string]string{
@@ -1063,7 +1062,7 @@ func TestSecretPublicFile(t *testing.T) {
 				"inventories/test.yaml": "hosts:\n  web1: {}\n  web2: {}\ngroups:\n  all:\n    vars:\n      token: !secret " + texts[0] +
 					"\n      users:\n        - name: alice\n          hash: !secret " + texts[1] + "\n",
 				"pipelines/site.yaml": "stages:\n  - name: base\n    hosts: all\n    steps:\n" + tt.steps +
-					"      - file:\n          path: /etc/app/token\n          content: !tpl \"{{ vars.token }}{{ for user in vars.users }}{{ user.hash }}{{ end }}\"\n          mode: \"0600\"\n" + tt.handlers,
+					"      - file:\n          path: /etc/app/token\n          content: !tpl \"{{ vars.token }}{{ for user in vars.users }}{{ user.hash }}{{ end }}\"\n          mode: \"0600\"\n" + tt.later,
 			})
 			p, err := project.Load(t.Context(), dir, "", "site", nil, project.Keys{Identity: secret.Identity{Path: identity}, Filter: secret.NewFilter()})
 			if err != nil {
@@ -1173,7 +1172,7 @@ func TestSecretErrorsOutsideStep(t *testing.T) {
 		{"an apply close error", user, func(*fakehost.Hosts) {}, failClose, false, []string{"web1: helper: no user u(secret)", `"error":"helper: no user u(secret)"`}},
 		{name: "an idle close error with keep", pipeline: dir, plan: failClose, keep: true, want: []string{"web1: helper: no user u(secret)"}},
 		{"a close error of a host that apply only clears", dir, func(h *fakehost.Hosts) {
-			h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "s", Module: "file", Mains: []string{"/srv/gone"}})
+			h.SetReact("web1", protocol.React{Pipeline: "site", Stage: "s", Module: "file", Mains: []string{"/srv/gone"}, Then: true})
 		}, failClose, false, []string{"web1: helper: no user u(secret)"}},
 		{"a pending call error", user, func(h *fakehost.Hosts) {
 			h.FailPendingWith("web1", "restore /home/uzqxj/x: no space left on device")

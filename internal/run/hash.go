@@ -37,18 +37,18 @@ type hashHealth struct {
 }
 
 type hashStep struct {
-	Address string   `json:"address"`
-	Module  string   `json:"module,omitempty"`
-	Args    any      `json:"args,omitempty"`
-	Then    string   `json:"then,omitempty"`
-	Notify  []string `json:"notify,omitempty"`
+	Address  string   `json:"address"`
+	Module   string   `json:"module,omitempty"`
+	Args     any      `json:"args,omitempty"`
+	Then     string   `json:"then,omitempty"`
+	OnChange []string `json:"on_change,omitempty"`
 	// ConfirmAccess changes what apply does, so the hash covers it.
-	ConfirmAccess bool `json:"confirm_access,omitempty"`
-	Result        any  `json:"result,omitempty"`
-	PendingThen   bool `json:"pending_then,omitempty"`
-	// Runs and Steps are set on a handler slot.
-	Runs  bool       `json:"runs,omitempty"`
-	Steps []hashStep `json:"steps,omitempty"`
+	ConfirmAccess bool   `json:"confirm_access,omitempty"`
+	Result        any    `json:"result,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Pending       bool   `json:"pending,omitempty"`
+	PendingThen   bool   `json:"pending_then,omitempty"`
+	ThenRuns      bool   `json:"then_runs,omitempty"`
 }
 
 // hashResult is a check result with the old content as its SHA-256.
@@ -96,16 +96,10 @@ func (p *Plan) HashInput() []byte {
 	return b.Bytes()
 }
 
-// stepHash is the hash input of a planned step or a handler slot.
+// stepHash is the hash input of a planned step.
 func (plan *Plan) stepHash(p Planned) hashStep {
-	if s := p.Handler; s != nil {
-		h := hashStep{Address: p.Address, Runs: s.Runs}
-		for _, st := range s.Steps {
-			h.Steps = append(h.Steps, plan.stepHash(st))
-		}
-		return h
-	}
-	h := hashStep{Address: p.Address, Module: p.Step.Module, Args: p.Step.Args, Then: p.Step.Then, Notify: p.Notify, ConfirmAccess: p.Step.ConfirmAccess, PendingThen: p.PendingThen}
+	h := hashStep{Address: p.Address, Module: p.Step.Module, Args: p.Step.Args, Then: p.Step.Then, OnChange: p.Step.OnChange, ConfirmAccess: p.Step.ConfirmAccess,
+		Reason: p.Reason, Pending: p.Pending, PendingThen: p.PendingThen, ThenRuns: p.ThenRuns}
 	if c, ok := p.Step.Args.(module.WithContent); ok {
 		h.Args = c.WithoutContent()
 	}

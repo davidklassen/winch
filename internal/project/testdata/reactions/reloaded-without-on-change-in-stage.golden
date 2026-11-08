@@ -1,0 +1,1 @@
+pipelines/site.yaml:17:11: reloaded: a step with reloaded needs on_change; add on_change with the paths whose change it reacts to

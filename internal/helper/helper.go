@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"syscall"
@@ -45,7 +44,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 	}()
 	enc := json.NewEncoder(out)
 	var lock *lockFile
-	var handlers, thens, downloads, certbotHooks, checks records
+	var reacts, downloads, certbotHooks, checks records
+	var old []string
 	var rb *rollbacks
 	var loginUser *module.Login
 	// After a reboot, the same run goes on in a new session. A session that
@@ -57,7 +57,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		}
 		err = errors.Join(err, lock.mark(false))
 		if !rebooting {
-			err = errors.Join(err, rb.end(ctx, handlers, thens))
+			err = errors.Join(err, rb.end(ctx, reacts))
 		}
 		err = errors.Join(err, os.RemoveAll(filepath.Join(dir, module.FetchedDir)))
 		lock.close()
@@ -86,8 +86,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			} else {
 				lock, err = takeLock(ctx, h, dir, self)
 			}
-			handlers = records{dir: filepath.Join(dir, "handlers"), project: h.Project, what: "pending handlers"}
-			thens = records{dir: filepath.Join(dir, "then"), project: h.Project, what: "pending then records"}
+			reacts = records{dir: filepath.Join(dir, "react"), project: h.Project, what: "pending steps"}
+			old = []string{filepath.Join(dir, "handlers", h.Project), filepath.Join(dir, "then", h.Project)}
 			downloads = downloadRecords(filepath.Join(dir, "downloads", h.Project))
 			certbotHooks = records{dir: filepath.Join(dir, "certbot-hooks"), project: h.Project, what: "pending certbot hooks"}
 			checks = records{dir: filepath.Join(dir, "checks"), project: h.Project, what: "pending health gates"}
@@ -106,7 +106,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 				err = rb.idle()
 			}
 			if err == nil && !h.Resume && len(rb.due) == 0 {
-				err = rb.clear(handlers)
+				err = rb.clear(reacts)
 			}
 			if err != nil && lock != nil {
 				lock.close()
@@ -118,19 +118,22 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			result, err = readFacts()
 		case req.Method == "pending":
 			var p protocol.Pending
-			p, err = readPending(handlers, thens, checks)
+			p, err = readPending(reacts, checks)
+			if err == nil {
+				p.Old, err = oldRecords(old)
+			}
 			if err == nil {
 				p.Rollback, err = rb.dueChanges(ctx)
 			}
 			// A due job that changes nothing would stay due with no plan line.
 			if err == nil && p.Rollback == nil && len(rb.due) > 0 {
-				err = rb.runDue(ctx, handlers)
+				err = rb.runDue(ctx, reacts)
 			}
 			result = p
 		case req.Method == "due":
-			err = rb.runDue(ctx, handlers)
-		case req.Method == "handled":
-			err = handled(req.Params, handlers)
+			err = rb.runDue(ctx, reacts)
+		case req.Method == "dropold":
+			err = dropOld(old)
 		case req.Method == "pend":
 			var line string
 			if line, err = checkLine(req.Params); err == nil {
@@ -142,21 +145,23 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 				err = checks.remove(line)
 			}
 		case req.Method == "command":
-			err = command(ctx, req.Params, thens)
-		case req.Method == "dropthen":
-			err = dropThen(req.Params, thens)
+			err = command(ctx, req.Params, reacts)
+		case req.Method == "reacted":
+			err = reacted(req.Params, reacts)
+		case req.Method == "drop":
+			err = drop(req.Params, reacts)
 		case req.Method == "exec":
 			result, err = execCommand(inCtx, req.Params)
 		case req.Method == "health":
 			err = runHealth(ctx, req.Params, checks)
 		case req.Method == "check":
-			result, err = step(ctx, req.Params, false, login, loginUser, handlers, thens, downloads, certbotHooks, rb, say)
+			result, err = step(ctx, req.Params, false, login, loginUser, reacts, downloads, certbotHooks, rb, say)
 		case req.Method == "apply":
-			result, err = step(ctx, req.Params, true, login, loginUser, handlers, thens, downloads, certbotHooks, rb, say)
+			result, err = step(ctx, req.Params, true, login, loginUser, reacts, downloads, certbotHooks, rb, say)
 		case req.Method == "confirm":
-			err = confirmStep(ctx, rb, handlers, thens)
+			err = confirmStep(ctx, rb, reacts)
 		case req.Method == "rollback":
-			err = rollbackStep(ctx, rb, handlers, thens)
+			err = rollbackStep(ctx, rb, reacts)
 		case req.Method == "reboot":
 			result, err = reboot(filepath.Join(dir, rebootRecord))
 			rebooting = err == nil
@@ -416,11 +421,11 @@ func (s sayer) Warn(text string) { _ = s.enc.Encode(protocol.Response{ID: s.id, 
 
 func (s sayer) Progress(text string) { _ = s.enc.Encode(protocol.Response{ID: s.id, Progress: text}) }
 
-// step checks a step. With apply, it then records the handlers that the step
-// notifies and its then, and makes the changes the check found. When the
-// changes fail, it removes the records that it added.
+// step checks a step. With apply, it then records the later steps that react
+// to the step, and makes the changes the check found. When the changes fail,
+// it removes the records that it added.
 // After a successful unpack, it records the checksum, owner, and group.
-func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, loginUser *module.Login, handlers, thens, downloads, certbotHooks records, rb *rollbacks, say module.Say) (protocol.StepResult, error) {
+func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, loginUser *module.Login, reacts, downloads, certbotHooks records, rb *rollbacks, say module.Say) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
@@ -504,34 +509,38 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			return out, err
 		}
 	}
-	notified, err := handlers.add(s.Notify)
+	var lines []string
+	for _, r := range s.React {
+		lines = append(lines, r.Line())
+	}
+	added, err := reacts.add(lines)
 	if err != nil {
 		return out, err
 	}
-	var thenLines []string
-	if s.Then != nil {
-		line, err := json.Marshal(s.Then)
-		if err != nil {
-			return out, err
-		}
-		if thenLines, err = thens.add([]string{string(line)}); err != nil {
-			return out, err
-		}
-	}
 	if err := recordSSHOff(rb, m, res.Changes); err != nil {
-		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+		return out, errors.Join(err, reacts.remove(added...))
 	}
 	guard := s.Guard.Confirm || res.Guard
 	var deadline time.Time
-	for _, h := range s.Guard.Handlers {
-		if _, _, err := rb.save(rb.handlerStore(h), m); err != nil {
-			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+	var guarded []string
+	for i, g := range s.Guard.Guarded {
+		saved, _, err := rb.save(rb.store(g.Store()), m)
+		if err != nil {
+			return out, errors.Join(err, reacts.remove(added...))
+		}
+		guarded = append(guarded, g.Line())
+		// Each store saves the same paths. The record of masked content
+		// is winch's own.
+		for _, sv := range saved {
+			if i == 0 && !strings.HasPrefix(sv.Path, rb.masked.dir+"/") {
+				out.Saved = append(out.Saved, sv.Path)
+			}
 		}
 	}
 	var untested []string
 	for _, st := range s.Guard.SSHD {
 		if _, _, err := rb.save(rb.store(st), m); err != nil {
-			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+			return out, errors.Join(err, reacts.remove(added...))
 		}
 		for _, t := range rb.touches(m) {
 			line, _ := json.Marshal(untestedFile{Store: st, Path: t.Path})
@@ -539,23 +548,23 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		}
 	}
 	if _, err := rb.sshd().add(untested); err != nil {
-		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+		return out, errors.Join(err, reacts.remove(added...))
 	}
-	if _, err := rb.notified().add(s.Guard.Handlers); err != nil {
-		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+	if _, err := rb.notified().add(guarded); err != nil {
+		return out, errors.Join(err, reacts.remove(added...))
 	}
 	_, isCmd := m.(*module.Cmd)
 	var saved, all []module.Saved
-	if s.Guard.Save || guard {
+	if guard {
 		var err error
 		saved, all, err = rb.save(rb.store(s.Guard.Store), m)
 		// The timer of a command starts when it ends, so a long command does
 		// not roll back while it runs.
-		if err == nil && guard && !isCmd {
+		if err == nil && !isCmd {
 			deadline, err = startTimer(rb, s.Guard, m, saved, all)
 		}
 		if err != nil {
-			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+			return out, errors.Join(err, reacts.remove(added...))
 		}
 	}
 	// The record comes first, so that a crash in the write leaves a record that
@@ -588,16 +597,16 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			} else {
 				err = fmt.Errorf("%w; the old files are back", err)
 			}
-			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+			return out, errors.Join(err, reacts.remove(added...))
 		}
 	}
 	if err != nil {
 		// A failed command can have changed the paths in part. The access
 		// check decides whether they go back.
 		if isCmd && guard {
-			if errors.Join(handlers.remove(notified...), thens.remove(thenLines...)) == nil {
+			if reacts.remove(added...) == nil {
 				out.Timer, out.Failed = time.Until(deadline), err.Error()
-				rb.running = &guarded{}
+				rb.running = &guardedStep{}
 				return out, nil
 			}
 		}
@@ -607,11 +616,11 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 			}
 			err = fmt.Errorf("%w; the old files are back", err)
 		}
-		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
+		return out, errors.Join(err, reacts.remove(added...))
 	}
 	if guard {
 		out.Timer = time.Until(deadline)
-		rb.running = &guarded{handlers: notified, thens: thenLines}
+		rb.running = &guardedStep{added: added}
 	}
 	// sshd now loads all its files: the access check tests them, and the
 	// rollback puts back those of the store.
@@ -651,8 +660,8 @@ func recordSSHOff(rb *rollbacks, m module.Module, changes []string) error {
 }
 
 // startTimer starts the rollback timer of the guarded step m. A step with
-// confirm_access puts back the whole store of its recipe or stage, and its
-// undo step; another guarded step puts back only what it saved.
+// confirm_access puts back its whole store, and its undo step; another
+// guarded step puts back only what it saved.
 func startTimer(rb *rollbacks, g protocol.Guard, m module.Module, saved, all []module.Saved) (time.Time, error) {
 	j := job{Deadline: time.Now().Add(timerTime), Restore: saved, Downloads: filepath.Join(rb.downloads.dir, rb.downloads.project)}
 	add := func(name string, step any) error {
@@ -732,25 +741,21 @@ func readFacts() (facts.Facts, error) {
 	return f, nil
 }
 
-func readPending(handlers, thens, checks records) (protocol.Pending, error) {
-	names, err := handlers.read()
+func readPending(reacts, checks records) (protocol.Pending, error) {
+	lines, err := reacts.read()
 	if err != nil {
 		return protocol.Pending{}, err
 	}
-	lines, err := thens.read()
-	if err != nil {
-		return protocol.Pending{}, err
-	}
-	p := protocol.Pending{Handlers: slices.DeleteFunc(names, func(n string) bool { return n == "" }), Then: []protocol.Then{}}
+	p := protocol.Pending{React: []protocol.React{}}
 	for i, l := range lines {
 		if l == "" {
 			continue
 		}
-		var t protocol.Then
-		if err := json.Unmarshal([]byte(l), &t); err != nil {
-			return protocol.Pending{}, fmt.Errorf("read the pending then records: %s:%d is not a record; delete the file, and the records in it are lost", filepath.Join(thens.dir, thens.project), i+2)
+		var r protocol.React
+		if err := json.Unmarshal([]byte(l), &r); err != nil {
+			return protocol.Pending{}, fmt.Errorf("read the pending steps: %s:%d is not a record; delete the file, and the records in it are lost", filepath.Join(reacts.dir, reacts.project), i+2)
 		}
-		p.Then = append(p.Then, t)
+		p.React = append(p.React, r)
 	}
 	lines, err = checks.read()
 	if err != nil {
@@ -769,6 +774,36 @@ func readPending(handlers, thens, checks records) (protocol.Pending, error) {
 	return p, nil
 }
 
+// oldRecords returns those of paths that hold a record: the record files of
+// an older winch. A file keeps its version line when its last record goes.
+func oldRecords(paths []string) ([]string, error) {
+	var out []string
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", p, err)
+		}
+		_, rest, _ := strings.Cut(string(data), "\n")
+		if strings.TrimSpace(rest) != "" {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// dropOld removes the record files of an older winch.
+func dropOld(paths []string) error {
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove %s: %w", p, err)
+		}
+	}
+	return nil
+}
+
 // checkLine returns the record line of the gate in params.
 func checkLine(params json.RawMessage) (string, error) {
 	var c protocol.Check
@@ -779,17 +814,9 @@ func checkLine(params json.RawMessage) (string, error) {
 	return string(line), err
 }
 
-func handled(params json.RawMessage, handlers records) error {
-	var h protocol.Handled
-	if err := json.Unmarshal(params, &h); err != nil {
-		return fmt.Errorf("decode handled: %w", err)
-	}
-	return handlers.remove(h.Name)
-}
-
 // command runs the command of a then, and then removes the records that
 // match it.
-func command(ctx context.Context, params json.RawMessage, thens records) error {
+func command(ctx context.Context, params json.RawMessage, reacts records) error {
 	var c protocol.Command
 	if err := json.Unmarshal(params, &c); err != nil {
 		return fmt.Errorf("decode command: %w", err)
@@ -797,32 +824,42 @@ func command(ctx context.Context, params json.RawMessage, thens records) error {
 	if err := module.Shell(ctx, c.Command); err != nil {
 		return err
 	}
-	return removeThens(thens, c.Then.Matches)
+	return removeReacts(reacts, c.React.Matches)
 }
 
-// dropThen removes the record of a then that matches no step.
-func dropThen(params json.RawMessage, thens records) error {
-	var t protocol.Then
-	if err := json.Unmarshal(params, &t); err != nil {
-		return fmt.Errorf("decode dropthen: %w", err)
+// reacted removes the records that match the record of a step that
+// succeeded.
+func reacted(params json.RawMessage, reacts records) error {
+	var r protocol.React
+	if err := json.Unmarshal(params, &r); err != nil {
+		return fmt.Errorf("decode reacted: %w", err)
 	}
-	return removeThens(thens, func(o protocol.Then) bool { return reflect.DeepEqual(t, o) })
+	return removeReacts(reacts, r.Matches)
 }
 
-// removeThens removes the then records for which drop returns true.
-func removeThens(thens records, drop func(protocol.Then) bool) error {
-	lines, err := thens.read()
+// drop removes a record that matches no step.
+func drop(params json.RawMessage, reacts records) error {
+	var r protocol.React
+	if err := json.Unmarshal(params, &r); err != nil {
+		return fmt.Errorf("decode drop: %w", err)
+	}
+	return reacts.remove(r.Line())
+}
+
+// removeReacts removes the records for which drop returns true.
+func removeReacts(reacts records, drop func(protocol.React) bool) error {
+	lines, err := reacts.read()
 	if err != nil {
 		return err
 	}
 	var gone []string
 	for _, l := range lines {
-		var t protocol.Then
-		if json.Unmarshal([]byte(l), &t) == nil && drop(t) {
+		var r protocol.React
+		if json.Unmarshal([]byte(l), &r) == nil && drop(r) {
 			gone = append(gone, l)
 		}
 	}
-	return thens.remove(gone...)
+	return reacts.remove(gone...)
 }
 
 func execCommand(ctx context.Context, params json.RawMessage) (module.ExecResult, error) {

@@ -33,7 +33,7 @@ hosts one at a time. Without one, or with --batch, ssh asks nothing,
 and winch connects to them in parallel.
 
 With --exit-code, plan exits with code 2 when the plan has changes,
-unknown steps, pending handlers, a pending then, or a pending gate.
+unknown steps, a pending step, then, or gate.
 
 Flags:
   --inventory <name>          inventory for the run

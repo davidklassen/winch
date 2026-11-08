@@ -35,49 +35,40 @@ func TestFmt(t *testing.T) {
 		"winch.yaml": "name: acme\ninventory: hosts\nvars:\n    domain: example.com\n" + `recipes:
     other:
         steps:
-        -   notify: done
+        -   then: echo done
             pkg:
                 name: htop
-        handlers:
-            done:
-            -   cmd:
-                    command: "true"
-                name: Done
+        -   on_change: [/var/lib/dpkg/status]
+            cmd:
+                command: "true"
+            name: Done
 pipelines:
     extra:
         stages:
         -   name: x
             hosts: all
             steps:
-            -   notify: [other.done, x]
+            -   then: echo x
                 pkg:
                     name: curl
-            handlers:
-                x:
-                -   cmd:
-                        command: "true"
-                    name: X
+            -   on_change: /var/lib/dpkg/status
+                cmd:
+                    command: "true"
+                name: X
     quick:
         steps:
-        -   notify: y
-            pkg:
+        -   pkg:
                 name: jq
-        handlers:
-            y:
-            -   cmd:
-                    command: "true"
-                name: Y
+        -   on_change: [/var/lib/dpkg/status]
+            cmd:
+                command: "true"
+            name: Y
 `,
 		"inventories/hosts.yml": "hosts:\n    web1: {}\n    web2:\n        vars:\n            motd_text: hi\n",
 		"pipelines/short.yml": `steps:
--   notify: z
+-   then: echo z
     pkg:
         name: tree
-handlers:
-    z:
-    -   cmd:
-            command: "true"
-        name: Z
 `,
 		"pipelines/site.yaml": `stages:
 -   name: base
@@ -85,28 +76,22 @@ handlers:
     steps:
     -   recipe: motd
         name: The motd
-    -   notify: reload
+    -   on_change: [/etc/motd]
         file:
             path: /etc/issue
             content: hi
-    handlers:
-        reload:
-        -   cmd:
-                command: "true"
-            name: Reload
 `,
 		"recipes/motd/recipe.yml": `vars:
     motd_text: hello
 steps:
--   notify: done
+-   then: echo done
     file:
         path: /etc/motd
         content: !tpl "{{ vars.motd_text }}\n"
-handlers:
-    done:
-    -   cmd:
-            command: "true"
-        name: Done
+-   on_change: [/etc/motd]
+    cmd:
+        command: "true"
+    name: Done
 `,
 		"recipes/motd/files/data.yaml": "a:\n    b: 1\n",
 	}
@@ -124,12 +109,11 @@ handlers:
     steps:
       - pkg:
           name: htop
-        notify: done
-    handlers:
-      done:
-        - name: Done
-          cmd:
-            command: "true"
+        then: echo done
+      - name: Done
+        cmd:
+          command: "true"
+        on_change: [/var/lib/dpkg/status]
 pipelines:
   extra:
     stages:
@@ -138,33 +122,25 @@ pipelines:
         steps:
           - pkg:
               name: curl
-            notify: [other.done, x]
-        handlers:
-          x:
-            - name: X
-              cmd:
-                command: "true"
+            then: echo x
+          - name: X
+            cmd:
+              command: "true"
+            on_change: /var/lib/dpkg/status
   quick:
     steps:
       - pkg:
           name: jq
-        notify: y
-    handlers:
-      y:
-        - name: Y
-          cmd:
-            command: "true"
+      - name: Y
+        cmd:
+          command: "true"
+        on_change: [/var/lib/dpkg/status]
 `,
 		"inventories/hosts.yml": "hosts:\n  web1: {}\n  web2:\n    vars:\n      motd_text: hi\n",
 		"pipelines/short.yml": `steps:
   - pkg:
       name: tree
-    notify: z
-handlers:
-  z:
-    - name: Z
-      cmd:
-        command: "true"
+    then: echo z
 `,
 		"pipelines/site.yaml": `stages:
   - name: base
@@ -175,12 +151,7 @@ handlers:
       - file:
           path: /etc/issue
           content: hi
-        notify: reload
-    handlers:
-      reload:
-        - name: Reload
-          cmd:
-            command: "true"
+        on_change: [/etc/motd]
 `,
 		"recipes/motd/recipe.yml": `vars:
   motd_text: hello
@@ -188,12 +159,11 @@ steps:
   - file:
       path: /etc/motd
       content: !tpl "{{ vars.motd_text }}\n"
-    notify: done
-handlers:
-  done:
-    - name: Done
-      cmd:
-        command: "true"
+    then: echo done
+  - name: Done
+    cmd:
+      command: "true"
+    on_change: [/etc/motd]
 `,
 		"recipes/motd/files/data.yaml": files["recipes/motd/files/data.yaml"],
 	}
@@ -287,15 +257,13 @@ func TestFmtTopLevel(t *testing.T) {
 hosts:
     web1: {}
 steps:
--   notify: reload
-    pkg:
+-   pkg:
         name: nginx
-handlers:
-    reload:
-    -   service:
-            name: nginx
-            reloaded: true
-        name: Reload
+-   on_change: [/etc/nginx]
+    service:
+        name: nginx
+        reloaded: true
+    name: Reload
 `})
 	r := winch(t, dir, fakehost.New(), false, "", "fmt")
 	if r.code != exitOK || r.out != "winch.yaml\n" {
@@ -307,13 +275,11 @@ hosts:
 steps:
   - pkg:
       name: nginx
-    notify: reload
-handlers:
-  reload:
-    - name: Reload
-      service:
-        name: nginx
-        reloaded: true
+  - name: Reload
+    service:
+      name: nginx
+      reloaded: true
+    on_change: [/etc/nginx]
 `
 	if got := readFile(t, filepath.Join(dir, "winch.yaml")); got != want {
 		t.Errorf("winch.yaml:\n%s\nwant\n%s", got, want)

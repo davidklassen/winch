@@ -1,0 +1,5 @@
+stdout:
+2 hosts: 0 to change, 2 unchanged, 0 unknown
+plan 740e2c37e1ed3cc7
+stderr:
+web2: note: a pending service step of recipe app waits until its recipe runs on this host

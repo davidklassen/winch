@@ -1,0 +1,13 @@
+stdout:
+web1
+  web
+    nginx
+      ~ file /etc/nginx/a.conf
+          @@ -1,1 +1,1 @@
+          -old
+          +a
+      ~ service nginx: reload (/etc/nginx/a.conf changes)
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+plan 0f5e8ae4bc1dc083
+stderr:

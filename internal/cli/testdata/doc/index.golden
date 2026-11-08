@@ -8,7 +8,7 @@ Project files:
   pipeline     ordered stages that apply steps to hosts
   recipe       reusable groups of steps
   step         keys that every step has
-  handlers     steps that run after a change
+  reactions    steps that act after a change
 
 Values:
   variables    named values for hosts, groups, and recipes

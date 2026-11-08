@@ -1,0 +1,41 @@
+stdout:
+web2
+  web
+    nginx
+      + file /etc/nginx/a.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +a
+      + file /etc/nginx/b.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +b
+      + file /etc/nginx/c.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +c
+      ~ service nginx: restart (/etc/nginx/c.conf changes)
+      ~ service nginx: reload (/etc/nginx/a.conf changes)
+    site
+      + file /var/www/index.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+      + file /var/www/about.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+          then: reindex
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+plan d1996ac5b6d8b41b
+stderr:
+web1: note: a pending cmd step of recipe nginx matches no step and will not run
+web1: note: a pending then of a file step of recipe nginx matches no step and will not run
+web1: note: a pending service step of recipe old matches no step and will not run
+web1: note: a pending service step of stage old matches no step and will not run
+web1: note: a pending service step of stage web matches no step and will not run
+web1: note: the records in /var/lib/winch/handlers/acme are of an older winch and will not run
+web1: note: the records in /var/lib/winch/then/acme are of an older winch and will not run
+web1: note: a pending cmd step of recipe mail waits until its recipe runs on this host
+web1: note: a pending cmd step of stage mx of pipeline mail waits until its stage runs on this host

@@ -26,6 +26,6 @@ web2
           +web2
 
 2 hosts: 1 to change, 0 unchanged, 0 unknown, 1 failed
-plan 768badbab2b2ee50
+plan a3146a5fed5e5818
 stderr:
 web1: nginx: Site: file /etc/nginx/site: permission denied

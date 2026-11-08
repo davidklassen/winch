@@ -275,7 +275,7 @@ func TestApply(t *testing.T) {
 				h := fakehost.New()
 				h.SetFile("web1", "/etc/motd", "hello\n")
 				h.SetFile("web2", "/etc/motd", "hello\n")
-				h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/aliases")})
+				h.SetReact("web1", protocol.React{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/aliases"), Then: true})
 				if r := winch(t, dir, h, false, "", "plan", "site", "--exit-code"); r.code != exitOK {
 					t.Errorf("plan --exit-code: exit %d", r.code)
 				}
@@ -283,8 +283,8 @@ func TestApply(t *testing.T) {
 				if r.code != exitOK || !strings.Contains(r.out, "2 hosts: 0 changed, 2 unchanged\n") || strings.Contains(r.err, "Apply these changes?") {
 					t.Errorf("exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 				}
-				if got := h.ThenOf("web1"); len(got) != 0 {
-					t.Errorf("then records after apply = %v, want none", got)
+				if got := h.ReactOf("web1"); len(got) != 0 {
+					t.Errorf("records after apply = %v, want none", got)
 				}
 			})
 		}

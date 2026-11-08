@@ -49,7 +49,7 @@ func Format(dir string) ([]string, error) {
 	if cfg == nil {
 		return nil, err
 	}
-	format(cfg.file, []string{"steps", "handlers.*", "pipelines.*.steps", "pipelines.*.handlers.*", "pipelines.*.stages.*.steps", "pipelines.*.stages.*.handlers.*", "recipes.*.steps", "recipes.*.handlers.*"})
+	format(cfg.file, []string{"steps", "pipelines.*.steps", "pipelines.*.stages.*.steps", "recipes.*.steps"})
 	invs, pipelines, recipes, err := projectFiles(dir)
 	if err != nil {
 		return nil, err
@@ -58,10 +58,10 @@ func Format(dir string) ([]string, error) {
 		format(f, nil)
 	}
 	for _, f := range pipelines {
-		format(f, []string{"steps", "handlers.*", "stages.*.steps", "stages.*.handlers.*"})
+		format(f, []string{"steps", "stages.*.steps"})
 	}
 	for _, r := range recipes {
-		format(r, []string{"steps", "handlers.*"})
+		format(r, []string{"steps"})
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, err

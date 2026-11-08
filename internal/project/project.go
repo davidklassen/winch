@@ -59,7 +59,7 @@ type Project struct {
 }
 
 type Config struct {
-	Name         string `yaml:"name,required" line:"letters, digits, ., _, and -" doc:"Letters, digits, ., _, and -. It does not start with a dot. Hosts keep pending handlers and other state of the project under this name."`
+	Name         string `yaml:"name,required" line:"letters, digits, ., _, and -" doc:"Letters, digits, ., _, and -. It does not start with a dot. Hosts keep pending records and other state of the project under this name."`
 	Inventory    string `yaml:"inventory" line:"default for --inventory" doc:"Default for --inventory. A project with more than one inventory and no default makes every run name its inventory with --inventory."`
 	InventoryPos yamlx.Pos
 	Recipients   []string    `yaml:"recipients" line:"age public keys" doc:"Age public keys. winch encrypts each secret for all of them. winch secret init adds a key."`
@@ -72,7 +72,6 @@ type Config struct {
 	Hosts       *yamlx.Node `yaml:"hosts" type:"map" line:"hosts of the only inventory" doc:"Hosts of the only inventory, as in an inventory file. The project then has no other inventory. It can have any number of pipelines."`
 	Groups      *yamlx.Node `yaml:"groups" type:"map" line:"groups of the only inventory" doc:"Groups of the only inventory, as in an inventory file."`
 	Steps       *yamlx.Node `yaml:"steps" type:"list of steps" line:"steps of the only pipeline" doc:"Steps of the only pipeline. It has one stage on all hosts, and both have the name of the project. The project then has no other pipeline. Plan and apply take no pipeline name."`
-	Handlers    *yamlx.Node `yaml:"handlers" type:"map of lists of steps" line:"handlers of the only pipeline" doc:"Handlers of the only pipeline, as in a pipeline file."`
 	Parallelism *yamlx.Node `yaml:"parallelism" type:"integer" line:"parallelism of the only pipeline" doc:"Parallelism of the only pipeline, as in a pipeline file."`
 	Health      *yamlx.Node `yaml:"health" type:"map" line:"health gate of the only pipeline" doc:"Health gate of the only pipeline, as in a pipeline file."`
 	root        *yamlx.Node
@@ -115,25 +114,8 @@ type Stage struct {
 	Targets     []Host
 	Parallelism int
 	Health      *Health
-	// Handlers are in declared order.
-	Handlers []*Handler
 	// Skipped is true for a stage that the selection leaves out.
 	Skipped bool
-}
-
-// ConfirmsAccess reports whether a module step or a handler step of the
-// stage has confirm_access.
-func (s *Stage) ConfirmsAccess() bool {
-	return slices.ContainsFunc(s.Steps, confirms) || slices.ContainsFunc(s.Handlers, (*Handler).ConfirmsAccess)
-}
-
-// handlerSteps returns the steps of the handlers of the stage.
-func (s *Stage) handlerSteps() []Step {
-	var out []Step
-	for _, h := range s.Handlers {
-		out = append(out, h.Steps...)
-	}
-	return out
 }
 
 // Health is the health gate of a stage. Stable and Timeout are seconds.
@@ -152,8 +134,8 @@ type Step struct {
 	Args   module.Module
 	Pos    yamlx.Pos
 	Recipe *Recipe
-	// Notify are the handlers that the step notifies.
-	Notify []*Handler
+	// OnChange are the paths of on_change, after Eval.
+	OnChange []string
 	// Then is the command of then, after Eval.
 	Then string
 	// ConfirmAccess is the confirm_access of a service step.
@@ -173,7 +155,7 @@ type Step struct {
 	// masked is the copy of the step that the output shows, set after Eval
 	// when the evaluation reads a secret.
 	masked *Step
-	// actions is set on a handler step and on the step of winch run.
+	// actions is set on a step with on_change and on the step of winch run.
 	actions bool
 	// vars are the vars of a recipe step.
 	vars []*Var
@@ -182,9 +164,9 @@ type Step struct {
 	loop *value
 	// then is the command of then, or nil.
 	then *value
-	// notifyNames are the handler names as written.
-	notifyNames []nameAt
-	tmpl        *template
+	// onChange are the paths of on_change, or nil.
+	onChange *value
+	tmpl     *template
 	// tmplReads are the variables that the template file of the step reads
 	// by name. A computed file name reads those of all templates of the recipe.
 	tmplReads []string
@@ -199,13 +181,6 @@ type Step struct {
 type readsAt struct {
 	pos   yamlx.Pos
 	reads []string
-}
-
-// nameAt is a handler name of notify, with the handler after the load.
-type nameAt struct {
-	name    string
-	pos     yamlx.Pos
-	handler *Handler
 }
 
 // Load reads the project in dir with one inventory and one pipeline. The
@@ -441,7 +416,7 @@ func newLoader(dir string, cfg *Config) (*loader, error) {
 	var err error
 	l.layout, err = readLayout(dir, cfg)
 	errs := append([]error{err}, l.declare(cfg.Vars, "")...)
-	errs = append(errs, l.readRecipes(), l.compileDefaults(), l.loadRecipes(), l.resolveRecipeNotify())
+	errs = append(errs, l.readRecipes(), l.compileDefaults(), l.loadRecipes())
 	return l, errors.Join(errs...)
 }
 
@@ -513,9 +488,6 @@ func resolve(inv *Inventory, pl *Pipeline, decls []*Var, checked map[*Recipe]boo
 		if s.Targets, err = inv.Match(s.Hosts); err != nil {
 			errs = append(errs, yamlx.Errorf(s.HostsPos, "%s", err))
 		}
-		for _, hs := range s.handlerSteps() {
-			errs = append(errs, hs.checkMatches(inv))
-		}
 		for _, st := range s.Steps {
 			errs = append(errs, st.checkMatches(inv))
 			if st.Recipe == nil {
@@ -525,11 +497,6 @@ func resolve(inv *Inventory, pl *Pipeline, decls []*Var, checked map[*Recipe]boo
 				checked[st.Recipe] = true
 				for _, rs := range st.Recipe.Steps {
 					errs = append(errs, rs.checkMatches(inv))
-				}
-				for _, h := range st.Recipe.Handlers {
-					for _, hs := range h.Steps {
-						errs = append(errs, hs.checkMatches(inv))
-					}
 				}
 				errs = append(errs, defaultMatches(inv, decls, st.Recipe.Name))
 				for _, name := range slices.Sorted(maps.Keys(st.Recipe.templates)) {
@@ -548,7 +515,7 @@ func resolve(inv *Inventory, pl *Pipeline, decls []*Var, checked map[*Recipe]boo
 			}
 		}
 	}
-	return errors.Join(append(errs, notifyHosts(pl))...)
+	return errors.Join(errs...)
 }
 
 // checkMatches checks that each constant match() pattern of st matches a
@@ -558,7 +525,7 @@ func (st Step) checkMatches(inv *Inventory) error {
 	if st.when != nil {
 		cs = append(cs, st.when)
 	}
-	for _, v := range []*value{st.args, st.loop, st.then} {
+	for _, v := range []*value{st.args, st.loop, st.then, st.onChange} {
 		if v != nil {
 			cs = slices.AppendSeq(cs, maps.Values(v.computed))
 		}
@@ -634,62 +601,6 @@ func (p *Project) Reach() []Host {
 		}
 	}
 	return out
-}
-
-// notifyHosts checks that the recipe of each handler that a step notifies
-// runs on a host of the step's stage. A stage without hosts runs nothing.
-func notifyHosts(pl *Pipeline) error {
-	runs := map[*Recipe]map[string]bool{}
-	for _, s := range pl.Stages {
-		for _, st := range s.Steps {
-			if st.Recipe == nil {
-				continue
-			}
-			if runs[st.Recipe] == nil {
-				runs[st.Recipe] = map[string]bool{}
-			}
-			for _, h := range s.Targets {
-				runs[st.Recipe][h.Name] = true
-			}
-		}
-	}
-	var errs []error
-	for _, s := range pl.Stages {
-		if len(s.Targets) == 0 {
-			continue
-		}
-		for _, st := range s.Steps {
-			todo := []Step{st}
-			if st.Recipe != nil {
-				todo = st.Recipe.Steps
-			}
-			for _, ts := range todo {
-				errs = append(errs, notifyStage(ts, s, runs, pl.Name))
-			}
-		}
-	}
-	return errors.Join(errs...)
-}
-
-// notifyStage checks the handlers of other recipes that st in stage s
-// notifies. runs holds the hosts of each recipe.
-func notifyStage(st Step, s Stage, runs map[*Recipe]map[string]bool, pipeline string) error {
-	var errs []error
-	for _, n := range st.notifyNames {
-		if n.handler == nil {
-			// Its load error is reported.
-			continue
-		}
-		r := n.handler.Recipe
-		if r == nil || r == st.in {
-			continue
-		}
-		onStageHost := slices.ContainsFunc(s.Targets, func(t Host) bool { return runs[r][t.Name] })
-		if !onStageHost {
-			errs = append(errs, yamlx.Errorf(n.pos, "notify: recipe %s runs on no host of stage %s in pipeline %s", r.Name, s.Name, pipeline))
-		}
-	}
-	return errors.Join(errs...)
 }
 
 // list returns the .yaml and .yml files in a directory of the project, relative to dir.
@@ -803,7 +714,6 @@ type pipelineFile struct {
 	ParallelismPos yamlx.Pos
 	Health         *healthFile   `yaml:"health" line:"check after a host changed in the stage" doc:"Check after a host changed in the stage. The gate runs on a host after it finishes the stage, when the stage has a change on that host. The plan marks it with * and does not run it. A gate that fails stays pending on the host, and the next apply runs it."`
 	Steps          []*yamlx.Node `yaml:"steps" type:"list of steps" line:"steps of a pipeline without stages" doc:"Steps of a pipeline without stages: recipe steps and module steps, in order."`
-	Handlers       *yamlx.Node   `yaml:"handlers" type:"map of lists of steps" line:"handlers of a pipeline without stages" doc:"Handlers of a pipeline without stages, as in a recipe. A module step of the stage notifies them."`
 }
 
 type stageFile struct {
@@ -814,7 +724,6 @@ type stageFile struct {
 	ParallelismPos yamlx.Pos
 	Health         *healthFile   `yaml:"health" line:"check after a host changed in the stage" doc:"Check after a host changed in the stage. The gate runs on a host after it finishes the stage, when the stage has a change on that host. The plan marks it with * and does not run it. A gate that fails stays pending on the host, and the next apply runs it."`
 	Steps          []*yamlx.Node `yaml:"steps,required" type:"list of steps" line:"recipe steps and module steps, in order" doc:"Recipe steps and module steps, in order."`
-	Handlers       *yamlx.Node   `yaml:"handlers" type:"map of lists of steps" line:"handlers of the stage" doc:"Handlers of the stage, as in a recipe. A module step of the stage notifies them."`
 	Pos            yamlx.Pos
 }
 
@@ -914,7 +823,7 @@ func (l *loader) decodePipeline(p part) (*Pipeline, error) {
 		errs = append(errs, yamlx.Errorf(n.Pos, "a pipeline needs steps or stages"))
 	default:
 		stages = []stageFile{{Name: p.name, Hosts: pf.Hosts, HostsPos: pf.HostsPos, Parallelism: pf.Parallelism, ParallelismPos: pf.ParallelismPos,
-			Health: pf.Health, Steps: pf.Steps, Handlers: pf.Handlers, Pos: n.Pos}}
+			Health: pf.Health, Steps: pf.Steps, Pos: n.Pos}}
 	}
 	seen := map[string]bool{}
 	for _, sf := range stages {
@@ -939,17 +848,8 @@ func (l *loader) decodePipeline(p part) (*Pipeline, error) {
 				s.Health.Timeout = *h.Timeout
 			}
 		}
-		hs, err := l.loadHandlers(sf.Handlers, nil)
-		errs = append(errs, err)
-		for _, h := range hs {
-			h.Pipeline, h.Stage = s.Pipeline, s.Name
-		}
-		s.Handlers = hs
 		for _, sn := range sf.Steps {
 			st, err := l.loadStep(sn, nil, plainStep)
-			if err == nil {
-				err = l.resolveNotify(&st, &s)
-			}
 			switch {
 			case errors.Is(err, errReported):
 			case err != nil:
@@ -978,14 +878,14 @@ var recipeOnly = map[string]map[string]string{
 // stepKeys are the keys of a step other than its module, in the order of
 // winch fmt. loadStep reads them by hand.
 type stepKeys struct {
-	Name          string        `yaml:"name" line:"label in the plan and the logs" doc:"Label in the plan and the logs. Without it, the plan shows the module and its main argument."`
-	Recipe        string        `yaml:"recipe" line:"recipe to run, in place of a module" doc:"Recipe to run, in place of a module. A recipe step has only name, recipe, vars, and when. A recipe runs at most once per host in a run."`
-	Vars          *yamlx.Node   `yaml:"vars" type:"map" line:"variable values for this recipe step" doc:"Variable values for this recipe step. A value can be an !expr or a !tpl, and an !expr can use match(). They beat the inventory, and --set beats them. Only a recipe step has vars."`
-	When          *yamlx.Node   `yaml:"when" type:"expression" line:"skips the step when false" doc:"Skips the step when false. It is an !expr that gives true or false. winch evaluates none of the other keys of a skipped step. when runs once, before loop, and cannot use item."`
-	Loop          *yamlx.Node   `yaml:"loop" type:"list or expression" line:"elements to run the step for, as item" doc:"Elements to run the step for, as item. An !expr gives the list. loop: [] runs nothing and notifies nothing. A null element fails the host."`
-	Then          string        `yaml:"then" line:"command after a change" doc:"Command after a change. It runs right after the step changes something, before the next step. A failure of then fails the step. With loop, then runs once after the last element and cannot use item. A then that did not run stays pending on the host, and the next run runs it."`
-	ConfirmAccess bool          `yaml:"confirm_access" line:"access check with rollback, for a service step" doc:"Access check with rollback, for a service step. Only a service step can use it, in steps or in handlers. A firewall step gets the same check without it.\n\nBefore the step, winch keeps the old state of each path that the changed steps of the recipe wrote or removed in this run. It starts a 60-second rollback timer in a process of its own.\n\nAfter the step, winch runs the access check: it opens a new SSH connection and runs a command, through sudo -n when the login user is not root. It tries twice, 5 seconds apart.\n\nWhen both tries fail, winch puts back the old files and runs daemon-reload after a unit file. It reverses a start or a stop of the step, and reloads or restarts the unit again. The host fails with the error \"the access check failed: <error>; the old files are back\". When the SSH connection ends first, winch rolls back as it ends. When the helper is gone, the timer rolls back.\n\nWhen a run ends before a notified handler with confirm_access ran, winch puts back the files of that handler at once. The next run applies the change again.\n\nA rollback puts back files only. It does not undo a change of a user or a group."`
-	Notify        yamlx.Strings `yaml:"notify" line:"handlers to run after a change" doc:"Handlers to run after a change. Not a template or an expression. With loop, notify fires once when any element changed. Run winch doc handlers."`
+	Name          string      `yaml:"name" line:"label in the plan and the logs" doc:"Label in the plan and the logs. Without it, the plan shows the module and its main argument."`
+	Recipe        string      `yaml:"recipe" line:"recipe to run, in place of a module" doc:"Recipe to run, in place of a module. A recipe step has only name, recipe, vars, and when. A recipe runs at most once per host in a run."`
+	Vars          *yamlx.Node `yaml:"vars" type:"map" line:"variable values for this recipe step" doc:"Variable values for this recipe step. A value can be an !expr or a !tpl, and an !expr can use match(). They beat the inventory, and --set beats them. Only a recipe step has vars."`
+	When          *yamlx.Node `yaml:"when" type:"expression" line:"skips the step when false" doc:"Skips the step when false. It is an !expr that gives true or false. winch evaluates none of the other keys of a skipped step. when runs once, before loop, and cannot use item."`
+	Loop          *yamlx.Node `yaml:"loop" type:"list or expression" line:"elements to run the step for, as item" doc:"Elements to run the step for, as item. An !expr gives the list. loop: [] runs nothing and changes nothing. A null element fails the host."`
+	OnChange      *yamlx.Node `yaml:"on_change" type:"list of paths" line:"paths whose change the step reacts to" doc:"Absolute paths, as a list or one string. The step acts only when an earlier step of the run on its host changed one of them, or a path below one. Otherwise it checks as ok. A step changes the paths that its module writes, such as the path of a file step or /var/lib/dpkg/status for a pkg step. Every earlier step of the host counts, in any recipe or stage. A step that changes such a path after this step is a plan error. Run winch doc reactions."`
+	Then          string      `yaml:"then" line:"command after a change" doc:"Command after a change. It runs right after the step changes something, before the next step: a cmd step with on_change set to the paths of the step. A failure of then fails the step. With loop, then runs once after the last element and cannot use item. A then that did not run stays pending on the host, and the next run runs it. A step whose module changes no path cannot have then; use a cmd step with on_change."`
+	ConfirmAccess bool        `yaml:"confirm_access" line:"access check with rollback, for a service step" doc:"Access check with rollback, for a service step. Only a service step can use it. A firewall step gets the same check without it.\n\nBefore an earlier step changes a path that this step reacts to with on_change, winch keeps the old state of the path. Before the step, winch starts a 60-second rollback timer in a process of its own.\n\nAfter the step, winch runs the access check: it opens a new SSH connection and runs a command, through sudo -n when the login user is not root. It tries twice, 5 seconds apart.\n\nWhen both tries fail, winch puts back the old files and runs daemon-reload after a unit file. It reverses a start or a stop of the step, and reloads or restarts the unit again. The host fails with the error \"the access check failed: <error>; the old files are back\". When the SSH connection ends first, winch rolls back as it ends. When the helper is gone, the timer rolls back.\n\nWhen a run ends before a step with confirm_access that reacts to a change of the run ran, winch puts back the files of that change at once, and prints a line that names them. The next run applies the change again.\n\nA rollback puts back files only. It does not undo a change of a user or a group."`
 }
 
 var stepFields = func() []string {
@@ -998,13 +898,12 @@ var stepFields = func() []string {
 
 const thenInLoop = "then runs once after the last element; it cannot use item"
 
-// stepKind tells where a step is: in a stage or a recipe, in a handler, or
-// on the command line of winch run.
+// stepKind tells where a step is: in a stage or a recipe, or on the command
+// line of winch run.
 type stepKind int
 
 const (
 	plainStep stepKind = iota
-	handlerStep
 	runStep
 )
 
@@ -1022,9 +921,12 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 	if n.Kind != yamlx.Map {
 		return Step{}, yamlx.Errorf(n.Pos, "expected a step as a map, got %s", yamlx.Describe(n))
 	}
-	st := Step{Pos: n.Pos, in: r, actions: kind != plainStep}
-	isRecipe := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "recipe" })
-	hasLoop := slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "loop" })
+	has := func(key string) bool {
+		return slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == key })
+	}
+	st := Step{Pos: n.Pos, in: r, actions: kind == runStep || has("on_change")}
+	isRecipe := has("recipe")
+	hasLoop := has("loop")
 	sc := scope{reads: &l.reads, reach: &l.reach}
 	thenScope := scope{reads: &l.reads, reach: &l.reach, noItem: thenInLoop}
 	if !hasLoop {
@@ -1052,9 +954,6 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 		case p.Key == "recipe" && r != nil:
 			errs = append(errs, yamlx.Errorf(p.KeyPos, "a recipe cannot run another recipe; recipe steps belong in stages"))
 			continue
-		case p.Key == "recipe" && kind == handlerStep:
-			errs = append(errs, yamlx.Errorf(p.KeyPos, "a handler step cannot run a recipe"))
-			continue
 		case p.Key == "recipe":
 			errs = append(errs, yamlx.Decode(p.Value, &recipe))
 			recipePos = p.Value.Pos
@@ -1080,16 +979,13 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 			st.then, err = compileThen(p.Value, thenScope)
 			errs = append(errs, err)
 			continue
+		case p.Key == "on_change":
+			var err error
+			st.onChange, err = compileOnChange(p.Value, sc)
+			errs = append(errs, err)
+			continue
 		case p.Key == "confirm_access":
 			errs = append(errs, yamlx.Decode(p.Value, &st.ConfirmAccess))
-			continue
-		case p.Key == "notify" && kind == handlerStep:
-			errs = append(errs, yamlx.Errorf(p.KeyPos, "a handler step cannot notify"))
-			continue
-		case p.Key == "notify":
-			var err error
-			st.notifyNames, err = notifyNames(p.Value)
-			errs = append(errs, err)
 			continue
 		}
 		m, ok := st.newModule(p.Key)
@@ -1109,10 +1005,10 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 		if err := l.loadArgs(&st, m, p.Value, sc); err != nil {
 			errs = append(errs, err)
 		}
-		if p.Key == "service" && kind == plainStep {
+		if p.Key == "service" && !st.actions {
 			for _, a := range p.Value.Pairs {
 				if a.Key == "restarted" || a.Key == "reloaded" {
-					errs = append(errs, yamlx.Errorf(a.KeyPos, "%s: only handler steps and winch run can use %s", a.Key, a.Key))
+					errs = append(errs, yamlx.Errorf(a.KeyPos, "%s: a step with %s needs on_change; add on_change with the paths whose change it reacts to", a.Key, a.Key))
 				}
 			}
 		}
@@ -1133,6 +1029,11 @@ func (l *loader) loadStep(n *yamlx.Node, r *Recipe, kind stepKind) (Step, error)
 			if p.Key == "confirm_access" {
 				return Step{}, yamlx.Errorf(p.KeyPos, "confirm_access: only a service step can use it")
 			}
+		}
+	}
+	for _, p := range n.Pairs {
+		if p.Key == "then" && !changesPaths(st.Module, argsNode) {
+			return Step{}, yamlx.Errorf(p.KeyPos, "then needs a step that changes a path; use a cmd step")
 		}
 	}
 	if r == nil || r.inline {
@@ -1328,15 +1229,11 @@ func (l *loader) secretChecks(invs []*Inventory, pls []*Pipeline) ([]*yamlx.Erro
 	for _, pl := range pls {
 		for _, s := range pl.Stages {
 			steps = append(steps, s.Steps...)
-			steps = append(steps, s.handlerSteps()...)
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(l.recipes)) {
 		if r := l.recipes[name]; r != nil {
 			steps = append(steps, r.Steps...)
-			for _, h := range r.Handlers {
-				steps = append(steps, h.Steps...)
-			}
 		}
 	}
 	vars := slices.Clone(l.decls)
@@ -1453,83 +1350,56 @@ func thenText(n *yamlx.Node) (string, error) {
 	return text, nil
 }
 
-// notifyNames returns the handler names of notify: a string or a list.
-func notifyNames(n *yamlx.Node) ([]nameAt, error) {
+// changesPaths reports whether a step of the module with the arguments n
+// changes a path: a cmd step changes only its creates and changes.
+func changesPaths(name string, n *yamlx.Node) bool {
+	switch name {
+	case "service", "debconf", "reboot":
+		return false
+	case "cmd":
+		return slices.ContainsFunc(n.Pairs, func(p yamlx.Pair) bool { return p.Key == "creates" || p.Key == "changes" })
+	}
+	return true
+}
+
+// compileOnChange compiles the paths of on_change: a list, a string, or a
+// value with a tag. It checks the paths that it can see at load.
+func compileOnChange(n *yamlx.Node, sc scope) (*value, error) {
+	if n.Tag != "" && n.Kind != yamlx.List {
+		return compileValue(n, sc)
+	}
 	items := []*yamlx.Node{n}
 	if n.Kind == yamlx.List {
 		items = n.Items
+		if len(items) == 0 {
+			return nil, yamlx.Errorf(n.Pos, "on_change: needs at least one path")
+		}
 	}
-	var out []nameAt
 	for _, it := range items {
-		name, ok := it.Value.(string)
-		switch {
-		case it.Tag != "":
-			return nil, yamlx.Errorf(it.Pos, "notify: %s is not allowed here", it.Tag)
-		case it.Kind != yamlx.Scalar || !ok:
-			return nil, yamlx.Errorf(it.Pos, "notify: expected a string or a list of strings, got %s", yamlx.Describe(it))
-		}
-		out = append(out, nameAt{name: name, pos: it.Pos})
-	}
-	return out, nil
-}
-
-// resolveRecipeNotify resolves the notify names of the steps of every recipe
-// that loaded.
-func (l *loader) resolveRecipeNotify() error {
-	var errs []error
-	for _, name := range slices.Sorted(maps.Keys(l.recipes)) {
-		r := l.recipes[name]
-		if r == nil {
+		if it.Tag != "" {
 			continue
 		}
-		for i := range r.Steps {
-			errs = append(errs, l.resolveNotify(&r.Steps[i], nil))
+		if _, err := onChangePath(it); err != nil {
+			return nil, err
 		}
 	}
-	return errors.Join(errs...)
+	v, err := compileValue(n, sc)
+	if v == nil && err == nil {
+		v = &value{node: n}
+	}
+	return v, err
 }
 
-// resolveNotify finds the handlers that st names: <handler> of its own
-// recipe, or of stage for a step of a stage, or <recipe>.<handler>.
-func (l *loader) resolveNotify(st *Step, stage *Stage) error {
-	var errs []error
-	for j := range st.notifyNames {
-		n := &st.notifyNames[j]
-		recipe, handler, cross := strings.Cut(n.name, ".")
-		var handlers []*Handler
-		var owner string
-		switch {
-		case !cross && st.in == nil:
-			handler, handlers, owner = recipe, stage.Handlers, "stage "+stage.Name
-		case !cross:
-			handler, handlers, owner = recipe, st.in.Handlers, "recipe "+st.in.Name
-		default:
-			r, ok := l.recipes[recipe]
-			if !ok {
-				errs = append(errs, yamlx.Errorf(n.pos, "notify: unknown recipe %q%s", recipe, yamlx.Suggest(recipe, slices.Sorted(maps.Keys(l.recipes)))))
-				continue
-			}
-			if r == nil {
-				// Its load error is reported.
-				continue
-			}
-			handlers, owner = r.Handlers, "recipe "+r.Name
-		}
-		i := slices.IndexFunc(handlers, func(h *Handler) bool { return h.Name == handler })
-		if i < 0 {
-			var names []string
-			for _, h := range handlers {
-				names = append(names, h.Name)
-			}
-			errs = append(errs, yamlx.Errorf(n.pos, "notify: %s has no handler %q%s", owner, handler, yamlx.Suggest(handler, names)))
-			continue
-		}
-		n.handler = handlers[i]
-		if !slices.Contains(st.Notify, n.handler) {
-			st.Notify = append(st.Notify, n.handler)
-		}
+// onChangePath returns the path of an element of on_change without tags.
+func onChangePath(n *yamlx.Node) (string, error) {
+	text, ok := n.Value.(string)
+	switch {
+	case n.Kind != yamlx.Scalar || !ok:
+		return "", yamlx.Errorf(n.Pos, "on_change: expected a path, got %s", yamlx.Describe(n))
+	case !path.IsAbs(text):
+		return "", yamlx.Errorf(n.Pos, "on_change: %q is not an absolute path", text)
 	}
-	return errors.Join(errs...)
+	return path.Clean(text), nil
 }
 
 func (l *loader) compileWhen(n *yamlx.Node) (*computed, error) {
@@ -1564,6 +1434,9 @@ func (st Step) reads() []string {
 	}
 	if st.then != nil {
 		out = append(out, st.then.reads()...)
+	}
+	if st.onChange != nil {
+		out = append(out, st.onChange.reads()...)
 	}
 	out = append(out, st.tmplReads...)
 	return out
@@ -1738,6 +1611,9 @@ func (st Step) eval(e *Env) ([]Step, error) {
 		if err != nil {
 			return nil, err
 		}
+		if s.OnChange, err = st.onChangeFor(ie); err != nil {
+			return nil, err
+		}
 		s.Then = then
 		if variants {
 			if s.masked, err = st.shown(ie, s, args, thens); err != nil {
@@ -1784,6 +1660,33 @@ func (st Step) thenFor(e *Env) (string, error) {
 		return "", err
 	}
 	return thenText(n)
+}
+
+// onChangeFor returns the paths of on_change for e, or nil.
+func (st Step) onChangeFor(e *Env) ([]string, error) {
+	if st.onChange == nil {
+		return nil, nil
+	}
+	n, err := st.onChange.eval(e, "on_change")
+	if err != nil {
+		return nil, err
+	}
+	items := []*yamlx.Node{n}
+	if n.Kind == yamlx.List {
+		items = n.Items
+	}
+	if len(items) == 0 {
+		return nil, yamlx.Errorf(n.Pos, "on_change: needs at least one path")
+	}
+	var out []string
+	for _, it := range items {
+		p, err := onChangePath(it)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 // fileData sets the data of a file, unit, or repo step from its arguments m,
@@ -1870,6 +1773,16 @@ func (st Step) shown(e *Env, s Step, real any, thens [3]string) (*Step, error) {
 	var thenParts []string
 	sh.Then, thenParts = secret.MaskLines(thens[0], thens[1], thens[2])
 	parts = append(parts, thenParts...)
+	changes := [3]string{strings.Join(s.OnChange, "\n")}
+	for n := 1; n < 3; n++ {
+		paths, err := st.onChangeFor(e.variant(n))
+		changes[n] = strings.Join(paths, "\n")
+		if err != nil {
+			changes[n] = secret.Placeholder(n)
+		}
+	}
+	_, changeParts := secret.MaskLines(changes[0], changes[1], changes[2])
+	parts = append(parts, changeParts...)
 	var data [3][]byte
 	for n := range mods {
 		if t, ok := mods[n].(module.WithText); ok {
@@ -1997,11 +1910,6 @@ func (p *Project) Written(h Host, f facts.Facts, other map[string]HostFacts) (Wr
 			if !slices.ContainsFunc(s.Targets, func(t Host) bool { return t.Name == h.Name }) {
 				continue
 			}
-			for _, hs := range s.handlerSteps() {
-				if err := add(e, hs); err != nil {
-					return Writes{}, err
-				}
-			}
 			for i := range s.Steps {
 				st := &s.Steps[i]
 				if st.Recipe == nil {
@@ -2018,11 +1926,7 @@ func (p *Project) Written(h Host, f facts.Facts, other map[string]HostFacts) (Wr
 					continue
 				}
 				re := e.For(st)
-				steps := slices.Clone(st.Recipe.Steps)
-				for _, hd := range st.Recipe.Handlers {
-					steps = append(steps, hd.Steps...)
-				}
-				for _, rs := range steps {
+				for _, rs := range st.Recipe.Steps {
 					if err := add(re, rs); err != nil {
 						return Writes{}, err
 					}

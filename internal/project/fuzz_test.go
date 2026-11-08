@@ -13,8 +13,8 @@ import (
 // spec: YAML; CLI/Errors
 func FuzzValidate(f *testing.F) {
 	f.Add(base["winch.yaml"], base["inventories/test.yaml"], base["pipelines/site.yaml"], "steps: []\n")
-	f.Add(base["winch.yaml"], base["inventories/test.yaml"], stage("      - recipe: r\n"), recipe("  - pkg:\n      name: curl\n    notify: reload\n"))
-	f.Add(base["winch.yaml"], base["inventories/test.yaml"], stage("      - recipe: r\n"), "steps:\n  - cmd: !tpl \"echo {{ x }}\"\nhandlers:\n  - name: reload\n    service:\n      name: nginx\n      state: reloaded\n")
+	f.Add(base["winch.yaml"], base["inventories/test.yaml"], stage("      - recipe: r\n"), recipe("  - pkg:\n      name: curl\n  - service:\n      name: curl\n      reloaded: true\n    on_change: [/var/lib/dpkg/status]\n"))
+	f.Add(base["winch.yaml"], base["inventories/test.yaml"], stage("      - recipe: r\n"), "steps:\n  - cmd: !tpl \"echo {{ x }}\"\n    on_change: !tpl \"/{{ x }}\"\n")
 	f.Add(base["winch.yaml"], "hosts:\n  web1:\n    vars:\n      a: &x [1, *x]\n", base["pipelines/site.yaml"], "")
 	f.Add(base["winch.yaml"], base["inventories/test.yaml"], stage("      - file:\n          path: /a\n          content: !expr 'vars.x +'\n        when: !expr 'host.name =='\n"), "")
 	read := func(name string) string {

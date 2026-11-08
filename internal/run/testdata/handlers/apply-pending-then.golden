@@ -1,7 +1,0 @@
-stdout:
-web1: site: ! then: reindex
-web1: apps: ! then: newaliases
-web1: access check after the run passed
-
-2 hosts: 1 changed, 1 unchanged
-stderr:

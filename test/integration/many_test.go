@@ -18,7 +18,9 @@ const manyPipeline = `stages:
   - name: base
     hosts: all
     steps:
-      - recipe: app
+      - file:
+          path: /etc/winch-app/app.conf
+          content: "app\n"
   - name: web
     hosts: web
     parallelism: 1
@@ -41,7 +43,10 @@ const manyPipeline = `stages:
       - file:
           path: /etc/winch-app/extra.conf
           content: !tpl "{{ vars.web_text }}\n"
-        notify: app.reload
+  - name: app
+    hosts: all
+    steps:
+      - recipe: app
 `
 
 const hangPipeline = `stages:
@@ -78,7 +83,7 @@ const stopPipeline = `stages:
 // them.
 var manyTokens = [2]string{"many-token-aaaa", "many-token-bbbb"}
 
-// spec: Running a pipeline/Order; Running a pipeline/Health gates; Running a pipeline/Failures; Handlers; Templates and expressions/Data; Variables/Sources; Variables/Secrets in output; CLI
+// spec: Running a pipeline/Order; Running a pipeline/Health gates; Running a pipeline/Failures; Reactions; Templates and expressions/Data; Variables/Sources; Variables/Secrets in output; CLI
 func TestMany(t *testing.T) {
 	t.Parallel()
 	vms := []*vmtest.VM{lab.StartVM(t, "many-a"), lab.StartVM(t, "many-b")}
@@ -108,14 +113,10 @@ func TestMany(t *testing.T) {
 		"pipelines/hang.yaml": hangPipeline,
 		"pipelines/stop.yaml": stopPipeline,
 		"recipes/app/recipe.yaml": `steps:
-  - file:
-      path: /etc/winch-app/app.conf
-      content: "app\n"
-handlers:
-  reload:
-    - service:
-        name: ssh
-        reloaded: true
+  - service:
+      name: ssh
+      reloaded: true
+    on_change: [/etc/winch-app]
 `,
 		"recipes/peers/recipe.yaml": `steps:
   - file:
@@ -140,7 +141,9 @@ handlers:
 		noSecrets(t, strings.Join(args, " "), r.Stdout+r.Stderr, manyTokens[0], manyTokens[1])
 		return r
 	}
-	const records = "sed '/^version 1$/d' /var/lib/winch/handlers/many 2>/dev/null; true"
+	const records = "sed '/^version 1$/d' /var/lib/winch/react/many 2>/dev/null; true"
+	// reload is the record of the reload of ssh of recipe app.
+	const reload = `{"recipe":"app","module":"service","mains":["7f5a55cf3f88be936fb9440249cb449f3067ccee4b525d0027dc9278a29c32c1"]}` + "\n"
 
 	t.Run("match() peers and step vars render, secrets show as (secret)", func(t *testing.T) {
 		r := winch("plan", "site")
@@ -197,23 +200,23 @@ handlers:
 		}
 	})
 
-	t.Run("--stages without the recipe's stage keeps its handler pending", func(t *testing.T) {
+	t.Run("--stages without the stage of a reload keeps it pending", func(t *testing.T) {
 		r := winch("apply", "site", "--yes", "--set", "vars.web_text=two", "--stages", "conf")
-		if r.Code != 0 || strings.Contains(r.Stdout, "handler") {
-			t.Fatalf("apply --stages conf: exit %d", r.Code)
+		if r.Code != 0 || strings.Contains(r.Stdout, "service") || !strings.Contains(r.Stderr, "note: a pending service ssh of recipe app waits until its recipe runs on this host") {
+			t.Fatalf("apply --stages conf: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
 		}
 		for _, vm := range vms {
-			if out := vm.MustRun(t, records); out != "app.reload\n" {
-				t.Errorf("%s: pending handlers %q, want app.reload", vm.Name, out)
+			if out := vm.MustRun(t, records); out != reload {
+				t.Errorf("%s: records %q, want %q", vm.Name, out, reload)
 			}
 		}
 		r = winch("apply", "site", "--yes", "--set", "vars.web_text=two")
-		if r.Code != 0 || strings.Count(r.Stdout, ": app: ~ handler app.reload: service ssh") != 2 {
-			t.Errorf("full apply: exit %d, want the handler on both hosts", r.Code)
+		if r.Code != 0 || strings.Count(r.Stdout, ": app: ~ service ssh") != 2 {
+			t.Errorf("full apply: exit %d, want the reload on both hosts", r.Code)
 		}
 		for _, vm := range vms {
 			if out := vm.MustRun(t, records); out != "" {
-				t.Errorf("%s: pending handlers %q after the full run", vm.Name, out)
+				t.Errorf("%s: records %q after the full run", vm.Name, out)
 			}
 		}
 	})

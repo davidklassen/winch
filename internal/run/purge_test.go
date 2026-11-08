@@ -49,12 +49,10 @@ var purgeFiles = map[string]string{
   - file:
       path: /etc/app
       content: a
-    notify: clean
-handlers:
-  clean:
-    - dir:
-        path: /etc/y
-        purge: true
+  - dir:
+      path: /etc/y
+      purge: true
+    on_change: [/etc/app]
 `,
 }
 

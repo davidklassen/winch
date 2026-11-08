@@ -46,7 +46,6 @@ steps:
         	root * /var/www/{{ vars.domain }}
         	file_server
         }
-    notify: reload_caddy
 
   - name: Run Caddy
     service:
@@ -54,9 +53,8 @@ steps:
       enabled: true
       running: true
 
-handlers:
-  reload_caddy:
-    - name: Reload Caddy
-      service:
-        name: caddy
-        reloaded: true
+  - name: Reload Caddy
+    service:
+      name: caddy
+      reloaded: true
+    on_change: [/etc/caddy/Caddyfile]

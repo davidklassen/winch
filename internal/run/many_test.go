@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -34,13 +35,14 @@ const manyRecipe = `steps:
   - file:
       path: /etc/app.conf
       content: "app\n"
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: app
-        reloaded: true
+  - service:
+      name: app
+      reloaded: true
+    on_change: [/etc/app.conf, /etc/app.d]
 `
+
+// appReload is the record of the step with on_change of manyRecipe.
+var appReload = protocol.React{Recipe: "app", Module: "service", Mains: mains("app")}
 
 const motdStage = `  - name: base
     hosts: all
@@ -676,19 +678,18 @@ func TestSessionClosesWhenHostStops(t *testing.T) {
 	})
 }
 
-// spec: Handlers; CLI (--stages)
-func TestStagesLeaveHandlerPending(t *testing.T) {
-	p := manyProject(t, `  - name: app
-    hosts: all
-    steps:
-      - recipe: app
-  - name: conf
+// spec: Reactions; CLI (--stages)
+func TestStagesLeaveReactionPending(t *testing.T) {
+	p := manyProject(t, `  - name: conf
     hosts: all
     steps:
       - file:
           path: /etc/app.d/x.conf
           content: "x\n"
-        notify: app.reload
+  - name: app
+    hosts: all
+    steps:
+      - recipe: app
 `)
 	if err := p.Select(project.Selection{Stages: "conf"}); err != nil {
 		t.Fatal(err)
@@ -697,7 +698,7 @@ func TestStagesLeaveHandlerPending(t *testing.T) {
 	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
 	var out, errOut bytes.Buffer
 	plan.Write(plain(&out), plain(&errOut))
-	if strings.Contains(out.String(), "handler") || strings.Contains(out.String(), "/etc/app.conf") {
+	if strings.Contains(out.String(), "service") || strings.Contains(out.String(), "/etc/app.conf") {
 		t.Errorf("the plan shows the skipped stage:\n%s", out.String())
 	}
 	out.Reset()
@@ -705,8 +706,8 @@ func TestStagesLeaveHandlerPending(t *testing.T) {
 		t.Fatalf("apply failed: %s", errOut.String())
 	}
 	for _, host := range []string{"web1", "web2", "web3"} {
-		if got := h.PendingOf(host); !slices.Equal(got, []string{"app.reload"}) {
-			t.Errorf("%s: pending %q, want app.reload", host, got)
+		if got, want := h.ReactOf(host), []protocol.React{appReload}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: records %v, want %v", host, got, want)
 		}
 		if want := []string{"access"}; !slices.Equal(h.Log[host], want) {
 			t.Errorf("%s ran %q, want %q", host, h.Log[host], want)
@@ -1009,7 +1010,7 @@ func TestPlanIndependentOfFinishOrder(t *testing.T) {
 			h.SetFile("web5", "/etc/motd", "hi\n")
 			h.SetFile("web5", "/etc/app.conf", "app\n")
 			h.SetFile("web3", "/etc/app.conf", "app\n")
-			h.SetPending("web3", "app.reload")
+			h.SetReact("web3", appReload)
 			h.FailCheck("web2")
 			h.FailCheck("web4 /etc/app.conf")
 			// The host at index i of order finishes each check i seconds late.

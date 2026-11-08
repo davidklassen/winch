@@ -39,13 +39,7 @@ func (p *Plan) publicWarnings() []*yamlx.Error {
 				continue
 			}
 			for _, s := range hp.Steps {
-				if s.Handler == nil {
-					check(s)
-					continue
-				}
-				for _, hs := range s.Handler.Steps {
-					check(hs)
-				}
+				check(s)
 			}
 		}
 	}

@@ -39,14 +39,14 @@ pipelines/
   site.yaml              a pipeline: stages and steps
 recipes/
   nginx/
-    recipe.yaml          a recipe: variables, steps, and handlers
+    recipe.yaml          a recipe: variables and steps
     templates/site.tmpl  the templates of the recipe
     files/tls.conf       the files of the recipe
 `),
 		doc.Paragraph(`The name of an inventory or a pipeline is its file name without .yaml. Plan and apply then name the pipeline: winch plan site.`),
 		doc.Paragraph(`An inventory, a pipeline, or a recipe can also be a key in winch.yaml, under inventories, pipelines, or recipes. The value of the key is the content of the file. A name in both places is an error.`),
 		doc.Heading("Top-level inventory and pipeline"),
-		doc.Paragraph(`hosts and groups at the top of winch.yaml are the only inventory of the project. They work with any number of pipelines. steps, handlers, parallelism, and health at the top of winch.yaml are the only pipeline. Then plan and apply take no pipeline name.`),
+		doc.Paragraph(`hosts and groups at the top of winch.yaml are the only inventory of the project. They work with any number of pipelines. steps, parallelism, and health at the top of winch.yaml are the only pipeline. Then plan and apply take no pipeline name.`),
 		doc.Heading("YAML"),
 		doc.Paragraph(`All files are YAML 1.2. Only true and false are booleans: yes, no, on, and off are strings. File modes are strings: mode: "0644". Unknown keys and duplicate keys are errors. Anchors and aliases work. Merge keys (<<) do not. winch fmt fixes the indentation and the step key order.`),
 	},
@@ -181,16 +181,14 @@ steps:
       path: /etc/nginx/sites-enabled/default
       template: site.tmpl
       validate: nginx -t
-    notify: reload
   - service:
       name: nginx
       running: true
       enabled: true
-handlers:
-  reload:
-    - service:
-        name: nginx
-        reloaded: true
+  - service:
+      name: nginx
+      reloaded: true
+    on_change: [/etc/nginx]
 
 # recipes/nginx/templates/site.tmpl
 server {
@@ -217,13 +215,15 @@ var stepTopic = doc.Topic{
 		doc.Heading("Form"),
 		doc.Paragraph(`A step is a map. It has one module key, such as pkg or file, with the arguments of the module as a map. Or it has recipe with the name of a recipe. Run winch doc <module> for the arguments of a module.`),
 		doc.Heading("Computed values"),
-		doc.Paragraph(`Any module argument can be a template or an expression, and so can then. when takes an expression. loop takes a list or an expression.`),
+		doc.Paragraph(`Any module argument can be a template or an expression, and so can then and on_change. when takes an expression. loop takes a list or an expression.`),
 		doc.Heading("Evaluation"),
 		doc.Paragraph(`On each host, winch evaluates when. When it is false, winch skips the step. Then winch evaluates loop, and the arguments for each element. winch checks the step on the host, and apply changes what differs.`),
 		doc.Heading("Results"),
 		doc.Paragraph(`A step that runs a command counts as changed: a cmd, and a service with restarted or reloaded. When a step fails, its host stops. Other hosts go on.`),
+		doc.Heading("Reacting to a change"),
+		doc.Paragraph(`A step with on_change acts only when an earlier step of the run changed one of its paths. then runs a command after the step changes something. Run winch doc reactions.`),
 		doc.Heading("Key order"),
-		doc.Paragraph(`winch fmt puts the step keys in this order: name, the module or recipe, vars, when, loop, then, confirm_access, notify.`),
+		doc.Paragraph(`winch fmt puts the step keys in this order: name, the module or recipe, vars, when, loop, on_change, then, confirm_access.`),
 		doc.Example(`# winch.yaml
 name: demo
 hosts:
@@ -241,59 +241,58 @@ steps:
     when: !expr len(vars.sites) > 0
     loop: !expr vars.sites
     then: nginx -t
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: nginx
-        reloaded: true
+  - service:
+      name: nginx
+      reloaded: true
+    on_change: [/etc/nginx]
 `),
 	},
 }
 
-var handlersTopic = doc.Topic{
-	Name: "handlers",
-	Text: "steps that run after a change",
+var reactionsTopic = doc.Topic{
+	Name: "reactions",
+	Text: "steps that act after a change",
 	Blocks: []doc.Block{
-		doc.Paragraph(`A handler is a list of steps that runs once, after a step that notifies it changes something.`),
-		doc.Heading("Declaring a handler"),
-		doc.Paragraph(`handlers is a map in a recipe or in a stage. Each key is a handler name, and its value is a list of steps. A handler name has lowercase letters, digits, and _.`),
-		doc.Heading("Notifying a handler"),
-		doc.Paragraph(`notify on a step names a handler of the current recipe or stage, or <recipe>.<handler> of another recipe. That recipe must run in the same pipeline, on at least one host where the step runs. On a host where it does not run, winch drops the notification.`),
+		doc.Paragraph(`A step with on_change acts only when an earlier step of the run changed one of its paths, such as a reload of nginx after a change of its config.`),
+		doc.Heading("on_change"),
+		doc.Paragraph(`on_change lists absolute paths. A step with on_change acts when an earlier step of the run on its host changed one of these paths, or a path below one of them. Otherwise it checks as ok. Every earlier step of the host counts, in any recipe or stage of the pipeline.`),
 		doc.Code(`# winch.yaml
 name: demo
 hosts:
   web1.example.com: {}
 steps:
-  - recipe: nginx
+  - pkg:
+      name: nginx
   - file:
       path: /etc/nginx/conf.d/gzip.conf
       content: "gzip on;\n"
-    notify: nginx.reload
-recipes:
-  nginx:
-    steps:
-      - pkg:
-          name: nginx
-    handlers:
-      reload:
-        - service:
-            name: nginx
-            reloaded: true
+      validate: nginx -t
+  - service:
+      name: nginx
+      reloaded: true
+    on_change: [/etc/nginx]
 
-# A change of gzip.conf reloads nginx once, at the end of the stage.
+# A change of gzip.conf reloads nginx once.
 `),
-		doc.Heading("When a handler runs"),
+		doc.Heading("The paths that a step changes"),
 		doc.List(
-			`A handler runs at most once per recipe run on a host. A handler of a stage runs at most once per stage run.`,
-			`A handler runs after the last step of its recipe. When its recipe already ran on that host, it runs at the end of the current stage.`,
-			`A handler of a stage runs after the last step of the stage and after the recipe handlers at the end of the stage. It runs before the health gate.`,
-			`Handlers run in the order that the recipe or the stage declares them.`,
+			`file, dir, link, and line: their path. unit: its unit file. download: its path or unpack directory.`,
+			`repo: its source file and key. user: /etc/passwd, and the home, ~/.ssh, and authorized_keys of a user that it creates or gives a home. group: /etc/group.`,
+			`pkg and upgrade: /var/lib/dpkg/status. hostname: /etc/hostname. timezone: /etc/localtime and /etc/timezone.`,
+			`certbot: its renewal file and its live and archive directories. firewall: its rules file. cmd: its creates and changes.`,
 		),
-		doc.Heading("Handler steps"),
-		doc.Paragraph(`A handler step can have when. It cannot use notify or run a recipe. Only a handler step and winch run can use restarted and reloaded of service.`),
-		doc.Heading("Pending handlers"),
-		doc.Paragraph(`When a step notifies a handler, winch marks the handler as pending on the host before the step changes anything. The mark goes when the handler succeeds. When a run stops first, or --stages leaves out the stage of its recipe, the handler stays pending. It runs the next time its recipe or stage runs on that host. The plan shows a handler that will run with "!". For a handler that the run does not reach, the plan shows a note, such as "a pending handler ssh.reload waits until its recipe runs on this host". The note is not a change.`),
+		doc.Paragraph(`A step counts only when it changes something. A service, debconf, or reboot step changes no path.`),
+		doc.Heading("Rules"),
+		doc.List(
+			`A step that changes a path after a step that reacts to it is a plan error, such as "app#2 changes /etc/nginx/sites-available/app after nginx#5 reacts to it; add a step with on_change after app#2".`,
+			`When no step of the host in the pipeline can change any of the paths, the plan warns, such as "on_change: no step of web1 changes /etc/ngnix".`,
+			`restarted and reloaded of service need on_change, except in winch run. They check as ok when the run started the unit after the change that the step reacts to.`,
+			`A step that reacts names the path in the plan: ~ service nginx: reload (/etc/nginx/conf.d/gzip.conf changes).`,
+		),
+		doc.Heading("then"),
+		doc.Paragraph(`then: <command> is short for a cmd step right after the step, with that command and with on_change set to the paths that the step changes. With loop, it follows the last element and cannot read item. On a step with loop, the error of a failed then names the step, such as "failed: file (loop): then: sievec /etc/sieve: exit status 1". A step whose module changes no path cannot have then; use a cmd step with on_change.`),
+		doc.Heading("Pending steps"),
+		doc.Paragraph(`Before a step changes a path, winch records on the host each later step that reacts to it. The record goes when that step succeeds. When a run stops first, or the reacting step fails, the record stays: the next run runs the step, also when nothing changes. The plan shows it with "!" and "(pending from an earlier run)". For a record whose step the run does not reach, such as through --stages, the plan shows a note, such as "a pending service nginx of recipe web waits until its recipe runs on this host". The note is not a change.`),
 	},
 }
 
@@ -592,31 +591,31 @@ var workflowTopic = doc.Topic{
 		doc.Heading("Plan and apply"),
 		doc.Paragraph(`winch plan shows the changes and changes nothing. winch apply shows the same plan, asks, and then makes the changes. For each host, the plan connects to the host, reads the facts, evaluates the steps, checks the requirements of the recipes, and checks each step on the host. Apply checks each step again right before it changes it. The second check decides.`),
 		doc.Heading("Apply output"),
-		doc.Paragraph(`Apply prints a line for each step that changes or fails, then the summary. A step that checks as ok prints nothing: a planned change that the second check finds made, and a handler restart that checks as ok. An access check that passes prints access check passed after the step or handler that started it. The access check at the end of a host prints access check after the run passed. A health gate that passes prints health passed and its command. The summary line of plan and of apply counts hosts, not steps.`),
+		doc.Paragraph(`Apply prints a line for each step that changes or fails, then the summary. A step that checks as ok prints nothing: a planned change that the second check finds made, and a step with on_change that does not act. An access check that passes prints access check passed after the step that started it. The access check at the end of a host prints access check after the run passed. A health gate that passes prints health passed and its command. The summary line of plan and of apply counts hosts, not steps.`),
 		doc.Heading("Plan marks"),
 		doc.Table([][]string{
 			{"+", "create"},
 			{"~", "change"},
 			{"-", "remove"},
 			{"?", "unknown: a cmd step without creates or unless"},
-			{"!", "a handler, or a pending then or gate that will run"},
+			{"!", "a pending step, then, or gate that will run"},
 			{"*", "a reboot or health gate that runs during apply"},
 		}),
 		doc.Heading("Plan hash"),
-		doc.Paragraph(`The last line of a plan is its hash, such as plan a3f9c2e1d07b4c58. The hash covers the project name, the hosts with the host name and port that ssh resolves for them and their login users, the stages, the evaluated steps, the check results, and the pending handlers and then commands. winch apply --check <hash> applies only when the new plan has that hash, without the question.`),
+		doc.Paragraph(`The last line of a plan is its hash, such as plan a3f9c2e1d07b4c58. The hash covers the project name, the hosts with the host name and port that ssh resolves for them and their login users, the stages, the evaluated steps, the check results, and the pending records. winch apply --check <hash> applies only when the new plan has that hash, without the question.`),
 		doc.Heading("Without a terminal"),
 		doc.Paragraph(`apply without --yes or --check prints the plan and exits 5. Its last line is the command that applies that plan.`),
 		doc.Heading("What winch changes"),
 		doc.Paragraph(`winch changes only what steps declare. Deleting a step changes nothing on the host. To remove a thing, declare it with absent: true. The plan fails a host when two steps manage the same path, package, unit, user, or group with different arguments.`),
 		doc.Heading("Stopping and resuming"),
-		doc.Paragraph(`The first Ctrl-C lets the running step of each host finish, starts no new step, and ends with the summary. A second Ctrl-C ends the sessions with the hosts. A new run is the resume: steps that already succeeded check as ok, and pending handlers run.`),
+		doc.Paragraph(`The first Ctrl-C lets the running step of each host finish, starts no new step, and ends with the summary. A second Ctrl-C ends the sessions with the hosts. A new run is the resume: steps that already succeeded check as ok, and pending steps run.`),
 		doc.Heading("Access to the host"),
 		doc.Paragraph(`winch keeps its access to each host.`),
 		doc.List(
 			`A step that stops, disables, masks, or removes the SSH server fails: "this cuts off winch's access". So does a pkg or upgrade step that removes sudo while the login user is not root, or the package of the login user's shell.`,
 			`Some steps get the rollback of confirm_access without it: a change of the login user's home directory, ~/.ssh, or any file in ~/.ssh, such as authorized_keys or rc, groups added to the login user, a change of /etc/pam.d, and a change of /etc/sudoers or /etc/sudoers.d when the login user is not root. So does a cmd step whose changes key lists one of these paths, such as changes: [/etc/pam.d, /var/lib/pam] for pam-auth-update. Every firewall step gets it too. The plan marks such a step. Run winch doc step.confirm_access.`,
 			`A step that changes sshd's config while ssh.socket is active, as on Ubuntu, restarts ssh.socket. It gets the same protection. sshd's config includes the unit files and drop-ins of ssh.service and ssh.socket in /etc/systemd/system.`,
-			`Otherwise, a change of sshd's config gets no protection of its own. The plan warns at a step that loads the changed config without an access check, such as a restart of sshd without confirm_access, a reboot, or an upgrade of openssh-server. A then command such as systemctl restart ssh counts too, also on a step with confirm_access. The plan also warns when no later reload of sshd with confirm_access can roll the change back. Reload sshd in a service handler with confirm_access: true.`,
+			`Otherwise, a change of sshd's config gets no protection of its own. The plan warns at a step that loads the changed config without an access check, such as a restart of sshd without confirm_access, a reboot, or an upgrade of openssh-server. A then command such as systemctl restart ssh counts too. The plan also warns when no later reload of sshd with confirm_access can roll the change back. Reload sshd in a service step with on_change and confirm_access: true.`,
 			`After the last step of a host that changed something, winch checks the access once more. When it fails, the host fails, and nothing rolls back.`,
 		),
 		doc.Heading("Changing the SSH port"),
@@ -738,9 +737,8 @@ winch apply site --batch
 		doc.Paragraph(`winch keeps its files in /var/lib/winch/:`),
 		doc.Table([][]string{
 			{"bin/", "the helper"},
-			{"handlers/<project>", "pending handlers"},
 			{"masked/<project>/", "the masked content of each file that holds a secret"},
-			{"then/<project>", "pending then commands"},
+			{"react/<project>", "pending steps with on_change, and pending then commands"},
 			{"checks/<project>", "pending health gates"},
 			{"certbot-hooks/<project>", "pending certbot hooks"},
 			{"apt/", "the package index that the plan reads, the sources it plans with, and the archives that a session fetches"},
@@ -750,6 +748,6 @@ winch apply site --batch
 			{"reboot", "the boot ID and the error of a failed reboot, until the next boot"},
 			{"lock", "the session lock"},
 		}),
-		doc.Paragraph(`To remove winch from a host, delete /var/lib/winch/. Pending handlers, then commands, health gates, and certbot hooks are then lost. The next run of winch starts from the state of the host.`),
+		doc.Paragraph(`To remove winch from a host, delete /var/lib/winch/. Pending steps, then commands, health gates, and certbot hooks are then lost. The next run of winch starts from the state of the host.`),
 	},
 }

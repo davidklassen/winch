@@ -17,25 +17,21 @@ steps:
   - file:
       path: /etc/pebble/config.json
       source: config.json
-    notify: restart
   - unit:
       name: !expr item
       source: !expr item
     loop: [pebble-dns.service, pebble.service]
-    notify: restart
   - service:
       name: !expr item
       enabled: true
       running: true
     loop: [pebble-dns, pebble]
+  - service:
+      name: pebble
+      restarted: true
+    on_change: [/etc/pebble/config.json, /etc/systemd/system/pebble-dns.service, /etc/systemd/system/pebble.service]
   - name: certbot asks Pebble, not Let's Encrypt
     line:
       path: /etc/letsencrypt/cli.ini
       match: "^server ="
       line: server = https://localhost:14000/dir
-
-handlers:
-  restart:
-    - service:
-        name: pebble
-        restarted: true

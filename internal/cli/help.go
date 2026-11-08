@@ -191,7 +191,7 @@ rekey.`,
 winch.yaml, the inventories, the pipelines, and the recipes.`,
 			"It indents with two spaces, and indents list items under their key.",
 			`It puts step keys in this order: name, the module or recipe key, vars,
-when, loop, then, confirm_access, notify. Steps in flow style keep
+when, loop, on_change, then, confirm_access. Steps in flow style keep
 their key order. A comment above a key that moves to the first place
 goes above the "-" of its step.`,
 			`It keeps comments, blank lines, quoting, anchors, flow style, and line
@@ -227,7 +227,7 @@ order.`,
 hosts one at a time. Without one, or with --batch, ssh asks nothing,
 and winch connects to them in parallel.`,
 			`With --exit-code, plan exits with code 2 when the plan has changes,
-unknown steps, pending handlers, a pending then, or a pending gate.`,
+unknown steps, a pending step, then, or gate.`,
 		},
 		flags: []flagDoc{
 			inventoryFlag,

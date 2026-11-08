@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -115,7 +116,7 @@ func TestCheck(t *testing.T) {
 	})
 }
 
-const handlerPipeline = `stages:
+const appPipeline = `stages:
   - name: base
     hosts: all
     steps:
@@ -126,12 +127,10 @@ const appRecipe = `steps:
   - file:
       path: /etc/app.conf
       content: "a\n"
-    notify: reload
-handlers:
-  reload:
-    - service:
-        name: app
-        reloaded: true
+  - service:
+      name: app
+      reloaded: true
+    on_change: [/etc/app.conf]
 `
 
 // spec: CLI ("--exit-code"); CLI/Exit codes
@@ -160,14 +159,14 @@ func TestExitCode(t *testing.T) {
 	pending := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":              "name: acme\ninventory: test\n",
 		"inventories/test.yaml":   "hosts:\n  web1: {}\n",
-		"pipelines/site.yaml":     handlerPipeline,
+		"pipelines/site.yaml":     appPipeline,
 		"recipes/app/recipe.yaml": appRecipe,
 	})
 	h = fakehost.New()
 	h.SetFile("web1", "/etc/app.conf", "a\n")
-	h.SetPending("web1", "app.reload")
+	h.SetReact("web1", protocol.React{Recipe: "app", Module: "service", Mains: mains("app")})
 	if r := winch(t, pending, h, false, "", "plan", "site", "--exit-code"); r.code != exitChanges {
-		t.Errorf("a plan with only a pending handler: exit %d, want %d", r.code, exitChanges)
+		t.Errorf("a plan with only a pending step: exit %d, want %d", r.code, exitChanges)
 	}
 	unknown := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: test\n",
@@ -180,7 +179,7 @@ func TestExitCode(t *testing.T) {
 	h = fakehost.New()
 	h.SetFile("web1", "/etc/motd", "hello\n")
 	h.SetFile("web2", "/etc/motd", "hello\n")
-	h.SetThen("web1", protocol.Then{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/motd")})
+	h.SetReact("web1", protocol.React{Pipeline: "site", Stage: "base", Module: "file", Mains: mains("/etc/motd"), Then: true})
 	then := writeProject(t, strings.Replace(motd, `content: "hello\n"`, `content: "hello\n"`+"\n        then: echo done", 1))
 	if r := winch(t, then, h, false, "", "plan", "site", "--exit-code"); r.code != exitChanges {
 		t.Errorf("a plan with only a pending then: exit %d, want %d, stdout %q", r.code, exitChanges, r.out)
@@ -244,8 +243,8 @@ func TestDueRollbackOfAFailedHostThroughCLI(t *testing.T) {
 	}
 }
 
-// spec: Handlers; CLI ("--exit-code")
-func TestPendingHandlerOfALeftOutStage(t *testing.T) {
+// spec: Reactions; CLI ("--exit-code")
+func TestPendingStepOfALeftOutStage(t *testing.T) {
 	dir := vmtest.WriteProject(t, map[string]string{
 		"winch.yaml":            "name: acme\ninventory: test\n",
 		"inventories/test.yaml": "hosts:\n  web1: {}\n",
@@ -254,23 +253,24 @@ func TestPendingHandlerOfALeftOutStage(t *testing.T) {
     steps:
       - recipe: ssh
 `,
-		"recipes/ssh/recipe.yaml": "steps:\n  - file:\n      path: /etc/ssh/banner\n      content: \"hi\\n\"\n    notify: reload\nhandlers:\n  reload:\n    - service:\n        name: ssh\n        reloaded: true\n",
+		"recipes/ssh/recipe.yaml": "steps:\n  - file:\n      path: /etc/ssh/banner\n      content: \"hi\\n\"\n  - service:\n      name: ssh\n      reloaded: true\n    on_change: [/etc/ssh]\n",
 	})
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/motd", "hello\n")
-	h.SetPending("web1", "ssh.reload")
+	reload := protocol.React{Recipe: "ssh", Module: "service", Mains: mains("ssh")}
+	h.SetReact("web1", reload)
 	r := winch(t, dir, h, false, "", "plan", "site", "--stages", "base", "--exit-code")
 	if r.code != exitOK {
 		t.Errorf("plan --exit-code: exit %d, want 0", r.code)
 	}
-	if want := "web1: note: a pending handler ssh.reload waits until its recipe runs on this host\n"; !strings.Contains(r.err, want) {
+	if want := "web1: note: a pending service ssh of recipe ssh waits until its recipe runs on this host\n"; !strings.Contains(r.err, want) {
 		t.Errorf("stderr %q has no %q", r.err, want)
 	}
 	if r := winch(t, dir, h, false, "", "apply", "site", "--stages", "base"); r.code != exitOK {
 		t.Errorf("apply without a terminal: exit %d, stderr %q", r.code, r.err)
 	}
-	if want := []string{"ssh.reload"}; !slices.Equal(h.PendingOf("web1"), want) {
-		t.Errorf("pending = %q, want %q", h.PendingOf("web1"), want)
+	if want := []protocol.React{reload}; !reflect.DeepEqual(h.ReactOf("web1"), want) {
+		t.Errorf("records = %v, want %v", h.ReactOf("web1"), want)
 	}
 }
 

@@ -13,9 +13,9 @@ import (
 	"strings"
 )
 
-// records is a file of records of a project, one per line: the pending
-// handlers as <recipe>.<handler>, the pending then records and checks as
-// JSON, or the unpacks as <sha256>:<owner>:<group> <unpack directory>.
+// records is a file of records of a project, one per line: the records of
+// pending steps and checks as JSON, or the unpacks as
+// <sha256>:<owner>:<group> <unpack directory>.
 type records struct {
 	dir     string
 	project string

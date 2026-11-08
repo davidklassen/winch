@@ -1,1 +1,0 @@
-recipes/nginx/recipe.yaml:10:9: notify: expected a string or a list of strings, got a list

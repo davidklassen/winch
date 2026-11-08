@@ -56,13 +56,11 @@ func colorProject(t *testing.T) *project.Project {
     file:
       path: /etc/nginx/nginx.conf
       content: "user www-data;\nlisten 8080;\n"
-    notify: reload
     then: nginx -t
-handlers:
-  reload:
-    - service:
-        name: nginx
-        reloaded: true
+  - service:
+      name: nginx
+      reloaded: true
+    on_change: [/etc/nginx]
 `,
 	})
 }
@@ -98,7 +96,7 @@ func secretHosts(fail bool) *fakehost.Hosts {
 	h := fakehost.New()
 	h.SetFile("web1", "/etc/monit/conf.d/settings", "set httpd port 2812\n  allow admin:old-pass\n# Old-Pass\n")
 	h.SetMasked("web1", "/etc/monit/conf.d/settings", "set httpd port 2812\n  allow admin:(secret)\n# (secret)\n")
-	h.SetThen("web1", protocol.Then{Recipe: "monit", Module: "file", Mains: mains("/etc/monit/hunter2.key")})
+	h.SetReact("web1", protocol.React{Recipe: "monit", Module: "file", Mains: mains("/etc/monit/hunter2.key"), Then: true})
 	if fail {
 		h.FailApply("web1 /etc/monit/hunter2.key")
 	}

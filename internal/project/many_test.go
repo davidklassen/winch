@@ -505,9 +505,9 @@ func TestMatchConstantPattern(t *testing.T) {
 		{name: "recipe step vars", files: map[string]string{
 			"pipelines/site.yaml": "stages:\n  - name: monit\n    hosts: all\n    steps:\n      - recipe: monit\n        vars:\n          monit_peers: !expr 'match(\"web\")'\n",
 		}, want: `pipelines/site.yaml:7:24: match("web"): unknown host or group "web"`},
-		{name: "when of a handler", files: map[string]string{
-			"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\nsteps: []\nhandlers:\n  x:\n    - pkg:\n        name: curl\n      when: !expr 'len(match(\"mon & mail.acme.com\")) > 0'\n",
-		}, want: `recipes/monit/recipe.yaml:8:13: match("mon & mail.acme.com"): the host pattern matches no host`},
+		{name: "on_change", files: map[string]string{
+			"recipes/monit/recipe.yaml": "vars:\n  monit_peers: []\nsteps:\n  - cmd:\n      command: x\n    on_change: !expr 'len(match(\"mon & mail.acme.com\")) > 0 ? [\"/a\"] : [\"/b\"]'\n",
+		}, want: `recipes/monit/recipe.yaml:6:16: match("mon & mail.acme.com"): the host pattern matches no host`},
 		{name: "loop of a stage step", files: map[string]string{
 			"pipelines/site.yaml": "stages:\n  - name: monit\n    hosts: all\n    steps:\n      - file:\n          path: /x\n          content: x\n        loop: !expr 'match(\"mon & !mon\")'\n",
 		}, want: `pipelines/site.yaml:8:15: match("mon & !mon"): the host pattern matches no host`},
@@ -761,8 +761,9 @@ func TestHealthLoad(t *testing.T) {
 	}
 }
 
-// spec: Running a pipeline/Plan; CLI (--stages); Variables
-func TestSkippedStageEvaluatesOnlyRequirements(t *testing.T) {
+// spec: Running a pipeline/Plan; CLI (--stages); Variables; Reactions (a
+// step of a stage that --stages leaves out can react to a change of the run)
+func TestSkippedStageEvaluates(t *testing.T) {
 	files := with(stepVarsFiles, map[string]string{
 		"pipelines/site.yaml": `stages:
   - name: web
@@ -788,8 +789,9 @@ func TestSkippedStageEvaluatesOnlyRequirements(t *testing.T) {
 	if err := p.Select(Selection{Stages: "db"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Start(p.Inventory.Hosts[0], debian13, onDebian13(p)); err != nil {
-		t.Errorf("web1: %v", err)
+	_, err = p.Start(p.Inventory.Hosts[0], debian13, onDebian13(p))
+	if want := `pipelines/site.yaml:7:22: vars.site_name: unknown host or group "mial"`; err == nil || !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("web1: %v, want %s", err, want)
 	}
 }
 
@@ -829,7 +831,6 @@ func TestUserBeatsInventory(t *testing.T) {
 // spec: CLI/Output
 func TestNameCharacters(t *testing.T) {
 	recipe := "steps:\n  - name: \"%s\"\n    file:\n      path: /etc/motd\n      content: hi\n"
-	handler := "steps: []\nhandlers:\n  reload:\n    - name: \"%s\"\n      file:\n        path: /etc/motd\n        content: hi\n"
 	stageStep := "stages:\n  - name: web\n    hosts: all\n    steps:\n      - name: \"%s\"\n        file:\n          path: /etc/motd\n          content: hi\n"
 	recipeStep := "stages:\n  - name: web\n    hosts: all\n    steps:\n      - name: \"%s\"\n        recipe: tools\n"
 	tests := []struct {
@@ -859,10 +860,6 @@ func TestNameCharacters(t *testing.T) {
 			"pipelines/site.yaml":       strings.ReplaceAll(recipeStep, "%s", "tools"),
 			"recipes/tools/recipe.yaml": strings.ReplaceAll(recipe, "%s", `x\n`),
 		}, `recipes/tools/recipe.yaml:2:11: step "x\n": a name cannot hold a control or format character`},
-		{"step of a handler", map[string]string{
-			"pipelines/site.yaml":       strings.ReplaceAll(recipeStep, "%s", "tools"),
-			"recipes/tools/recipe.yaml": strings.ReplaceAll(handler, "%s", `x\a`),
-		}, `recipes/tools/recipe.yaml:4:13: step "x\a": a name cannot hold a control or format character`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -885,11 +882,9 @@ steps:
   - file:
       path: /x
       content: x
-    notify: done
-handlers:
-  done:
-    - cmd:
-        command: "true"
+  - cmd:
+      command: "true"
+    on_change: [/x]
 `,
 	})), "", "site", nil, Keys{})
 	if err != nil {
@@ -902,8 +897,8 @@ handlers:
 	if s.Name != "site" || s.Pipeline != "site" || hostNames(s.Targets) != "web1,web2,web3" || s.Parallelism != 1 || s.Health == nil || s.Health.Command != "true" {
 		t.Errorf("stage %s of %s: targets %s, parallelism %d, health %v", s.Name, s.Pipeline, hostNames(s.Targets), s.Parallelism, s.Health)
 	}
-	if len(s.Handlers) != 1 || s.Handlers[0].Stage != "site" || len(s.Steps) != 1 || len(s.Steps[0].Notify) != 1 {
-		t.Errorf("handlers %v, steps %v", s.Handlers, s.Steps)
+	if len(s.Steps) != 2 {
+		t.Errorf("steps %v", s.Steps)
 	}
 	if err := p.Select(Selection{Stages: "site"}); err != nil || p.Pipeline.Stages[0].Skipped {
 		t.Errorf("--stages site: %v, skipped %v", err, p.Pipeline.Stages[0].Skipped)

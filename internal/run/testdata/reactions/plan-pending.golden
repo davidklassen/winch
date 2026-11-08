@@ -1,0 +1,9 @@
+stdout:
+web1
+  web
+    nginx
+      ! service nginx: restart (pending from an earlier run)
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+plan d9b11282183ec1ca
+stderr:

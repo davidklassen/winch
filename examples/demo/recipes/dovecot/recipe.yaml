@@ -41,22 +41,18 @@ steps:
       - 20-lmtp.conf
       - 90-sieve.conf
       - 90-sieve-extprograms.conf
-    notify: restart
   - name: Virtual users only (a later file cannot drop the system auth include)
     file:
       path: /etc/dovecot/conf.d/10-auth.conf
       source: 10-auth.conf
       validate: doveconf -n
-    notify: restart
   - file:
       path: /etc/dovecot/conf.d/99-local.conf
       template: 99-local.conf.tmpl
       validate: doveconf -n
-    notify: restart
   - dir:
       path: /etc/dovecot/conf.d
       purge: true
-    notify: restart
   - file:
       path: /etc/dovecot/users
       template: users.tmpl
@@ -80,9 +76,7 @@ steps:
       name: dovecot
       enabled: true
       running: true
-
-handlers:
-  restart:
-    - service:
-        name: dovecot
-        restarted: true
+  - service:
+      name: dovecot
+      restarted: true
+    on_change: [/etc/dovecot/conf.d]

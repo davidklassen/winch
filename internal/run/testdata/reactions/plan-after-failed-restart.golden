@@ -1,0 +1,26 @@
+stdout:
+web1
+  web
+    nginx
+      ! service nginx: restart (pending from an earlier run)
+    site
+      + file /var/www/index.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+      + file /var/www/about.html
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +hi
+          then: reindex
+  apps
+    app
+      + file /etc/app.conf
+          owner root, group root, mode 0644
+          @@ -0,0 +1,1 @@
+          +app
+      ~ service app: restart (/var/www/index.html changes)
+
+2 hosts: 1 to change, 1 unchanged, 0 unknown
+plan 623946978e4c6a63
+stderr:
