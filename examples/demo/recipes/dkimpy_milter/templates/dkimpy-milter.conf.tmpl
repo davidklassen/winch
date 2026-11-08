@@ -5,7 +5,7 @@ PidFile /run/dkimpy-milter/dkimpy-milter.pid
 UserID dkimpy-milter
 Canonicalization relaxed/simple
 
-Domain {{ .host.name }}
+Domain {{ host.name }}
 KeyFile /etc/dkimpy-milter/dkim.key
 Selector dkim
 # TCP: Postfix's chrooted smtpd and cleanup cannot reach /run.

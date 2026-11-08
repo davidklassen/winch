@@ -4,8 +4,8 @@ mail_path = ~/Maildir
 mail_inbox_path =
 
 ssl = required
-ssl_server_cert_file = /etc/letsencrypt/live/{{ .host.name }}/fullchain.pem
-ssl_server_key_file = /etc/letsencrypt/live/{{ .host.name }}/privkey.pem
+ssl_server_cert_file = /etc/letsencrypt/live/{{ host.name }}/fullchain.pem
+ssl_server_key_file = /etc/letsencrypt/live/{{ host.name }}/privkey.pem
 
 # IMAP on 993 only.
 service imap-login {

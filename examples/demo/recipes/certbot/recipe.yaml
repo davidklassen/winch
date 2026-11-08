@@ -23,7 +23,7 @@ steps:
       email: !expr vars.certbot_email
       deploy_hook: systemctl reload nginx
   - certbot:
-      name: !tpl mta-sts.{{ .vars.domain }}
+      name: !tpl mta-sts.{{ vars.domain }}
       domains: !expr '["mta-sts." + vars.domain]'
       email: !expr vars.certbot_email
       deploy_hook: systemctl reload nginx

@@ -73,7 +73,7 @@ handlers:
   site_pages: [index, about]
 steps:
   - file:
-      path: !tpl /var/www/{{ .item }}.html
+      path: !tpl /var/www/{{ item }}.html
       content: "hi\n"
     loop: !expr vars.site_pages
     then: reindex
@@ -1186,7 +1186,7 @@ func TestPendingThenWithoutItsStep(t *testing.T) {
 	files := maps.Clone(handlerFiles)
 	files["recipes/site/recipe.yaml"] = `steps:
   - file:
-      path: !tpl /var/www/{{ .item }}.html
+      path: !tpl /var/www/{{ item }}.html
       content: "hi\n"
     loop: [index]
     then: reindex

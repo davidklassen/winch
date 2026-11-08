@@ -38,21 +38,21 @@ groups:
       - recipe: site
 `,
 		"recipes/site/recipe.yaml": `vars:
-  site_dir: !tpl /srv/{{ .host.short }}
+  site_dir: !tpl /srv/{{ host.short }}
   site_users: [ann]
 steps:
   - dir:
       path: !expr vars.site_dir
   - file:
-      path: !tpl "{{ .vars.site_dir }}/{{ .item }}"
-      content: !tpl "{{ .item }} on {{ .host.name }}\n"
+      path: !tpl "{{ vars.site_dir }}/{{ item }}"
+      content: !tpl "{{ item }} on {{ host.name }}\n"
     loop: !expr vars.site_users
   - file:
-      path: !tpl "{{ .vars.site_dir }}/relay.conf"
+      path: !tpl "{{ vars.site_dir }}/relay.conf"
       template: relay.tmpl
     when: !expr vars.relay
 `,
-		"recipes/site/templates/relay.tmpl": "relay for {{ join .vars.site_users \", \" }}\n",
+		"recipes/site/templates/relay.tmpl": "relay for {{ join(vars.site_users, \", \") }}\n",
 	})
 
 	r := lab.Winch(t, dir, "apply", "site", "--yes")

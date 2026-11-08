@@ -1,1 +1,3 @@
-recipes/nginx/templates/bad.tmpl:1:1: unexpected right paren
+recipes/nginx/templates/bad.tmpl:1:16: unexpected token Bracket(")")
+ | a {{ host.name ) }}
+ | ...............^

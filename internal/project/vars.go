@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"text/template"
 	"unicode/utf8"
 
 	"github.com/davidklassen/winch/internal/facts"
@@ -388,10 +387,9 @@ type Env struct {
 	vars  [3]map[string]any
 	// secret holds the names of the secret variables.
 	secret map[string]bool
-	// item is the current element of a loop when hasItem is true.
-	item    [3]any
-	hasItem bool
-	n       int
+	// item is the current element of a loop.
+	item [3]any
+	n    int
 	// failed is set in a placeholder variant for the output: a computed
 	// value that fails gives the placeholder, so the other arguments still
 	// show, and failed becomes true.
@@ -485,7 +483,7 @@ func (e *Env) hostVars() map[string]any {
 
 func (e *Env) with(items [3]any) *Env {
 	c := *e
-	c.item, c.hasItem = items, true
+	c.item = items
 	return &c
 }
 
@@ -508,25 +506,6 @@ func (e *Env) masked(err error, f func(*Env) error) error {
 		alt[i] = f(e.variant(i + 1))
 	}
 	return maskError(err, alt)
-}
-
-// templateData returns the data of templates, with hosts when hosts is true.
-func (e *Env) templateData(hosts bool) (map[string]any, error) {
-	d := map[string]any{
-		"vars":  e.vars[e.n],
-		"facts": e.facts.Map(),
-		"host":  hostMap(e.host, e.hostVars(), e.facts),
-	}
-	if e.hasItem {
-		d["item"] = e.item[e.n]
-	}
-	if hosts {
-		var err error
-		if d["hosts"], err = e.hosts(e.others.p.Inventory.Hosts); err != nil {
-			return nil, err
-		}
-	}
-	return d, nil
 }
 
 // exprEnv returns the data of expressions, with hosts when hosts is true.
@@ -572,7 +551,7 @@ func (e *Env) hosts(hosts []Host) ([]any, error) {
 	return out, nil
 }
 
-// hostMap returns the fields of host h for templates, hosts, and match().
+// hostMap returns the fields of host h for hosts and match().
 func hostMap(h Host, vars any, f facts.Facts) map[string]any {
 	short, _, _ := strings.Cut(h.Name, ".")
 	return map[string]any{"name": h.Name, "short": short, "address": h.Address, "groups": h.Groups, "vars": vars, "facts": f.Map()}
@@ -639,58 +618,6 @@ func (e *Env) peerVar(name string, h Host) (any, error) {
 		return nil, err
 	}
 	return pe.vars[e.n][name], nil
-}
-
-// resolve returns v with the value of each marked default that names holds.
-// A default that fails gives a marker of its error. It reports whether v
-// changed.
-func (e *Env) resolve(v any, names []string) (any, bool) {
-	switch v := v.(type) {
-	case string:
-		name, h, msg, ok := e.others.marker(v)
-		if !ok || msg != "" || !slices.Contains(names, name) {
-			return v, false
-		}
-		val, err := e.peerVar(name, h)
-		if err != nil {
-			return mark(name, h.Name, err.Error()), true
-		}
-		out, _ := e.resolve(val, names)
-		return out, true
-	case map[string]any:
-		var out map[string]any
-		for k, x := range v {
-			r, changed := e.resolve(x, names)
-			if !changed {
-				continue
-			}
-			if out == nil {
-				out = maps.Clone(v)
-			}
-			out[k] = r
-		}
-		if out == nil {
-			return v, false
-		}
-		return out, true
-	case []any:
-		var out []any
-		for i, x := range v {
-			r, changed := e.resolve(x, names)
-			if !changed {
-				continue
-			}
-			if out == nil {
-				out = slices.Clone(v)
-			}
-			out[i] = r
-		}
-		if out == nil {
-			return v, false
-		}
-		return out, true
-	}
-	return v, false
 }
 
 // peerVars returns the vars of each host for hosts and match(): the defaults
@@ -787,112 +714,6 @@ type computedDefault struct{ name, host string }
 
 func (c computedDefault) Error() string {
 	return fmt.Sprintf("vars.%s of host %s is an !expr or !tpl default; read it by name", c.name, c.host)
-}
-
-// withoutComputed returns a copy of v without the map entries that hold a
-// marker, so that a template that reads one fails. found is true when v holds
-// a marker.
-func withoutComputed(v any) (out any, found bool) {
-	switch v := v.(type) {
-	case map[string]any:
-		m := make(map[string]any, len(v))
-		for k, x := range v {
-			if s, ok := x.(string); ok && strings.HasPrefix(s, computedMark) {
-				found = true
-				continue
-			}
-			var f bool
-			m[k], f = withoutComputed(x)
-			found = found || f
-		}
-		return m, found
-	case []any:
-		l := make([]any, len(v))
-		for i, x := range v {
-			var f bool
-			l[i], f = withoutComputed(x)
-			found = found || f
-		}
-		return l, found
-	}
-	return v, false
-}
-
-var missingKeyRe = regexp.MustCompile(`map has no entry for key "([a-z0-9_]+)"`)
-
-// render executes t with the data of e, with hosts when hosts is true. The
-// computed defaults names of the hosts of hosts and match() get their values.
-// A read of another computed default fails as a missing key. get gives
-// nothing for a missing key, so when the data holds markers, a second run
-// with the markers fails where get reads one. A template that prints a whole
-// host, in any encoding, gives other output in the second run and fails too.
-// When the second run prints the marker of a missing key, the error names the
-// default and the host instead.
-func (e *Env) render(t *template.Template, names []string, hosts bool) (string, error) {
-	d, err := e.templateData(hosts)
-	if err != nil {
-		return "", err
-	}
-	data := any(d)
-	if len(names) > 0 {
-		data, _ = e.resolve(data, names)
-	}
-	t, err = t.Clone()
-	if err != nil {
-		return "", err
-	}
-	// match strips the markers in the first run, as the data has them
-	// stripped.
-	strip, matched := true, false
-	t.Funcs(template.FuncMap{"match": func(pattern string) ([]any, error) {
-		hs, err := e.match(pattern)
-		if err != nil {
-			return nil, err
-		}
-		out, _ := e.resolve(hs, names)
-		if strip {
-			var found bool
-			out, found = withoutComputed(out)
-			matched = matched || found
-		}
-		return out.([]any), nil
-	}})
-	stripped, found := withoutComputed(data)
-	var b strings.Builder
-	err = t.Execute(&b, stripped)
-	found = found || matched
-	strip = false
-	var full strings.Builder
-	if found {
-		var cd computedDefault
-		if ferr := t.Execute(&full, data); errors.As(ferr, &cd) {
-			return "", ferr
-		}
-	}
-	if err == nil {
-		if found && full.String() != b.String() {
-			if err := computedError(full.String()); err != nil {
-				return "", err
-			}
-			return "", computedIn(data)
-		}
-		return b.String(), nil
-	}
-	var ne nullError
-	if errors.As(err, &ne) {
-		// The error names the added notNull call; name the action instead.
-		at, _, _ := strings.Cut(err.Error(), " at <")
-		return "", errors.New(at + " at <" + ne.text + ">: " + ne.Error())
-	}
-	m := missingKeyRe.FindStringSubmatch(err.Error())
-	if m == nil {
-		return "", err
-	}
-	i := strings.Index(full.String(), computedMark+m[1]+"\x00")
-	if i < 0 {
-		return "", err
-	}
-	return "", errors.New(strings.Replace(err.Error(), m[0], computedError(full.String()[i:]).Error(), 1))
 }
 
 // Start returns the data of host h with facts f, where all holds the facts of

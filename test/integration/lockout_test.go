@@ -46,7 +46,7 @@ table inet filter {
 		ct state established,related accept
 		ct state invalid drop
 		iif lo accept
-		tcp dport { {{ join .vars.nftables_tcp_ports ", " }} } accept
+		tcp dport { {{ join(map(vars.nftables_tcp_ports, string(#)), ", ") }} } accept
 	}
 }
 `
@@ -121,7 +121,7 @@ func TestLockoutNotifiedStore(t *testing.T) {
         table inet ssh {
         	chain input {
         		type filter hook input priority -10; policy accept;
-        		{{ if .vars.ssh_drop }}ct state new tcp dport 22 drop{{ end }}
+        		{{ if vars.ssh_drop }}ct state new tcp dport 22 drop{{ end }}
         	}
         }
     notify: nftables.reload
@@ -276,7 +276,7 @@ const sshPortRecipe = `vars:
 steps:
   - file:
       path: /etc/ssh/sshd_config.d/port.conf
-      content: !tpl "{{ range .vars.sshd_ports }}Port {{ . }}\n{{ end }}"
+      content: !tpl "{{ for port in vars.sshd_ports }}Port {{ port }}\n{{ end }}"
     notify: restart
 handlers:
   restart:
@@ -351,18 +351,18 @@ func TestLockoutSSHDConfigBeforeAReload(t *testing.T) {
           command: exit 3
         when: !expr vars.fail
       - cmd:
-          command: !tpl "sleep {{ .vars.sleep }}"
+          command: !tpl "sleep {{ vars.sleep }}"
       - recipe: ssh
 `,
 		"recipes/hardening/recipe.yaml": `steps:
   - file:
       path: /etc/ssh/sshd_config.d/hardening.conf
-      content: !tpl "MaxAuthTries {{ .vars.tries }}\n"
+      content: !tpl "MaxAuthTries {{ vars.tries }}\n"
 `,
 		"recipes/ssh/recipe.yaml": `steps:
   - file:
       path: /etc/ssh/winch-tries
-      content: !tpl "{{ .vars.tries }}\n"
+      content: !tpl "{{ vars.tries }}\n"
     notify: reload
 handlers:
   reload:
@@ -648,7 +648,7 @@ const rollbackStartPipeline = `stages:
     steps:
       - file:
           path: /etc/winch-rb.conf
-          content: !tpl "{{ .vars.conf }}\n"
+          content: !tpl "{{ vars.conf }}\n"
         notify: restart
     handlers:
       restart:
@@ -706,7 +706,7 @@ const failedRollbackPipeline = `stages:
     steps:
       - file:
           path: /etc/winch-frb.conf
-          content: !tpl "{{ .vars.conf }}\n"
+          content: !tpl "{{ vars.conf }}\n"
       - service:
           name: winch-frb
           running: true
@@ -759,7 +759,7 @@ const pendingConfirmPipeline = `stages:
     steps:
       - file:
           path: /etc/ssh/sshd_config.d/winch.conf
-          content: !tpl "MaxAuthTries {{ .vars.tries }}\n"
+          content: !tpl "MaxAuthTries {{ vars.tries }}\n"
         then: !expr vars.wait
         notify: reload
       - name: Fails on request
@@ -1088,7 +1088,7 @@ const dueRollbackPipeline = `stages:
     steps:
       - file:
           path: /etc/winch-due.conf
-          content: !tpl "{{ .vars.conf }}\n"
+          content: !tpl "{{ vars.conf }}\n"
         notify: reload
     handlers:
       reload:

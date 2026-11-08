@@ -194,7 +194,7 @@ handlers:
 
 # recipes/nginx/templates/site.tmpl
 server {
-    listen {{ .vars.nginx_port }};
+    listen {{ vars.nginx_port }};
 }
 
 # winch.yaml
@@ -236,8 +236,8 @@ steps:
       name: nginx
   - name: Write the sites
     file:
-      path: !tpl /etc/nginx/sites-enabled/{{ .item }}.conf
-      content: !tpl "# {{ .item }}\n"
+      path: !tpl /etc/nginx/sites-enabled/{{ item }}.conf
+      content: !tpl "# {{ item }}\n"
     when: !expr len(vars.sites) > 0
     loop: !expr vars.sites
     then: nginx -t
@@ -316,7 +316,7 @@ var variablesTopic = doc.Topic{
 		doc.Heading("Variables without a default"),
 		doc.Paragraph(`A variable without a default needs no declaration. A read of it is enough, and the variable is required where it is read. A variable that may stay unset needs a default, such as relay_host: "".`),
 		doc.Heading("Names and reads"),
-		doc.Paragraph(`A variable name has lowercase letters, digits, and _. A read names the variable: vars.domain, .vars.domain, $.vars.domain, or host.vars.domain. Any other read of the whole map, such as keys(vars) or range .vars, is an error. A map variable holds data that a step reads by key: vars.users[item]. host.vars holds the variables of the host without the vars of a recipe step.`),
+		doc.Paragraph(`A variable name has lowercase letters, digits, and _. A read names the variable: vars.domain or host.vars.domain. Any other read of the whole map, such as keys(vars) or for x in vars, is an error. A map variable holds data that a step reads by key: vars.users[item]. host.vars holds the variables of the host without the vars of a recipe step.`),
 		doc.Heading("Types"),
 		doc.Paragraph(`Variables have no types. A value keeps the type that YAML gives it. YAML reads 8.0 as 8 and 3.10 as 3.1. Quote such a value: php_version: "8.0". In the inventory, a default, or the vars of a recipe step, an unquoted one is a warning. --set parses its value as YAML, and there it is an error: --set 'vars.php_version="8.0"'.`),
 		doc.Example(`# winch.yaml
@@ -344,13 +344,13 @@ recipes:
     steps:
       - file:
           path: /etc/motd
-          content: !tpl "{{ .vars.motd_text }} on {{ .vars.domain }}\n"
+          content: !tpl "{{ vars.motd_text }} on {{ vars.domain }}\n"
       - file:
           path: /etc/admin_email
-          content: !tpl "{{ .vars.admin_email }}\n"
+          content: !tpl "{{ vars.admin_email }}\n"
       - file:
           path: /etc/relay_host
-          content: !tpl "{{ .vars.relay_host }}\n"
+          content: !tpl "{{ vars.relay_host }}\n"
         when: !expr vars.relay_host != ""
 `),
 	},
@@ -362,29 +362,25 @@ var templatesTopic = doc.Topic{
 	Blocks: []doc.Block{
 		doc.Paragraph(`A template is text in which winch fills in the values of each host.`),
 		doc.Heading("Syntax"),
-		doc.Paragraph(`The !tpl tag marks a template, a Go text/template. It builds text, such as a path or a line. The template files of a recipe use the same language.`),
+		doc.Paragraph(`The !tpl tag marks a template. It builds text, such as a path or a line. The template files of a recipe use the same language. {{ expression }} prints the value of an expression. Templates and expressions use one language, with the same data and functions; run winch doc expressions.`),
+		doc.Heading("Blocks"),
+		doc.Paragraph(`if, else if, and else choose a part. for name in list repeats a part for each element of a list, with the element under that name. end closes a block: {{ for admin in vars.admins }}{{ if admin != "root" }}{{ admin }} {{ end }}{{ end }}.`),
+		doc.List(
+			`{{- removes the white space and line ends before the action, and -}} those after it. The - needs a space after it, or before it in -}}.`,
+			`for takes a list. Loop through a map by its sorted keys: {{ for name in keys(vars.users) }}{{ name }}={{ vars.users[name] }}{{ end }}.`,
+			`A loop name that hides a name of the data, such as vars or item, is an error.`,
+			`if takes true or false.`,
+		),
 		doc.Heading("Data"),
-		doc.Paragraph(`A template reads these names with a leading dot:`),
-		doc.Table([][]string{
-			{".vars", "the variables of the host, with the vars of the recipe step"},
-			{".facts", "the facts of the host; run winch doc facts"},
-			{".host", "name, short, address, groups, vars, and facts of the host; address is the name when the host has no address"},
-			{".hosts", "every host of the inventory, in inventory order, each with the fields of .host"},
-			{".item", "the current element in a step with loop"},
-		}),
-		doc.Paragraph(`Inside range, "." is the element. $.vars reads the variables.`),
+		doc.Paragraph(`A template reads vars, facts, host, hosts, item, and match(), as an expression does.`),
 		doc.Heading("Where templates go"),
 		doc.Paragraph(`Any module argument can be a template or an expression, and so can then.`),
-		doc.Heading("Functions and actions"),
-		doc.Paragraph(`A function takes its arguments after its name, separated by spaces: {{ join .vars.names ", " }}. Templates also have the actions of Go's text/template: if, else, range, with, define, template, block, break, and continue, and the variables $x := value.`),
-		doc.Heading("Missing values"),
-		doc.Paragraph(`A template that reads a missing map key fails. Use get for a map key that may be missing. A variable needs a value or a default; get does not read the host's own .vars. A template that prints a null value fails.`),
+		doc.Heading("Values"),
+		doc.Paragraph(`A list or a map prints as JSON. Printing null fails, so a missing key fails where it prints. Test a key that may be missing: {{ if peer.endpoint != nil }}Endpoint = {{ peer.endpoint }}{{ end }}.`),
 		doc.Heading("Quoting"),
-		doc.Paragraph(`A value goes into a command as it is. Quote a value that must stay one word with quote. Quote a YAML value that starts with a quote, [, {, &, *, or !, or that contains ": " or " #". A template that starts with {{ needs quotes.`),
-		doc.Heading("Other hosts"),
-		doc.Paragraph(`match gives the hosts of .hosts that match a host pattern: {{ range match "backup" }}{{ .facts.ssh.ed25519 }}{{ end }}. .hosts and match read the inventory, not the --hosts selection. A host from them has all its variables, without the vars of a recipe step, and its facts. The plan reads the facts of each host that they can reach, also of a host outside --hosts. When winch cannot read them, each host that reads them fails.`),
+		doc.Paragraph(`A value goes into a command as it is. Quote a value that must stay one word with quote: {{ quote(vars.map) }}. Quote a YAML value that starts with a quote, [, {, &, *, or !, or that contains ": " or " #". A template that starts with {{ needs quotes.`),
 		doc.Heading("When they run"),
-		doc.Paragraph(`winch evaluates templates on the machine that runs winch, during the plan. They cannot read the result of a step. winch checks each one when it loads the project: an unknown name or a syntax error is an error. An error while winch evaluates one for a host fails that host. The other hosts go on.`),
+		doc.Paragraph(`winch evaluates templates on the machine that runs winch, during the plan. They cannot read the result of a step. winch checks each one when it loads the project: an unknown name, a syntax error, or a block that is not closed is an error with the line and column. An error while winch evaluates one for a host fails that host. The other hosts go on.`),
 		doc.Example(`# winch.yaml
 name: demo
 hosts:
@@ -396,17 +392,17 @@ vars:
 steps:
   - name: Write the sites
     file:
-      path: !tpl /etc/nginx/sites-enabled/{{ .item }}.conf
-      content: !tpl "server_name {{ .item }}.{{ .host.short }};\n"
+      path: !tpl /etc/nginx/sites-enabled/{{ item }}.conf
+      content: !tpl "server_name {{ item }}.{{ host.short }};\n"
     loop: !expr vars.sites
   - name: List the admins
     file:
       path: /etc/app/admins.conf
-      content: !tpl "admins ={{ range .vars.admins }} {{ . }}{{ end }}\n"
+      content: !tpl "admins ={{ for admin in vars.admins }} {{ admin }}{{ end }}\n"
   - name: List the other hosts
     file:
       path: /etc/peers
-      content: !tpl "{{ range match \"all\" }}{{ if ne .name $.host.name }}{{ .name }} {{ .facts.net.ipv4 }}\n{{ end }}{{ end }}"
+      content: !tpl "{{ for peer in match(\"all\") }}{{ if peer.name != host.name }}{{ peer.name }} {{ peer.facts.net.ipv4 }}\n{{ end }}{{ end }}"
 `),
 	},
 }
@@ -417,9 +413,9 @@ var expressionsTopic = doc.Topic{
 	Blocks: []doc.Block{
 		doc.Paragraph(`An expression computes a value for each host, such as a list, a number, or true or false.`),
 		doc.Heading("Syntax"),
-		doc.Paragraph(`The !expr tag marks an expression in the language of expr (expr-lang.org). Its result keeps its type: a list, a number, a boolean, a map, or a string.`),
+		doc.Paragraph(`The !expr tag marks an expression in the language of expr (expr-lang.org). Its result keeps its type: a list, a number, a boolean, a map, or a string. Templates use the same language in {{ }}; run winch doc templates.`),
 		doc.Heading("Data"),
-		doc.Paragraph(`An expression reads these names without a leading dot:`),
+		doc.Paragraph(`An expression reads these names:`),
 		doc.Table([][]string{
 			{"vars", "the variables of the host, with the vars of the recipe step"},
 			{"facts", "the facts of the host; run winch doc facts"},
@@ -488,7 +484,7 @@ var factsTopic = doc.Topic{
 	Blocks: []doc.Block{
 		doc.Paragraph(`Facts are values that winch reads from each host before the plan, such as the OS release.`),
 		doc.Heading("Reading a fact"),
-		doc.Paragraph(`Expressions read a fact as facts.os.id, and templates as {{ .facts.os.id }}. A host from hosts or match() has its facts too: match("backup")[0].facts.ssh.ed25519. Facts are a fixed set. A read of an unknown fact is an error.`),
+		doc.Paragraph(`Expressions read a fact as facts.os.id, and templates as {{ facts.os.id }}. A host from hosts or match() has its facts too: match("backup")[0].facts.ssh.ed25519. Facts are a fixed set. A read of an unknown fact is an error.`),
 		doc.Code(`# winch.yaml
 name: demo
 hosts:
@@ -582,7 +578,7 @@ recipients:
 steps:
   - file:
       path: /etc/app/db.env
-      content: !tpl "DB_PASSWORD={{ .vars.db_password }}\n"
+      content: !tpl "DB_PASSWORD={{ vars.db_password }}\n"
       mode: "0600"
 `),
 	},

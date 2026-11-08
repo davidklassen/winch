@@ -1,8 +1,8 @@
-set mailserver localhost using hostname "{{ .host.name }}"
-set mail-format { from: Monit {{ title .host.short }} <monit@{{ .host.name }}> }
-{{ range .vars.alert_addresses -}}
-set alert {{ . }}
+set mailserver localhost using hostname "{{ host.name }}"
+set mail-format { from: Monit {{ upper(host.short[:1]) + host.short[1:] }} <monit@{{ host.name }}> }
+{{ for address in vars.alert_addresses -}}
+set alert {{ address }}
 {{ end -}}
 set httpd unixsocket /run/monit.sock
-  allow monit:{{ .vars.monit_password }}
+  allow monit:{{ vars.monit_password }}
 set ssl { verify: enable }

@@ -1,4 +1,15 @@
 recipes/nginx/templates/bad.tmpl:1:7: unknown name "fact"; did you mean "facts"?
-recipes/nginx/templates/bad.tmpl:1:42: unknown host field "nmae"; did you mean "name"?
+ | {{ if fact.os }}a{{ end }}{{ for x in host.nmae }}b{{ end }}
+ | ......^
+recipes/nginx/templates/bad.tmpl:1:44: unknown host field "nmae"; did you mean "name"?
+ | {{ if fact.os }}a{{ end }}{{ for x in host.nmae }}b{{ end }}
+ | ...........................................^
 recipes/nginx/templates/bad.tmpl:2:4: unknown name "hots"; did you mean "host"?
-recipes/nginx/templates/bad.tmpl:2:23: unknown name "hots"; did you mean "host"?
+ | {{ hots.name.x }} {{ hots }}
+ | ...^
+recipes/nginx/templates/bad.tmpl:2:22: unknown name "hots"; did you mean "host"?
+ | {{ hots.name.x }} {{ hots }}
+ | .....................^
+recipes/nginx/templates/bad.tmpl:3:31: unknown name "name"
+ | {{ for row in [facts.os] }}{{ name }}{{ row.y }}{{ end }}
+ | ..............................^

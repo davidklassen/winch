@@ -464,7 +464,7 @@ steps:
       path: /etc/nginx/snippets/tls.conf
       source: snippets/tls.conf
 `,
-	"recipes/nginx/templates/sites/default.tmpl": "server_name {{ .host.name }};\n",
+	"recipes/nginx/templates/sites/default.tmpl": "server_name {{ host.name }};\n",
 	"recipes/nginx/files/snippets/tls.conf":      "ssl_protocols TLSv1.3;\n",
 	"recipes/pkg/recipe.yaml":                    "steps:\n  - pkg:\n      name: curl\n",
 }
@@ -515,20 +515,20 @@ func TestLoadRecipes(t *testing.T) {
 		}},
 		{name: "template-names-in-branches", files: map[string]string{
 			"recipes/nginx/recipe.yaml": recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
-			"recipes/nginx/templates/bad.tmpl": "{{ if .fact.os }}a{{ end }}{{ range .host.nmae }}b{{ end }}\n" +
-				"{{ .hots.name.x }} {{ $.hots }}\n" +
-				"{{ define \"row\" }}{{ $.name }}{{ .y }}{{ end }}{{ template \"row\" .facts.os }}\n",
+			"recipes/nginx/templates/bad.tmpl": "{{ if fact.os }}a{{ end }}{{ for x in host.nmae }}b{{ end }}\n" +
+				"{{ hots.name.x }} {{ hots }}\n" +
+				"{{ for row in [facts.os] }}{{ name }}{{ row.y }}{{ end }}\n",
 		}},
-		{name: "template-not-defined", files: map[string]string{
+		{name: "template-block-not-closed", files: map[string]string{
 			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
-			"recipes/nginx/templates/bad.tmpl": "{{ define \"row\" }}{{ .name }}{{ end }}\n{{ template \"row\" .facts.os }} {{ template \"rwo\" .facts.os }}\n",
+			"recipes/nginx/templates/bad.tmpl": "{{ if true }}\n  {{ for x in [1] }}{{ x }}{{ end }}\n",
 		}},
-		{name: "template-not-defined-inline", files: map[string]string{
-			"pipelines/site.yaml": stage("      - file:\n          path: /a\n          content: !tpl '{{ template \"x\" }}'\n"),
+		{name: "template-stray-end-inline", files: map[string]string{
+			"pipelines/site.yaml": stage("      - file:\n          path: /a\n          content: !tpl 'a {{ end }}'\n"),
 		}},
 		{name: "template-parse-error-mid-line", files: map[string]string{
 			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
-			"recipes/nginx/templates/bad.tmpl": "a {{ .host.name ) }}\n",
+			"recipes/nginx/templates/bad.tmpl": "a {{ host.name ) }}\n",
 		}},
 		{name: "recipe-without-file", files: map[string]string{
 			"pipelines/site.yaml":       stage("      - recipe: empty\n"),
@@ -595,11 +595,11 @@ func TestLoadRecipes(t *testing.T) {
 		}},
 		{name: "template-parse-error", files: map[string]string{
 			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
-			"recipes/nginx/templates/bad.tmpl": "line 1\n{{ if .host.name }}\n",
+			"recipes/nginx/templates/bad.tmpl": "line 1\n{{ if host.name }}\n",
 		}},
 		{name: "template-unknown-name", files: map[string]string{
 			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
-			"recipes/nginx/templates/bad.tmpl": "a\n  {{ .vars.domain }}\n{{ with .facts.os }}{{ .x }}{{ $.hots.name }}{{ end }}\n",
+			"recipes/nginx/templates/bad.tmpl": "a\n  {{ vars.domain }}\n{{ if facts.os != nil }}{{ facts.os.x }}{{ hots.name }}{{ end }}\n",
 		}},
 		{name: "template-in-stage", files: map[string]string{
 			"pipelines/site.yaml": stage("      - file:\n          path: /a\n          template: a.tmpl\n      - file:\n          path: /b\n          source: b\n"),
@@ -986,21 +986,14 @@ func TestRender(t *testing.T) {
 		template string
 		want     map[string]string
 	}{
-		{"host fields", "{{ .host.name }} {{ .host.short }} {{ .host.address }}\n", map[string]string{
+		{"host fields", "{{ host.name }} {{ host.short }} {{ host.address }}\n", map[string]string{
 			"web1.acme.com": "web1.acme.com web1 192.0.2.1\n",
 			"web2":          "web2 web2 web2\n",
 		}},
-		{"no trailing newline", "{{ .host.short }}", map[string]string{"web2": "web2"}},
-		{"with and dollar", "{{ with .facts.os }}{{ .id }}-{{ $.host.name }}{{ end }}", map[string]string{"web1.acme.com": "debian-web1.acme.com"}},
-		{"missing key", "a\n b {{ with .facts.os }}{{ .nme }}{{ end }}\n", map[string]string{
-			"web1.acme.com": "error: recipes/r/templates/t.tmpl:2:27: .nme: map has no entry for key \"nme\"",
-		}},
+		{"no trailing newline", "{{ host.short }}", map[string]string{"web2": "web2"}},
+		{"loop over host data", "{{ for g in host.groups }}{{ g }}-{{ host.short }};{{ end }}", map[string]string{"web2": "all-web2;"}},
 		{"source bytes", "", map[string]string{"web2": binary}},
-		{"range over a map", "{{ range $k, $v := .facts.os }}{{ $k }}={{ $v }};{{ end }}", map[string]string{"web2": "arch=amd64;codename=trixie;id=debian;version=13;"}},
-		{"index", "{{ index .facts.os \"id\" }}", map[string]string{"web2": "debian"}},
-		{"index of a missing key", "{{ index .facts.os \"nme\" }}", map[string]string{
-			"web2": "error: recipes/r/templates/t.tmpl:1:4: index .facts.os \"nme\": error calling index: map has no entry for key \"nme\"",
-		}},
+		{"index", "{{ facts.os[\"id\"] }}", map[string]string{"web2": "debian"}},
 		{"empty output", "{{ if false }}x{{ end }}", map[string]string{"web2": ""}},
 	}
 	for _, tt := range tests {

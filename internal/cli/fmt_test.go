@@ -101,7 +101,7 @@ steps:
 -   notify: done
     file:
         path: /etc/motd
-        content: !tpl "{{ .vars.motd_text }}\n"
+        content: !tpl "{{ vars.motd_text }}\n"
 handlers:
     done:
     -   cmd:
@@ -187,7 +187,7 @@ handlers:
 steps:
   - file:
       path: /etc/motd
-      content: !tpl "{{ .vars.motd_text }}\n"
+      content: !tpl "{{ vars.motd_text }}\n"
     notify: done
 handlers:
   done:

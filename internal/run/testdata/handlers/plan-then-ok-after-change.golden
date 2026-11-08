@@ -10,5 +10,5 @@ web1
       ! handler nginx.reload
 
 2 hosts: 1 to change, 1 unchanged, 0 unknown
-plan bb9d142282f2cfea
+plan 83c740c6f2f9f2fe
 stderr:

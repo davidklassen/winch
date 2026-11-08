@@ -72,7 +72,7 @@ func TestRebootRequiredFact(t *testing.T) {
     steps:
       - file:
           path: /etc/motd
-          content: !tpl "reboot: {{ .facts.reboot_required }}\n"
+          content: !tpl "reboot: {{ facts.reboot_required }}\n"
         when: !expr facts.reboot_required
 `,
 	})

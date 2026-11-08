@@ -20,7 +20,7 @@ stages:
           authorized_keys: !expr vars.admin_authorized_keys
       - file:
           path: /etc/motd
-          content: !tpl "{{ .host.name }} is managed by winch.\n"
+          content: !tpl "{{ host.name }} is managed by winch.\n"
       - pkg:
           name: curl
       - recipe: unbound

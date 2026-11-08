@@ -141,7 +141,7 @@ func TestFilterPlainLines(t *testing.T) {
 		in    string
 		want  string
 	}{
-		{"common line shows", "[Peer]\nPublicKey = {{ .vars.key }}\n", wg, " [Peer]\n-PublicKey = old\n+PublicKey = new", " [Peer]\n-PublicKey = old\n+PublicKey = new"},
+		{"common line shows", "[Peer]\nPublicKey = {{ vars.key }}\n", wg, " [Peer]\n-PublicKey = old\n+PublicKey = new", " [Peer]\n-PublicKey = old\n+PublicKey = new"},
 		{"key line stays hidden", "[Peer]\n", wg, "+PrivateKey = wg-private-key-1", "+(secret)"},
 		{"line without a common line stays hidden", "[Peer]\n", wg, "x AllowedIPs = 10.0.0.2/32", "x (secret)"},
 		{"whole value stays hidden", "[Interface]\n[Peer]\n", wg, "x " + wg + " y", "x (secret)\n(secret)\n\n(secret)\n(secret)\n(secret) y"},

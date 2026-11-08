@@ -417,7 +417,7 @@ const greeting = `stages:
     steps:
       - file:
           path: /etc/motd
-          content: !tpl "{{ .vars.greeting }}\n"
+          content: !tpl "{{ vars.greeting }}\n"
 `
 
 // spec: CLI ("--set vars.<name>=<value>"); Variables/Sources

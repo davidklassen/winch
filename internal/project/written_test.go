@@ -76,7 +76,7 @@ groups:
 `,
 	"recipes/app/recipe.yaml": `steps:
   - file:
-      path: !tpl "{{ .vars.app_root }}/conf"
+      path: !tpl "{{ vars.app_root }}/conf"
       content: c
 handlers:
   restart:

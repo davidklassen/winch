@@ -41,7 +41,7 @@ func TestSecretInCommandErrors(t *testing.T) {
       - file:
           path: /tmp/validate
           content: "x\n"
-          validate: !tpl "echo {{ quote .vars.pw }}; false {{ quote .vars.pw }}"
+          validate: !tpl "echo {{ quote(vars.pw) }}; false {{ quote(vars.pw) }}"
 `,
 		"pipelines/then.yaml": `stages:
   - name: base
@@ -50,7 +50,7 @@ func TestSecretInCommandErrors(t *testing.T) {
       - file:
           path: /tmp/then
           content: "x\n"
-        then: !tpl "echo {{ quote .vars.pw }}; false {{ quote .vars.pw }}"
+        then: !tpl "echo {{ quote(vars.pw) }}; false {{ quote(vars.pw) }}"
 `,
 	})
 	env := []string{"WINCH_AGE_KEY=" + key}
@@ -179,7 +179,7 @@ func TestSecretMaskedRecord(t *testing.T) {
 		return strings.Fields(vm.MustRun(t, "find /var/lib/winch/masked/acme -type f"))
 	}
 	const old, rotated = "first-password", "second-password"
-	const withSecret, tokenSecret = `workers = 2\npassword = {{ .vars.pw }}\nkeep\n`, `token {{ .vars.pw }}`
+	const withSecret, tokenSecret = `workers = 2\npassword = {{ vars.pw }}\nkeep\n`, `token {{ vars.pw }}`
 	dir := project(old, withSecret, tokenSecret, "workers 2")
 	if r := lab.WinchEnv(t, dir, env, "apply", "site", "--yes"); r.Code != 0 {
 		t.Fatalf("apply: exit %d, stderr %q", r.Code, r.Stderr)
@@ -208,7 +208,7 @@ func TestSecretMaskedRecord(t *testing.T) {
 		t.Errorf("records after an apply of an ok step: %q, want two", got)
 	}
 
-	next := project(rotated, `workers = 3\npassword = {{ .vars.pw }}\nkeep\n`, tokenSecret, "workers 3")
+	next := project(rotated, `workers = 3\npassword = {{ vars.pw }}\nkeep\n`, tokenSecret, "workers 3")
 	r := lab.WinchEnv(t, next, env, "plan", "site")
 	for _, want := range []string{
 		"-workers = 2\n", "-password = (secret)\n", "+workers = 3\n", "+password = (secret) (secret value changed)\n",

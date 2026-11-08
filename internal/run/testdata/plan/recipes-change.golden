@@ -14,6 +14,8 @@ web1
         +stage step
 
 2 hosts: 1 to change, 0 unchanged, 0 unknown, 1 failed
-plan 3be0b4f00456f698
+plan 271b9743045c60c8
 stderr:
-web2: recipes/tools/templates/tools.tmpl:1:33: index .host.groups 3: error calling index: index 3 out of range for length 1
+web2: recipes/tools/templates/tools.tmpl:1:43: index out of range: 3 (array length is 1)
+   | {{ if host.name == "web2" }}{{ host.groups[3] }}{{ end }}
+   | ..........................................^

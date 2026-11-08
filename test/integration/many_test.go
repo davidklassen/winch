@@ -29,7 +29,7 @@ const manyPipeline = `stages:
     steps:
       - file:
           path: /root/web
-          content: !tpl "{{ .vars.web_text }}\n"
+          content: !tpl "{{ vars.web_text }}\n"
         then: date +%s.%N >> /root/times && sleep 2 && date +%s.%N >> /root/times
       - recipe: peers
         vars:
@@ -40,7 +40,7 @@ const manyPipeline = `stages:
     steps:
       - file:
           path: /etc/winch-app/extra.conf
-          content: !tpl "{{ .vars.web_text }}\n"
+          content: !tpl "{{ vars.web_text }}\n"
         notify: app.reload
 `
 
@@ -124,10 +124,10 @@ handlers:
       mode: "0600"
   - file:
       path: /etc/peers-token
-      content: !tpl "{{ .vars.peers_token }}\n"
+      content: !tpl "{{ vars.peers_token }}\n"
       mode: "0600"
 `,
-		"recipes/peers/templates/peers.tmpl": "{{ range .vars.peers_list }}{{ .name }} {{ .short }} {{ .vars.token }}\n{{ end }}",
+		"recipes/peers/templates/peers.tmpl": "{{ for x in vars.peers_list }}{{ x.name }} {{ x.short }} {{ x.vars.token }}\n{{ end }}",
 	})
 	keyFile := filepath.Join(t.TempDir(), "age.key")
 	if err := os.WriteFile(keyFile, []byte(id.String()+"\n"), 0o600); err != nil {

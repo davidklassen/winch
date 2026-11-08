@@ -8,592 +8,567 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
-	"text/template"
-	tparse "text/template/parse"
 	"unicode"
+	"unicode/utf8"
 
-	"github.com/davidklassen/winch/internal/facts"
+	"github.com/expr-lang/expr/ast"
+	"github.com/expr-lang/expr/file"
+	"github.com/expr-lang/expr/vm"
+
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
-// funcs replaces the built-in index, which gives the zero value for a missing
-// map key. render replaces match with the match of the host.
-var funcs = template.FuncMap{"index": index, "join": join, "has": has, "title": title, "quote": quote, "sqlquote": sqlquote, "json": toJSON, "get": get,
-	"match": func(string) ([]any, error) { return nil, errors.New("match has no host") }}
-
-// tmplFile is a parsed template file of a recipe.
-type tmplFile struct {
-	t *template.Template
-	// item is true when the template reads .item.
-	item bool
-	// data is true when it reads a name other than item, and hosts when it
-	// reads hosts.
-	data, hosts bool
-	reads       []string
-	// values are the variables whose values it reads.
-	values []string
-	// peerReads are the variables that it reads of a host from hosts or
-	// match().
-	peerReads []string
-	matches   []matchCall
+// template is a parsed template: text with actions in {{ }}. A template file
+// has a file name; an inline !tpl value has its position instead.
+type template struct {
+	file  string
+	pos   yamlx.Pos
+	text  string
+	nodes []tnode
+	// readSet holds the reads of all expressions. A field of the elements
+	// of a variable x that a loop reads is the value "x.field".
+	readSet
 }
 
-// parseTemplate parses the template text of file and checks the names it
-// reads. item is allowed: the step that uses the file decides.
-func parseTemplate(file string, text []byte, sc scope) (*tmplFile, error) {
-	t, err := template.New(file).Option("missingkey=error").Funcs(funcs).Parse(string(text))
-	if err != nil {
-		hint := exprFuncHint(err, "compute it in a variable with !expr, and read that variable in the template")
-		err = templateError(file, err)
-		if ye, ok := err.(*yamlx.Error); ok {
-			ye.Msg += hint
-		}
-		return nil, err
-	}
-	c := nameCheck{sc: sc, at: func(off int) yamlx.Pos {
-		before := string(text[:off])
-		return yamlx.Pos{File: file, Line: strings.Count(before, "\n") + 1, Col: off - strings.LastIndexByte(before, '\n')}
-	}}
-	c.check(t, file)
-	if err := errors.Join(c.errs...); err != nil {
-		return nil, err
-	}
-	failNull(t)
-	return c.file(t), nil
+type tnode interface{}
+
+type textNode string
+
+// exprNode is an expression at the byte offset at of the template text.
+type exprNode struct {
+	at   int
+	src  string
+	prog *vm.Program
+}
+
+type printNode struct{ exprNode }
+
+// ifNode chooses the body of the first true condition. The body of else has
+// a nil condition.
+type ifNode struct {
+	conds  []*exprNode
+	bodies [][]tnode
+}
+
+type forNode struct {
+	name  string
+	list  exprNode
+	body  []tnode
+	depth int
+}
+
+// parseTemplate parses the template file file. item is allowed: the step
+// that uses the file decides.
+func parseTemplate(file string, text []byte, sc scope) (*template, error) {
+	sc.noItem = ""
+	return parseText(&template{file: file, text: string(text)}, sc)
 }
 
 // parseInline parses the text of a !tpl value at pos.
-func parseInline(pos yamlx.Pos, text string, sc scope) (*tmplFile, error) {
-	t, err := template.New(pos.String()).Option("missingkey=error").Funcs(funcs).Parse(text)
+func parseInline(pos yamlx.Pos, text string, sc scope) (*template, error) {
+	return parseText(&template{pos: pos, text: text}, sc)
+}
+
+// action is the text inside {{ }}: start is the byte offset of {{, in the
+// offset of the text, and trimLeft and trimRight are its trim markers.
+type action struct {
+	start, in           int
+	text                string
+	trimLeft, trimRight bool
+}
+
+const spaces = " \t\r\n"
+
+func isSpace(b byte) bool { return strings.IndexByte(spaces, b) >= 0 }
+
+// scan splits the template text into text and actions. The end of an action
+// is the first }} outside a string literal and outside the braces of a map.
+func (t *template) scan() ([]any, error) {
+	var out []any
+	s := t.text
+	i := 0
+	for {
+		j := strings.Index(s[i:], "{{")
+		if j < 0 {
+			out = append(out, textNode(s[i:]))
+			return out, nil
+		}
+		out = append(out, textNode(s[i:i+j]))
+		a := action{start: i + j, in: i + j + 2}
+		if len(s) > a.in+1 && s[a.in] == '-' && isSpace(s[a.in+1]) {
+			a.trimLeft = true
+			a.in++
+		}
+		end, err := t.actionEnd(a.start, a.in)
+		if err != nil {
+			return nil, err
+		}
+		if end-1 > a.in && s[end-1] == '-' && isSpace(s[end-2]) {
+			a.trimRight = true
+			a.text = s[a.in : end-1]
+		} else {
+			a.text = s[a.in:end]
+		}
+		out = append(out, a)
+		i = end + 2
+	}
+}
+
+// actionEnd returns the offset of the }} that ends the action at start,
+// whose text starts at in.
+func (t *template) actionEnd(start, in int) (int, error) {
+	s := t.text
+	depth := 0
+	for i := in; i < len(s); i++ {
+		switch c := s[i]; c {
+		case '"', '\'', '`':
+			end := stringEnd(s, i)
+			if end < 0 {
+				return 0, t.loadError(i, "the string is not closed")
+			}
+			i = end
+		case '{':
+			depth++
+		case '}':
+			if depth == 0 && i+1 < len(s) && s[i+1] == '}' {
+				return i, nil
+			}
+			depth = max(depth-1, 0)
+		}
+	}
+	return 0, t.loadError(start, "{{ is not closed with }}")
+}
+
+// stringEnd returns the offset of the quote that closes the string literal
+// that starts at i, or -1.
+func stringEnd(s string, i int) int {
+	q := s[i]
+	for j := i + 1; j < len(s); j++ {
+		switch {
+		case s[j] == '\\' && q != '`':
+			j++
+		case s[j] == q:
+			return j
+		}
+	}
+	return -1
+}
+
+// block is an open if or for while the parser reads its body.
+type block struct {
+	at   int
+	word string
+	node tnode
+	// body is the list that the next node goes into.
+	body *[]tnode
+	// done is true after else.
+	done bool
+}
+
+// forRe matches the text after for: the loop name and the list.
+var forRe = regexp.MustCompile(`^\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s`)
+
+// languageWords are the words of expr and of the template blocks, which a
+// loop name cannot be.
+var languageWords = []string{"true", "false", "nil", "in", "not", "and", "or", "let", "if", "else", "matches", "contains", "startsWith", "endsWith", "for", "end", "range", "with"}
+
+func parseText(t *template, sc scope) (*template, error) {
+	parts, err := t.scan()
 	if err != nil {
-		// A parse error names the template, which is the position here.
-		msg := strings.ReplaceAll(templateMessage(pos.String(), err), pos.String()+":", "line ")
-		return nil, yamlx.Errorf(pos, "%s%s", msg, exprFuncHint(err, "use !expr"))
-	}
-	c := nameCheck{sc: sc, at: func(int) yamlx.Pos { return pos }}
-	c.check(t, pos.String())
-	if c.item && sc.noItem != "" {
-		c.errs = append(c.errs, yamlx.Errorf(pos, "%s", sc.noItem))
-	}
-	if err := errors.Join(c.errs...); err != nil {
 		return nil, err
 	}
-	failNull(t)
-	return c.file(t), nil
-}
-
-func (c *nameCheck) file(t *template.Template) *tmplFile {
-	return &tmplFile{t: t, item: c.item, data: c.data, hosts: c.hosts, reads: c.reads, values: c.values, peerReads: c.peerReads, matches: c.matches}
-}
-
-// names is a level of the names that a template can read. A nil *names allows
-// any name.
-type names struct {
-	noun string
-	sub  map[string]*names
-}
-
-// templateNames are the names that a template can read. The level of vars
-// takes any name.
-var templateNames = func() *names {
-	vars := &names{noun: "variable"}
-	fact := factNames(reflect.TypeFor[facts.Facts]())
-	host := map[string]*names{"vars": vars, "facts": fact}
-	for _, n := range hostFields {
-		if _, ok := host[n]; !ok {
-			host[n] = nil
-		}
-	}
-	return &names{noun: "name", sub: map[string]*names{
-		"vars":  vars,
-		"facts": fact,
-		"host":  {noun: "host field", sub: host},
-		"hosts": nil,
-		"item":  nil,
-	}}
-}()
-
-// factNames returns the names of the facts in the struct t.
-func factNames(t reflect.Type) *names {
-	n := &names{noun: "fact", sub: map[string]*names{}}
-	for i := range t.NumField() {
-		f := t.Field(i)
-		var sub *names
-		if f.Type.Kind() == reflect.Struct {
-			sub = factNames(f.Type)
-		}
-		n.sub[f.Tag.Get("expr")] = sub
-	}
-	return n
-}
-
-// nameCheck checks the names of each field that reads the data. at gives the
-// position of an offset in the text.
-type nameCheck struct {
-	sc    scope
-	at    func(off int) yamlx.Pos
-	t     *template.Template
-	top   *names
-	main  bool
-	item  bool
-	data  bool
-	hosts bool
-	reads []string
-	// peerReads are the variables that it reads of other hosts.
-	peerReads []string
-	matches   []matchCall
-	// values are the variables whose values it reads. A field of the
-	// elements of a variable x is the value "x.field". A range over only
-	// the keys of a map does not read its values.
-	values []string
-	errs   []error
-	// elem is true for the value of a range whose body reads only fields
-	// of the element, and fields are those fields.
-	elem   bool
-	fields []string
-	// byKey is the key while the check walks the map of a get or index with
-	// a constant key: a read of a host's vars by name.
-	byKey *tparse.StringNode
-}
-
-// check checks every template of t. main names the template of the text,
-// where $ is the data.
-func (c *nameCheck) check(t *template.Template, main string) {
-	c.t = t
-	c.top = templateNames
-	for _, d := range t.Templates() {
-		c.main = d.Name() == main
-		c.walk(d.Root, c.main)
-	}
-}
-
-// walk checks n. top is false where "." is another value: inside range and
-// with, and in a defined template.
-func (c *nameCheck) walk(n tparse.Node, top bool) {
-	switch n := n.(type) {
-	case *tparse.ListNode:
-		if n != nil {
-			for _, x := range n.Nodes {
-				c.walk(x, top)
-			}
-		}
-	case *tparse.ActionNode:
-		c.walk(n.Pipe, top)
-	case *tparse.TemplateNode:
-		if c.t.Lookup(n.Name) == nil {
-			var defined []string
-			for _, d := range c.t.Templates() {
-				defined = append(defined, d.Name())
-			}
-			c.errs = append(c.errs, yamlx.Errorf(c.at(int(n.Pos)), "template %q is not defined in this template%s", n.Name, yamlx.Suggest(n.Name, defined)))
-		}
-		if n.Pipe != nil {
-			c.walk(n.Pipe, top)
-		}
-	case *tparse.PipeNode:
-		if n != nil {
-			for _, x := range n.Cmds {
-				c.walk(x, top)
-			}
-		}
-	case *tparse.CommandNode:
-		id, _ := n.Args[0].(*tparse.IdentifierNode)
-		lookup := id != nil && (id.Ident == "get" || id.Ident == "index")
-		var byKey *tparse.StringNode
-		if lookup && len(n.Args) > 2 {
-			byKey, _ = n.Args[2].(*tparse.StringNode)
-		}
-		if id != nil && id.Ident == "match" {
-			c.match(n)
-		}
-		outer := c.byKey
-		for i, x := range n.Args {
-			c.byKey = nil
-			if i == 1 {
-				c.byKey = byKey
-			}
-			c.walk(x, top)
-		}
-		c.byKey = outer
-		if key, ok := n.Args[len(n.Args)-1].(*tparse.StringNode); lookup && ok && key.Text == "vars" {
-			c.notByName(int(key.Pos))
-		}
-	case *tparse.ChainNode:
-		c.walk(n.Node, top)
-		c.peers(n.Field, int(n.Pos))
-	case *tparse.IfNode:
-		c.walk(n.Pipe, top)
-		c.walk(n.List, top)
-		c.walk(n.ElseList, top)
-	case *tparse.RangeNode:
-		c.fields, c.elem = elemFields(n)
-		c.walk(n.Pipe, top)
-		c.fields, c.elem = nil, false
-		c.walk(n.List, false)
-		c.walk(n.ElseList, top)
-	case *tparse.WithNode:
-		c.walk(n.Pipe, top)
-		c.walk(n.List, false)
-		c.walk(n.ElseList, top)
-	case *tparse.FieldNode:
-		// The position of .a.b is the position of .b.
-		dot := int(n.Pos)
-		if len(n.Ident) > 1 {
-			dot -= len(n.Ident[0]) + 1
-		}
-		if top {
-			c.field(n.Ident, dot, dot)
-		} else {
-			c.peers(n.Ident, dot)
-		}
-	case *tparse.VariableNode:
-		// The position of $.a is the position of .a.
-		switch {
-		case c.main && n.Ident[0] == "$" && len(n.Ident) > 1:
-			c.field(n.Ident[1:], int(n.Pos), int(n.Pos)-1)
-		case c.main && n.Ident[0] == "$":
-			c.notByName(int(n.Pos))
-		default:
-			c.peers(n.Ident[1:], int(n.Pos))
-		}
-	case *tparse.DotNode:
-		if top {
-			c.notByName(int(n.Pos))
-		}
-	}
-}
-
-// match logs the call of match n: the hosts that it can reach, and a
-// constant pattern for the check against the inventory.
-func (c *nameCheck) match(n *tparse.CommandNode) {
-	c.data = true
-	if len(n.Args) != 2 {
-		c.sc.reach.all = true
-		return
-	}
-	pattern, ok := n.Args[1].(*tparse.StringNode)
-	if !ok {
-		c.sc.reach.all = true
-		return
-	}
-	c.matches = append(c.matches, matchCall{pos: c.at(int(n.Pos)), pattern: pattern.Text})
-	c.sc.reach.patterns = append(c.sc.reach.patterns, pattern.Text)
-}
-
-func (c *nameCheck) notByName(off int) {
-	c.errs = append(c.errs, yamlx.Errorf(c.at(off), "%s", notByName))
-}
-
-// log adds a read of the variable name at the offset off.
-func (c *nameCheck) log(name string, off int) {
-	*c.sc.reads = append(*c.sc.reads, varRead{name: name, pos: c.at(off)})
-}
-
-// peers logs the variable after each vars in ident, a field of a value
-// other than the data, such as a host from match(). A read of the whole vars
-// map would lose the computed defaults of such a host.
-func (c *nameCheck) peers(ident []string, off int) {
-	for i := 1; i < len(ident); i++ {
-		if ident[i-1] == "vars" {
-			c.peerReads = append(c.peerReads, ident[i])
-			c.log(ident[i], off)
-		}
-	}
-	if len(ident) > 0 && ident[len(ident)-1] == "vars" {
-		if c.byKey == nil {
-			c.notByName(off)
-			return
-		}
-		c.peerReads = append(c.peerReads, c.byKey.Text)
-		c.log(c.byKey.Text, int(c.byKey.Pos))
-	}
-}
-
-// field checks the names of a field such as .host.vars.domain. dot is the
-// offset of its first dot, first the offset for an error in the first name.
-func (c *nameCheck) field(ident []string, dot, first int) {
-	switch ident[0] {
-	case "item":
-		c.item = true
-	case "hosts":
-		c.data, c.hosts = true, true
-		c.sc.reach.all = true
-	default:
-		c.data = true
-	}
-	level := c.top
-	vars := c.top.sub["vars"]
-	off := first
-	for i, id := range ident {
-		if level == nil {
-			c.peers(ident[i-1:], dot)
-			return
-		}
-		if i > 0 {
-			off = dot
-		}
-		if level == vars {
-			c.reads = append(c.reads, id)
-			switch {
-			case !c.elem || len(c.fields) > 0 && i < len(ident)-1:
-				c.values = append(c.values, id)
-			default:
-				for _, f := range c.fields {
-					c.values = append(c.values, id+"."+f)
-				}
-			}
-			c.log(id, off)
-			c.peers(ident[i+1:], dot)
-			return
-		}
-		next, ok := level.sub[id]
+	for i, p := range parts {
+		txt, ok := p.(textNode)
 		if !ok {
-			var opts []string
-			for n := range level.sub {
-				opts = append(opts, n)
-			}
-			slices.Sort(opts)
-			c.errs = append(c.errs, yamlx.Errorf(c.at(off), "unknown %s %q%s", level.noun, id, yamlx.Suggest(id, opts)))
-			return
+			continue
 		}
-		level = next
-		dot += len(id) + 1
+		if i > 0 && parts[i-1].(action).trimRight {
+			txt = textNode(strings.TrimLeft(string(txt), spaces))
+		}
+		if i+1 < len(parts) && parts[i+1].(action).trimLeft {
+			txt = textNode(strings.TrimRight(string(txt), spaces))
+		}
+		parts[i] = txt
 	}
-	if level == vars || level == c.top.sub["host"] {
-		c.notByName(first)
+	var errs []error
+	var stack []*block
+	top := &t.nodes
+	body := func() *[]tnode {
+		if len(stack) == 0 {
+			return top
+		}
+		return stack[len(stack)-1].body
 	}
+	var loops []string
+	compile := func(at int, src string) exprNode {
+		lead := len(src) - len(strings.TrimLeftFunc(src, unicode.IsSpace))
+		at += lead
+		src = strings.TrimSpace(src)
+		n := exprNode{at: at, src: src}
+		if src == "" {
+			errs = append(errs, t.loadError(at, "an action needs an expression"))
+			return n
+		}
+		prog, err := t.compileExpr(at, src, loops, sc)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		n.prog = prog
+		return n
+	}
+	for _, p := range parts {
+		if txt, ok := p.(textNode); ok {
+			if txt != "" {
+				*body() = append(*body(), txt)
+			}
+			continue
+		}
+		a := p.(action)
+		lead := len(a.text) - len(strings.TrimLeftFunc(a.text, unicode.IsSpace))
+		at := a.in + lead
+		word, rest := keyword(a.text[lead:])
+		restAt := at + len(word)
+		var open *block
+		if len(stack) > 0 {
+			open = stack[len(stack)-1]
+		}
+		switch word {
+		case "if":
+			n := &ifNode{}
+			cond := compile(restAt, rest)
+			n.conds = append(n.conds, &cond)
+			n.bodies = append(n.bodies, nil)
+			*body() = append(*body(), n)
+			stack = append(stack, &block{at: at, word: "if", node: n, body: &n.bodies[0]})
+		case "else":
+			var in *ifNode
+			if open != nil {
+				in, _ = open.node.(*ifNode)
+			}
+			switch {
+			case in == nil:
+				errs = append(errs, t.loadError(at, "else without if"))
+				continue
+			case open.done:
+				errs = append(errs, t.loadError(at, "else after else"))
+				continue
+			}
+			var cond *exprNode
+			if w, r := keyword(strings.TrimLeftFunc(rest, unicode.IsSpace)); w == "if" {
+				c := compile(restAt+len(rest)-len(r), r)
+				cond = &c
+			} else if strings.TrimSpace(rest) != "" {
+				errs = append(errs, t.loadError(restAt, "else takes no expression; use else if"))
+			}
+			open.done = cond == nil
+			in.conds = append(in.conds, cond)
+			in.bodies = append(in.bodies, nil)
+			open.body = &in.bodies[len(in.bodies)-1]
+		case "for":
+			m := forRe.FindStringSubmatchIndex(rest)
+			name := "_"
+			switch {
+			case m == nil:
+				errs = append(errs, t.loadError(at, "use for <name> in <list>"))
+			case slices.Contains(exprNames, rest[m[2]:m[3]]) || slices.Contains(loops, rest[m[2]:m[3]]):
+				errs = append(errs, t.loadError(restAt+m[2], fmt.Sprintf("the loop name %s hides a name of the data; choose another name", rest[m[2]:m[3]])))
+			case isExprFunc(rest[m[2]:m[3]]) || slices.Contains(noExprFuncs, rest[m[2]:m[3]]):
+				errs = append(errs, t.loadError(restAt+m[2], fmt.Sprintf("the loop name %s is a function; choose another name", rest[m[2]:m[3]])))
+			case slices.Contains(languageWords, rest[m[2]:m[3]]):
+				errs = append(errs, t.loadError(restAt+m[2], fmt.Sprintf("the loop name %s is a word of the language; choose another name", rest[m[2]:m[3]])))
+			default:
+				name = rest[m[2]:m[3]]
+			}
+			n := &forNode{name: name, depth: len(loops)}
+			if m != nil {
+				n.list = compile(restAt+m[1], rest[m[1]:])
+			}
+			*body() = append(*body(), n)
+			stack = append(stack, &block{at: at, word: "for", node: n, body: &n.body})
+			loops = append(loops, name)
+		case "range", "with":
+			use := map[string]string{"range": "for <name> in <list>", "with": "if <expression>"}[word]
+			errs = append(errs, t.loadError(at, fmt.Sprintf("a template has no %s; use %s", word, use)))
+			stack = append(stack, &block{at: at, word: word, body: new([]tnode)})
+		case "end":
+			if strings.TrimSpace(rest) != "" {
+				errs = append(errs, t.loadError(restAt, "end takes no expression"))
+			}
+			if open == nil {
+				errs = append(errs, t.loadError(at, "end without if or for"))
+				continue
+			}
+			if open.word == "for" {
+				loops = loops[:len(loops)-1]
+				t.elemValues(open.node.(*forNode))
+			}
+			stack = stack[:len(stack)-1]
+		default:
+			n := &printNode{compile(a.in, a.text)}
+			*body() = append(*body(), n)
+		}
+	}
+	for _, b := range stack {
+		errs = append(errs, t.loadError(b.at, b.word+" is not closed; add {{ end }}"))
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	return t, nil
 }
 
-// elemFields returns the fields of the element that the body of the range n
-// reads, as .name in range .vars.m or $v.name in range $k, $v := .vars.m. It
-// returns false when the body reads the element whole. With =, the variables
-// keep the last element after the range.
-func elemFields(n *tparse.RangeNode) ([]string, bool) {
-	if n.Pipe.IsAssign || len(n.Pipe.Cmds) != 1 || len(n.Pipe.Cmds[0].Args) != 1 {
-		return nil, false
+// keyword returns the block word that s starts with, and the text after it.
+func keyword(s string) (string, string) {
+	for _, w := range []string{"if", "else", "for", "end", "range", "with"} {
+		rest, ok := strings.CutPrefix(s, w)
+		if ok && (rest == "" || isSpace(rest[0])) {
+			return w, rest
+		}
 	}
-	switch n.Pipe.Cmds[0].Args[0].(type) {
-	case *tparse.FieldNode, *tparse.VariableNode:
-	default:
-		return nil, false
+	return "", s
+}
+
+// compileExpr compiles the expression src at the byte offset at, with the
+// loop names loops, and checks it as !expr is checked.
+func (t *template) compileExpr(at int, src string, loops []string, sc scope) (*vm.Program, error) {
+	where := func(loc file.Location) (yamlx.Pos, string) {
+		return t.where(at, loc.From)
 	}
-	v := ""
-	if d := n.Pipe.Decl; len(d) > 0 {
-		v = d[len(d)-1].Ident[0]
+	c, err := checkExpr(src, loops, sc, where)
+	if err != nil {
+		return nil, err
+	}
+	t.item = t.item || c.item
+	t.data = t.data || c.data
+	t.hosts = t.hosts || c.hosts
+	t.reads = append(t.reads, c.reads...)
+	t.values = append(t.values, c.values...)
+	t.peerReads = append(t.peerReads, c.peerReads...)
+	t.matches = append(t.matches, c.matches...)
+	return c.prog, nil
+}
+
+// elemValues replaces the values of the list of the loop n, a variable, with
+// the fields of its elements that the body reads, when the body reads only
+// fields of the element.
+func (t *template) elemValues(n *forNode) {
+	if n.list.prog == nil {
+		return
+	}
+	list := n.list.prog.Node()
+	for {
+		d, ok := list.(*ast.VariableDeclaratorNode)
+		if !ok {
+			break
+		}
+		list = d.Expr
+	}
+	base, name, ok := constKey(unpatched(list))
+	if !ok || !isVars(base) {
+		return
 	}
 	var fields []string
-	if !readsElem(n.List, v, true, &fields) {
-		return nil, false
+	if !readsFields(n.body, n.name, &fields) {
+		return
 	}
-	return fields, true
+	if i := slices.Index(t.values, name); i >= 0 {
+		t.values = slices.Delete(t.values, i, i+1)
+	}
+	for _, f := range fields {
+		t.values = append(t.values, name+"."+f)
+	}
 }
 
-// readsElem adds to fields the first name of each field that n reads of the
-// variable v, or of dot where dot is true. It returns false when n reads v or
-// dot whole.
-func readsElem(n tparse.Node, v string, dot bool, fields *[]string) bool {
-	all := func(dot bool, ns ...tparse.Node) bool {
-		for _, x := range ns {
-			if !readsElem(x, v, dot, fields) {
-				return false
-			}
-		}
-		return true
-	}
-	switch n := n.(type) {
-	case *tparse.ListNode:
-		return n == nil || all(dot, n.Nodes...)
-	case *tparse.ActionNode:
-		return all(dot, n.Pipe)
-	case *tparse.TemplateNode:
-		return n.Pipe == nil || all(dot, n.Pipe)
-	case *tparse.PipeNode:
-		for _, x := range n.Cmds {
-			if !all(dot, x) {
-				return false
-			}
-		}
-		return true
-	case *tparse.CommandNode:
-		return all(dot, n.Args...)
-	case *tparse.ChainNode:
-		return all(dot, n.Node)
-	case *tparse.IfNode:
-		return all(dot, n.Pipe, n.List, n.ElseList)
-	case *tparse.RangeNode:
-		return all(dot, n.Pipe, n.ElseList) && all(false, n.List)
-	case *tparse.WithNode:
-		return all(dot, n.Pipe, n.ElseList) && all(false, n.List)
-	case *tparse.DotNode:
-		return !dot
-	case *tparse.FieldNode:
-		if dot {
-			*fields = append(*fields, n.Ident[0])
-		}
-	case *tparse.VariableNode:
-		if n.Ident[0] != v {
+// readsFields adds to fields each field of the loop name that the nodes
+// read. It returns false when they read the element whole.
+func readsFields(nodes []tnode, name string, fields *[]string) bool {
+	expr := func(n *exprNode) bool {
+		if n == nil || n.prog == nil {
 			return true
 		}
-		if len(n.Ident) == 1 {
-			return false
+		isName := func(n ast.Node) bool {
+			id, ok := n.(*ast.IdentifierNode)
+			return ok && id.Value == name
 		}
-		*fields = append(*fields, n.Ident[1])
+		reads, byField := 0, 0
+		ast.Walk(new(n.prog.Node()), visitor(func(np *ast.Node) {
+			if base, key, ok := constKey(*np); ok && isName(base) {
+				byField++
+				*fields = append(*fields, key)
+			}
+			if isName(*np) {
+				reads++
+			}
+		}))
+		return reads == byField
+	}
+	for _, n := range nodes {
+		switch n := n.(type) {
+		case *printNode:
+			if !expr(&n.exprNode) {
+				return false
+			}
+		case *ifNode:
+			for i, c := range n.conds {
+				if !expr(c) || !readsFields(n.bodies[i], name, fields) {
+					return false
+				}
+			}
+		case *forNode:
+			if !expr(&n.list) || !readsFields(n.body, name, fields) {
+				return false
+			}
+		}
 	}
 	return true
 }
 
-// nullError is the error of an action that prints a null value. text is the
-// pipeline of the action.
-type nullError struct{ text string }
+// where returns the position and the snippet of the rune offset from of the
+// expression at the byte offset at.
+func (t *template) where(at, from int) (yamlx.Pos, string) {
+	fe := (&file.Error{Location: file.Location{From: utf8.RuneCountInString(t.text[:at]) + from}}).Bind(file.NewSource(t.text))
+	if t.file == "" {
+		return t.pos, fe.Snippet
+	}
+	return yamlx.Pos{File: t.file, Line: fe.Line, Col: fe.Column + 1}, fe.Snippet
+}
 
-func (nullError) Error() string { return "null is not a value" }
+// loadError is the error msg at the byte offset at.
+func (t *template) loadError(at int, msg string) error {
+	pos, snippet := t.where(at, 0)
+	return yamlx.Errorf(pos, "%s%s", msg, snippet)
+}
 
-// failNull makes each action of t that prints fail on a null value: the
-// template package prints null as "<no value>". It adds the notNull function
-// at the end of the pipeline, after the parse, so that a template cannot call
-// it.
-func failNull(t *template.Template) {
-	t.Funcs(template.FuncMap{"notNull": notNull})
-	var walk func(n tparse.Node)
-	walk = func(n tparse.Node) {
+// runError is the error msg of the expression n, at the location of err in
+// it when err has one. The error of an inline template has no position: the
+// value that holds it adds it.
+func (t *template) runError(n *exprNode, msg string, err error) error {
+	from := 0
+	if fe, ok := errors.AsType[*file.Error](err); ok {
+		from = fe.From
+	}
+	pos, snippet := t.where(n.at, from)
+	if t.file == "" {
+		return errors.New(msg + snippet)
+	}
+	return yamlx.Errorf(pos, "%s%s", msg, snippet)
+}
+
+// exec returns the text of the template for env.
+func (t *template) exec(env exprEnv) (string, error) {
+	r := runner{t: t, env: &env}
+	err := r.run(t.nodes)
+	return r.b.String(), err
+}
+
+// runner runs the expressions of a template on one machine and one
+// environment.
+type runner struct {
+	t   *template
+	b   strings.Builder
+	m   vm.VM
+	env *exprEnv
+}
+
+func (r *runner) eval(n *exprNode) (any, error) {
+	out, err := r.m.Run(n.prog, r.env)
+	if err != nil {
+		return nil, r.t.runError(n, exprProblem(err, n.src, exprNames), err)
+	}
+	return out, nil
+}
+
+func (r *runner) run(nodes []tnode) error {
+	t, env := r.t, r.env
+	for _, n := range nodes {
 		switch n := n.(type) {
-		case *tparse.ListNode:
-			if n != nil {
-				for _, x := range n.Nodes {
-					walk(x)
+		case textNode:
+			r.b.WriteString(string(n))
+		case *printNode:
+			v, err := r.eval(&n.exprNode)
+			if err != nil {
+				return err
+			}
+			s, err := printValue(v)
+			if err != nil {
+				return t.runError(&n.exprNode, err.Error(), nil)
+			}
+			r.b.WriteString(s)
+		case *ifNode:
+			for i, c := range n.conds {
+				if c != nil {
+					v, err := r.eval(c)
+					if err != nil {
+						return err
+					}
+					ok, isBool := v.(bool)
+					if !isBool {
+						return t.runError(c, "if: expected true or false, got "+describeValue(v), nil)
+					}
+					if !ok {
+						continue
+					}
+				}
+				if err := r.run(n.bodies[i]); err != nil {
+					return err
+				}
+				break
+			}
+		case *forNode:
+			v, err := r.eval(&n.list)
+			if err != nil {
+				return err
+			}
+			l := reflect.ValueOf(v)
+			if l.Kind() != reflect.Slice && l.Kind() != reflect.Array {
+				msg := "for takes a list, got " + describeValue(v)
+				if l.Kind() == reflect.Map {
+					msg += "; loop through its keys: for k in keys(...)"
+				}
+				return t.runError(&n.list, msg, nil)
+			}
+			loop := env.Loop[:n.depth:n.depth]
+			for i := range l.Len() {
+				env.Loop = append(loop, l.Index(i).Interface())
+				if err := r.run(n.body); err != nil {
+					return err
 				}
 			}
-		case *tparse.ActionNode:
-			if len(n.Pipe.Decl) > 0 {
-				return
-			}
-			text := n.Pipe.String()
-			n.Pipe.Cmds = append(n.Pipe.Cmds, &tparse.CommandNode{NodeType: tparse.NodeCommand, Pos: n.Pipe.Pos, Args: []tparse.Node{
-				tparse.NewIdentifier("notNull").SetPos(n.Pipe.Pos),
-				&tparse.StringNode{NodeType: tparse.NodeString, Pos: n.Pipe.Pos, Quoted: strconv.Quote(text), Text: text},
-			}})
-		case *tparse.IfNode:
-			walk(n.List)
-			walk(n.ElseList)
-		case *tparse.RangeNode:
-			walk(n.List)
-			walk(n.ElseList)
-		case *tparse.WithNode:
-			walk(n.List)
-			walk(n.ElseList)
+			env.Loop = loop
 		}
 	}
-	for _, d := range t.Templates() {
-		walk(d.Root)
-	}
+	return nil
 }
 
-func notNull(text string, v any) (any, error) {
+// printValue returns the text of v: a list or a map as JSON.
+func printValue(v any) (string, error) {
 	if v == nil {
-		return nil, nullError{text}
+		return "", errors.New("the expression gave null")
 	}
-	return v, nil
+	if s, ok := v.(string); ok {
+		return s, computedError(s)
+	}
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+		return fmt.Sprint(v), nil
+	}
+	return toJSON(v)
 }
 
-// index is the built-in index, except that a missing map key is an error.
-func index(item any, keys ...any) (any, error) {
-	v := reflect.ValueOf(item)
-	for _, k := range keys {
-		kv := reflect.ValueOf(k)
-		switch v.Kind() {
-		case reflect.Map:
-			if !kv.IsValid() || !kv.Type().AssignableTo(v.Type().Key()) {
-				return nil, fmt.Errorf("index: key %v is not a %s", k, v.Type().Key())
-			}
-			e := v.MapIndex(kv)
-			if !e.IsValid() {
-				return nil, fmt.Errorf("map has no entry for key %q", fmt.Sprint(k))
-			}
-			v = e
-		case reflect.Slice, reflect.Array, reflect.String:
-			i, ok := k.(int)
-			if !ok {
-				return nil, fmt.Errorf("index: %v is not an integer", k)
-			}
-			if i < 0 || i >= v.Len() {
-				return nil, fmt.Errorf("index %d out of range for length %d", i, v.Len())
-			}
-			v = v.Index(i)
-		default:
-			return nil, fmt.Errorf("index: cannot index %s", v.Kind())
-		}
-		for v.Kind() == reflect.Interface {
-			v = v.Elem()
-		}
-	}
-	if !v.IsValid() {
-		return nil, nil
-	}
-	return v.Interface(), nil
-}
-
-// get reads a key that a map may leave out. A missing key gives nil.
-func get(m any, key string) (any, error) {
-	mm, ok := m.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("get: %s is not a map", describeValue(m))
-	}
-	if err := computedError(mm[key]); err != nil {
-		return nil, err
-	}
-	return mm[key], nil
-}
-
-func listArg(name string, l any) (reflect.Value, error) {
-	v := reflect.ValueOf(l)
-	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
-		return v, fmt.Errorf("%s: %s is not a list", name, describeValue(l))
-	}
-	return v, nil
-}
-
-func join(l any, sep string) (string, error) {
-	v, err := listArg("join", l)
-	if err != nil {
-		return "", err
-	}
-	parts := make([]string, v.Len())
-	for i := range v.Len() {
-		e := v.Index(i).Interface()
-		if e == nil {
-			return "", fmt.Errorf("join: element %d is null", i+1)
-		}
-		parts[i] = fmt.Sprint(e)
-	}
-	return strings.Join(parts, sep), nil
-}
-
-func has(l any, x any) (bool, error) {
-	v, err := listArg("has", l)
-	if err != nil {
-		return false, err
-	}
-	for i := range v.Len() {
-		if reflect.DeepEqual(v.Index(i).Interface(), x) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func title(s string) string {
+// namePattern returns a pattern for the values of the template: each action
+// can give any text.
+func (t *template) namePattern() *regexp.Regexp {
 	var b strings.Builder
-	start := true
-	for _, r := range s {
-		if start {
-			r = unicode.ToUpper(r)
+	for _, n := range t.nodes {
+		if txt, ok := n.(textNode); ok {
+			b.WriteString(regexp.QuoteMeta(string(txt)))
+		} else {
+			b.WriteString(".*")
 		}
-		start = unicode.IsSpace(r)
-		b.WriteRune(r)
 	}
-	return b.String()
+	return regexp.MustCompile("^" + b.String() + "$")
 }
 
 func quote(s string) string {
@@ -627,57 +602,4 @@ func toJSON(v any) (string, error) {
 		return "", err
 	}
 	return jsonEscapes.Replace(strings.TrimSuffix(b.String(), "\n")), nil
-}
-
-var undefinedFuncRe = regexp.MustCompile(`: function "(\w+)" not defined$`)
-
-// exprFuncHint is the hint for a parse error of a template that calls an
-// expression function, with fix as the way to use it, or "".
-func exprFuncHint(err error, fix string) string {
-	if f := undefinedFuncRe.FindStringSubmatch(err.Error()); f != nil && isExprFunc(f[1]) {
-		return fmt.Sprintf("; %s is an expression function: %s", f[1], fix)
-	}
-	return ""
-}
-
-var templateErrRe = regexp.MustCompile(`(?s)^(\d+)(?::(\d+))?: (?:executing "(?:[^"\\]|\\.)*" at <(.*?)>: )?(.*)$`)
-
-// parseTemplateError splits an error of the template package for the template
-// name into the line, the column, and the message. A parse error has no
-// column, so it gets column 1.
-func parseTemplateError(name string, err error) (line, col int, msg string, ok bool) {
-	m := templateErrRe.FindStringSubmatch(strings.TrimPrefix(err.Error(), "template: "+name+":"))
-	if m == nil {
-		return 0, 0, "", false
-	}
-	line, _ = strconv.Atoi(m[1])
-	col = 1
-	if m[2] != "" {
-		col, _ = strconv.Atoi(m[2])
-		col++
-	}
-	msg = m[4]
-	if m[3] != "" {
-		msg = m[3] + ": " + msg
-	}
-	return line, col, msg, true
-}
-
-// templateError turns an error of the template package into an error with
-// the position in file.
-func templateError(file string, err error) error {
-	line, col, msg, ok := parseTemplateError(file, err)
-	if !ok {
-		return fmt.Errorf("%s: %w", file, err)
-	}
-	return yamlx.Errorf(yamlx.Pos{File: file, Line: line, Col: col}, "%s", msg)
-}
-
-// templateMessage is the message of an error of the template package, without
-// the position.
-func templateMessage(name string, err error) string {
-	if _, _, msg, ok := parseTemplateError(name, err); ok {
-		return msg
-	}
-	return err.Error()
 }

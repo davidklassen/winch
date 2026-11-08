@@ -6,7 +6,7 @@ check program system-state with path "/usr/bin/systemctl is-system-running"
 
 check program postfix-queue with path /usr/local/bin/postfix-queue-age
   if status != 0 for 3 cycles then alert
-{{- if .vars.mail_server }}
+{{- if vars.mail_server }}
 
 check program blocklists with path /usr/local/bin/blocklists
   every 30 cycles

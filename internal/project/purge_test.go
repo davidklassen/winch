@@ -15,7 +15,7 @@ func TestLoadPurgeWarning(t *testing.T) {
 	}{
 		{"then", "purge: true", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", true},
 		{"notify", "purge: true", "/etc/maps/virtual", "x", "notify: app.rebuild", false},
-		{"computed content", "purge: true", "/etc/maps/virtual", "!tpl '{{ .host.name }}'", "then: postmap /etc/maps/virtual", true},
+		{"computed content", "purge: true", "/etc/maps/virtual", "!tpl '{{ host.name }}'", "then: postmap /etc/maps/virtual", true},
 		{"kept", "purge: true\n          keep: ['*.db']", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", false},
 		{"computed keep", "purge: true\n          keep: !expr '[\"*.db\"]'", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", false},
 		{"empty keep", "purge: true\n          keep: []", "/etc/maps/virtual", "x", "then: postmap /etc/maps/virtual", false},
@@ -140,7 +140,7 @@ func TestLoadPurgeWarningOfADeployHook(t *testing.T) {
 		name, hook, want string
 	}{
 		{"deploy hook", "          deploy_hook: systemctl reload nginx\n", "purge of /etc/letsencrypt/renewal may remove files that deploy_hook makes; add keep"},
-		{"computed deploy hook", "          deploy_hook: !tpl 'systemctl reload {{ .host.short }}'\n", "purge of /etc/letsencrypt/renewal may remove files that deploy_hook makes; add keep"},
+		{"computed deploy hook", "          deploy_hook: !tpl 'systemctl reload {{ host.short }}'\n", "purge of /etc/letsencrypt/renewal may remove files that deploy_hook makes; add keep"},
 		{"no hook", "", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

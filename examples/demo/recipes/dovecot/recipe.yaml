@@ -17,9 +17,9 @@ steps:
       group: vmail
     loop:
       - /var/vmail
-      - !tpl /var/vmail/{{ .vars.domain }}
+      - !tpl /var/vmail/{{ vars.domain }}
   - dir:
-      path: !tpl /var/vmail/{{ .vars.domain }}/{{ .item }}
+      path: !tpl /var/vmail/{{ vars.domain }}/{{ item }}
       owner: vmail
       group: vmail
     loop: !expr sort(keys(vars.mail_users))
@@ -30,8 +30,8 @@ steps:
   # the files to /etc/dovecot/conf.d: no package owns them there.
   - name: Debian's conf.d files stay stock
     file:
-      path: !tpl /etc/dovecot/conf.d/{{ .item }}
-      copy_from: !tpl /usr/share/dovecot/conf.d/{{ .item }}
+      path: !tpl /etc/dovecot/conf.d/{{ item }}
+      copy_from: !tpl /usr/share/dovecot/conf.d/{{ item }}
     loop:
       - 10-mail.conf
       - 10-master.conf
@@ -69,8 +69,8 @@ steps:
       target: /usr/bin/rspamc
   - name: Global Sieve scripts (vmail cannot compile them here)
     file:
-      path: !tpl /etc/dovecot/sieve/{{ .item }}
-      source: !tpl sieve/{{ .item }}
+      path: !tpl /etc/dovecot/sieve/{{ item }}
+      source: !tpl sieve/{{ item }}
     loop: [spam.sieve, report-spam.sieve, report-ham.sieve]
     then: >-
       sievec -P sieve_extprograms -P sieve_imapsieve

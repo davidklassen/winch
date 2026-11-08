@@ -184,7 +184,7 @@ type Step struct {
 	then *value
 	// notifyNames are the handler names as written.
 	notifyNames []nameAt
-	tmpl        *tmplFile
+	tmpl        *template
 	// tmplReads are the variables that the template file of the step reads
 	// by name. A computed file name reads those of all templates of the recipe.
 	tmplReads []string
@@ -1834,9 +1834,13 @@ func (st Step) instance(e *Env, decode func(*yamlx.Node, any) error) (Step, any,
 	if st.tmpl == nil {
 		return st, args, nil
 	}
-	out, err := e.render(st.tmpl.t, st.tmpl.peerReads, st.tmpl.hosts)
+	env, err := e.exprEnv(st.tmpl.hosts)
 	if err != nil {
-		return st, args, templateError(st.tmpl.t.Name(), err)
+		return st, args, err
+	}
+	out, err := st.tmpl.exec(env)
+	if err != nil {
+		return st, args, err
 	}
 	f := *st.Args.(*module.File)
 	// Empty output is empty content, not missing content.

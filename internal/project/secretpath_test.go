@@ -503,7 +503,7 @@ func TestSecretAtBrokenRecipe(t *testing.T) {
 		"inventories/test.yaml":        "hosts:\n  web1:\n",
 		"pipelines/site.yaml":          readsPipeline("db_password"),
 		"recipes/db/recipe.yaml":       "steps:\n  - file:\n      path: /etc/db.conf\n      template: db.conf\n",
-		"recipes/db/templates/db.conf": "{{ .vars.db_password ",
+		"recipes/db/templates/db.conf": "{{ vars.db_password ",
 	})
 	if _, err := writeSecret(dir, "inventories.test.groups.all.vars.db_password"); err != nil {
 		t.Errorf("write: %v", err)

@@ -416,7 +416,7 @@ steps:
       path: /etc/nginx/logo.png
       source: logo.png
 `,
-	"recipes/nginx/templates/site.tmpl": "server_name {{ .host.name }};\n",
+	"recipes/nginx/templates/site.tmpl": "server_name {{ host.name }};\n",
 	"recipes/nginx/files/logo.png":      "\x89PNG\r\n\x1a\n\x00\x00\xff",
 	"recipes/php/recipe.yaml":           "steps:\n  - file:\n      path: /etc/php.ini\n      content: \"x\\n\"\n",
 	"recipes/tools/recipe.yaml": `require:
@@ -426,7 +426,7 @@ steps:
       path: /etc/tools
       template: tools.tmpl
 `,
-	"recipes/tools/templates/tools.tmpl": "{{ if eq .host.name \"web2\" }}{{ index .host.groups 3 }}{{ end }}\n",
+	"recipes/tools/templates/tools.tmpl": "{{ if host.name == \"web2\" }}{{ host.groups[3] }}{{ end }}\n",
 }
 
 // spec: CLI/Output; Steps; Recipes; Running a pipeline/Plan; Templates and expressions/When they run; Modules/file, dir, link
@@ -440,13 +440,13 @@ func TestPlanRecipes(t *testing.T) {
 		// web2 fails on the template of stage tools, before its first stage.
 		{name: "recipes", failed: []string{"web2"}},
 		{name: "recipes-require-fails", failed: []string{"web1"},
-			files: map[string]string{"recipes/tools/templates/tools.tmpl": "{{ .host.short }}\n"},
+			files: map[string]string{"recipes/tools/templates/tools.tmpl": "{{ host.short }}\n"},
 			setup: func(h *fakehost.Hosts) {
 				h.SetFacts("web1", facts.Facts{OS: facts.OS{ID: "ubuntu", Version: "24.04", Codename: "noble"}})
 			}},
 		// tools runs only on web2, so web1 does not need version 13.
 		{name: "recipes-require-other-stage", failed: nil,
-			files: map[string]string{"recipes/tools/templates/tools.tmpl": "{{ .host.short }}\n"},
+			files: map[string]string{"recipes/tools/templates/tools.tmpl": "{{ host.short }}\n"},
 			setup: func(h *fakehost.Hosts) {
 				h.SetFacts("web1", facts.Facts{OS: facts.OS{ID: "debian", Version: "12", Codename: "bookworm"}})
 			}},
@@ -458,14 +458,14 @@ func TestPlanRecipes(t *testing.T) {
 			}},
 		{name: "recipes-require-run-error", failed: []string{"web1"},
 			files: map[string]string{
-				"recipes/tools/templates/tools.tmpl": "{{ .host.short }}\n",
+				"recipes/tools/templates/tools.tmpl": "{{ host.short }}\n",
 				"recipes/nginx/recipe.yaml":          "require:\n  - !expr 'int(facts.os.version) >= 13'\nsteps: []\n",
 			},
 			setup: func(h *fakehost.Hosts) {
 				h.SetFacts("web1", facts.Facts{OS: facts.OS{ID: "debian", Codename: "forky"}})
 			}},
 		{name: "recipes-check-fails", failed: []string{"web1"},
-			files: map[string]string{"recipes/tools/templates/tools.tmpl": "{{ .host.short }}\n"},
+			files: map[string]string{"recipes/tools/templates/tools.tmpl": "{{ host.short }}\n"},
 			setup: func(h *fakehost.Hosts) { h.FailCheck("web1 /etc/nginx/site") }},
 		{name: "recipes-change", failed: []string{"web2"}, setup: func(h *fakehost.Hosts) {
 			for _, host := range []string{"web1", "web2"} {
@@ -571,8 +571,8 @@ groups:
   site_names: !expr 'vars.mail_server ? ["mail", "www"] : ["www"]'
 steps:
   - file:
-      path: !tpl /etc/site/{{ .item }}
-      content: !tpl "{{ .item }} on {{ .host.name }}\n"
+      path: !tpl /etc/site/{{ item }}
+      content: !tpl "{{ item }} on {{ host.name }}\n"
     loop: !expr vars.site_names
   - file:
       path: /etc/site/mail.conf
@@ -582,7 +582,7 @@ steps:
       path: /etc/site/port
       content: !expr 'string(vars.port + 1) + "\n"'
 `,
-	"recipes/site/templates/mail.tmpl": "relay {{ .host.short }}\n",
+	"recipes/site/templates/mail.tmpl": "relay {{ host.short }}\n",
 }
 
 // spec: Templates and expressions/When they run; Steps; Running a pipeline/Plan; CLI/Output

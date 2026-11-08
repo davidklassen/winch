@@ -1,0 +1,3 @@
+recipes/web/recipe.yaml:2:13: a template has no range; use for <name> in <list>
+ | {{ range vars.web_sites }}x{{ end }}
+ | ...^

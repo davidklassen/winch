@@ -8,13 +8,13 @@ import (
 	"github.com/davidklassen/winch/internal/module"
 )
 
-// spec: Templates and expressions/Data; Templates and expressions/Template functions; Variables
+// spec: Templates and expressions/Data; Templates and expressions/Functions; Variables
 func TestMatchInTemplateAndDefault(t *testing.T) {
 	files := with(matchFiles, map[string]string{
 		"winch.yaml": "name: acme\ninventory: test\nvars:\n  mail_server: false\n  role: !expr 'vars.mail_server ? \"mail\" : \"node\"'\n" +
 			"  peer_roles: !expr 'join(map(match(\"all\"), .short + \"=\" + .vars.role), \",\")'\n",
 		"pipelines/site.yaml":                "stages:\n  - name: monit\n    hosts: all\n    steps:\n      - recipe: monit\n",
-		"recipes/monit/templates/peers.tmpl": "{{ range match \"all\" }}{{ .name }} {{ .vars.role }} {{ .facts.os.codename }}\n{{ end }}{{ .vars.peer_roles }}\n",
+		"recipes/monit/templates/peers.tmpl": "{{ for x in match(\"all\") }}{{ x.name }} {{ x.vars.role }} {{ x.facts.os.codename }}\n{{ end }}{{ vars.peer_roles }}\n",
 	})
 	p, err := Load(t.Context(), writeProject(t, files), "", "site", nil, Keys{})
 	if err != nil {
@@ -37,7 +37,7 @@ func TestDefaultCycleThroughHosts(t *testing.T) {
 			want: "winch.yaml:6:3: vars.a: the defaults form a cycle: a → b → a"},
 		{name: "self", vars: "  a: !expr 'len(filter(match(\"all\"), .vars.a == \"x\"))'\n",
 			want: "winch.yaml:6:3: vars.a: the defaults form a cycle: a → a"},
-		{name: "template", vars: "  a: !tpl '{{ range .hosts }}{{ .vars.b }}{{ end }}'\n  b: !expr 'vars.a'\n",
+		{name: "template", vars: "  a: !tpl '{{ for h in hosts }}{{ h.vars.b }}{{ end }}'\n  b: !expr 'vars.a'\n",
 			want: "winch.yaml:6:3: vars.a: the defaults form a cycle: a → b → a"},
 	}
 	for _, tt := range tests {
@@ -66,7 +66,7 @@ func TestPeerDefaultFails(t *testing.T) {
 				"inventories/test.yaml":              "hosts:\n  mail.acme.com:\n    vars:\n      zone: a\n  monitor.acme.com: {}\n",
 				"pipelines/site.yaml":                "stages:\n  - name: monit\n    hosts: mail.acme.com\n    steps:\n      - recipe: monit\n",
 				"recipes/monit/recipe.yaml":          "steps:\n  - file:\n      path: /etc/monit/peers\n      " + content + "\n",
-				"recipes/monit/templates/peers.tmpl": "{{ range match \"all\" }}{{ .vars.role }}{{ end }}\n",
+				"recipes/monit/templates/peers.tmpl": "{{ for x in match(\"all\") }}{{ x.vars.role }}{{ end }}\n",
 			})
 			p, err := Load(t.Context(), writeProject(t, files), "", "site", nil, Keys{})
 			if err != nil {
