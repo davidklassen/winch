@@ -592,7 +592,7 @@ var workflowTopic = doc.Topic{
 		doc.Heading("Plan and apply"),
 		doc.Paragraph(`winch plan shows the changes and changes nothing. winch apply shows the same plan, asks, and then makes the changes. For each host, the plan connects to the host, reads the facts, evaluates the steps, checks the requirements of the recipes, and checks each step on the host. Apply checks each step again right before it changes it. The second check decides.`),
 		doc.Heading("Apply output"),
-		doc.Paragraph(`Apply prints a line for each step that changes or fails, then the summary. A step that checks as ok prints nothing: a planned change that the second check finds made, an assert that passes, and a handler restart that checks as ok. An access check that passes prints access check passed after the step or handler that started it. The access check at the end of a host prints access check after the run passed. The summary line of plan and of apply counts hosts, not steps.`),
+		doc.Paragraph(`Apply prints a line for each step that changes or fails, then the summary. A step that checks as ok prints nothing: a planned change that the second check finds made, an assert that passes, and a handler restart that checks as ok. An access check that passes prints access check passed after the step or handler that started it. The access check at the end of a host prints access check after the run passed. A health gate that passes prints health passed and its command. The summary line of plan and of apply counts hosts, not steps.`),
 		doc.Heading("Plan marks"),
 		doc.Table([][]string{
 			{"+", "create"},
