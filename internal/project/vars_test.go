@@ -895,13 +895,25 @@ func TestGet(t *testing.T) {
 		{"missing key prints null", `{{ for peer in vars.peers }}{{ get(peer, "endpoint") }}{{ end }}`,
 			"error: recipes/r/recipe.yaml:4:16: content: the expression gave null\n | {{ for peer in vars.peers }}{{ get(peer, \"endpoint\") }}{{ end }}\n | ...............................^"},
 		{"not a map", `{{ get(vars.l, "endpoint") }}`,
-			"error: recipes/r/recipe.yaml:4:16: content: invalid operation: int(string)\n | {{ get(vars.l, \"endpoint\") }}\n | ...^"},
+			"error: recipes/r/recipe.yaml:4:16: content: get: a list takes a number, got the string \"endpoint\"\n | {{ get(vars.l, \"endpoint\") }}\n | ...^"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := evalOne(t, vars, "  - file:\n      path: /a\n      content: !tpl '"+tt.text+"'\n", nil)
 			if got != tt.want {
 				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// spec: Templates and expressions/When they run
+func TestGetTypedValueLoadError(t *testing.T) {
+	for _, text := range []string{`get(host, "name")`, `get(facts, "os")`, `get(facts.os, "id")`} {
+		t.Run(text, func(t *testing.T) {
+			got := evalOne(t, valueVars, "  - file:\n      path: /a\n      content: !expr '"+strings.ReplaceAll(text, "'", "''")+"'\n", nil)
+			if !strings.HasPrefix(got, "load error: ") || strings.Contains(got, "a read of vars") {
+				t.Errorf("got %q, want a load error about the type", got)
 			}
 		})
 	}
@@ -923,6 +935,8 @@ func TestExprValues(t *testing.T) {
 		{"host", `host.name + " " + host.short + " " + host.address + " " + join(host.groups, ",") + " " + string(host.vars.i)`, "web1 web1 192.0.2.1 all 80"},
 		{"defaults in dependency order", `string(vars.early)`, "3"},
 		{"facts", `facts.os.id + " " + facts.os.version + " " + facts.os.codename + " " + facts.os.arch`, "debian 13 trixie amd64"},
+		{"join of numbers", `join(vars.ports, ", ")`, "22, 25"},
+		{"join of strings and numbers", `join(["a", vars.i, vars.f2], " ")`, "a 80 8.5"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -967,6 +981,20 @@ func TestEvalErrors(t *testing.T) {
 			want: "error: recipes/r/recipe.yaml:4:16: content: quote: the integer 80 is not a string\n | quote(vars.i)\n | ^"},
 		{name: "sqlquote of a number", step: "  - file:\n      path: /a\n      content: !expr sqlquote(vars.i)\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: sqlquote: the integer 80 is not a string\n | sqlquote(vars.i)\n | ^"},
+		{name: "join of a map", step: "  - file:\n      path: /a\n      content: !expr 'join([\"a\", 1, vars.m], \",\")'\n",
+			want: "error: recipes/r/recipe.yaml:4:16: content: join: the element at index 2 is a map\n | join([\"a\", 1, vars.m], \",\")\n | ^"},
+		{name: "get of a map with a number", step: "  - file:\n      path: /a\n      content: !expr 'get(vars.m, 1)'\n",
+			want: "error: recipes/r/recipe.yaml:4:16: content: get: a map takes a string, got the integer 1\n | get(vars.m, 1)\n | ^"},
+		{name: "get of a typed list with a string", step: "  - file:\n      path: /a\n      content: !expr 'get(host.groups, vars.s)'\n",
+			want: "error: recipes/r/recipe.yaml:4:16: content: get: a list takes a number, got the string \"yes\"\n | get(host.groups, vars.s)\n | ^"},
+		{name: "get of a map literal with a number", step: "  - file:\n      path: /a\n      content: !expr 'get({\"a\": 1}, vars.i)'\n",
+			want: "error: recipes/r/recipe.yaml:4:16: content: get: a map takes a string, got the integer 80\n | get({\"a\": 1}, vars.i)\n | ^"},
+		{name: "join of a boolean", step: "  - file:\n      path: /a\n      content: !expr 'join([true], \",\")'\n",
+			want: "error: recipes/r/recipe.yaml:4:16: content: join: the element at index 0 is the boolean true\n | join([true], \",\")\n | ^"},
+		{name: "join with a number separator", step: "  - file:\n      path: /a\n      content: !expr 'join(vars.l, vars.i)'\n",
+			want: "error: recipes/r/recipe.yaml:4:16: content: join: the separator must be a string, got the integer 80\n | join(vars.l, vars.i)\n | ^"},
+		{name: "join with a constant number separator", step: "  - file:\n      path: /a\n      content: !expr 'join(vars.l, 1)'\n",
+			want: "error: recipes/r/recipe.yaml:4:16: content: join: the separator must be a string, got the integer 1\n | join(vars.l, 1)\n | ^"},
 		{name: "json of infinity", vars: "  inf: .inf\n", step: "  - file:\n      path: /a\n      content: !expr json(vars.inf)\n",
 			want: "error: recipes/r/recipe.yaml:4:16: content: json: unsupported value: +Inf\n | json(vars.inf)\n | ^"},
 		{name: "default fails", vars: "  bad: !expr 1 + vars.s\n", step: "  - file:\n      path: /a\n      content: !expr vars.bad\n",
@@ -1059,7 +1087,7 @@ func TestTemplateNull(t *testing.T) {
 		{"depth 1", "{{ vars.nm.k }}", "the expression gave null", 4},
 		{"depth 1 list", "{{ vars.nl[1] }}", "the expression gave null", 4},
 		{"depth 2", "{{ vars.nm.d.j }}", "the expression gave null", 4},
-		{"join", "{{ join(vars.nl, \",\") }}", "interface conversion: interface {} is nil, not string", 4},
+		{"join", "{{ join(vars.nl, \",\") }}", "join: the element at index 1 is null", 4},
 		{"condition", "{{ if vars.nm.k != nil }}set{{ else }}null{{ end }}", "null", 0},
 	}
 	for _, tt := range tests {
