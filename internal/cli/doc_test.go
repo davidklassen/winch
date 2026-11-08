@@ -86,6 +86,15 @@ func TestDocUserSystem(t *testing.T) {
 	}
 }
 
+// spec: Modules/firewall
+func TestDocFirewallForward(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "firewall")
+	want := "The step does not filter forwarded or outgoing traffic."
+	if out := strings.Join(strings.Fields(r.out), " "); !strings.Contains(out, want) {
+		t.Errorf("winch doc firewall lacks %q:\n%s", want, r.out)
+	}
+}
+
 // spec: Modules/service and unit; Modules/repo
 func TestDocAbsent(t *testing.T) {
 	tests := []struct{ arg, want string }{
