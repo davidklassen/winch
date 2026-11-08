@@ -214,7 +214,7 @@ func (s *Service) Check(ctx context.Context, _ *State, _ Say) (Result, error) {
 			// systemd reports a unit without [Install] as static, but not
 			// a linked or runtime-enabled one.
 			if !installs(sectionKeys(files, "Install")) {
-				return Result{}, fmt.Errorf("%s has no [Install] section with WantedBy, RequiredBy, UpheldBy, or Alias; enabled: true cannot enable it", u.id)
+				return Result{}, fmt.Errorf("%s has no [Install] section with WantedBy, RequiredBy, UpheldBy, or Alias; enabled: true cannot enable it; remove enabled, or enable the unit that wants it", u.id)
 			}
 			s.todo = append(s.todo, "enable")
 		default:
