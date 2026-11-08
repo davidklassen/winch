@@ -438,7 +438,7 @@ func TestModuleNouns(t *testing.T) {
 		m, _ := New(name)
 		n, ok := m.(interface{ Noun() string })
 		want := "a " + name + " step"
-		if name == "assert" || name == "upgrade" {
+		if name == "upgrade" {
 			want = "an " + name + " step"
 		}
 		if !ok || n.Noun() != want {

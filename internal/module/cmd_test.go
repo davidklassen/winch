@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -56,24 +55,6 @@ func TestCmdValidate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { validate(t, &Cmd{}, tt.yaml, tt.want) })
-	}
-}
-
-// spec: Modules (the table); Modules/assert
-func TestAssertValidate(t *testing.T) {
-	tests := []struct {
-		name string
-		yaml string
-		want string
-	}{
-		{"both", "command: systemctl is-active nginx\nmessage: nginx does not run\n", ""},
-		{"no message", "command: \"true\"\n", `t.yaml:1:1: an assert step needs message`},
-		{"no command", "message: x\n", `t.yaml:1:1: an assert step needs command`},
-		{"empty command", "command: \"\"\nmessage: x\n", `t.yaml:1:10: command: is empty`},
-		{"empty message", "command: \"true\"\nmessage: \"\"\n", `t.yaml:2:10: message: is empty`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) { validate(t, &Assert{}, tt.yaml, tt.want) })
 	}
 }
 
@@ -304,42 +285,6 @@ func TestCmdApply(t *testing.T) {
 	}
 }
 
-// spec: Modules/assert
-func TestAssert(t *testing.T) {
-	dir := t.TempDir()
-	ran := filepath.Join(dir, "ran")
-	a := &Assert{Command: "touch " + ran + "; echo 'curl: (22) 401'; exit 3", Message: "port 25 is blocked"}
-	got, err := a.Check(t.Context(), &State{}, Silent{})
-	if err != nil || got.Status != OK || !got.Deferred || got.Action != "" {
-		t.Errorf("check = %+v, %v; want ok and deferred", got, err)
-	}
-	if _, err := os.Stat(ran); err == nil {
-		t.Error("the check ran the command")
-	}
-	err = a.Apply(t.Context(), Silent{})
-	if want := "port 25 is blocked: exit status 3: curl: (22) 401"; err == nil || err.Error() != want {
-		t.Errorf("a failing assert: %v, want %q", err, want)
-	}
-	if _, err := os.Stat(ran); err != nil {
-		t.Error("apply did not run the command")
-	}
-	if err := (&Assert{Command: "true", Message: "x"}).Apply(t.Context(), Silent{}); err != nil {
-		t.Errorf("a passing assert: %v", err)
-	}
-	err = (&Assert{Command: "seq 40000; echo last; exit 1", Message: "m"}).Apply(t.Context(), Silent{})
-	if want := "m: exit status 1: (output cut to the last 64 KiB)\n"; err == nil || !strings.HasPrefix(err.Error(), want) || !strings.HasSuffix(err.Error(), "\n40000\nlast") {
-		t.Errorf("an assert with a long output: %.80q, want %q first", err, want)
-	}
-	err = (&Assert{Command: "no-such-tool", Message: "port 25 is blocked"}).Apply(t.Context(), Silent{})
-	if want := "port 25 is blocked: exit status 127: "; err == nil || !strings.HasPrefix(err.Error(), want) || len(err.Error()) == len(want) {
-		t.Errorf("an assert with a missing command: %v, want %q and the shell's error", err, want)
-	}
-	err = (&Assert{Command: dir, Message: "m"}).Apply(t.Context(), Silent{})
-	if want := "m: exit status 126: "; err == nil || !strings.HasPrefix(err.Error(), want) || len(err.Error()) == len(want) {
-		t.Errorf("an assert that sh cannot run: %v, want %q and the shell's error", err, want)
-	}
-}
-
 // spec: Steps (name: the plan shows the module and its main argument)
 func TestCommandMain(t *testing.T) {
 	tests := []struct {
@@ -353,9 +298,6 @@ func TestCommandMain(t *testing.T) {
 	for _, tt := range tests {
 		if got := (&Cmd{Command: tt.command}).Main(); got != tt.want {
 			t.Errorf("cmd %q: Main = %q, want %q", tt.command, got, tt.want)
-		}
-		if got := (&Assert{Command: tt.command}).Main(); got != tt.want {
-			t.Errorf("assert %q: Main = %q, want %q", tt.command, got, tt.want)
 		}
 	}
 }

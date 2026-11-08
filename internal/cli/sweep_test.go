@@ -151,9 +151,6 @@ func TestSecretSweep(t *testing.T) {
           value: !expr 'vars.pw[:5]'
       - hostname:
           name: !expr '"h-" + vars.pw[2:6]'
-      - assert:
-          command: !expr '"check " + vars.pw[2:6]'
-          message: !expr '"no " + vars.pw[6:]'
       - unit:
           name: app.service
           content: !expr '"[Service]\nExecStart=/bin/app " + vars.pw + "\n"'
@@ -364,14 +361,6 @@ func TestSecretSweep(t *testing.T) {
           content: "a\n"
         then: !expr '"notify " + vars.pw[6:]'
 `, func(h *fakehost.Hosts) { h.FailCommand("web1", "notify qz") }, applyAll},
-		{"a failed assert", `"error":"(secret)"`, `
-      - file:
-          path: /srv/a
-          content: "a\n"
-      - assert:
-          command: !expr '"check " + vars.pw[2:6]'
-          message: !expr '"no " + vars.pw[6:]'
-`, func(h *fakehost.Hosts) { h.FailCommand("web1", "check zqxj") }, applyAll},
 		{"a certbot hook", "a certbot hook cannot hold a secret", `
       - certbot:
           name: app
@@ -441,12 +430,11 @@ func TestSecretSweep(t *testing.T) {
 			h.SetNote("web1", "/srv/plain", "the user u"+sweepSecret[2:6]+" reads /srv/plain", false)
 			h.FailCommandWith("web1", "probe", "user u"+sweepSecret[2:6]+" is locked")
 		}, applyAll},
-		{"the output of a failed assert", "closed: exit status 1: user u(secret) is locked", `
+		{"the output of a failed cmd", "exit status 1: user u(secret) is locked", `
       - user:
           name: !expr '"u" + vars.pw[2:6]'
-      - assert:
+      - cmd:
           command: probe
-          message: closed
 `, func(h *fakehost.Hosts) {
 			h.FailCommandWith("web1", "probe", "user u"+sweepSecret[2:6]+" is locked")
 		}, applyAll},

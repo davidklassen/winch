@@ -100,9 +100,6 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 				if p.Handler != nil {
 					markLine(b, indent, "!", " handler "+p.Handler.Handler.FullName()+"\n")
 					for _, hs := range p.Handler.Steps {
-						if hs.PendingAssert {
-							writeStep(b, indent+"    ", hs)
-						}
 						if hs.PendingThen {
 							markLine(b, indent+"    ", "!", " then:"+command(hs.Step.Shown().Then, indent+"        ")+"\n")
 						}
@@ -241,8 +238,8 @@ func WriteNote(out *color.Writer, n Note) {
 	fmt.Fprintf(out, "%s: %s: %s\n", n.Host, kind, secret.Printable(n.Text))
 }
 
-// goneNote names the gate or assert of record c at place that the project no
-// longer has.
+// goneNote names the gate, or the assert of an older winch, of record c at
+// place.
 func goneNote(c protocol.Check, place string) string {
 	if c.Step == 0 {
 		return "a pending health gate of " + place + " matches no gate"
@@ -359,8 +356,6 @@ func writeStep(t *color.Text, indent string, p Planned) {
 	switch {
 	case res.Status == module.Unknown:
 		mark = "?"
-	case p.PendingAssert:
-		mark = "!"
 	case res.Deferred:
 		mark = "*"
 	}

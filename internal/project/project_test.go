@@ -566,8 +566,8 @@ func TestLoadRecipes(t *testing.T) {
 		{name: "unit-in-stage", files: map[string]string{
 			"pipelines/site.yaml": stage("      - unit:\n          name: app.service\n          source: app.service\n"),
 		}},
-		{name: "assert-then", files: map[string]string{
-			"pipelines/site.yaml": stage("      - assert:\n          command: \"true\"\n          message: x\n        then: echo done\n"),
+		{name: "assert", files: map[string]string{
+			"pipelines/site.yaml": stage("      - assert:\n          command: \"true\"\n          message: x\n"),
 		}},
 		{name: "confirm-access-not-service", files: map[string]string{
 			"pipelines/site.yaml": stage("      - file:\n          path: /a\n          content: a\n        confirm_access: true\n"),
@@ -580,9 +580,6 @@ func TestLoadRecipes(t *testing.T) {
 		}},
 		{name: "reboot-without-if-required", files: map[string]string{
 			"pipelines/site.yaml": stage("      - reboot:\n          timeout: 60\n"),
-		}},
-		{name: "assert-notify", files: map[string]string{
-			"recipes/nginx/recipe.yaml": recipe("  - assert:\n      command: \"true\"\n      message: x\n    notify: reload\nhandlers:\n  reload:\n    - service:\n        name: nginx\n        reloaded: true\n"),
 		}},
 		{name: "service-handler-nothing", files: map[string]string{
 			"recipes/nginx/recipe.yaml": recipe("  - pkg:\n      name: nginx\n    notify: reload\nhandlers:\n  reload:\n    - service:\n        name: nginx\n"),

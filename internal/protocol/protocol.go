@@ -72,11 +72,8 @@ type Step struct {
 	Notify []string `json:"notify,omitempty"`
 	// Then is the then of the step, which the helper records before an
 	// apply changes something.
-	Then *Then `json:"then,omitempty"`
-	// Check is the record of an assert step. The helper adds it when the
-	// command fails, and removes it when the command exits 0.
-	Check *Check `json:"check,omitempty"`
-	Guard Guard  `json:"guard,omitzero"`
+	Then  *Then `json:"then,omitempty"`
+	Guard Guard `json:"guard,omitzero"`
 	// Masked is the masked new content of a step whose content reads a
 	// secret. A step that writes content without it drops the record.
 	Masked *string `json:"masked,omitempty"`
@@ -168,10 +165,9 @@ type Exec struct {
 	Timeout time.Duration `json:"timeout,omitempty"`
 }
 
-// Check is a record of a pending health gate or assert: the place of its
-// stage or step. Step counts from 1 in the steps of the recipe, of its
-// handler, or of the stage of the pipeline for a step of a stage. It is 0 for
-// the gate of a stage.
+// Check is a record of a pending health gate: its pipeline and stage. A record
+// with a recipe, a handler, or a step is of an assert, a module that winch no
+// longer has.
 type Check struct {
 	Recipe   string `json:"recipe,omitempty"`
 	Pipeline string `json:"pipeline,omitempty"`

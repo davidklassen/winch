@@ -1,18 +1,14 @@
 stdout:
 web1
-  checks
-    * assert systemctl is-active nginx
   base
     ? cmd apt-get clean
 
 web2
-  checks
-    * assert systemctl is-active nginx
   build
     + cmd make install
         user: www-data
         dir: /srv/app
 
-3 hosts: 1 to change, 1 unchanged, 1 unknown
-plan c090b8dbf74b5f7b
+2 hosts: 1 to change, 0 unchanged, 1 unknown
+plan 8a7a22074b99d535
 stderr:

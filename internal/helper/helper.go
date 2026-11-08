@@ -90,7 +90,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 			thens = records{dir: filepath.Join(dir, "then"), project: h.Project, what: "pending then records"}
 			downloads = downloadRecords(filepath.Join(dir, "downloads", h.Project))
 			certbotHooks = records{dir: filepath.Join(dir, "certbot-hooks"), project: h.Project, what: "pending certbot hooks"}
-			checks = records{dir: filepath.Join(dir, "checks"), project: h.Project, what: "pending health gates and asserts"}
+			checks = records{dir: filepath.Join(dir, "checks"), project: h.Project, what: "pending health gates"}
 			rb = &rollbacks{dir: filepath.Join(dir, "rollback"), project: h.Project, self: self, downloads: downloads, masked: maskedRecords{dir: filepath.Join(dir, "masked", h.Project)}}
 			if err == nil {
 				loginUser, err = module.LookupLogin(login.LoginUID)
@@ -150,9 +150,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		case req.Method == "health":
 			err = runHealth(ctx, req.Params, checks)
 		case req.Method == "check":
-			result, err = step(ctx, req.Params, false, login, loginUser, handlers, thens, downloads, certbotHooks, checks, rb, say)
+			result, err = step(ctx, req.Params, false, login, loginUser, handlers, thens, downloads, certbotHooks, rb, say)
 		case req.Method == "apply":
-			result, err = step(ctx, req.Params, true, login, loginUser, handlers, thens, downloads, certbotHooks, checks, rb, say)
+			result, err = step(ctx, req.Params, true, login, loginUser, handlers, thens, downloads, certbotHooks, rb, say)
 		case req.Method == "confirm":
 			err = confirmStep(ctx, rb, handlers, thens)
 		case req.Method == "rollback":
@@ -417,10 +417,10 @@ func (s sayer) Warn(text string) { _ = s.enc.Encode(protocol.Response{ID: s.id, 
 func (s sayer) Progress(text string) { _ = s.enc.Encode(protocol.Response{ID: s.id, Progress: text}) }
 
 // step checks a step. With apply, it then records the handlers that the step
-// notifies and its then, and makes the changes the check found, or runs a
-// deferred step. When the changes fail, it removes the records that it added.
+// notifies and its then, and makes the changes the check found. When the
+// changes fail, it removes the records that it added.
 // After a successful unpack, it records the checksum, owner, and group.
-func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, loginUser *module.Login, handlers, thens, downloads, certbotHooks, checks records, rb *rollbacks, say module.Say) (protocol.StepResult, error) {
+func step(ctx context.Context, params json.RawMessage, apply bool, login module.State, loginUser *module.Login, handlers, thens, downloads, certbotHooks records, rb *rollbacks, say module.Say) (protocol.StepResult, error) {
 	var s protocol.Step
 	if err := json.Unmarshal(params, &s); err != nil {
 		return protocol.StepResult{}, fmt.Errorf("decode step: %w", err)
@@ -485,24 +485,8 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		}
 	}
 	out := protocol.StepResult{Result: res, State: s.State}
-	if err != nil || !apply || res.Status == module.OK && !res.Deferred {
+	if err != nil || !apply || res.Status == module.OK {
 		return out, err
-	}
-	// A deferred step changes nothing, so it notifies nothing.
-	if res.Status == module.OK {
-		err := m.Apply(ctx, say)
-		if s.Check == nil {
-			return out, err
-		}
-		line, jerr := json.Marshal(s.Check)
-		if jerr != nil {
-			return out, errors.Join(err, jerr)
-		}
-		if err != nil {
-			_, rerr := checks.add([]string{string(line)})
-			return out, errors.Join(err, rerr)
-		}
-		return out, checks.remove(string(line))
 	}
 	if isCertbot {
 		if hooks := c.HooksToRun(); len(hooks) > 0 {
@@ -778,14 +762,14 @@ func readPending(handlers, thens, checks records) (protocol.Pending, error) {
 		}
 		var c protocol.Check
 		if err := json.Unmarshal([]byte(l), &c); err != nil {
-			return protocol.Pending{}, fmt.Errorf("read the pending health gates and asserts: %s:%d is not a record; delete the file, and the records in it are lost", filepath.Join(checks.dir, checks.project), i+2)
+			return protocol.Pending{}, fmt.Errorf("read the pending health gates: %s:%d is not a record; delete the file, and the records in it are lost", filepath.Join(checks.dir, checks.project), i+2)
 		}
 		p.Checks = append(p.Checks, c)
 	}
 	return p, nil
 }
 
-// checkLine returns the record line of the gate or assert in params.
+// checkLine returns the record line of the gate in params.
 func checkLine(params json.RawMessage) (string, error) {
 	var c protocol.Check
 	if err := json.Unmarshal(params, &c); err != nil {

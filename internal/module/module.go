@@ -46,7 +46,7 @@ const (
 // the target of the symbolic link at the path that the step follows.
 // StartedBy are the active or enabled units that start the unit that a
 // service step stops or disables; the plan needs a step for each. Deferred
-// marks a step that runs during apply without a change, such as an assert.
+// marks a reboot step that an earlier step can require.
 type Result struct {
 	Status  Status   `json:"status"`
 	Action  Action   `json:"action,omitempty"`
@@ -189,7 +189,6 @@ var modules = map[string]struct {
 	new        func() Module
 	text, body string
 }{
-	"assert":   {func() Module { return new(Assert) }, "stop a host when a check command fails", "The plan marks the step with * and runs nothing. An assert runs only on a host that apply changes, or when it is pending. A failed assert stays pending on the host, and the next apply runs it again, also when nothing else changes."},
 	"certbot":  {func() Module { return new(Certbot) }, "get a Let's Encrypt certificate", "The step runs certbot certonly. Renewal stays with certbot's own timer. Install the package certbot in an earlier pkg step. The nginx and apache authenticators also need python3-certbot-nginx or python3-certbot-apache."},
 	"cmd":      {func() Module { return new(Cmd) }, "run a command", "Without creates or unless, the check result is unknown, and apply runs the command each time. A secret in the command does not show in the process list of the host. A program that the command starts with the secret as an argument, such as psql -c, does show it."},
 	"debconf":  {func() Module { return new(Debconf) }, "set a debconf answer", "Only the scripts of a package read its answers. Put the step before the pkg step that installs the package, also when the package comes in as a dependency.\n\nAfter a package loaded the question, as at its install, the check compares type with the type of the question. A select or multiselect value must be one of the choices of the question. A type that differs, or a value that is not a choice, fails the check."},

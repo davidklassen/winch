@@ -1,1 +1,0 @@
-recipes/nginx/recipe.yaml:5:5: an assert changes nothing; it cannot use notify

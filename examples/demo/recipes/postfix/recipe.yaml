@@ -1,9 +1,5 @@
 # Postfix on loopback: it sends mail signed by dkimpy-milter and delivers
 # the mail of the domain to Dovecot.
-vars:
-  # The host that the check of outbound port 25 reaches.
-  postfix_probe_host: gmail-smtp-in.l.google.com
-
 steps:
   - debconf:
       package: postfix
@@ -40,10 +36,6 @@ steps:
       name: postfix
       enabled: true
       running: true
-  - name: Outbound port 25 is open
-    assert:
-      command: !tpl "timeout 10 bash -c '</dev/tcp/$1/25' - {{ quote(vars.postfix_probe_host) }}"
-      message: outbound port 25 is blocked; open it at the provider
 
 handlers:
   reload:

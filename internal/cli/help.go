@@ -227,8 +227,7 @@ order.`,
 hosts one at a time. Without one, or with --batch, ssh asks nothing,
 and winch connects to them in parallel.`,
 			`With --exit-code, plan exits with code 2 when the plan has changes,
-unknown steps, pending handlers, a pending then, or a pending gate or
-assert.`,
+unknown steps, pending handlers, a pending then, or a pending gate.`,
 		},
 		flags: []flagDoc{
 			inventoryFlag,
@@ -306,7 +305,7 @@ intersection, and "!" for exclusion.`,
 that YAML would change, such as mode='"0644"'. A value that YAML
 rejects, such as *x, @x, or [x, is an error that says to quote it.`,
 			`The step runs in a stage named run. Unlike a pipeline step, it can use
-restarted and reloaded. Run rejects assert. Use winch exec for a check.`,
+restarted and reloaded.`,
 			`winch asks only when stdin and stderr are terminals. Without a
 terminal, and without --yes or --check, run prints the plan and exits
 with code 5. Its last line is the command that applies the plan with

@@ -42,9 +42,8 @@ type Conn interface {
 	Pending(ctx context.Context) (protocol.Pending, error)
 	Check(ctx context.Context, name string, m module.Module, st *module.State) (module.Result, error)
 	// Apply records the handlers in notify and then on the host before it
-	// changes something, and the record check of an assert that fails. It
-	// guards the step against a lockout as guard says.
-	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, check *protocol.Check, guard protocol.Guard, masked *string) (module.Result, error)
+	// changes something. It guards the step against a lockout as guard says.
+	Apply(ctx context.Context, name string, m module.Module, st *module.State, notify []string, then *protocol.Then, guard protocol.Guard, masked *string) (module.Result, error)
 	// Access opens a second SSH connection and runs a command that needs the
 	// login and sudo.
 	Access(ctx context.Context) error
@@ -58,9 +57,9 @@ type Conn interface {
 	Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error)
 	// Handled removes the record of a handler that succeeded.
 	Handled(ctx context.Context, handler string) error
-	// Pend records a pending health gate or assert.
+	// Pend records a pending health gate.
 	Pend(ctx context.Context, c protocol.Check) error
-	// Passed removes the record of a health gate or assert.
+	// Passed removes the record of a health gate.
 	Passed(ctx context.Context, c protocol.Check) error
 	// DropThen removes the record of a then that matches no step.
 	DropThen(ctx context.Context, t protocol.Then) error
@@ -135,7 +134,7 @@ type Plan struct {
 	// reported them.
 	Destinations map[string]protocol.Destination
 	Warnings     []*yamlx.Error
-	// gone are the records of each host for gates and asserts that the
+	// gone are the records of each host for gates, and of asserts, that the
 	// pipeline no longer has.
 	gone map[string][]protocol.Check
 	// goneThens are the then records of each host that match no step.
@@ -200,11 +199,6 @@ type Planned struct {
 	// ThenRuns is true on the last element of a step whose then the plan
 	// expects to run: an element changes, or the then is pending.
 	ThenRuns bool
-	// Check is the record of an assert step, or nil.
-	Check *protocol.Check
-	// PendingAssert is true on an assert step whose record is pending on the
-	// host.
-	PendingAssert bool
 	// Address is the scope, the number of the step in its list, and the loop
 	// index: nginx#3[0]. A slot has the full name of its handler.
 	Address string
@@ -236,9 +230,9 @@ type Slot struct {
 }
 
 // shows reports whether the plan shows p as something that apply changes or
-// runs: a change, an unknown step, a handler, a then, or a pending assert.
+// runs: a change, an unknown step, a handler, or a then.
 func (p Planned) shows() bool {
-	return p.Result.Status == module.Change || p.Result.Status == module.Unknown || p.Handler != nil && p.Handler.Runs || p.ThenRuns || p.PendingAssert
+	return p.Result.Status == module.Change || p.Result.Status == module.Unknown || p.Handler != nil && p.Handler.Runs || p.ThenRuns
 }
 
 func (h HostPlan) changes() bool {
@@ -272,7 +266,7 @@ type hostRun struct {
 	notified map[string]bool
 	// thens are the pending then records.
 	thens []*pendingThen
-	// checks are the pending gates and asserts.
+	// checks are the pending gates.
 	checks map[protocol.Check]bool
 	// pending are the records that the host reported at the first contact.
 	pending *protocol.Pending
@@ -747,7 +741,6 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 					pending := hr.matchThen(hs.Then, s.Runs)
 					s.Steps[j].PendingThen = s.Runs && pending
 				}
-				s.Steps[j].PendingAssert = s.Runs && hs.Check != nil && hr.checks[*hs.Check]
 			}
 			continue
 		}
@@ -800,7 +793,6 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		}
 		hr.dropCreatedParents(p.Step.Args, &steps[i].Result)
 		hr.trackUnits(p.Step.Args, steps[i].Result, where)
-		steps[i].PendingAssert = p.Check != nil && hr.checks[*p.Check]
 		if steps[i].Result.Status != module.OK {
 			if err := hr.leftOut(p.Step, where); err != nil {
 				return nil, err
@@ -1573,16 +1565,16 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 				late[h] = true
 			}
 		}
-		then, check := thenRecord(steps, place), checkRecord(st, place)
+		then := thenRecord(steps, place)
 		for i, s := range steps {
-			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify, Then: then, Check: check, Address: address(addr, st, i)})
+			out = append(out, Planned{Step: s, In: in, Last: i == len(steps)-1, Notify: notify, Then: then, Address: address(addr, st, i)})
 		}
 		return nil
 	}
 	for i := range stage.Steps {
 		st := &stage.Steps[i]
 		if st.Recipe == nil {
-			if err := add(hr.env, *st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1), protocol.Check{Pipeline: stage.Pipeline, Stage: stage.Name, Step: i + 1}); err != nil {
+			if err := add(hr.env, *st, nil, fmt.Sprintf("%s#%d", stage.Name, i+1), protocol.Check{Pipeline: stage.Pipeline, Stage: stage.Name}); err != nil {
 				return nil, err
 			}
 			continue
@@ -1596,7 +1588,7 @@ func evaluate(stage *project.Stage, hr *hostRun) ([]Planned, error) {
 		}
 		env := hr.env.For(st)
 		for j, rs := range st.Recipe.Steps {
-			if err := add(env, rs, st, fmt.Sprintf("%s#%d", st.Recipe.Name, j+1), protocol.Check{Recipe: st.Recipe.Name, Step: j + 1}); err != nil {
+			if err := add(env, rs, st, fmt.Sprintf("%s#%d", st.Recipe.Name, j+1), protocol.Check{Recipe: st.Recipe.Name}); err != nil {
 				return nil, err
 			}
 		}
@@ -1684,10 +1676,9 @@ func handlerSlot(h *project.Handler, env *project.Env, in *project.Step, hr *hos
 			return nil, err
 		}
 		addr := fmt.Sprintf("%s#%d", h.FullName(), j+1)
-		place.Step = j + 1
-		then, check := thenRecord(steps, place), checkRecord(hs, place)
+		then := thenRecord(steps, place)
 		for i, s := range steps {
-			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1, Then: then, Check: check, Address: address(addr, hs, i)})
+			slot.Steps = append(slot.Steps, Planned{Step: s, In: in, Last: i == len(steps)-1, Then: then, Address: address(addr, hs, i)})
 		}
 	}
 	return slot, nil
@@ -1733,15 +1724,6 @@ func thenRecord(steps []project.Step, place protocol.Check) *protocol.Then {
 		t.Mains = append(t.Mains, sum(st.Args.Main()))
 	}
 	return t
-}
-
-// checkRecord is the record of the assert step st at place, or nil for
-// another step.
-func checkRecord(st project.Step, place protocol.Check) *protocol.Check {
-	if st.Module != "assert" {
-		return nil
-	}
-	return &place
 }
 
 // owners are the pipelines and recipes of the project, which own the records
@@ -1843,51 +1825,21 @@ func (o owners) goneThens(host string, hr *hostRun) []protocol.Then {
 	return gone
 }
 
-// goneChecks returns the records of gates and asserts that the project no
-// longer has: the gate of a stage without health, an assert whose place holds
-// no assert step, and a record whose recipe, pipeline, stage, or handler is
-// gone. Only the stages of pl count for gates and steps.
+// goneChecks returns the records that match no gate: the record of an
+// assert, the gate of a stage without health, and a gate whose pipeline or
+// stage is gone. Only the stages of pl count for gates.
 func (o owners) goneChecks(records []protocol.Check) []protocol.Check {
 	var gone []protocol.Check
 	for _, c := range records {
-		if !o.has(c) {
-			gone = append(gone, c)
-			continue
-		}
-		var steps []project.Step
-		var handlers []*project.Handler
 		switch {
-		case c.Recipe != "":
-			r := o.recipes[c.Recipe]
-			if r == nil {
-				continue
-			}
-			steps, handlers = r.Steps, r.Handlers
+		case c != (protocol.Check{Pipeline: c.Pipeline, Stage: c.Stage}):
+			gone = append(gone, c)
 		case c.Pipeline == o.pl.Name:
 			i := slices.IndexFunc(o.pl.Stages, func(s project.Stage) bool { return s.Name == c.Stage })
-			if i < 0 {
+			if i < 0 || o.pl.Stages[i].Health == nil {
 				gone = append(gone, c)
-				continue
 			}
-			if c.Step == 0 {
-				if o.pl.Stages[i].Health == nil {
-					gone = append(gone, c)
-				}
-				continue
-			}
-			steps, handlers = o.pl.Stages[i].Steps, o.pl.Stages[i].Handlers
-		default:
-			continue
-		}
-		if c.Handler != "" {
-			i := slices.IndexFunc(handlers, func(h *project.Handler) bool { return h.Name == c.Handler })
-			if i < 0 {
-				gone = append(gone, c)
-				continue
-			}
-			steps = handlers[i].Steps
-		}
-		if c.Step < 1 || c.Step > len(steps) || steps[c.Step-1].Module != "assert" {
+		case !o.has(c):
 			gone = append(gone, c)
 		}
 	}

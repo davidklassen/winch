@@ -819,7 +819,7 @@ func guard(stage *project.Stage, p Planned) protocol.Guard {
 // checks the access. After a changed reboot step, it reboots the host.
 func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned, g protocol.Guard) (module.Result, error) {
 	a.conn.Mask(p.hostText)
-	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, p.Check, g, p.Step.MaskedContent())
+	res, err := a.conn.Apply(context.WithoutCancel(ctx), p.Step.Module, p.Step.Args, &a.state, p.Notify, p.Then, g, p.Step.MaskedContent())
 	a.conn.Mask(a.hide)
 	if res.Failed != "" {
 		err = errors.New(res.Failed)

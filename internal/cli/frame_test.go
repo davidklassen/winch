@@ -11,18 +11,15 @@ import (
 
 // spec: CLI/Messages ("A line has one prefix"; notes); CLI/JSON output
 func TestFrame(t *testing.T) {
-	assertStep := `stages:
+	cmdStep := `stages:
   - name: base
     hosts: web1
     steps:
       - file:
           path: /etc/motd
           content: "hello\n"
-      - assert:
+      - cmd:
           command: probe
-          message: |-
-            port 25 is closed
-            open it in the firewall
 `
 	firewallStep := `stages:
   - name: base
@@ -41,8 +38,8 @@ func TestFrame(t *testing.T) {
 	}{
 		{name: "project-error", pipeline: "stages:\n  - name: base\n    hosts: all\n    steps:\n      - fiel: {}\n", args: []string{"validate"}},
 		{name: "command-line-error", pipeline: motd, args: []string{"run", "web1"}},
-		{name: "host-error-lines", pipeline: assertStep, setup: func(h *fakehost.Hosts) {
-			h.FailCommandWith("web1", "probe", "nc: port 25: Connection refused")
+		{name: "host-error-lines", pipeline: cmdStep, setup: func(h *fakehost.Hosts) {
+			h.FailCommandWith("web1", "probe", "port 25 is closed\nnc: port 25: Connection refused")
 		}, args: []string{"apply", "site", "--yes"}},
 		{name: "note", pipeline: firewallStep, setup: func(h *fakehost.Hosts) {
 			h.SetNote("web1", "/etc/motd", "the certificate a expires on 2026-11-20; certbot renew --dry-run --cert-name a shows why certbot does not renew it", true)

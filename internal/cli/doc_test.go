@@ -113,15 +113,6 @@ func TestDocHealthPassed(t *testing.T) {
 	}
 }
 
-// spec: Modules/assert
-func TestDocAssert(t *testing.T) {
-	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "assert")
-	want := "An assert runs only on a host that apply changes, or when it is pending."
-	if out := strings.Join(strings.Fields(r.out), " "); !strings.Contains(out, want) {
-		t.Errorf("winch doc assert lacks %q:\n%s", want, r.out)
-	}
-}
-
 // spec: Running a pipeline/Failures
 func TestDocPipelineFailures(t *testing.T) {
 	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "pipeline")

@@ -98,7 +98,7 @@ func TestJSON(t *testing.T) {
 			return vmtest.WriteProject(t, map[string]string{
 				"winch.yaml":            "name: acme\ninventory: test\n",
 				"inventories/test.yaml": "hosts:\n  web1: {}\n",
-				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - assert:\n          command: probe\n          message: x\n      - cmd:\n          command: apt-get clean\n",
+				"pipelines/site.yaml":   "stages:\n  - name: base\n    hosts: all\n    steps:\n      - cmd:\n          command: apt-get clean\n",
 			})
 		}, args: []string{"plan", "site", "--json", "--exit-code"}},
 		{name: "plan-no-pipeline", dir: jsonProject, args: []string{"plan", "--json"}},

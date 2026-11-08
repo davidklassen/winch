@@ -1291,7 +1291,7 @@ func TestGoneThenScopes(t *testing.T) {
 	}
 }
 
-// spec: Steps; Modules/assert; Running a pipeline/Health gates; Running a pipeline/Apply
+// spec: Steps; Running a pipeline/Health gates; Running a pipeline/Apply; State on the host
 func TestGoneRecordWithoutChange(t *testing.T) {
 	files := map[string]string{
 		"winch.yaml":              "name: acme\ninventory: test\n",
@@ -1381,7 +1381,7 @@ func TestGoneRecordWithoutChange(t *testing.T) {
 func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 	files := maps.Clone(handlerFiles)
 	files["pipelines/mail.yaml"] = "stages:\n  - name: mx\n    hosts: all\n    steps:\n      - recipe: mail\n    handlers:\n      flush:\n        - cmd:\n            command: postqueue -f\n"
-	files["recipes/mail/recipe.yaml"] = "steps:\n  - assert:\n      command: \"true\"\n      message: no\nhandlers:\n  reload:\n    - cmd:\n        command: postfix reload\n"
+	files["recipes/mail/recipe.yaml"] = "steps:\n  - file:\n      path: /etc/mail.conf\n      content: mail\nhandlers:\n  reload:\n    - cmd:\n        command: postfix reload\n"
 	// The stage apps with the recipe app is left out, and the recipe mail
 	// runs only in another pipeline.
 	stays := records{
@@ -1392,20 +1392,23 @@ func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 			{Recipe: "mail", Handler: "reload", Module: "cmd", Mains: mains("x")},
 			{Pipeline: "mail", Stage: "mx", Module: "file", Mains: mains("/etc/mx.old")},
 		},
-		checks: []protocol.Check{{Recipe: "mail", Step: 1}},
+		checks: []protocol.Check{{Pipeline: "mail", Stage: "mx"}},
 	}
 	// These name a handler, a stage, or a pipeline that the project does not
-	// have.
+	// have, or are of an assert.
 	known := records{
 		handlers: []string{"mail.gone", "mail\tmx\tgone", "mail\told\tflush"},
 		thens:    []protocol.Then{{Recipe: "mail", Handler: "gone", Module: "cmd", Mains: mains("x")}},
-		checks:   []protocol.Check{{Pipeline: "mail", Stage: "old", Step: 1}},
+		checks:   []protocol.Check{{Pipeline: "mail", Stage: "old", Step: 1}, {Recipe: "mail", Step: 1}, {Pipeline: "mail", Stage: "mx", Step: 1}, {Recipe: "old", Step: 1}},
 	}
 	knownNotes := "web1: note: a pending handler mail.gone matches no handler and will not run\n" +
 		"web1: note: a pending handler mx.gone of pipeline mail matches no handler and will not run\n" +
 		"web1: note: a pending handler old.flush of pipeline mail matches no handler and will not run\n" +
 		"web1: note: a pending then of a cmd step in handler mail.gone matches no step and will not run\n" +
-		"web1: note: a pending assert of stage old of pipeline mail step 1 matches no assert and will not run\n"
+		"web1: note: a pending assert of stage old of pipeline mail step 1 matches no assert and will not run\n" +
+		"web1: note: a pending assert of recipe mail step 1 matches no assert and will not run\n" +
+		"web1: note: a pending assert of stage mx of pipeline mail step 1 matches no assert and will not run\n" +
+		"web1: note: a pending assert of recipe old step 1 matches no assert and will not run\n"
 	stayNotes := "web1: note: a pending handler app.restart waits until its recipe runs on this host\n" +
 		"web1: note: a pending handler mail.reload waits until its recipe runs on this host\n" +
 		"web1: note: a pending handler mx.flush of pipeline mail waits until its stage runs on this host\n"
@@ -1413,7 +1416,7 @@ func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 	unknown := records{
 		handlers: []string{"old.reload", "old\tweb\treload"},
 		thens:    []protocol.Then{{Recipe: "old", Module: "file", Mains: mains("/etc/old")}},
-		checks:   []protocol.Check{{Recipe: "old", Step: 1}, {Pipeline: "old", Stage: "web"}},
+		checks:   []protocol.Check{{Pipeline: "old", Stage: "web"}},
 	}
 	for _, tc := range []struct {
 		name  string
@@ -1456,6 +1459,8 @@ func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 					"web1: note: a pending then of a cmd step in handler mail.gone matches no step and will not run\n" +
 					"web1: note: a pending then of a file step in recipe old matches no step and will not run\n" +
 					"web1: note: a pending assert of stage old of pipeline mail step 1 matches no assert and will not run\n" +
+					"web1: note: a pending assert of recipe mail step 1 matches no assert and will not run\n" +
+					"web1: note: a pending assert of stage mx of pipeline mail step 1 matches no assert and will not run\n" +
 					"web1: note: a pending assert of recipe old step 1 matches no assert and will not run\n" +
 					"web1: note: a pending health gate of stage web of pipeline old matches no gate and will not run\n" +
 					stayNotes
@@ -1476,7 +1481,7 @@ func TestPendingRecordsOfUnreachedRecipes(t *testing.T) {
 				t.Errorf("then records after apply = %v, want %v", got, kept.thens)
 			}
 			if got := h.ChecksOf("web1"); !reflect.DeepEqual(got, kept.checks) {
-				t.Errorf("assert records after apply = %v, want %v", got, kept.checks)
+				t.Errorf("gate records after apply = %v, want %v", got, kept.checks)
 			}
 		})
 	}
