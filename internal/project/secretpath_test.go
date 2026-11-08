@@ -495,6 +495,41 @@ func TestSecretAtLayoutErrors(t *testing.T) {
 	})
 }
 
+// spec: Variables/Secrets (winch secret generate, paths)
+func TestSecretAtUnread(t *testing.T) {
+	k := newKey(t)
+	head := "name: acme\nrecipients:\n  - " + k.id.Recipient().String() + "\n"
+	hint := "; write the step that reads it, or give it a default first"
+	tests := []struct {
+		name string
+		// cfg follows head in winch.yaml.
+		cfg, recipe, path, want string
+	}{
+		{"a default", "", "", "vars.john_password", "nothing reads vars.john_password" + hint},
+		{"an inventory", "", "", "inventories.test.groups.all.vars.john_password", "nothing reads vars.john_password" + hint},
+		{"a recipe in its file", "", "steps: []\n", "recipes.mail.vars.mail_db_password", "nothing reads vars.mail_db_password" + hint + " in recipes/mail/recipe.yaml"},
+		{"a recipe in winch.yaml", "recipes:\n  mail:\n    steps: []\n", "", "recipes.mail.vars.mail_db_password", "nothing reads vars.mail_db_password" + hint + " in winch.yaml"},
+		{"a recipe default without the prefix", "", "steps: []\n", "recipes.mail.vars.db_password", "cannot write recipes.mail.vars.db_password: a variable of recipe mail starts with mail_"},
+		{"an unknown recipe", "", "steps: []\n", "recipes.mial.vars.mial_pw", `unknown recipe "mial"; did you mean "mail"?`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := map[string]string{
+				"winch.yaml":            head + tt.cfg,
+				"inventories/test.yaml": "hosts:\n  web1:\n",
+				"pipelines/site.yaml":   readsPipeline("pw"),
+			}
+			if tt.recipe != "" {
+				files["recipes/mail/recipe.yaml"] = tt.recipe
+			}
+			dir := writeProject(t, files)
+			if _, err := writeSecret(dir, tt.path); err == nil || err.Error() != tt.want {
+				t.Errorf("err %v; want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 // spec: Variables/Secrets (winch secret generate)
 func TestSecretAtBrokenRecipe(t *testing.T) {
 	k := newKey(t)
@@ -519,8 +554,8 @@ func TestSecretAtReadInBrokenRecipe(t *testing.T) {
 		"recipes/db/recipe.yaml": "steps:\n  - file:\n      path: /x\n      content: !expr vars.db_password\n  - file: {path: /y\n",
 	})
 	_, err := writeSecret(dir, "inventories.test.groups.all.vars.db_password")
-	if err == nil || !strings.Contains(err.Error(), `nothing reads vars.db_password`) || !strings.Contains(err.Error(), "recipes/db/recipe.yaml:4:1: did not find expected") {
-		t.Errorf("err %v; want the unknown variable and the parse error", err)
+	if err == nil || !strings.Contains(err.Error(), "nothing reads vars.db_password\n") || !strings.Contains(err.Error(), "recipes/db/recipe.yaml:4:1: did not find expected") {
+		t.Errorf("err %v; want the unknown variable without a hint, and the parse error", err)
 	}
 }
 
