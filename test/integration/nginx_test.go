@@ -82,3 +82,39 @@ func TestNginx(t *testing.T) {
 		t.Errorf("second plan: exit %d, stdout %q", r.Code, r.Stdout)
 	}
 }
+
+// spec: Running a pipeline/Plan
+func TestNginxDefaultSite(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "nginx-default")
+	dir := vmtest.WriteProject(t, map[string]string{
+		"winch.yaml":            "name: demo\ninventory: test\n",
+		"inventories/test.yaml": "hosts:\n  nginx-default: {}\n",
+		"pipelines/site.yaml": `stages:
+  - name: web
+    hosts: all
+    steps:
+      - pkg: {name: nginx}
+      - link: {path: /etc/nginx/sites-enabled/default, absent: true}
+`,
+	})
+
+	r := lab.Winch(t, dir, "plan", "site")
+	note := "nginx-default: note: /etc/nginx/sites-enabled/default does not exist yet; a package that web#1 pkg nginx installs can create it, and apply then removes it\n"
+	if r.Code != 0 || !strings.Contains(r.Stderr, note) {
+		t.Fatalf("plan: exit %d, stderr %q, want the note %q", r.Code, r.Stderr, note)
+	}
+
+	r = lab.Winch(t, dir, "apply", "site", "--yes")
+	if want := "nginx-default: web: - link /etc/nginx/sites-enabled/default\n"; r.Code != 0 || !strings.Contains(r.Stdout, want) {
+		t.Fatalf("apply: exit %d, stdout %q, want %q", r.Code, r.Stdout, want)
+	}
+	if out, err := vm.Run(t.Context(), "test ! -e /etc/nginx/sites-enabled/default && test ! -L /etc/nginx/sites-enabled/default"); err != nil {
+		t.Errorf("the default site is still linked: %v %s", err, out)
+	}
+
+	r = lab.Winch(t, dir, "plan", "site")
+	if r.Code != 0 || !unchanged(r.Stdout, 1) || r.Stderr != "" {
+		t.Errorf("second plan: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	}
+}

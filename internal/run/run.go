@@ -788,7 +788,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		hr.trackRemoved(p.Step.Args)
 		hr.trackUnitFile(p.Step.Args, steps[i].Result)
 		hr.dropCreated(&steps[i].Result)
-		steps[i].missing = hr.missingNotes(h.Name, steps[i].Step, steps[i].Result.Missing)
+		steps[i].missing = hr.missingNotes(h.Name, steps[i].Step, steps[i].Result)
 		if err := hr.order(p.Step, steps[i].Result, where); err != nil {
 			return nil, err
 		}
@@ -960,18 +960,23 @@ func (hr *hostRun) dropCreated(res *module.Result) {
 }
 
 // missingNotes returns the notes on the missing users, groups, and dirs of
-// step st on host. A package that an earlier pkg step installs can create
-// them; without such a step, each is a warning.
-func (hr *hostRun) missingNotes(host string, st project.Step, missing []string) []Note {
+// step st on host, and on the missing path of an absent file, dir, or link
+// step. A package that an earlier pkg step installs can create them; without
+// such a step, each missing user, group, or dir is a warning.
+func (hr *hostRun) missingNotes(host string, st project.Step, res module.Result) []Note {
 	installer := ""
 	for _, e := range hr.pkgs {
 		if !e.pkg.Absent && len(e.installs) > 0 {
 			installer = e.where
 		}
 	}
-	needs, shown := needsOf(st.Args), needsOf(st.Shown().Args)
+	args := st.Shown().Args
 	var notes []Note
-	for _, m := range missing {
+	if p := absentPath(args); p != "" && installer != "" && res.Status == module.OK {
+		notes = append(notes, Note{host, fmt.Sprintf("%s does not exist yet; a package that %s installs can create it, and apply then removes it", p, installer), false})
+	}
+	needs, shown := needsOf(st.Args), needsOf(args)
+	for _, m := range res.Missing {
 		hr.reported[m] = true
 		kind, _, _ := strings.Cut(m, " ")
 		// The owner of a stock file comes from its package, not from the step.
@@ -986,6 +991,24 @@ func (hr *hostRun) missingNotes(host string, st project.Step, missing []string) 
 		}
 	}
 	return notes
+}
+
+func absentPath(m module.Module) string {
+	switch m := m.(type) {
+	case *module.File:
+		if m.Absent {
+			return m.Path
+		}
+	case *module.Dir:
+		if m.Absent {
+			return m.Path
+		}
+	case *module.Link:
+		if m.Absent {
+			return m.Path
+		}
+	}
+	return ""
 }
 
 // repo fails a repo step whose source an earlier repo step of the host has.
@@ -1457,19 +1480,11 @@ func (hr *hostRun) newText(st project.Step, res *module.Result) {
 type sourceText struct{ text, reason string }
 
 func (hr *hostRun) trackRemoved(m module.Module) {
+	if p := absentPath(m); p != "" {
+		hr.removed = append(hr.removed, p)
+		return
+	}
 	switch m := m.(type) {
-	case *module.File:
-		if m.Absent {
-			hr.removed = append(hr.removed, m.Path)
-		}
-	case *module.Dir:
-		if m.Absent {
-			hr.removed = append(hr.removed, m.Path)
-		}
-	case *module.Link:
-		if m.Absent {
-			hr.removed = append(hr.removed, m.Path)
-		}
 	case *module.Unit:
 		if m.Absent {
 			hr.removed = append(hr.removed, m.Path())
