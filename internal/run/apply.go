@@ -236,6 +236,9 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			o.Failed[name] = err
 			delete(o.Changed, name)
 			rep.Host(HostEvent{Phase: "apply", Host: name, Status: hostStatus(err), Error: err.Error()})
+			if a := runs[name]; a != nil && a.passed {
+				rep.Access(name, "")
+			}
 		}
 	}
 	for si, sp := range plan.Stages {
@@ -421,18 +424,22 @@ type hostApply struct {
 	conn Conn
 	// rollback is the plan of the rollback of an earlier run, until it runs.
 	rollback []string
+	// passed is true when the access check after the run passed on a host
+	// that failed. Apply reports it after the error of the host.
+	passed bool
 }
 
 // finish ends the run of the host with the error err of the run. When the
 // run changed the host, it runs the access check after the run first.
 func (a *hostApply) finish(ctx context.Context, changed bool, err error) error {
+	passed := false
 	if changed {
 		a.progress.Busy(a.host, "access check")
 		// The access check returns context.Canceled after a second Ctrl-C.
 		aerr := a.access(context.WithoutCancel(ctx), time.Time{})
 		switch {
 		case aerr == nil:
-			a.rep.Access(a.host, "")
+			passed = true
 		case !errors.Is(aerr, context.Canceled):
 			aerr = fmt.Errorf("the access check after the run failed: %w", aerr)
 			if err != nil {
@@ -441,7 +448,12 @@ func (a *hostApply) finish(ctx context.Context, changed bool, err error) error {
 			err = aerr
 		}
 	}
-	return errors.Join(err, a.close())
+	err = errors.Join(err, a.close())
+	if passed && err == nil {
+		a.rep.Access(a.host, "")
+	}
+	a.passed = passed && err != nil
+	return err
 }
 
 func (a *hostApply) close() error {
