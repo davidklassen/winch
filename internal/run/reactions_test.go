@@ -498,15 +498,6 @@ func TestChangeAfterReaction(t *testing.T) {
     steps:
       - recipe: app
 `, "web1: app: file /etc/nginx/sites-available/app: app#1 changes /etc/nginx/sites-available/app after nginx#2 reacts to it; add a step with on_change after app#1"},
-		{"a then", `stages:
-  - name: web
-    hosts: all
-    steps:
-      - dir:
-          path: /etc/nginx/sites-available
-        then: nginx -t
-      - recipe: app
-`, "web1: app: file /etc/nginx/sites-available/app: app#1 changes /etc/nginx/sites-available/app after the then of web#1 reacts to it; add a step with on_change after app#1"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := loadWeb1(t, map[string]string{
@@ -1110,4 +1101,74 @@ func TestCmdChangesWithoutAccessPath(t *testing.T) {
 	if want := []string{"cmd make build", "app restart", "access"}; !slices.Equal(h.Log["web1"], want) {
 		t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
 	}
+}
+
+// spec: Reactions (then reacts only to its own step)
+func TestThenReactsOnlyToItsStep(t *testing.T) {
+	for _, tt := range []struct{ name, steps string }{
+		{"dir and a file in it", `      - dir:
+          path: /srv/app
+        then: echo app
+      - file:
+          path: /srv/app/a.conf
+          content: "a\n"
+`},
+		{"two pkg steps", `      - pkg:
+          name: nginx
+        then: echo nginx
+      - pkg:
+          name: curl
+`},
+		{"two user steps", `      - user:
+          name: deploy
+        then: echo deploy
+      - user:
+          name: backup
+`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := loadWeb1(t, map[string]string{"pipelines/site.yaml": "stages:\n  - name: web\n    hosts: all\n    steps:\n" + tt.steps})
+			plan := run.MakePlan(context.Background(), p, fakehost.New().Connector(), run.Options{})
+			if err := plan.Failed["web1"]; err != nil {
+				t.Errorf("plan error %v, want none", err)
+			}
+		})
+	}
+	t.Run("a change of another step runs no then", func(t *testing.T) {
+		p := loadWeb1(t, map[string]string{"pipelines/site.yaml": `stages:
+  - name: web
+    hosts: all
+    steps:
+      - file:
+          path: /srv/app/a.conf
+          content: "a\n"
+      - dir:
+          path: /srv/app
+        then: echo before
+      - file:
+          path: /srv/app/b.conf
+          content: "b\n"
+      - dir:
+          path: /srv/app
+        then: echo after
+`})
+		h := fakehost.New()
+		h.SetFile("web1", "/srv/app", "")
+		plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+		var out, errOut bytes.Buffer
+		plan.Write(plain(&out), plain(&errOut))
+		if strings.Contains(out.String(), "then:") {
+			t.Errorf("the plan runs a then:\n%s", out.String())
+		}
+		ok, got := applyAll(t, p, h)
+		if !ok {
+			t.Fatalf("apply failed:\n%s", got)
+		}
+		if want := []string{"access"}; !slices.Equal(h.Log["web1"], want) {
+			t.Errorf("web1 ran %q, want %q", h.Log["web1"], want)
+		}
+		if r := h.ReactOf("web1"); len(r) != 0 {
+			t.Errorf("records = %v, want none", r)
+		}
+	})
 }

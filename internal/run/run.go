@@ -381,8 +381,7 @@ func (hr *hostRun) matchReact(r protocol.React, run bool) bool {
 }
 
 // reactor is a step with on_change, or the then of a step: the paths that it
-// reacts to, and its record. then is the step of a then; such a reactor
-// comes after all elements of its step.
+// reacts to, and its record. A then reacts only to the elements of its step.
 type reactor struct {
 	onChange []string
 	record   protocol.React
@@ -395,8 +394,8 @@ type reactor struct {
 	guarded     bool
 }
 
-// after reports whether r comes after the elements of the step n.
-func (r reactor) after(n int) bool { return r.step > n || r.then && r.step == n }
+// reacts reports whether r reacts to a change of the step n.
+func (r reactor) reacts(n int) bool { return r.then && r.step == n || !r.then && r.step > n }
 
 // changeAt is a path that a step changes, with the count of changed steps up
 // to that step.
@@ -865,8 +864,10 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 			continue
 		}
 		steps[i].PendingThen = hr.matchReact(p.thenRecord(), true)
-		_, _, hit := reaction(hr.changed, p.thenPaths)
-		steps[i].ThenRuns = hit || steps[i].PendingThen
+		steps[i].ThenRuns = steps[i].PendingThen
+		for j := i; j >= 0 && steps[j].step == p.step; j-- {
+			steps[i].ThenRuns = steps[i].ThenRuns || steps[j].Result.Status != module.OK
+		}
 	}
 	return steps, nil
 }
@@ -911,7 +912,7 @@ func afterStart(st project.Step, started map[string]int, at int) project.Step {
 func (hr *hostRun) changes(p Planned, where string) error {
 	for _, path := range p.paths {
 		for _, r := range hr.reactors {
-			if r.step < p.step && !r.stage.Skipped && coveredBy(r.onChange, path) != "" {
+			if !r.then && r.step < p.step && !r.stage.Skipped && coveredBy(r.onChange, path) != "" {
 				return fmt.Errorf("%s: %s changes %s after %s reacts to it; add a step with on_change after %[2]s", where, baseAddress(p), path, r.name)
 			}
 		}
@@ -952,7 +953,7 @@ func (hr *hostRun) link(host string, order []*Planned) {
 	}
 	for _, p := range order {
 		for _, r := range hr.reactors {
-			if !r.after(p.step) || !covers(r.onChange, p.paths) || slices.ContainsFunc(p.React, func(o protocol.React) bool { return o.Line() == r.record.Line() }) {
+			if !r.reacts(p.step) || !covers(r.onChange, p.paths) || slices.ContainsFunc(p.React, func(o protocol.React) bool { return o.Line() == r.record.Line() }) {
 				continue
 			}
 			p.React = append(p.React, r.record)

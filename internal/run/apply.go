@@ -627,12 +627,12 @@ func (ev *StepEvent) result(st project.Step, res module.Result) {
 
 // steps applies steps. A step with on_change acts only when an earlier step
 // of the run changed a path that it reacts to, or when its record is pending.
-// A step runs its then after its last element when a path of the step
-// changed, or when its then is pending on the host.
+// A step runs its then after its last element when an element of the step
+// changed something, or when its then is pending on the host.
 func (a *hostApply) steps(ctx context.Context, stage *project.Stage, steps []Planned) (changed bool, err error) {
 	// reacted is true when an element of the current step acted on a
-	// change.
-	reacted := false
+	// change, and stepChanged when an element changed something.
+	reacted, stepChanged := false, false
 	for _, p := range steps {
 		if ctx.Err() != nil {
 			return changed, ErrInterrupted
@@ -654,6 +654,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, steps []Pla
 			a.progress.Busy(a.host, ev.scope()+": "+l)
 			res, err := a.step(ctx, ev, l, p, guard(p))
 			changed = changed || res.Status == module.Change
+			stepChanged = stepChanged || res.Status == module.Change
 			if err != nil {
 				return changed, err
 			}
@@ -664,6 +665,8 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, steps []Pla
 		if !p.Last {
 			continue
 		}
+		thenRuns := stepChanged
+		stepChanged = false
 		if reacted {
 			reacted = false
 			if err := a.conn.Reacted(context.WithoutCancel(ctx), p.Record); err != nil {
@@ -676,7 +679,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, steps []Pla
 		}
 		t := p.thenRecord()
 		pending := slices.ContainsFunc(a.pending, t.Matches)
-		if _, _, hit := reaction(a.changed, p.thenPaths); !hit && !pending {
+		if !thenRuns && !pending {
 			continue
 		}
 		thenLabel := l

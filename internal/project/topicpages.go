@@ -290,7 +290,7 @@ steps:
 			`A step that reacts names the path in the plan: ~ service nginx: reload (/etc/nginx/conf.d/gzip.conf changes).`,
 		),
 		doc.Heading("then"),
-		doc.Paragraph(`then: <command> is short for a cmd step right after the step, with that command and with on_change set to the paths that the step changes. With loop, it follows the last element and cannot read item. On a step with loop, the error of a failed then names the step, such as "failed: file (loop): then: sievec /etc/sieve: exit status 1". A step whose module changes no path cannot have then; use a cmd step with on_change.`),
+		doc.Paragraph(`then: <command> runs the command right after the step when the step changes something. It reacts only to its own step: a later step that changes the same paths is not a plan error. With loop, it follows the last element and cannot read item. On a step with loop, the error of a failed then names the step, such as "failed: file (loop): then: sievec /etc/sieve: exit status 1". A step whose module changes no path cannot have then; use a cmd step with on_change.`),
 		doc.Heading("Pending steps"),
 		doc.Paragraph(`Before a step changes a path, winch records on the host each later step that reacts to it. The record goes when that step succeeds. When a run stops first, or the reacting step fails, the record stays: the next run runs the step, also when nothing changes. The plan shows it with "!" and "(pending from an earlier run)". For a record whose step the run does not reach, such as through --stages, the plan shows a note, such as "a pending service nginx of recipe web waits until its recipe runs on this host". The note is not a change.`),
 	},
