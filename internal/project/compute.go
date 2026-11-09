@@ -14,15 +14,13 @@ import (
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/builtin"
-	"github.com/expr-lang/expr/checker"
-	"github.com/expr-lang/expr/compiler"
-	"github.com/expr-lang/expr/conf"
 	"github.com/expr-lang/expr/file"
 	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
 
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/secret"
+	tparse "github.com/davidklassen/winch/internal/tmpl/parse"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -101,8 +99,7 @@ type exprEnv struct {
 	Match func(string) ([]any, error) `expr:"match"`
 	// Read checks the value of a member read.
 	Read func(any) (any, error) `expr:"$read"`
-	// Loop holds the elements of the loops of a template, outermost first.
-	Loop []any `expr:"$loop"`
+	Loop []any                  `expr:"$loop"`
 }
 
 type hostEnv struct {
@@ -153,19 +150,9 @@ var exprOptions = []expr.Option{
 	}, toJSON),
 }
 
-// noExprFuncs are the builtins of expr that exprOptions and exprCheck take
-// away.
-var noExprFuncs = []string{"now", "toJSON"}
-
-func isExprFunc(name string) bool {
-	_, ok := builtin.Index[name]
-	return slices.Contains([]string{"match", "quote", "sqlquote", "json"}, name) || ok && !slices.Contains(noExprFuncs, name)
-}
-
 const (
-	readFunc  = "$read"
-	getFunc   = "$get"
-	loopField = "$loop"
+	readFunc = "$read"
+	getFunc  = "$get"
 )
 
 // readCheck checks each member read and get() that gives a value of unknown
@@ -282,7 +269,7 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 		return c, nil
 	}
 	src := file.NewSource(text)
-	check, err := checkExpr(text, nil, sc, func(loc file.Location) (yamlx.Pos, string) {
+	check, err := checkExpr(text, sc, func(loc file.Location) (yamlx.Pos, string) {
 		return n.Pos, (&file.Error{Location: loc}).Bind(src).Snippet
 	})
 	if err != nil {
@@ -292,57 +279,48 @@ func compile(n *yamlx.Node, sc scope) (*computed, error) {
 	return c, nil
 }
 
-// compileExpr compiles the expression src. Each name of loops reads the
-// element of that loop in the field $loop of exprEnv.
-func compileExpr(src string, loops []string) (*vm.Program, error) {
-	config := conf.CreateNew()
-	for _, op := range exprOptions {
-		op(config)
-	}
-	for name := range config.Disabled {
-		delete(config.Builtins, name)
-	}
-	config.Check()
-	tree, err := parser.ParseWithConfig(src, config)
+// ownNames returns an error for a name of exprEnv that only winch writes.
+func ownNames(src string) error {
+	tree, err := parser.Parse(src)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 	var own error
 	ast.Walk(&tree.Node, visitor(func(np *ast.Node) {
-		if id, ok := (*np).(*ast.IdentifierNode); ok && own == nil && (id.Value == loopField || id.Value == readFunc || id.Value == getFunc) {
+		if id, ok := (*np).(*ast.IdentifierNode); ok && own == nil && (id.Value == tparse.LoopField || id.Value == readFunc || id.Value == getFunc) {
 			own = (&file.Error{Location: id.Location(), Message: id.Value + " is not allowed"}).Bind(tree.Source)
 		}
 	}))
-	if own != nil {
-		return nil, own
-	}
-	for i, name := range slices.Backward(loops) {
-		tree.Node = &ast.VariableDeclaratorNode{
-			Name:  name,
-			Value: &ast.MemberNode{Node: &ast.IdentifierNode{Value: loopField}, Property: &ast.IntegerNode{Value: i}},
-			Expr:  tree.Node,
-		}
-	}
-	if _, err := new(checker.Checker).PatchAndCheck(tree, config); err != nil {
-		return nil, err
-	}
-	return compiler.Compile(tree, config)
+	return own
 }
 
-// checkExpr compiles the expression src with the loop names loops and
-// checks what it reads. where gives the position and the snippet of a
-// location in src.
-func checkExpr(src string, loops []string, sc scope, where func(file.Location) (yamlx.Pos, string)) (*exprCheck, error) {
-	prog, err := compileExpr(src, loops)
-	if err != nil {
-		fe, ok := errors.AsType[*file.Error](err)
-		if !ok {
-			pos, _ := where(file.Location{})
-			return nil, yamlx.Errorf(pos, "%s", exprProblem(err, src, exprNames))
-		}
-		pos, snippet := where(fe.Location)
-		return nil, yamlx.Errorf(pos, "%s%s", exprProblem(err, src, exprNames), snippet)
+// exprError returns the load error of the error err of the expression src.
+// where gives the position and the snippet of a location in src.
+func exprError(err error, src string, where func(file.Location) (yamlx.Pos, string)) error {
+	fe, ok := errors.AsType[*file.Error](err)
+	if !ok {
+		pos, _ := where(file.Location{})
+		return yamlx.Errorf(pos, "%s", exprProblem(err, src, exprNames))
 	}
+	pos, snippet := where(fe.Location)
+	return yamlx.Errorf(pos, "%s%s", exprProblem(err, src, exprNames), snippet)
+}
+
+// checkExpr compiles the expression src and checks what it reads. where
+// gives the position and the snippet of a location in src.
+func checkExpr(src string, sc scope, where func(file.Location) (yamlx.Pos, string)) (*exprCheck, error) {
+	if err := ownNames(src); err != nil {
+		return nil, exprError(err, src, where)
+	}
+	prog, err := expr.Compile(src, exprOptions...)
+	if err != nil {
+		return nil, exprError(err, src, where)
+	}
+	return checkProg(prog, sc, where)
+}
+
+// checkProg checks what the program prog reads.
+func checkProg(prog *vm.Program, sc scope, where func(file.Location) (yamlx.Pos, string)) (*exprCheck, error) {
 	check := &exprCheck{sc: sc, where: where, prog: prog, named: map[ast.Node]bool{}, keysOnly: map[ast.Node]bool{}}
 	ast.Walk(new(prog.Node()), visitor(func(np *ast.Node) {
 		if c, ok := (*np).(*ast.CallNode); ok && len(c.Arguments) == 1 {
