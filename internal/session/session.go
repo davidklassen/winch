@@ -97,6 +97,8 @@ type Session struct {
 
 	waitOnce sync.Once
 	waitErr  error
+	// closed is true after wait closed stdin.
+	closed bool
 	// ended is true after a call returned the error of the session end.
 	ended bool
 }
@@ -104,6 +106,7 @@ type Session struct {
 // wait closes stdin and waits for ssh to end.
 func (s *Session) wait() error {
 	s.waitOnce.Do(func() {
+		s.closed = true
 		s.stdin.Close()
 		s.waitErr = s.cmd.Wait()
 	})
@@ -759,6 +762,22 @@ func (s *Session) Due(ctx context.Context) error {
 	return s.call("due", nil, nil)
 }
 
+// End ends the run on the host. After the session ended, the helper has
+// ended the run already, and End does nothing.
+func (s *Session) End(ctx context.Context) ([]protocol.PutBack, error) {
+	if s.closed {
+		return nil, nil
+	}
+	var e protocol.Ended
+	if err := s.call("end", nil, &e); err != nil {
+		return nil, err
+	}
+	if e.Error != "" {
+		return e.PutBack, errors.New(e.Error)
+	}
+	return e.PutBack, nil
+}
+
 // Reboot reboots the host, and connects again until the host has a new boot
 // ID, within wait. It then waits for the system to start, within the same
 // time.
@@ -816,7 +835,7 @@ func (s *Session) Reboot(ctx context.Context, wait time.Duration) (protocol.Boot
 			continue
 		}
 		s.cmd, s.stdin, s.stdout, s.stderr, s.id = n.cmd, n.stdin, n.stdout, n.stderr, n.id
-		s.waitOnce, s.waitErr, s.ended = sync.Once{}, nil, false
+		s.waitOnce, s.waitErr, s.ended, s.closed = sync.Once{}, nil, false, false
 		if b.State != "running" && b.State != "degraded" {
 			return b, fmt.Errorf("the host did not start within %s: systemctl is-system-running says %s", module.Seconds(wait), b.State)
 		}

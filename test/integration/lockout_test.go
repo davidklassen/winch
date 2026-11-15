@@ -3,6 +3,7 @@ package integration
 import (
 	"archive/tar"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -873,6 +874,80 @@ func TestLockoutPendingHandler(t *testing.T) {
 			t.Errorf("pending handlers = %q, want none", out)
 		}
 	})
+}
+
+// spec: Running a pipeline/Lockout protection (the run of a host ends before
+// a notified handler with confirm_access ran: the files of the other steps
+// stay)
+func TestLockoutPendingHandlerKeepsOtherFiles(t *testing.T) {
+	t.Parallel()
+	vm := lab.StartVM(t, "pending-narrow")
+	var keys []string
+	for _, l := range strings.Split(strings.TrimSpace(vm.MustRun(t, "cat /home/admin/.ssh/authorized_keys")), "\n") {
+		keys = append(keys, strconv.Quote(l))
+	}
+	other := strconv.Quote(fakeKey('5', "other"))
+	project := func(n, ports string, keys []string) string {
+		return vmtest.WriteProject(t, map[string]string{
+			"winch.yaml":            "name: ndemo\ninventory: test\nvars:\n  fail: false\n",
+			"inventories/test.yaml": "hosts:\n  pending-narrow: {}\n",
+			"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - pkg:
+          name: nftables
+      - file:
+          path: /etc/winch-test.conf
+          content: "value ` + n + `\n"
+      - user:
+          name: admin
+          authorized_keys: [` + strings.Join(keys, ", ") + `]
+      - file:
+          path: /etc/ssh/sshd_config.d/winch.conf
+          content: "MaxAuthTries ` + n + `\n"
+        notify: reload
+      - firewall:
+          allow:
+            - tcp: [` + ports + `]
+      - name: Fails on request
+        cmd:
+          command: exit 3
+        when: !expr vars.fail
+    handlers:
+      reload:
+        - service:
+            name: ssh
+            reloaded: true
+          confirm_access: true
+`,
+		})
+	}
+	if r := lab.Winch(t, project("6", "22", keys), "apply", "site", "--yes"); r.Code != 0 {
+		t.Fatalf("first apply: exit %d\n%s", r.Code, r.Stderr)
+	}
+	r := lab.Winch(t, project("7", "22, 8080", append(slices.Clone(keys), other)), "apply", "site", "--yes", "--set", "vars.fail=true")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "Fails on request") {
+		t.Fatalf("apply: exit %d, want the failed step\n%s", r.Code, r.Stderr)
+	}
+	if want := "pending-narrow: put back /etc/ssh/sshd_config.d/winch.conf: the handler base.reload did not run\n"; !strings.Contains(r.Stdout, want) {
+		t.Errorf("apply output lacks %q:\n%s", want, r.Stdout)
+	}
+	if out := vm.MustRun(t, "cat /etc/ssh/sshd_config.d/winch.conf"); out != "MaxAuthTries 6\n" {
+		t.Errorf("sshd drop-in after the failed run: %q, want the old file", out)
+	}
+	if out := vm.MustRun(t, "cat /etc/winch-test.conf"); out != "value 7\n" {
+		t.Errorf("/etc/winch-test.conf after the failed run: %q, want the new file", out)
+	}
+	if out := vm.MustRun(t, "cat /home/admin/.ssh/authorized_keys"); !strings.Contains(out, " other\n") {
+		t.Errorf("authorized_keys after the failed run lacks the new key:\n%s", out)
+	}
+	if out := vm.MustRun(t, "nft list table inet winch"); !strings.Contains(out, "8080") {
+		t.Errorf("the firewall table after the failed run lacks port 8080:\n%s", out)
+	}
+	if out := vm.MustRun(t, "cat /etc/winch/firewall.nft"); !strings.Contains(out, "8080") {
+		t.Errorf("/etc/winch/firewall.nft after the failed run lacks port 8080:\n%s", out)
+	}
 }
 
 // spec: Running a pipeline/Lockout protection; Modules/download (the

@@ -90,8 +90,9 @@ type Guard struct {
 	Save bool `json:"save,omitempty"`
 	// Handlers are the records of the handlers with confirm_access that the
 	// step notifies. The step keeps the old state in the store of each, which
-	// the timer of that handler puts back. When the session ends while one is
-	// pending, the helper puts back its store and drops its record.
+	// the timer of that handler puts back. When the run ends while one is
+	// pending, the helper puts back the paths that the step saved in its
+	// store, and drops its record.
 	Handlers []string `json:"handlers,omitempty"`
 	// SSHD are the stores of the later steps of the host with
 	// confirm_access that restart or reload sshd: a recipe, or
@@ -106,6 +107,21 @@ type Guard struct {
 	// Confirm is the confirm_access of the step: a change starts the
 	// rollback timer, which puts back the whole store.
 	Confirm bool `json:"confirm,omitempty"`
+}
+
+// Ended is the result of end. Error is the error of end; PutBack holds the
+// handlers whose files came back also when end failed.
+type Ended struct {
+	PutBack []PutBack `json:"put_back,omitempty"`
+	Error   string    `json:"error,omitempty"`
+}
+
+// PutBack is a result of end: a handler with confirm_access that did not
+// run, by its record, and the paths of the steps that notified it, which
+// came back.
+type PutBack struct {
+	Handler string   `json:"handler"`
+	Paths   []string `json:"paths"`
 }
 
 // Booted is the params of booted: the boot ID before the reboot, and the

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -1101,6 +1102,142 @@ func TestEndPutsBackOnlyTheStoreOfThePendingHandler(t *testing.T) {
 	l.end(t)
 	if a, b := content(t, l.a), content(t, l.b); a != "old\n" || b != "new\n" {
 		t.Errorf("a = %q, b = %q; want a old and b new", a, b)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the files of the recipe's
+// other steps stay)
+func TestEndPutsBackOnlyTheFilesOfTheNotifyingSteps(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		store   string
+		handler string
+	}{
+		{"recipe", "ssh", "ssh.reload"},
+		{"stage", "site\tbase", "site\tbase\treload"},
+	} {
+		l := startLockout(t)
+		g := protocol.Guard{Store: tt.store, Save: true}
+		if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: g}); r.Error != "" {
+			t.Fatal(r.Error)
+		}
+		if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "mid\n"), Guard: g}); r.Error != "" {
+			t.Fatal(r.Error)
+		}
+		g.Handlers = []string{tt.handler}
+		if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: g.Handlers}); r.Error != "" {
+			t.Fatal(r.Error)
+		}
+		l.end(t)
+		// The store keeps the state before the first change of a path.
+		if a, b := content(t, l.a), content(t, l.b); a != "old\n" || b != "new\n" {
+			t.Errorf("%s: a = %q, b = %q; want a old and b new", tt.name, a, b)
+		}
+	}
+}
+
+// endResult sends end and returns its result.
+func (l *lockout) endResult(t *testing.T) protocol.Ended {
+	t.Helper()
+	r := l.c.call(t, "end", nil)
+	if r.Error != "" {
+		t.Fatalf("end: %s", r.Error)
+	}
+	var e protocol.Ended
+	if err := json.Unmarshal(r.Result, &e); err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+// spec: Running a pipeline/Lockout protection (apply prints one line per
+// host: put back <paths>: the handler <recipe>.<handler> did not run)
+func TestEndReportsThePutBackFiles(t *testing.T) {
+	l := startLockout(t)
+	g := protocol.Guard{Store: "ssh", Save: true, Handlers: []string{"ssh.reload"}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: []string{"ssh.reload"}}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	g.Handlers = []string{"ssh.reload", "nftables.reload"}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: g, Notify: g.Handlers}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	want := protocol.Ended{PutBack: []protocol.PutBack{{Handler: "ssh.reload", Paths: []string{l.a, l.b}}, {Handler: "nftables.reload", Paths: []string{l.b}}}}
+	if got := l.endResult(t); !reflect.DeepEqual(got, want) {
+		t.Errorf("end = %+v, want %+v", got, want)
+	}
+	if a, b := content(t, l.a), content(t, l.b); a != "old\n" || b != "old\n" {
+		t.Errorf("a = %q, b = %q; want both old", a, b)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a handler whose files did not
+// come back stays pending; the session end does not try again)
+func TestEndRunsOnce(t *testing.T) {
+	l := startLockout(t)
+	g := protocol.Guard{Store: "ssh", Save: true, Handlers: []string{"ssh.reload"}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: g.Handlers}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	// A read-only directory fails the restore.
+	dir := filepath.Dir(l.a)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) }) //nolint:errcheck // the test cleans up
+	if e := l.endResult(t); !strings.Contains(e.Error, "put back the files of the handler ssh.reload") {
+		t.Fatalf("end = %+v, want the failed restore", e)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l.end(t)
+	if got := content(t, l.a); got != "new\n" {
+		t.Errorf("a after the session end = %q, want it unchanged", got)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (apply prints the files that
+// came back also when the files of another handler did not)
+func TestEndReportsThePutBackFilesWhenAnotherFails(t *testing.T) {
+	l := startLockout(t)
+	g := protocol.Guard{Store: "ssh", Save: true, Handlers: []string{"ssh.reload"}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: g.Handlers}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	other := filepath.Join(t.TempDir(), "c")
+	write(t, other, "old\n")
+	g = protocol.Guard{Store: "app", Handlers: []string{"site\tfirewall\treload"}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(other, "new\n"), Guard: g, Notify: g.Handlers}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if err := os.Chmod(filepath.Dir(other), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.Dir(other), 0o700) }) //nolint:errcheck // the test cleans up
+	e := l.endResult(t)
+	if want := []protocol.PutBack{{Handler: "ssh.reload", Paths: []string{l.a}}}; !reflect.DeepEqual(e.PutBack, want) {
+		t.Errorf("end put back %+v, want %+v", e.PutBack, want)
+	}
+	if !strings.Contains(e.Error, "put back the files of the handler firewall.reload that did not run: ") {
+		t.Errorf("end error %q, want the failed restore", e.Error)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection; Variables/Secrets in output
+// (the record of a masked file is no file of the step)
+func TestEndHidesTheMaskedRecord(t *testing.T) {
+	l := startLockout(t)
+	const rec = "pw=(secret)\n"
+	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "pw=one\n"), Masked: new(rec)})
+	g := protocol.Guard{Store: "wg", Save: true, Handlers: []string{"wg.restart"}}
+	l.step(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "pw=two\n"), Masked: new(rec), Guard: g, Notify: g.Handlers})
+	want := []protocol.PutBack{{Handler: "wg.restart", Paths: []string{l.a}}}
+	if e := l.endResult(t); !reflect.DeepEqual(e.PutBack, want) || e.Error != "" {
+		t.Errorf("end = %+v, want %+v", e, want)
+	}
+	if got := content(t, l.a); got != "pw=one\n" {
+		t.Errorf("a = %q, want the old file", got)
 	}
 }
 
