@@ -613,9 +613,7 @@ func (ev StepEvent) label() string {
 // then after its last element when an element changed something, or when its
 // then is pending on the host. h is the handler of the steps, or nil.
 func (a *hostApply) steps(ctx context.Context, stage *project.Stage, h *project.Handler, steps []Planned) (changed bool, err error) {
-	// changedLabel is the label of the last element of the current step that
-	// changed something, or "".
-	changedLabel := ""
+	elementChanged := false
 	for _, p := range steps {
 		if ctx.Err() != nil {
 			return changed, ErrInterrupted
@@ -643,28 +641,33 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, h *project.
 		if err != nil {
 			return changed, err
 		}
-		if res.Status == module.Change {
-			changedLabel = l
-		}
+		elementChanged = elementChanged || res.Status == module.Change
 		if !p.Last {
 			continue
 		}
 		t := p.Then
-		failLabel := cmp.Or(changedLabel, l)
 		pending := t != nil && slices.ContainsFunc(a.thens, t.Matches)
-		run := t != nil && (changedLabel != "" || pending)
-		changedLabel = ""
+		run := t != nil && (elementChanged || pending)
+		elementChanged = false
 		if !run {
 			continue
 		}
 		tev := ev
 		tev.Step, tev.Module, tev.Then, tev.ThenPending = "", "", secret.PrintableLines(p.Step.Shown().Then), pending
-		a.progress.Busy(a.host, ev.scope()+": "+failLabel+": then")
+		thenLabel := l
+		if p.Step.Loops() {
+			ev.Step = secret.PrintableLines(stepHead(p.Step))
+			if p.Step.Name == "" {
+				ev.Step += " (loop)"
+			}
+			thenLabel = oneLine(ev.label())
+		}
+		a.progress.Busy(a.host, ev.scope()+": "+thenLabel+": then")
 		if err := a.conn.Command(context.WithoutCancel(ctx), p.Step.Then, *t); err != nil {
 			err = maskError(err, p.hostText)
 			tev.Status, tev.Error = "failed", err.Error()
 			a.rep.Step(tev)
-			return changed, fmt.Errorf("%s: failed: %s: then: %w", ev.scope(), failLabel, err)
+			return changed, fmt.Errorf("%s: failed: %s: then: %w", ev.scope(), thenLabel, err)
 		}
 		tev.Status = "change"
 		a.rep.Step(tev)
