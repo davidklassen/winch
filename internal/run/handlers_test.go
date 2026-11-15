@@ -445,6 +445,47 @@ func TestThen(t *testing.T) {
 	})
 }
 
+// spec: Steps; CLI/Output (progress)
+func TestFailedThenLabel(t *testing.T) {
+	const loop = "      path: !tpl /etc/sieve/{{ item }}.sieve\n      content: \"x\\n\"\n    loop: [learn-spam, learn-ham]\n"
+	for _, tt := range []struct {
+		name, step, label string
+		pending           bool
+	}{
+		{name: "a loop step", step: "file:\n" + loop, label: "file (loop)"},
+		{name: "a named loop step", step: "name: Compile the filters\n    file:\n" + loop, label: "Compile the filters: file"},
+		{name: "a pending then of a loop step", step: "file:\n" + loop, label: "file (loop)", pending: true},
+		{name: "a step without loop", step: "file:\n      path: /etc/sieve/learn-ham.sieve\n      content: \"x\\n\"\n", label: "file /etc/sieve/learn-ham.sieve"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := loadWeb1(t, map[string]string{
+				"pipelines/site.yaml":       "stages:\n  - name: mail\n    hosts: all\n    steps:\n      - recipe: sieve\n",
+				"recipes/sieve/recipe.yaml": "steps:\n  - " + tt.step + "    then: sievec /etc/sieve\n",
+			})
+			h := fakehost.New()
+			h.SetFile("web1", "/etc/sieve/learn-spam.sieve", "x\n")
+			if tt.pending {
+				h.SetFile("web1", "/etc/sieve/learn-ham.sieve", "x\n")
+				h.SetThen("web1", protocol.Then{Recipe: "sieve", Module: "file", Mains: mains("/etc/sieve/learn-spam.sieve", "/etc/sieve/learn-ham.sieve")})
+			}
+			h.FailCommand("web1", "sievec /etc/sieve")
+			prog := &progress{calls: map[string][]string{}}
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{Progress: prog})
+			var out, errOut bytes.Buffer
+			if run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+				t.Fatal("apply succeeded with a failing then")
+			}
+			want := "web1: sieve: failed: " + tt.label + ": then: sievec /etc/sieve: exit status 1\n"
+			if got := errOut.String(); got != want {
+				t.Errorf("stderr = %q, want %q", got, want)
+			}
+			if busy := "sieve: " + tt.label + ": then"; !slices.Contains(prog.calls["web1"], busy) {
+				t.Errorf("progress %q, want %q", prog.calls["web1"], busy)
+			}
+		})
+	}
+}
+
 // spec: Handlers; Running a pipeline/Plan; Running a pipeline/Failures
 func TestApplyPendingOnly(t *testing.T) {
 	h := fakehost.New()
