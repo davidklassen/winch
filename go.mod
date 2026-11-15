@@ -2,7 +2,7 @@ module github.com/davidklassen/winch
 
 go 1.27
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	filippo.io/age v1.3.2
