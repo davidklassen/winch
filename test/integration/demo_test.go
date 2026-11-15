@@ -50,6 +50,9 @@ func TestDemo(t *testing.T) {
 	if !strings.Contains(r.Stdout, "file /etc/nginx/htpasswd-example.com") {
 		t.Errorf("apply does not show the password file:\n%s", r.Stdout)
 	}
+	if want := "demo: base: health passed: timeout 10 bash -c '</dev/tcp/$1/25' - '127.0.0.1'\n"; !strings.Contains(r.Stdout, want) {
+		t.Errorf("apply does not show the gate of stage base with the probe host of the inventory:\n%s", r.Stdout)
+	}
 	// parallelism: 1 runs the web stage on demo, then its gate, then on demo2.
 	gate := strings.Index(r.Stdout, "demo: web: health passed: ")
 	if gate < 0 || strings.Index(r.Stdout, "demo2: nginx: ") < gate {

@@ -69,8 +69,8 @@ func (p *Plan) WriteJSON(e *Events) {
 					continue
 				}
 				writePlanned(e, h.Name, sp.Stage, hp.Steps)
-				if sp.Stage.Health != nil && hp.changes() {
-					e.Write("planned", healthEvent(h.Name, sp.Stage))
+				if hp.Health != nil && hp.changes() {
+					e.Write("planned", healthEvent(h.Name, sp.Stage, hp.Health))
 				}
 			}
 		}

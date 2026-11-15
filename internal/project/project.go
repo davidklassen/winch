@@ -138,9 +138,66 @@ func (s *Stage) handlerSteps() []Step {
 
 // Health is the health gate of a stage. Stable and Timeout are seconds.
 type Health struct {
-	Command string
 	Stable  int
 	Timeout int
+	command *value
+}
+
+// Gate is the command of a health gate for one host. Shown has each part that
+// comes from a secret as secret.Mark, and Parts are those parts.
+type Gate struct {
+	Command string
+	Shown   string
+	Parts   []string
+}
+
+// Eval returns the command of the gate for the host of e.
+func (h *Health) Eval(e *Env) (Gate, error) {
+	cmd, err := h.commandFor(e)
+	if err != nil {
+		return Gate{}, e.masked(err, func(v *Env) error {
+			_, err := h.commandFor(v)
+			return err
+		})
+	}
+	g := Gate{Command: cmd, Shown: cmd}
+	if e.n != 0 || !e.secrets {
+		return g, nil
+	}
+	cmds := e.textVariants(cmd, h.commandFor)
+	var parts []string
+	g.Shown, parts = secret.MaskLines(cmds[0], cmds[1], cmds[2])
+	for _, p := range parts {
+		if p != "" {
+			g.Parts = append(g.Parts, p)
+			g.Parts = append(g.Parts, e.filter.Lines(p)...)
+		}
+	}
+	return g, nil
+}
+
+func (h *Health) commandFor(e *Env) (string, error) {
+	n, err := h.command.eval(e, "command")
+	if err != nil {
+		return "", err
+	}
+	text, err := commandText(n)
+	if err != nil {
+		return "", yamlx.Errorf(n.Pos, "command: %s", err)
+	}
+	return text, nil
+}
+
+// commandText returns the command of a health gate node without tags.
+func commandText(n *yamlx.Node) (string, error) {
+	text, ok := n.Value.(string)
+	switch {
+	case n.Kind != yamlx.Scalar || !ok:
+		return "", fmt.Errorf("expected a string, got %s", yamlx.Describe(n))
+	case strings.TrimSpace(text) == "":
+		return "", errors.New("is empty")
+	}
+	return text, nil
 }
 
 // Step is a module step, or a recipe step with Recipe set.
@@ -516,6 +573,11 @@ func resolve(inv *Inventory, pl *Pipeline, decls []*Var, checked map[*Recipe]boo
 		for _, hs := range s.handlerSteps() {
 			errs = append(errs, hs.checkMatches(inv))
 		}
+		if h := s.Health; h != nil {
+			for _, c := range h.command.computed {
+				errs = append(errs, matchErrors(inv, c.matches)...)
+			}
+		}
 		for _, st := range s.Steps {
 			errs = append(errs, st.checkMatches(inv))
 			if st.Recipe == nil {
@@ -821,9 +883,9 @@ type stageFile struct {
 func (*stageFile) Noun() string { return "a stage" }
 
 type healthFile struct {
-	Command string `yaml:"command,required" line:"must exit 0" doc:"Must exit 0. winch runs it on the host once per second until it exits 0, then keeps running it for stable seconds. A failed run starts the wait again. An exit of 126 or 127, when sh cannot find or run the command, fails the gate at once."`
-	Stable  int    `yaml:"stable" default:"0" line:"seconds the command keeps passing" doc:"Seconds the command keeps passing. It is less than timeout."`
-	Timeout *int   `yaml:"timeout" default:"60" line:"seconds the gate has to pass" doc:"Seconds the gate has to pass. Then the host fails, and the error shows the end of the last output."`
+	Command *yamlx.Node `yaml:"command,required" type:"string" line:"must exit 0" doc:"Must exit 0. winch runs it on the host once per second until it exits 0, then keeps running it for stable seconds. A failed run starts the wait again. An exit of 126 or 127, when sh cannot find or run the command, fails the gate at once.\n\nIt can be a !tpl. The template reads the data of the host, as a step of the stage does, without the vars of a recipe step."`
+	Stable  int         `yaml:"stable" default:"0" line:"seconds the command keeps passing" doc:"Seconds the command keeps passing. It is less than timeout."`
+	Timeout *int        `yaml:"timeout" default:"60" line:"seconds the gate has to pass" doc:"Seconds the gate has to pass. Then the host fails, and the error shows the end of the last output."`
 }
 
 func (*healthFile) Noun() string { return "a health gate" }
@@ -836,10 +898,12 @@ func (h *healthFile) Validate() error {
 	if h.Timeout != nil {
 		timeout = *h.Timeout
 	}
-	switch {
-	case strings.TrimSpace(h.Command) == "":
-		return &yamlx.FieldError{Field: "command", Msg: "is empty"}
-	case h.Stable < 0:
+	if h.Command.Tag == "" {
+		if _, err := commandText(h.Command); err != nil {
+			return &yamlx.FieldError{Field: "command", Msg: err.Error()}
+		}
+	}
+	if h.Stable < 0 {
 		return &yamlx.FieldError{Field: "stable", Msg: "must be 0 or more seconds"}
 	}
 	if err := module.CheckSeconds("timeout", timeout); err != nil {
@@ -938,10 +1002,13 @@ func (l *loader) decodePipeline(p part) (*Pipeline, error) {
 			s.Parallelism = *sf.Parallelism
 		}
 		if h := sf.Health; h != nil {
-			s.Health = &Health{Command: h.Command, Stable: h.Stable, Timeout: defaultTimeout}
+			s.Health = &Health{Stable: h.Stable, Timeout: defaultTimeout}
 			if h.Timeout != nil {
 				s.Health.Timeout = *h.Timeout
 			}
+			c, err := compileValue(h.Command, scope{reads: &l.reads, reach: &l.reach, noItem: itemOutsideLoop})
+			errs = append(errs, err)
+			s.Health.command = cmp.Or(c, &value{node: h.Command})
 		}
 		hs, err := l.loadHandlers(sf.Handlers, nil)
 		errs = append(errs, err)
@@ -1717,15 +1784,10 @@ func (st Step) eval(e *Env) ([]Step, error) {
 	var thens [3]string
 	variants := e.n == 0 && e.secrets
 	if variants {
-		thens[0] = then
-		for n := 1; n < 3; n++ {
-			if lists[0] != nil {
-				if l, err := st.items(e.variant(n)); err == nil && len(l) == count {
-					lists[n] = l
-				}
-			}
-			if thens[n], err = st.thenFor(e.variant(n)); err != nil {
-				thens[n] = secret.Placeholder(n)
+		thens = e.textVariants(then, st.thenFor)
+		for n := 1; n < 3 && lists[0] != nil; n++ {
+			if l, err := st.items(e.variant(n)); err == nil && len(l) == count {
+				lists[n] = l
 			}
 		}
 	}
@@ -1781,6 +1843,19 @@ func (st Step) items(e *Env) ([]any, error) {
 		out = append(out, yamlx.Value(item))
 	}
 	return out, nil
+}
+
+// textVariants returns real and the text of f in the two placeholder variants
+// of e. A variant that fails gives its placeholder.
+func (e *Env) textVariants(real string, f func(*Env) (string, error)) [3]string {
+	out := [3]string{real}
+	for n := 1; n < 3; n++ {
+		var err error
+		if out[n], err = f(e.variant(n)); err != nil {
+			out[n] = secret.Placeholder(n)
+		}
+	}
+	return out
 }
 
 // thenFor returns the command of then for e, or "".

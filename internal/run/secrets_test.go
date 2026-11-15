@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"testing/cryptotest"
@@ -1135,6 +1136,41 @@ func TestSecretHostTextOutsideStep(t *testing.T) {
 	run.Apply(t.Context(), plan, connect, run.Text(w, ew))
 	all := out.String() + errOut.String()
 	for _, want := range []string{"web1: note: the user u(secret) reads /srv/plain\n", "user u(secret) is locked", "web1: warning: probe runs as u(secret)\n"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the output has no %q:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "zqxj") {
+		t.Errorf("the output shows the part zqxj:\n%s", all)
+	}
+}
+
+// spec: Running a pipeline/Health gates (command can be a !tpl); Variables/Secrets in output
+func TestSecretHealthCommand(t *testing.T) {
+	// The output has no text filter, so only the masks hide the part zqxj.
+	p, _ := hashSecretProject(t, "kwzqxjqz", `stages:
+  - name: a
+    hosts: all
+    health:
+      command: !tpl "probe {{ vars.pw[2:6] }}"
+    steps:
+      - file:
+          path: /srv/plain
+          content: "a\n"
+`, "", nil, nil)
+	h := fakehost.New()
+	h.FailCommandWith("web1", "probe zqxj", "no zqxj")
+	var out, errOut, js bytes.Buffer
+	w, ew := plain(&out), plain(&errOut)
+	plan := run.MakePlan(t.Context(), p, h.Connector(), run.Options{})
+	plan.Write(w, ew)
+	plan.WriteJSON(run.NewEvents(plain(&js), func() time.Time { return time.Time{} }))
+	run.Apply(t.Context(), plan, h.Connector(), run.Text(w, ew))
+	if !slices.Contains(h.Trace, "health web1 probe zqxj 0s 1m0s") {
+		t.Errorf("the gate did not run the real command: %q", h.Trace)
+	}
+	all := out.String() + errOut.String() + js.String()
+	for _, want := range []string{"* health: probe (secret)\n", `"health":"probe (secret)"`, "a: failed: health: probe (secret): did not pass within 60s: exit status 1: no (secret)"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("the output has no %q:\n%s", want, all)
 		}

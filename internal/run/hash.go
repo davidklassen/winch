@@ -83,8 +83,8 @@ func (p *Plan) HashInput() []byte {
 					continue
 				}
 				hs := hashStage{Stage: sp.Stage.Name, Parallelism: sp.Stage.Parallelism}
-				if h := sp.Stage.Health; h != nil {
-					hs.Health = &hashHealth{Command: h.Command, Stable: h.Stable, Timeout: h.Timeout}
+				if g := hp.Health; g != nil {
+					hs.Health = &hashHealth{Command: g.Command, Stable: sp.Stage.Health.Stable, Timeout: sp.Stage.Health.Timeout}
 				}
 				write(hs)
 				for _, pl := range hp.Steps {
