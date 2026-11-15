@@ -737,6 +737,11 @@ func (p *Project) Start(h Host, f facts.Facts, all map[string]HostFacts) (*Env, 
 					return nil, err
 				}
 			}
+			if g := s.Health; g != nil {
+				if err := p.evalDefaults(e, g.command.reads(), g.command.node.Pos); err != nil {
+					return nil, err
+				}
+			}
 		}
 		for j := range s.Steps {
 			st := &s.Steps[j]

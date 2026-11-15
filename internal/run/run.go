@@ -174,6 +174,8 @@ type StagePlan struct {
 type HostPlan struct {
 	Host  project.Host
 	Steps []Planned
+	// Health is the health gate of the stage for the host, or nil.
+	Health *project.Gate
 	// PendingHealth is true when the health gate of the stage is pending on
 	// the host.
 	PendingHealth bool
@@ -327,6 +329,9 @@ type hostRun struct {
 	step string
 	// stages are the evaluated steps of each stage, from the first contact.
 	stages map[*project.Stage][]Planned
+	// gates are the evaluated health gates of the stages, from the first
+	// contact.
+	gates map[*project.Stage]*project.Gate
 	// parts are the secret parts of the evaluated steps, each once. Text from
 	// the host of one step can hold a value that another step built.
 	parts []string
@@ -537,7 +542,7 @@ func MakePlan(ctx context.Context, p *project.Project, connect Connect, opts Opt
 				continue
 			}
 			gate := protocol.Check{Pipeline: stage.Pipeline, Stage: stage.Name}
-			sp.Hosts = append(sp.Hosts, HostPlan{Host: h, Steps: steps[i], PendingHealth: stage.Health != nil && runs[h.Name].checks[gate]})
+			sp.Hosts = append(sp.Hosts, HostPlan{Host: h, Steps: steps[i], Health: runs[h.Name].gates[stage], PendingHealth: stage.Health != nil && runs[h.Name].checks[gate]})
 		}
 		plan.Stages = append(plan.Stages, sp)
 	}
@@ -695,6 +700,7 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 		}
 		hr.written = sync.OnceValues(func() (project.Writes, error) { return p.Written(h, f, other) })
 		hr.stages = map[*project.Stage][]Planned{}
+		hr.gates = map[*project.Stage]*project.Gate{}
 		for i := range p.Pipeline.Stages {
 			s := &p.Pipeline.Stages[i]
 			if s.Skipped || !slices.ContainsFunc(s.Targets, func(t project.Host) bool { return t.Name == h.Name }) {
@@ -713,6 +719,14 @@ func check(ctx context.Context, conn Conn, progress Progress, p *project.Project
 				}
 			}
 			hr.stages[s] = steps
+			if s.Health != nil {
+				g, err := s.Health.Eval(hr.env)
+				if err != nil {
+					return nil, err
+				}
+				hr.addParts(g.Parts)
+				hr.gates[s] = &g
+			}
 		}
 		pending, err := conn.Pending(context.WithoutCancel(ctx))
 		if err != nil {

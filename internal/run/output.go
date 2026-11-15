@@ -116,12 +116,12 @@ func (p *Plan) Write(out, errOut *color.Writer) {
 					fmt.Fprintf(b, "%s    then:%s\n", indent, command(p.Step.Shown().Then, indent+"      "))
 				}
 			}
-			if h := sp.Stage.Health; h != nil && hp.changes() {
+			if h := hp.Health; h != nil && hp.changes() {
 				mark := "*"
 				if hp.PendingHealth {
 					mark = "!"
 				}
-				markLine(b, "    ", mark, " health:"+command(h.Command, "        ")+"\n")
+				markLine(b, "    ", mark, " health:"+command(h.Shown, "        ")+"\n")
 			}
 		}
 	}

@@ -228,7 +228,7 @@ func TestTopLevel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if s := p.Pipeline.Stages[0]; s.Parallelism != 2 || s.Health == nil || s.Health.Command != "true" {
+		if s := p.Pipeline.Stages[0]; s.Parallelism != 2 || s.Health == nil || s.Health.command.node.Value != "true" {
 			t.Errorf("stage: parallelism %d, health %+v", s.Parallelism, s.Health)
 		}
 	})

@@ -175,6 +175,15 @@ func TestDocHealthPassed(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Health gates (command can be a !tpl)
+func TestDocHealthTemplate(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "pipeline.health.command")
+	want := "It can be a !tpl. The template reads the data of the host, as a step of the stage does, without the vars of a recipe step."
+	if out := strings.Join(strings.Fields(r.out), " "); !strings.Contains(out, want) {
+		t.Errorf("winch doc pipeline.health.command lacks %q:\n%s", want, r.out)
+	}
+}
+
 // spec: Running a pipeline/Failures
 func TestDocPipelineFailures(t *testing.T) {
 	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "pipeline")

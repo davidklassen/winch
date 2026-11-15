@@ -14,7 +14,7 @@ func TestGoneCheckPlaces(t *testing.T) {
 	app := &project.Recipe{Name: "app", Steps: []project.Step{file},
 		Handlers: []*project.Handler{{Name: "reload", Steps: []project.Step{file}}}}
 	pl := &project.Pipeline{Name: "site", Stages: []project.Stage{
-		{Name: "base", Pipeline: "site", Health: &project.Health{Command: "true"}, Steps: []project.Step{{Recipe: app}, file}},
+		{Name: "base", Pipeline: "site", Health: &project.Health{}, Steps: []project.Step{{Recipe: app}, file}},
 		{Name: "web", Pipeline: "site", Steps: []project.Step{file}},
 	}}
 	tests := []struct {

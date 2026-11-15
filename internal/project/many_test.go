@@ -744,6 +744,12 @@ func TestHealthLoad(t *testing.T) {
 		{"      command: x\n      stable: -1\n", "stable: must be 0 or more seconds"},
 		{"      command: x\n      stable: 9223372036\n      timeout: 9223372036\n", "stable must be less than timeout (9223372036 seconds)"},
 		{"      command: x\n      stable: 9223372037\n", "stable must be less than timeout (60 seconds)"},
+		{"      command: !tpl \"nc -z {{ host.name }} 25\"\n", ""},
+		{"      command: !tpl \"nc -z {{ vars.smtp_host }} 25\"\n", "pipelines/site.yaml:5:16: vars.smtp_host has no value"},
+		{"      command: !tpl \"nc -z {{ item }} 25\"\n", "item is defined only in a step with loop"},
+		{"      command: !secret abc\n", "!secret is allowed only in variable values"},
+		{"      command: [a]\n", "command: expected a string"},
+		{"      command: !tpl \"nc -z {{ match('dbx')[0].address }} 5432\"\n", "pipelines/site.yaml:5:16: match(\"dbx\")"},
 	}
 	for _, tt := range tests {
 		_, err := Load(t.Context(), writeProject(t, with(manyProject, map[string]string{
@@ -899,7 +905,7 @@ handlers:
 		t.Fatalf("stages: %d", len(p.Pipeline.Stages))
 	}
 	s := p.Pipeline.Stages[0]
-	if s.Name != "site" || s.Pipeline != "site" || hostNames(s.Targets) != "web1,web2,web3" || s.Parallelism != 1 || s.Health == nil || s.Health.Command != "true" {
+	if s.Name != "site" || s.Pipeline != "site" || hostNames(s.Targets) != "web1,web2,web3" || s.Parallelism != 1 || s.Health == nil || s.Health.command.node.Value != "true" {
 		t.Errorf("stage %s of %s: targets %s, parallelism %d, health %v", s.Name, s.Pipeline, hostNames(s.Targets), s.Parallelism, s.Health)
 	}
 	if len(s.Handlers) != 1 || s.Handlers[0].Stage != "site" || len(s.Steps) != 1 || len(s.Steps[0].Notify) != 1 {

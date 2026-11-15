@@ -12,3 +12,5 @@ vars:
   mail_server: false
   # Mailbox name to its {BLF-CRYPT} password hash, one per user.
   mail_users: {}
+  # The mail server that the health gate of stage base reaches on port 25.
+  smtp_probe_host: gmail-smtp-in.l.google.com

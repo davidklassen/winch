@@ -526,6 +526,114 @@ func TestHealthGate(t *testing.T) {
 	})
 }
 
+// spec: Running a pipeline/Health gates (command can be a !tpl); CLI/JSON output
+func TestHealthGateTemplate(t *testing.T) {
+	p := loadWeb1(t, map[string]string{
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      probe: a.example\n  web2:\n    vars:\n      probe: b.example\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    health:
+      command: !tpl "nc -z {{ vars.probe }} 25 # {{ host.name }}"
+    steps:
+      - file:
+          path: /etc/motd
+          content: "hi\n"
+`,
+	})
+	h := fakehost.New()
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var out, errOut, events bytes.Buffer
+	plan.Write(plain(&out), plain(&errOut))
+	for _, want := range []string{"* health: nc -z a.example 25 # web1\n", "* health: nc -z b.example 25 # web2\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the plan has no %q:\n%s", want, out.String())
+		}
+	}
+	plan.WriteJSON(run.NewEvents(plain(&events), func() time.Time { return time.Time{} }))
+	if !strings.Contains(events.String(), `"health":"nc -z b.example 25 # web2"`) {
+		t.Errorf("the planned events do not show the command of web2:\n%s", events.String())
+	}
+	h.Trace = nil
+	out.Reset()
+	if !run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&out), plain(&errOut))).OK() {
+		t.Fatalf("apply failed: %s", errOut.String())
+	}
+	for _, want := range []string{"health web1 nc -z a.example 25 # web1 0s 1m0s", "health web2 nc -z b.example 25 # web2 0s 1m0s"} {
+		if !slices.Contains(h.Trace, want) {
+			t.Errorf("trace %q has no %q", h.Trace, want)
+		}
+	}
+	if !strings.Contains(out.String(), "web2: base: health passed: nc -z b.example 25 # web2\n") {
+		t.Errorf("apply output does not show the command of web2:\n%s", out.String())
+	}
+}
+
+// spec: Running a pipeline/Health gates (command can be a !tpl)
+func TestHealthGateTemplateData(t *testing.T) {
+	gate := func(command, recipe string) string {
+		return `stages:
+  - name: base
+    hosts: web1
+    health:
+      command: !tpl "` + command + `"
+    steps:
+` + recipe + `      - file:
+          path: /etc/motd
+          content: "hi\n"
+`
+	}
+	stepVars := "      - recipe: app\n        vars:\n          probe: step.example\n"
+	tests := []struct {
+		name, inventory, command, recipe, want string
+	}{
+		{"a default that only the gate reads", "hosts:\n  web1: {}\n", "nc -z {{ vars.probe }} 25", "", "nc -z web1.default 25"},
+		{"not the vars of a recipe step", "hosts:\n  web1: {}\n", "nc -z {{ vars.probe }} 25", stepVars, "nc -z web1.default 25"},
+		{"a host from match()", "hosts:\n  web1: {}\n  db1:\n    vars:\n      addr: 10.0.0.9\n", "nc -z {{ match('db1')[0].vars.addr }} {{ vars.probe }}", "", "nc -z 10.0.0.9 web1.default"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := loadWeb1(t, map[string]string{
+				"winch.yaml":              "name: acme\ninventory: test\nvars:\n  probe: !tpl \"{{ host.name }}.default\"\n  addr: none\n",
+				"inventories/test.yaml":   tt.inventory,
+				"pipelines/site.yaml":     gate(tt.command, tt.recipe),
+				"recipes/app/recipe.yaml": manyRecipe,
+			})
+			h := fakehost.New()
+			plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+			var out, errOut bytes.Buffer
+			plan.Write(plain(&out), plain(&errOut))
+			if want := "* health: " + tt.want + "\n"; !strings.Contains(out.String(), want) {
+				t.Errorf("the plan has no %q:\n%s%s", want, out.String(), errOut.String())
+			}
+		})
+	}
+}
+
+// spec: Running a pipeline/Health gates (command can be a !tpl)
+func TestHealthGateTemplateFailsOneHost(t *testing.T) {
+	p := loadWeb1(t, map[string]string{
+		"inventories/test.yaml": "hosts:\n  web1:\n    vars:\n      probe: {port: 25}\n  web2:\n    vars:\n      probe: x\n",
+		"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    health:
+      command: !tpl "nc -z localhost {{ vars.probe.port }}"
+    steps:
+      - file:
+          path: /etc/motd
+          content: "hi\n"
+`,
+	})
+	plan := run.MakePlan(context.Background(), p, fakehost.New().Connector(), run.Options{})
+	if err := plan.Failed["web2"]; err == nil || !strings.Contains(err.Error(), "pipelines/site.yaml:5:16: command: ") {
+		t.Errorf("web2: error %v, want the error of the command", err)
+	}
+	if err := plan.Failed["web1"]; err != nil {
+		t.Errorf("web1: error %v", err)
+	}
+}
+
 // spec: Running a pipeline/Health gates; CLI/Output
 func TestPlanHealth(t *testing.T) {
 	p := manyProject(t, healthStage)

@@ -529,7 +529,7 @@ func (a *hostApply) due(ctx context.Context) (bool, error) {
 func (a *hostApply) apply(ctx context.Context, stage *project.Stage, hp HostPlan) (bool, error) {
 	gate := protocol.Check{Pipeline: stage.Pipeline, Stage: stage.Name}
 	a.gate = nil
-	if stage.Health != nil && !hp.PendingHealth {
+	if hp.Health != nil && !hp.PendingHealth {
 		a.gate = &gate
 		if hp.changes() {
 			if err := a.pendGate(ctx); err != nil {
@@ -541,13 +541,13 @@ func (a *hostApply) apply(ctx context.Context, stage *project.Stage, hp HostPlan
 	if err != nil {
 		return changed, err
 	}
-	if stage.Health == nil || !changed && !hp.changes() {
+	if hp.Health == nil || !changed && !hp.changes() {
 		return changed, nil
 	}
 	if ctx.Err() != nil {
 		return changed, ErrInterrupted
 	}
-	return changed, a.health(ctx, stage, gate)
+	return changed, a.health(ctx, stage, hp.Health, gate)
 }
 
 // pendGate records the gate of the current stage, before the stage changes
@@ -564,11 +564,11 @@ func (a *hostApply) pendGate(ctx context.Context) error {
 }
 
 // health runs the health gate of a stage.
-func (a *hostApply) health(ctx context.Context, stage *project.Stage, gate protocol.Check) error {
+func (a *hostApply) health(ctx context.Context, stage *project.Stage, g *project.Gate, gate protocol.Check) error {
 	h := stage.Health
-	ev := healthEvent(a.host, stage)
+	ev := healthEvent(a.host, stage, g)
 	a.progress.Busy(a.host, stage.Name+": health")
-	err := a.conn.Health(context.WithoutCancel(ctx), protocol.Health{Command: h.Command,
+	err := a.conn.Health(context.WithoutCancel(ctx), protocol.Health{Command: g.Command,
 		Stable: time.Duration(h.Stable) * time.Second, Timeout: time.Duration(h.Timeout) * time.Second, Check: gate})
 	err = maskError(err, a.hide)
 	if err != nil {
@@ -585,10 +585,10 @@ func (a *hostApply) health(ctx context.Context, stage *project.Stage, gate proto
 	return nil
 }
 
-// healthEvent returns the event of the health gate of stage on host, as it
+// healthEvent returns the event of the health gate g of stage on host, as it
 // passes.
-func healthEvent(host string, stage *project.Stage) StepEvent {
-	return StepEvent{Host: host, Address: host + ":" + stage.Name + "#health", Stage: stage.Name, Health: secret.PrintableLines(stage.Health.Command), Status: "ok"}
+func healthEvent(host string, stage *project.Stage, g *project.Gate) StepEvent {
+	return StepEvent{Host: host, Address: host + ":" + stage.Name + "#health", Stage: stage.Name, Health: secret.PrintableLines(g.Shown), Status: "ok"}
 }
 
 // stepEvent returns the event of p on host in stage, without its result.
