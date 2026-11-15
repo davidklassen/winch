@@ -168,6 +168,13 @@ func TestLoadHandlers(t *testing.T) {
 		{name: "stage-handler-of-other-stage", files: map[string]string{
 			"pipelines/site.yaml": webHandlers + "      - file:\n          path: /etc/issue\n          content: hi\n        notify: reload\n",
 		}},
+		{name: "notify-other-stage", files: map[string]string{
+			"pipelines/site.yaml": webHandlers + "      - file:\n          path: /etc/issue\n          content: hi\n        notify: web.reload\n",
+		}},
+		{name: "notify-recipe-named-like-stage", files: map[string]string{
+			"pipelines/site.yaml":    pl + "      - file:\n          path: /etc/issue\n          content: hi\n        notify: db.reload\n",
+			"recipes/db/recipe.yaml": handlersProject["recipes/db/recipe.yaml"] + "handlers:\n  reload:\n    - cmd:\n        command: db-reload\n",
+		}},
 		{name: "stage-handler-step-notify", files: map[string]string{
 			"pipelines/site.yaml": strings.Replace(webHandlers, "command: update-motd\n", "command: update-motd\n          notify: reload\n", 1),
 		}},
