@@ -11,11 +11,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	tpl "github.com/davidklassen/expr-template"
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/file"
 
-	"github.com/davidklassen/winch/internal/tmpl"
-	tparse "github.com/davidklassen/winch/internal/tmpl/parse"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -25,7 +24,7 @@ type template struct {
 	file string
 	pos  yamlx.Pos
 	text string
-	t    *tmpl.Template
+	t    *tpl.Template
 	// readSet holds the reads of all expressions. A field of the elements
 	// of a variable x that a loop reads is the value "x.field".
 	readSet
@@ -44,46 +43,37 @@ func parseInline(pos yamlx.Pos, text string, sc scope) (*template, error) {
 }
 
 func parseText(t *template, sc scope) (*template, error) {
-	tt, err := tmpl.New(t.file).Expr(exprOptions...).Print(printValue).Parse(t.text)
+	tt, err := tpl.New(t.file, exprOptions...).Print(printValue).Parse(t.text)
 	if err != nil {
-		var errs []error
-		for _, e := range joined(err) {
-			pe, _ := errors.AsType[*tparse.Error](e)
-			errs = append(errs, t.engineError(pe, true))
-		}
-		return nil, errors.Join(errs...)
+		return nil, t.engineError(err, true)
 	}
 	t.t = tt
 	var errs []error
-	t.check(tt.Tree.Root, sc, &errs)
+	t.check(tt.Nodes(), sc, nil, &errs)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
 	return t, nil
 }
 
-// joined returns the errors that err joins, or err.
-func joined(err error) []error {
-	if j, ok := err.(interface{ Unwrap() []error }); ok {
-		return j.Unwrap()
-	}
-	return []error{err}
-}
+// loopHidden are the names that a loop name must not hide: the fields of the
+// data, and $get, which readCheck calls.
+var loopHidden = append(fieldTags(exprEnv{}), getFunc)
 
-// check checks what the expressions of list read, as !expr is checked.
-func (t *template) check(list *tparse.ListNode, sc scope, errs *[]error) {
-	if list == nil {
-		return
-	}
-	expr := func(n *tparse.ExprNode) {
+// check checks what the expressions of nodes read, as !expr is checked.
+// loop holds the names of the loops around nodes.
+func (t *template) check(nodes []tpl.Node, sc scope, loop []string, errs *[]error) {
+	expr := func(e *tpl.Expr) {
+		at := e.Location().From
 		where := func(loc file.Location) (yamlx.Pos, string) {
-			return t.where(int(n.Pos), loc.From)
+			return t.where(at + loc.From)
 		}
-		if err := ownNames(n.Src); err != nil {
-			*errs = append(*errs, exprError(err, n.Src, where))
+		src := e.Program.Source().String()
+		if err := ownNames(src); err != nil {
+			*errs = append(*errs, exprError(err, src, where))
 			return
 		}
-		c, err := checkProg(n.Prog, sc, where)
+		c, err := checkProg(e.Program, sc, where)
 		if err != nil {
 			*errs = append(*errs, err)
 			return
@@ -96,40 +86,59 @@ func (t *template) check(list *tparse.ListNode, sc scope, errs *[]error) {
 		t.peerReads = append(t.peerReads, c.peerReads...)
 		t.matches = append(t.matches, c.matches...)
 	}
-	for _, n := range list.Nodes {
+	for _, n := range nodes {
 		switch n := n.(type) {
-		case *tparse.ActionNode:
+		case *tpl.ActionNode:
 			expr(n.Expr)
-		case *tparse.IfNode:
+		case *tpl.IfNode:
 			expr(n.Cond)
-			t.check(n.List, sc, errs)
-			t.check(n.ElseList, sc, errs)
-		case *tparse.ForNode:
-			expr(n.Expr)
-			t.check(n.List, sc, errs)
+			t.check(n.Body, sc, loop, errs)
+			t.check(n.ElseBody, sc, loop, errs)
+		case *tpl.ForNode:
+			expr(n.Collection)
+			inner := slices.Clip(loop)
+			for _, name := range []string{n.Key, n.Elem} {
+				if name == "" {
+					continue
+				}
+				if slices.Contains(loopHidden, name) || slices.Contains(loop, name) {
+					pos, snippet := t.where(t.loopNameAt(n, name))
+					*errs = append(*errs, yamlx.Errorf(pos, "the loop name %s hides a name of the data; choose another name%s", name, snippet))
+				}
+				inner = append(inner, name)
+			}
+			t.check(n.Body, sc, inner, errs)
 			t.elemValues(n)
 		}
 	}
 }
 
-// elemValues replaces the values of the list of the loop n, a variable, with
-// the fields of its elements that the body reads, when the body reads only
-// fields of the element.
-func (t *template) elemValues(n *tparse.ForNode) {
-	list := n.Expr.Prog.Node()
-	for {
-		d, ok := list.(*ast.VariableDeclaratorNode)
-		if !ok {
-			break
+var loopNamesRe = regexp.MustCompile(`^\{\{-?\s*for\s+([^\s,]+)(?:\s*,\s*([^\s,]+))?`)
+
+// loopNameAt returns the rune offset of the loop name name of n, or the
+// offset of n when the action has a comment before its names.
+func (t *template) loopNameAt(n *tpl.ForNode, name string) int {
+	loc := n.Location()
+	action := string([]rune(t.text)[loc.From:loc.To])
+	m := loopNamesRe.FindStringSubmatchIndex(action)
+	for i := 2; m != nil && i < len(m); i += 2 {
+		if m[i] >= 0 && action[m[i]:m[i+1]] == name {
+			return loc.From + utf8.RuneCountInString(action[:m[i]])
 		}
-		list = d.Expr
 	}
-	base, name, ok := constKey(unpatched(list))
+	return loc.From
+}
+
+// elemValues replaces the values of the collection of the loop n, a
+// variable, with the fields of its elements that the body reads, when the
+// body reads only fields of the element.
+func (t *template) elemValues(n *tpl.ForNode) {
+	base, name, ok := constKey(unpatched(n.Collection.Program.Node()))
 	if !ok || !isVars(base) {
 		return
 	}
 	var fields []string
-	if !readsFields(n.List, n.Name, &fields) {
+	if !readsFields(n.Body, n.Elem, &fields) {
 		return
 	}
 	if i := slices.Index(t.values, name); i >= 0 {
@@ -140,19 +149,16 @@ func (t *template) elemValues(n *tparse.ForNode) {
 	}
 }
 
-// readsFields adds to fields each field of the loop name that the nodes of
-// list read. It returns false when they read the element whole.
-func readsFields(list *tparse.ListNode, name string, fields *[]string) bool {
-	if list == nil {
-		return true
-	}
-	expr := func(n *tparse.ExprNode) bool {
+// readsFields adds to fields each field of the loop name that nodes read. It
+// returns false when they read the element whole.
+func readsFields(nodes []tpl.Node, name string, fields *[]string) bool {
+	expr := func(e *tpl.Expr) bool {
 		isName := func(n ast.Node) bool {
 			id, ok := n.(*ast.IdentifierNode)
 			return ok && id.Value == name
 		}
 		reads, byField := 0, 0
-		ast.Walk(new(n.Prog.Node()), visitor(func(np *ast.Node) {
+		ast.Walk(new(e.Program.Node()), visitor(func(np *ast.Node) {
 			if base, key, ok := constKey(*np); ok && isName(base) {
 				byField++
 				*fields = append(*fields, key)
@@ -163,18 +169,18 @@ func readsFields(list *tparse.ListNode, name string, fields *[]string) bool {
 		}))
 		return reads == byField
 	}
-	for _, n := range list.Nodes {
+	for _, n := range nodes {
 		switch n := n.(type) {
-		case *tparse.ActionNode:
+		case *tpl.ActionNode:
 			if !expr(n.Expr) {
 				return false
 			}
-		case *tparse.IfNode:
-			if !expr(n.Cond) || !readsFields(n.List, name, fields) || !readsFields(n.ElseList, name, fields) {
+		case *tpl.IfNode:
+			if !expr(n.Cond) || !readsFields(n.Body, name, fields) || !readsFields(n.ElseBody, name, fields) {
 				return false
 			}
-		case *tparse.ForNode:
-			if !expr(n.Expr) || !readsFields(n.List, name, fields) {
+		case *tpl.ForNode:
+			if !expr(n.Collection) || !readsFields(n.Body, name, fields) {
 				return false
 			}
 		}
@@ -182,10 +188,9 @@ func readsFields(list *tparse.ListNode, name string, fields *[]string) bool {
 	return true
 }
 
-// where returns the position and the snippet of the rune offset from of the
-// expression at the byte offset at.
-func (t *template) where(at, from int) (yamlx.Pos, string) {
-	fe := (&file.Error{Location: file.Location{From: utf8.RuneCountInString(t.text[:at]) + from}}).Bind(file.NewSource(t.text))
+// where returns the position and the snippet of the rune offset off.
+func (t *template) where(off int) (yamlx.Pos, string) {
+	fe := (&file.Error{Location: file.Location{From: off}}).Bind(file.NewSource(t.text))
 	if t.file == "" {
 		return t.pos, fe.Snippet
 	}
@@ -195,28 +200,115 @@ func (t *template) where(at, from int) (yamlx.Pos, string) {
 // exec returns the text of the template for env.
 func (t *template) exec(env exprEnv) (string, error) {
 	var b strings.Builder
-	err := t.t.Execute(&b, env)
-	if pe, ok := errors.AsType[*tparse.Error](err); ok {
-		return "", t.engineError(pe, false)
+	if err := t.t.Execute(&b, env); err != nil {
+		return "", t.engineError(err, false)
 	}
-	return b.String(), err
+	return b.String(), nil
 }
 
-// engineError returns the winch error of the engine error pe. A load error
-// of an expression shows a snippet only when expr gives a location. A run
-// error of an inline template has no position: the value that holds it adds
-// it.
-func (t *template) engineError(pe *tparse.Error, load bool) error {
-	msg := exprProblem(pe.Err, pe.Expr, exprNames)
-	pos, snippet := t.where(int(pe.Pos), 0)
-	_, located := errors.AsType[*file.Error](pe.Err)
-	switch {
-	case load && pe.Expr != "" && !located:
-		return yamlx.Errorf(pos, "%s", msg)
-	case !load && t.file == "":
+// engineError returns the winch error of the engine error err. A run error
+// of an inline template has no position: the value that holds it adds it.
+func (t *template) engineError(err error, load bool) error {
+	te, ok := errors.AsType[*tpl.Error](err)
+	if !ok {
+		return err
+	}
+	off := 0
+	for i, line := range strings.SplitAfter(t.text, "\n") {
+		if i == te.Line-1 {
+			off += te.Column - 1
+			break
+		}
+		off += utf8.RuneCountInString(line)
+	}
+	if !load {
+		off = exprAt(t.t.Nodes(), off)
+	}
+	msg := t.problem(te.Message, off)
+	pos, snippet := t.where(off)
+	if !load && t.file == "" {
 		return errors.New(msg + snippet)
 	}
 	return yamlx.Errorf(pos, "%s%s", msg, snippet)
+}
+
+// exprAt returns the offset of the expression of the action of nodes that
+// starts at the rune offset off, or off. A run error without a position in
+// the expression points to the start of its action.
+func exprAt(nodes []tpl.Node, off int) int {
+	for _, n := range nodes {
+		var e *tpl.Expr
+		var inner [][]tpl.Node
+		switch n := n.(type) {
+		case *tpl.ActionNode:
+			e = n.Expr
+		case *tpl.IfNode:
+			e, inner = n.Cond, [][]tpl.Node{n.Body, n.ElseBody}
+		case *tpl.ForNode:
+			e, inner = n.Collection, [][]tpl.Node{n.Body}
+		}
+		if e != nil && n.Location().From == off {
+			return e.Location().From
+		}
+		for _, list := range inner {
+			if at := exprAt(list, off); at != off {
+				return at
+			}
+		}
+	}
+	return off
+}
+
+var (
+	conditionRe = regexp.MustCompile(`^non-bool expression \(type (.+)\) used as condition$`)
+	loopRe      = regexp.MustCompile(`^cannot loop over (.+)$`)
+	sortRe      = regexp.MustCompile(`^cannot sort keys of `)
+	// blockRe is the start of an action up to its expression, and the trim
+	// marker at its end.
+	blockRe = regexp.MustCompile(`^-?\s*(?:else\s+if\s|if\s|for\s[^}]*?\sin\s)?|\s-$`)
+)
+
+// problem returns the message of the engine message msg of the error at the
+// rune offset off: the types in words, and the hints of expr errors.
+func (t *template) problem(msg string, off int) string {
+	if m := conditionRe.FindStringSubmatch(msg); m != nil {
+		return "if: expected true or false, got " + typeWord(m[1])
+	}
+	if m := loopRe.FindStringSubmatch(msg); m != nil {
+		return "for takes a list or a map, got " + typeWord(m[1])
+	}
+	if sortRe.MatchString(msg) {
+		return "for: the keys of the map cannot be sorted"
+	}
+	// The expression of the action around off, with the block words and the
+	// trim markers as spaces, so that off keeps its place in it.
+	runes := []rune(t.text)
+	start := strings.LastIndex(string(runes[:off]), "{{")
+	if start < 0 {
+		return msg
+	}
+	start = utf8.RuneCountInString(string(runes[:off])[:start]) + 2
+	src, _, _ := strings.Cut(string(runes[start:]), "}}")
+	src = blockRe.ReplaceAllStringFunc(src, func(s string) string {
+		return strings.Repeat(" ", utf8.RuneCountInString(s))
+	})
+	return exprProblem(&file.Error{Location: file.Location{From: off - start}, Message: msg}, src, exprNames)
+}
+
+// typeWord names the Go type typ of a value in an error message.
+func typeWord(typ string) string {
+	switch {
+	case strings.HasPrefix(typ, "[]"):
+		return "a list"
+	case strings.HasPrefix(typ, "map["):
+		return "a map"
+	case strings.HasPrefix(typ, "func("):
+		return "a function"
+	}
+	if w, ok := typeWords[typ]; ok {
+		return w
+	}
+	return "a set of fields"
 }
 
 // printValue returns the text of v: a list or a map as JSON.
@@ -239,8 +331,8 @@ func printValue(v any) (string, error) {
 // can give any text.
 func (t *template) namePattern() *regexp.Regexp {
 	var b strings.Builder
-	for _, n := range t.t.Tree.Root.Nodes {
-		if txt, ok := n.(*tparse.TextNode); ok {
+	for _, n := range t.t.Nodes() {
+		if txt, ok := n.(*tpl.TextNode); ok {
 			b.WriteString(regexp.QuoteMeta(txt.Text))
 		} else {
 			b.WriteString(".*")

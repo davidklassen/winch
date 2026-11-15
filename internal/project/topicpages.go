@@ -367,9 +367,11 @@ var templatesTopic = doc.Topic{
 		doc.Paragraph(`if, else if, and else choose a part. for name in list repeats a part for each element of a list, with the element under that name. end closes a block: {{ for admin in vars.admins }}{{ if admin != "root" }}{{ admin }} {{ end }}{{ end }}.`),
 		doc.List(
 			`{{- removes the white space and line ends before the action, and -}} those after it. The - needs a space after it, or before it in -}}.`,
-			`for takes a list. Loop through a map by its sorted keys: {{ for name in keys(vars.users) }}{{ name }}={{ vars.users[name] }}{{ end }}.`,
+			`for takes a list or a map. A map is looped through in the sorted order of its keys, with the value under the name. A loop over a map whose keys cannot be sorted fails.`,
+			`for key, value in ... also names the key of a map, or the index of a list from 0: {{ for name, user in vars.users }}{{ name }}={{ user.uid }} {{ end }}.`,
 			`A loop name that hides a name of the data, such as vars or item, is an error.`,
 			`if takes true or false.`,
+			`{{ /* text */ }} is a comment and prints nothing.`,
 		),
 		doc.Heading("Data"),
 		doc.Paragraph(`A template reads vars, facts, host, hosts, item, and match(), as an expression does.`),

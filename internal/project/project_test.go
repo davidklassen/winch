@@ -592,7 +592,7 @@ func TestLoadRecipes(t *testing.T) {
 		}},
 		{name: "template-parse-error", files: map[string]string{
 			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
-			"recipes/nginx/templates/bad.tmpl": "line 1\n{{ if host.name }}\n",
+			"recipes/nginx/templates/bad.tmpl": "line 1\n{{ if true }}\n",
 		}},
 		{name: "template-unknown-name", files: map[string]string{
 			"recipes/nginx/recipe.yaml":        recipe("  - file:\n      path: /a\n      template: bad.tmpl\n"),
