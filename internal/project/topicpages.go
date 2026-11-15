@@ -283,6 +283,23 @@ recipes:
 
 # A change of gzip.conf reloads nginx once, at the end of the stage.
 `),
+		doc.Paragraph(`A step cannot notify a handler of another stage. To restart a service when a downloaded binary changes, put the download in the stage or the recipe of the service, and notify its handler.`),
+		doc.Code(`# recipes/app/recipe.yaml
+steps:
+  - download:
+      url: https://example.com/releases/app-1.4.2-linux-amd64
+      sha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+      path: /usr/local/bin/app
+      mode: "0755"
+    notify: restart
+handlers:
+  restart:
+    - service:
+        name: app
+        restarted: true
+
+# A new app binary restarts app after the last step of the recipe.
+`),
 		doc.Heading("When a handler runs"),
 		doc.List(
 			`A handler runs at most once per recipe run on a host. A handler of a stage runs at most once per stage run.`,

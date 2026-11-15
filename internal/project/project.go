@@ -916,6 +916,10 @@ func (l *loader) decodePipeline(p part) (*Pipeline, error) {
 		stages = []stageFile{{Name: p.name, Hosts: pf.Hosts, HostsPos: pf.HostsPos, Parallelism: pf.Parallelism, ParallelismPos: pf.ParallelismPos,
 			Health: pf.Health, Steps: pf.Steps, Handlers: pf.Handlers, Pos: n.Pos}}
 	}
+	var stageNames []string
+	for _, sf := range stages {
+		stageNames = append(stageNames, sf.Name)
+	}
 	seen := map[string]bool{}
 	for _, sf := range stages {
 		if seen[sf.Name] {
@@ -948,7 +952,7 @@ func (l *loader) decodePipeline(p part) (*Pipeline, error) {
 		for _, sn := range sf.Steps {
 			st, err := l.loadStep(sn, nil, plainStep)
 			if err == nil {
-				err = l.resolveNotify(&st, &s)
+				err = l.resolveNotify(&st, &s, stageNames)
 			}
 			switch {
 			case errors.Is(err, errReported):
@@ -1483,15 +1487,16 @@ func (l *loader) resolveRecipeNotify() error {
 			continue
 		}
 		for i := range r.Steps {
-			errs = append(errs, l.resolveNotify(&r.Steps[i], nil))
+			errs = append(errs, l.resolveNotify(&r.Steps[i], nil, nil))
 		}
 	}
 	return errors.Join(errs...)
 }
 
 // resolveNotify finds the handlers that st names: <handler> of its own
-// recipe, or of stage for a step of a stage, or <recipe>.<handler>.
-func (l *loader) resolveNotify(st *Step, stage *Stage) error {
+// recipe, or of stage for a step of a stage, or <recipe>.<handler>. stages
+// are the stage names of the pipeline of a step of a stage.
+func (l *loader) resolveNotify(st *Step, stage *Stage, stages []string) error {
 	var errs []error
 	for j := range st.notifyNames {
 		n := &st.notifyNames[j]
@@ -1505,6 +1510,10 @@ func (l *loader) resolveNotify(st *Step, stage *Stage) error {
 			handler, handlers, owner = recipe, st.in.Handlers, "recipe "+st.in.Name
 		default:
 			r, ok := l.recipes[recipe]
+			if !ok && slices.Contains(stages, recipe) {
+				errs = append(errs, yamlx.Errorf(n.pos, "notify: %s is a stage; a step notifies a handler of its own stage, or <recipe>.<handler>", recipe))
+				continue
+			}
 			if !ok {
 				errs = append(errs, yamlx.Errorf(n.pos, "notify: unknown recipe %q%s", recipe, yamlx.Suggest(recipe, slices.Sorted(maps.Keys(l.recipes)))))
 				continue

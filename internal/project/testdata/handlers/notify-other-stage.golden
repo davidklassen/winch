@@ -1,0 +1,1 @@
+pipelines/site.yaml:27:17: notify: web is a stage; a step notifies a handler of its own stage, or <recipe>.<handler>
