@@ -132,6 +132,20 @@ func TestDocCmdUnless(t *testing.T) {
 	}
 }
 
+// spec: Templates and expressions
+func TestDocTemplateLoops(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "templates")
+	for _, want := range []string{
+		"for takes a list or a map. A map is looped through in the sorted order of its keys, with the value under the name.",
+		"for key, value in ... also names the key of a map, or the index of a list from 0:",
+		"{{ /* text */ }} is a comment and prints nothing.",
+	} {
+		if out := strings.Join(strings.Fields(r.out), " "); !strings.Contains(out, want) {
+			t.Errorf("winch doc templates lacks %q:\n%s", want, r.out)
+		}
+	}
+}
+
 // spec: Modules (every command on the host)
 func TestDocFailedCommandOutput(t *testing.T) {
 	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "remote")

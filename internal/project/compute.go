@@ -20,7 +20,6 @@ import (
 
 	"github.com/davidklassen/winch/internal/facts"
 	"github.com/davidklassen/winch/internal/secret"
-	tparse "github.com/davidklassen/winch/internal/tmpl/parse"
 	"github.com/davidklassen/winch/internal/yamlx"
 )
 
@@ -99,7 +98,6 @@ type exprEnv struct {
 	Match func(string) ([]any, error) `expr:"match"`
 	// Read checks the value of a member read.
 	Read func(any) (any, error) `expr:"$read"`
-	Loop []any                  `expr:"$loop"`
 }
 
 type hostEnv struct {
@@ -287,7 +285,7 @@ func ownNames(src string) error {
 	}
 	var own error
 	ast.Walk(&tree.Node, visitor(func(np *ast.Node) {
-		if id, ok := (*np).(*ast.IdentifierNode); ok && own == nil && (id.Value == tparse.LoopField || id.Value == readFunc || id.Value == getFunc) {
+		if id, ok := (*np).(*ast.IdentifierNode); ok && own == nil && (id.Value == readFunc || id.Value == getFunc) {
 			own = (&file.Error{Location: id.Location(), Message: id.Value + " is not allowed"}).Bind(tree.Source)
 		}
 	}))
