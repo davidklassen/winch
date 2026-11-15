@@ -322,6 +322,9 @@ func TestRebootTimeout(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "the host did not come back within 0.2s") {
 		t.Errorf("Reboot = %v", err)
 	}
+	if back, err := s.End(context.Background()); back != nil || err != nil {
+		t.Errorf("End after the failed reboot = %v, %v; want nothing: the session has ended", back, err)
+	}
 }
 
 // spec: Modules/reboot (gap: another state than running or degraded fails

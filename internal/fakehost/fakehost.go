@@ -105,8 +105,11 @@ type Hosts struct {
 	// rollbackErr is the error of every rollback.
 	rollbackErr error
 	// due holds the plan of the rollback of an earlier run, by host.
-	due   map[string][]string
-	boots map[string]protocol.Boot
+	due map[string][]string
+	// putBack holds what end reports, by host, and endErr its error.
+	putBack map[string][]protocol.PutBack
+	endErr  error
+	boots   map[string]protocol.Boot
 	// dests holds the destinations that SetDestination set.
 	dests map[string]protocol.Destination
 	// jumps holds the jump hosts that SetJump set.
@@ -161,6 +164,7 @@ func New() *Hosts {
 		kills:        map[string]int{},
 		ended:        map[string]bool{},
 		due:          map[string][]string{},
+		putBack:      map[string][]protocol.PutBack{},
 	}
 }
 
@@ -206,6 +210,20 @@ func (h *Hosts) SetDue(host string, lines ...string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.due[host] = lines
+}
+
+// SetPutBack sets what the end of the run of host reports.
+func (h *Hosts) SetPutBack(host string, back ...protocol.PutBack) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.putBack[host] = back
+}
+
+// FailEnd makes the end of every run fail with err.
+func (h *Hosts) FailEnd(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.endErr = err
 }
 
 // SetBoot sets what a reboot of host reports.
@@ -1086,6 +1104,17 @@ func (c *Conn) Due(ctx context.Context) error {
 	defer c.hosts.mu.Unlock()
 	delete(c.hosts.due, c.host)
 	return c.hosts.rollbackErr
+}
+
+// End returns what SetPutBack and FailEnd set. A dead session has ended its
+// run already.
+func (c *Conn) End(ctx context.Context) ([]protocol.PutBack, error) {
+	if c.dead() != nil {
+		return nil, nil
+	}
+	c.hosts.mu.Lock()
+	defer c.hosts.mu.Unlock()
+	return c.hosts.putBack[c.host], c.hosts.endErr
 }
 
 // Reboot boots the kernel of SetBoot. The host still needs a reboot when that

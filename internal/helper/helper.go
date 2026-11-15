@@ -57,7 +57,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 		}
 		err = errors.Join(err, lock.mark(false))
 		if !rebooting {
-			err = errors.Join(err, rb.end(ctx, handlers, thens))
+			_, endErr := rb.end(ctx, handlers, thens)
+			err = errors.Join(err, endErr)
 		}
 		err = errors.Join(err, os.RemoveAll(filepath.Join(dir, module.FetchedDir)))
 		lock.close()
@@ -127,6 +128,13 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, dir, self string, l
 				err = rb.runDue(ctx, handlers)
 			}
 			result = p
+		case req.Method == "end":
+			back, endErr := rb.end(ctx, handlers, thens)
+			e := protocol.Ended{PutBack: back}
+			if endErr != nil {
+				e.Error = endErr.Error()
+			}
+			result = e
 		case req.Method == "due":
 			err = rb.runDue(ctx, handlers)
 		case req.Method == "handled":
@@ -523,10 +531,18 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	}
 	guard := s.Guard.Confirm || res.Guard
 	var deadline time.Time
+	var notifiedLines []string
 	for _, h := range s.Guard.Handlers {
-		if _, _, err := rb.save(rb.handlerStore(h), m); err != nil {
+		saved, _, err := rb.save(rb.handlerStore(h), m)
+		if err != nil {
 			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 		}
+		n := notifiedStep{Handler: h}
+		for _, sv := range saved {
+			n.Paths = append(n.Paths, sv.Path)
+		}
+		line, _ := json.Marshal(n)
+		notifiedLines = append(notifiedLines, string(line))
 	}
 	var untested []string
 	for _, st := range s.Guard.SSHD {
@@ -541,7 +557,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	if _, err := rb.sshd().add(untested); err != nil {
 		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 	}
-	if _, err := rb.notified().add(s.Guard.Handlers); err != nil {
+	if _, err := rb.notified().add(notifiedLines); err != nil {
 		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 	}
 	_, isCmd := m.(*module.Cmd)

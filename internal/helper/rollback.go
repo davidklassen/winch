@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/davidklassen/winch/internal/module"
+	"github.com/davidklassen/winch/internal/protocol"
 )
 
 // job is a rollback timer: at Deadline, the timer process puts back Restore
@@ -98,6 +99,8 @@ type rollbacks struct {
 	// due are the jobs of earlier runs whose timer process is gone. They run
 	// only on the due request; until then, the stores stay.
 	due []string
+	// over is set when end ran.
+	over bool
 }
 
 type guarded struct {
@@ -117,6 +120,12 @@ func (r *rollbacks) sshd() records {
 	return records{dir: filepath.Join(r.dir, r.project), project: "sshd", what: "untested sshd files"}
 }
 
+// notifiedStep is a line of the notified handlers.
+type notifiedStep struct {
+	Handler string   `json:"handler"`
+	Paths   []string `json:"paths,omitempty"`
+}
+
 // untestedFile is a line of the untested sshd files: Store names a store as
 // Guard.SSHD does.
 type untestedFile struct {
@@ -133,9 +142,10 @@ func (r *rollbacks) store(name string) string {
 	return filepath.Join(r.dir, r.project, "recipe-"+name)
 }
 
-// notified holds the records of the handlers with confirm_access that the
-// steps of the run notified. The reconnect after a reboot keeps it; the next
-// run's first session removes it with the stores.
+// notified holds a line for each step of the run that notified handlers with
+// confirm_access: per handler, the paths that the step saved in its store.
+// The reconnect after a reboot keeps it; the next run's first session removes
+// it with the stores.
 func (r *rollbacks) notified() records {
 	return records{dir: filepath.Join(r.dir, r.project), project: "notified", what: "notified handlers"}
 }
@@ -526,47 +536,71 @@ func (r *rollbacks) clear(handlers records) error {
 	return nil
 }
 
-// end runs when the session ends. The run of the host ended before each
-// handler with confirm_access that the run notified and that is still
-// pending: end puts back the store of the handler and drops its record. A
-// handler whose store does not come back stays pending. A timer that still
-// runs rolls back first. While jobs are due, the stores and records are
-// those of the earlier run, and end changes nothing.
-func (r *rollbacks) end(ctx context.Context, handlers, thens records) error {
-	if len(r.due) > 0 {
-		return nil
+// end runs when the run of the host ends, and again when the session ends,
+// where it changes nothing more. The run ended before each handler with
+// confirm_access that the run notified and that is still pending: end puts
+// back the paths of the steps that notified it, drops its record, and returns
+// the paths. A handler whose paths do not come back stays pending. A timer
+// that still runs rolls back first. While jobs are due, the stores and
+// records are those of the earlier run, and end changes nothing.
+func (r *rollbacks) end(ctx context.Context, handlers, thens records) ([]protocol.PutBack, error) {
+	if r.over || len(r.due) > 0 {
+		return nil, nil
 	}
+	r.over = true
 	errs := []error{rollbackStep(ctx, r, handlers, thens), r.putBackUntested(ctx)}
-	notified, err := r.notified().read()
-	if err != nil || len(notified) == 0 {
-		return errors.Join(append(errs, err)...)
+	lines, err := r.notified().read()
+	if err != nil || len(lines) == 0 {
+		return nil, errors.Join(append(errs, err)...)
 	}
 	pending, err := handlers.read()
 	if err != nil {
-		return errors.Join(append(errs, err)...)
+		return nil, errors.Join(append(errs, err)...)
 	}
-	var drop []string
-	restored := map[string]error{}
-	for _, h := range notified {
-		if !slices.Contains(pending, h) {
+	var order []string
+	paths := map[string][]string{}
+	for _, line := range lines {
+		var n notifiedStep
+		if err := json.Unmarshal([]byte(line), &n); err != nil {
+			return nil, errors.Join(append(errs, fmt.Errorf("read the notified handlers: %w", err))...)
+		}
+		if !slices.Contains(pending, n.Handler) {
 			continue
 		}
-		dir := r.handlerStore(h)
-		err, done := restored[dir]
-		if !done {
-			saved, rerr := readIndex(dir)
-			if rerr == nil {
-				rerr = restore(ctx, r.downloads, saved)
-			}
-			err, restored[dir] = rerr, rerr
+		if _, ok := paths[n.Handler]; !ok {
+			order = append(order, n.Handler)
+		}
+		paths[n.Handler] = append(paths[n.Handler], n.Paths...)
+	}
+	var back []protocol.PutBack
+	var drop []string
+	for _, h := range order {
+		saved, err := readIndex(r.handlerStore(h))
+		// A tree can follow the attributes of its directory.
+		saved = slices.DeleteFunc(saved, func(s module.Saved) bool { return !slices.Contains(paths[h], s.Path) })
+		if err == nil {
+			err = restore(ctx, r.downloads, saved)
 		}
 		if err != nil {
-			errs = append(errs, fmt.Errorf("put back the files of the handler %s that did not run: %w", h, err))
+			name := h
+			if f := strings.Split(h, "\t"); len(f) == 3 {
+				name = f[1] + "." + f[2]
+			}
+			errs = append(errs, fmt.Errorf("put back the files of the handler %s that did not run: %w", name, err))
 			continue
 		}
 		drop = append(drop, h)
+		var shown []string
+		for _, s := range saved {
+			if filepath.Dir(s.Path) != r.masked.dir && !slices.Contains(shown, s.Path) {
+				shown = append(shown, s.Path)
+			}
+		}
+		if len(shown) > 0 {
+			back = append(back, protocol.PutBack{Handler: h, Paths: shown})
+		}
 	}
-	return errors.Join(append(errs, handlers.remove(drop...))...)
+	return back, errors.Join(append(errs, handlers.remove(drop...))...)
 }
 
 // tested drops the lines of the untested sshd files that the store in dir

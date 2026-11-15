@@ -1170,6 +1170,9 @@ func TestCloseAfterBrokenSession(t *testing.T) {
 	if _, err := s.Facts(context.Background()); err == nil || err.Error() != want {
 		t.Errorf("facts error = %v, want %q", err, want)
 	}
+	if back, err := s.End(context.Background()); back != nil || err != nil {
+		t.Errorf("End = %v, %v; want nothing: the facts call returned the error", back, err)
+	}
 	if err := s.Close(); err != nil {
 		t.Errorf("close error = %v, want none: the facts call returned it", err)
 	}

@@ -65,6 +65,9 @@ type Reporter interface {
 	// Access reports an access check that passed: after a step of scope, or
 	// after the run when scope is "".
 	Access(host, scope string)
+	// PutBack reports the paths that came back because the handler did not
+	// run.
+	PutBack(host, handler string, paths []string)
 	Host(HostEvent)
 	Done(*Outcome)
 }
@@ -115,6 +118,10 @@ func (t text) Access(host, scope string) {
 		return
 	}
 	fmt.Fprintf(t.out, "%s: %s: access check passed\n", host, scope)
+}
+
+func (t text) PutBack(host, handler string, paths []string) {
+	fmt.Fprintf(t.out, "%s: put back %s: the handler %s did not run\n", host, secret.Printable(strings.Join(paths, ", ")), handler)
 }
 
 func (t text) Host(ev HostEvent) {
@@ -380,6 +387,12 @@ func (r *lockedReporter) Access(host, scope string) {
 	r.rep.Access(host, scope)
 }
 
+func (r *lockedReporter) PutBack(host, handler string, paths []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rep.PutBack(host, handler, paths)
+}
+
 func (r *lockedReporter) Host(ev HostEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -432,9 +445,16 @@ type hostApply struct {
 	held []string
 }
 
-// finish ends the run of the host with the error err of the run. When the
-// run changed the host, it runs the access check after the run first.
+// finish ends the run of the host with the error err of the run. The helper
+// puts back the files of the handlers with confirm_access that did not run.
+// When the run changed the host, the access check after the run follows.
 func (a *hostApply) finish(ctx context.Context, changed bool, err error) error {
+	back, eerr := a.conn.End(context.WithoutCancel(ctx))
+	for _, b := range back {
+		recipe, _, stage, handler := project.ParseRecord(b.Handler)
+		a.rep.PutBack(a.host, cmp.Or(recipe, stage)+"."+handler, b.Paths)
+	}
+	err = errors.Join(err, eerr)
 	passed := false
 	if changed {
 		a.progress.Busy(a.host, "access check")

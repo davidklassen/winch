@@ -53,6 +53,9 @@ type Conn interface {
 	Rollback(ctx context.Context) error
 	// Due runs the rollback of an earlier run whose timer process is gone.
 	Due(ctx context.Context) error
+	// End ends the run of the host: it puts back the files of the handlers
+	// with confirm_access that did not run, and returns them.
+	End(ctx context.Context) ([]protocol.PutBack, error)
 	// Reboot reboots the host and connects again within wait.
 	Reboot(ctx context.Context, wait time.Duration) (protocol.Boot, error)
 	// Handled removes the record of a handler that succeeded.

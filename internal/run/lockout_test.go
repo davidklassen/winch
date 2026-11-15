@@ -65,6 +65,40 @@ func applyWeb1(t *testing.T, p *project.Project, h *fakehost.Hosts) (string, *ru
 	return out.String() + errOut.String(), o
 }
 
+// spec: Running a pipeline/Lockout protection (apply prints one line per
+// host: put back <paths>: the handler <recipe>.<handler> did not run)
+func TestPutBackLine(t *testing.T) {
+	h := fakehost.New()
+	h.SetPutBack("web1",
+		protocol.PutBack{Handler: "ssh.reload", Paths: []string{"/etc/ssh/sshd_config.d/local.conf"}},
+		protocol.PutBack{Handler: "site\tfirewall\treload", Paths: []string{"/etc/a", "/etc/b"}})
+	out, o := applyWeb1(t, lockoutProject(t), h)
+	if !o.OK() {
+		t.Fatalf("apply failed: %v", o.Failed)
+	}
+	want := "web1: put back /etc/ssh/sshd_config.d/local.conf: the handler ssh.reload did not run\n" +
+		"web1: put back /etc/a, /etc/b: the handler firewall.reload did not run\n" +
+		"web1: access check after the run passed\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("apply output:\n%s\nwant it to contain:\n%s", out, want)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a handler whose files did not
+// come back stays pending)
+func TestFailedPutBackFailsTheHost(t *testing.T) {
+	h := fakehost.New()
+	h.SetPutBack("web1", protocol.PutBack{Handler: "ssh.reload", Paths: []string{"/etc/ssh/sshd_config.d/local.conf"}})
+	h.FailEnd(errors.New("put back the files of the handler nftables.reload that did not run: no space left on device"))
+	out, o := applyWeb1(t, lockoutProject(t), h)
+	if err := o.Failed["web1"]; err == nil || !strings.Contains(err.Error(), "no space left on device") {
+		t.Errorf("web1 error %v, want the failed put back", err)
+	}
+	if want := "web1: put back /etc/ssh/sshd_config.d/local.conf: the handler ssh.reload did not run\n"; !strings.Contains(out, want) {
+		t.Errorf("apply output:\n%s\nwant it to contain:\n%s", out, want)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (the store of the recipe, the
 // timer, the second connection)
 func TestConfirmAccess(t *testing.T) {

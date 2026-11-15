@@ -155,6 +155,17 @@ func TestDocFailedCommandOutput(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection
+func TestDocConfirmAccessHandlerDidNotRun(t *testing.T) {
+	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "step.confirm_access")
+	out := strings.Join(strings.Fields(r.out), " ")
+	for _, want := range []string{"winch puts back the files of the steps that notified it", "The files of the other steps stay.", "put back <paths>: the handler <recipe>.<handler> did not run"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("winch doc step.confirm_access lacks %q:\n%s", want, r.out)
+		}
+	}
+}
+
 // spec: CLI/Output
 func TestDocHealthPassed(t *testing.T) {
 	r := winch(t, t.TempDir(), fakehost.New(), false, "", "doc", "workflow")
