@@ -469,6 +469,37 @@ func TestParseTab(t *testing.T) {
 	}
 }
 
+// spec: Templates
+func TestParseUnquotedTemplate(t *testing.T) {
+	tests := []struct {
+		name, yaml, want string
+	}{
+		{"text after the template", "steps:\n  - file:\n      path: !tpl {{ vars.d }}/.kube\n      state: dir\n",
+			`t.yaml:3:13: a value that starts with "{{" needs quotes`},
+		{"a list item", "a:\n  - !tpl {{ x }}/y\n", `t.yaml:2:5: a value that starts with "{{" needs quotes`},
+		{"an expr", "a: !expr {{ x }} + 1\n", `t.yaml:1:4: a value that starts with "{{" needs quotes`},
+		{"a parsed template above the failed one", "file:\n  owner: !tpl {{ u }}\n  path: !tpl {{ d }}/.kube\n",
+			`t.yaml:3:9: a value that starts with "{{" needs quotes`},
+		{"two failed templates in one block", "steps:\n  - file:\n      path: !tpl {{ vars.d }}/.kube\n      src: !tpl {{ vars.d }}/k.yaml\n",
+			`t.yaml:3:13: a value that starts with "{{" needs quotes`},
+		{"a key that is not ASCII", "ключ: !tpl {{ d }}/.kube\n", `t.yaml:1:7: a value that starts with "{{" needs quotes`},
+		{"an error below a whole template", "a: !tpl {{ x }}\nb: @x\n", "t.yaml:2:1: found character that cannot start any token"},
+		{"an error above a whole template", "x: 1\ny: @z\nb: !tpl {{ x }}\n", "t.yaml:2:1: found character that cannot start any token"},
+		{"a comment", "x: 1\nq: w: e\n# was: !tpl {{ y }}/z\n", "t.yaml:2:1: mapping values are not allowed in this context"},
+		{"a quoted string", "a: @x\nb: \"c: !tpl {{ x }}/y\"\n", "t.yaml:1:1: found character that cannot start any token"},
+		{"a flow map above an error", "x:\n  a: {c: !tpl {{ x }}}\n  - c\n", "t.yaml:1:1: did not find expected key"},
+		{"a block scalar", "a: @x\nb: |\n  k: !x {{ y }}/z\n", "t.yaml:1:1: found character that cannot start any token"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse("t.yaml", []byte(tt.yaml))
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("got  %v\nwant %s", err, tt.want)
+			}
+		})
+	}
+}
+
 // spec: CLI/Messages
 func TestFromValueKinds(t *testing.T) {
 	tests := []struct {
