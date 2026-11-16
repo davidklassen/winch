@@ -105,6 +105,9 @@ type rollbacks struct {
 
 type guarded struct {
 	handlers, thens []string
+	// handler is the record of the handler whose step with confirm_access
+	// this is, or "".
+	handler string
 }
 
 func (r *rollbacks) job() string { return filepath.Join(r.dir, "timer.json") }
@@ -667,7 +670,7 @@ func rollbackStep(ctx context.Context, r *rollbacks, handlers, thens records) er
 	if err := r.rollback(ctx); err != nil || g == nil {
 		return err
 	}
-	return errors.Join(handlers.remove(g.handlers...), thens.remove(g.thens...))
+	return rolledBack(g, handlers, thens)
 }
 
 // confirmStep stops the timer of the guarded step. When the timer ended first
@@ -676,10 +679,47 @@ func rollbackStep(ctx context.Context, r *rollbacks, handlers, thens records) er
 func confirmStep(ctx context.Context, r *rollbacks, handlers, thens records) error {
 	g := r.running
 	err := r.confirm(ctx)
-	if g == nil || !errors.Is(err, errTimerFirst) {
+	if g == nil {
 		return err
 	}
-	return errors.Join(err, handlers.remove(g.handlers...), thens.remove(g.thens...))
+	if err == nil {
+		return r.checked(g.handler)
+	}
+	if errors.Is(err, errTimerFirst) {
+		return errors.Join(err, rolledBack(g, handlers, thens))
+	}
+	return err
+}
+
+// rolledBack drops the records that the guarded step g added. The rollback
+// of a handler's step put back the files of the steps that notified the
+// handler, so the handler goes too, and the end puts back nothing for it.
+func rolledBack(g *guarded, handlers, thens records) error {
+	drop := g.handlers
+	if g.handler != "" {
+		drop = append(drop, g.handler)
+	}
+	return errors.Join(handlers.remove(drop...), thens.remove(g.thens...))
+}
+
+// checked drops the notified lines of the handler h: its access check tested
+// the files of the steps that notified it. The handler stays pending.
+func (r *rollbacks) checked(h string) error {
+	if h == "" {
+		return nil
+	}
+	lines, err := r.notified().read()
+	if err != nil {
+		return err
+	}
+	var drop []string
+	for _, line := range lines {
+		var n notifiedStep
+		if json.Unmarshal([]byte(line), &n) == nil && n.Handler == h {
+			drop = append(drop, line)
+		}
+	}
+	return r.notified().remove(drop...)
 }
 
 // RunTimer is the timer process: it waits until the job is gone, which

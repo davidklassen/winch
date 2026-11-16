@@ -622,12 +622,13 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 				return out, fmt.Errorf("%w; the rollback failed: %w", err, rerr)
 			}
 			err = fmt.Errorf("%w; the old files are back", err)
+			return out, errors.Join(err, rolledBack(&guarded{handlers: notified, thens: thenLines, handler: s.Guard.Handler}, handlers, thens))
 		}
 		return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 	}
 	if guard {
 		out.Timer = time.Until(deadline)
-		rb.running = &guarded{handlers: notified, thens: thenLines}
+		rb.running = &guarded{handlers: notified, thens: thenLines, handler: s.Guard.Handler}
 	}
 	// sshd now loads all its files: the access check tests them, and the
 	// rollback puts back those of the store.

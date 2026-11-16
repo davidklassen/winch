@@ -84,7 +84,7 @@ func storeOf(h *project.Handler) store {
 // stores returns the rollback stores that keep the old state of the step p,
 // as guard sends them to the helper.
 func stores(stage *project.Stage, p Planned) []store {
-	g := guard(stage, p)
+	g := guard(stage, nil, p)
 	var out []store
 	if g.Save {
 		out = append(out, ownStore(stage, p))
