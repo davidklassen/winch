@@ -134,7 +134,7 @@ func (l *Line) Apply(ctx context.Context, _ Say) error {
 	}
 	st := fi.Sys().(*syscall.Stat_t)
 	err = writeFile(dir, name, bytes.NewReader(out), int(st.Uid), int(st.Gid), uint32(st.Mode)&0o7777, func(tmp string) error {
-		return put(ctx, dir, missing, dir, tmp, name, l.Validation)
+		return put(ctx, dir, missing, dir, tmp, name, "file", l.Validation)
 	})
 	return pathError("write", l.Path, err)
 }
