@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -91,6 +92,13 @@ func HasComment(data []byte) bool {
 
 var lineRe = regexp.MustCompile(`^yaml: line (\d+): (.*)$`)
 
+// unquotedTplRe matches a tagged block value that starts with "{{". YAML reads
+// the "{{" as a flow map, so text after the closing "}}" fails the parse, and
+// the error names the line of the enclosing block, at or above the value. The
+// parser decides which match failed: quote all matches, then leave each one
+// unquoted in turn until the error changes.
+var unquotedTplRe = regexp.MustCompile(`^(?:[^#"'{\[]*[-:]\s)?\s*(!\S*)\s+(\{\{.*)$`)
+
 // parseError gives the error of the YAML parser a position in file. The
 // errors of a tab in the indentation name the line of the tab or the line
 // above it, and on the first line no line.
@@ -100,8 +108,8 @@ func parseError(file string, data []byte, err error) error {
 		line, _ = strconv.Atoi(m[1])
 		msg = m[2]
 	}
+	lines := strings.Split(string(data), "\n")
 	if slices.Contains(tabErrors, msg) {
-		lines := strings.Split(string(data), "\n")
 		for i := line - 1; i <= line && i < len(lines); i++ {
 			indent := lines[i][:len(lines[i])-len(strings.TrimLeft(lines[i], " \t"))]
 			if col := strings.IndexByte(indent, '\t'); col >= 0 {
@@ -109,7 +117,40 @@ func parseError(file string, data []byte, err error) error {
 			}
 		}
 	}
+	quoted := slices.Clone(lines)
+	tags := map[int]int{}
+	for i := line - 1; i < len(lines); i++ {
+		if m := unquotedTplRe.FindStringSubmatchIndex(lines[i]); m != nil {
+			quoted[i] = lines[i][:m[4]] + "'" + strings.ReplaceAll(lines[i][m[4]:], "'", "''") + "'"
+			tags[i] = utf8.RuneCountInString(lines[i][:m[2]]) + 1
+		}
+	}
+	all := yamlError([]byte(strings.Join(quoted, "\n")))
+	for i := line - 1; all != err.Error() && i < len(lines); i++ {
+		if _, ok := tags[i]; !ok {
+			continue
+		}
+		one := slices.Clone(quoted)
+		one[i] = lines[i]
+		if yamlError([]byte(strings.Join(one, "\n"))) != all {
+			return Errorf(Pos{file, i + 1, tags[i]}, `a value that starts with "{{" needs quotes`)
+		}
+	}
 	return Errorf(Pos{file, line, 1}, "%s", msg)
+}
+
+// yamlError returns the text of the first error of the YAML parser in data, or
+// "" when all documents parse.
+func yamlError(data []byte) string {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	for {
+		var doc yaml.Node
+		if err := dec.Decode(&doc); errors.Is(err, io.EOF) {
+			return ""
+		} else if err != nil {
+			return err.Error()
+		}
+	}
 }
 
 var tabErrors = []string{
