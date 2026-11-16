@@ -69,7 +69,7 @@ func refreshWinchIndex(ctx context.Context, st *State) ([]string, error) {
 	if err := os.WriteFile(conf, []byte(noUpdateHooks), 0o600); err != nil {
 		return nil, fmt.Errorf("create the package index: %w", err)
 	}
-	if _, err := aptGet(ctx, slices.Concat([]string{"update", "-q", "--error-on=any", "-c", conf}, index)...); err != nil {
+	if err := aptUpdate(ctx, slices.Concat([]string{"-c", conf}, index)...); err != nil {
 		if st.Sources {
 			return nil, fmt.Errorf("refresh the index of the sources that the run will have: %w", err)
 		}

@@ -216,8 +216,8 @@ func TestUpgradeFileSource(t *testing.T) {
 		t.Fatalf("run after version 2: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	vm.MustRun(t, oldVersion("3")+" && "+downSource)
-	if r := upgrade(); r.Code == 0 || !strings.Contains(r.Stderr, "Failed to fetch http://127.0.0.1:9/winch-down") {
-		t.Fatalf("run with a source that apt cannot fetch: exit %d, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
+	if r := upgrade(); r.Code == 0 || !strings.Contains(r.Stderr, "Failed to fetch http://127.0.0.1:9/winch-down") || strings.Contains(r.Stderr, "Hit:") || strings.Contains(r.Stderr, "Get:") {
+		t.Fatalf("run with a source that apt cannot fetch: exit %d, want only the failed fetch, stdout %q, stderr %q", r.Code, r.Stdout, r.Stderr)
 	}
 	vm.MustRun(t, "rm /etc/apt/sources.list.d/winch-down.sources")
 	if r := upgrade(); r.Code != 5 || !strings.Contains(r.Stdout, "upgrade winch-signed 0 → 3") {

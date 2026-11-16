@@ -689,7 +689,7 @@ func TestRepoUpdateUsesAptGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.TrimSpace(string(data))
-	want := "update -q --error-on=any -o Dir::Etc::SourceList=/etc/apt/sources.list.d/x.sources -o Dir::Etc::SourceParts=-" +
+	want := "update -qq --error-on=any -o Dir::Etc::SourceList=/etc/apt/sources.list.d/x.sources -o Dir::Etc::SourceParts=-" +
 		" -o APT::Get::List-Cleanup=0 -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= -o " + aptSolver
 	if got != want {
 		t.Errorf("apt-get %s, want the refresh of this source only, through aptGet as pkg's refresh", got)
