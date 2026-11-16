@@ -21,7 +21,7 @@ import (
 type Service struct {
 	Name      string `yaml:"name,required" json:"name" line:"unit, with or without .service" doc:"Unit, with or without .service, such as nginx or certbot.timer."`
 	Running   *bool  `yaml:"running" json:"running,omitempty" line:"start or stop; unset leaves it" doc:"Start or stop; unset leaves it. Without running, the step does not start or stop the unit."`
-	Enabled   *bool  `yaml:"enabled" json:"enabled,omitempty" line:"start at boot; unset leaves it" doc:"Start at boot; unset leaves it. Without enabled, the step does not change it."`
+	Enabled   *bool  `yaml:"enabled" json:"enabled,omitempty" line:"start at boot; unset leaves it" doc:"Start at boot; unset leaves it. Without enabled, the step does not change it. A unit that systemd makes from an init script fails the check: its rc links decide the start at boot."`
 	Reloaded  bool   `yaml:"reloaded" json:"reloaded,omitempty" line:"reload, in handlers and winch run only" doc:"Reload, in handlers and winch run only. A unit that cannot reload restarts."`
 	Restarted bool   `yaml:"restarted" json:"restarted,omitempty" line:"restart, in handlers and winch run only" doc:"Restart, in handlers and winch run only. A stopped unit stays stopped."`
 	// NewFile is the unit file that an earlier unit step of the host writes

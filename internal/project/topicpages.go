@@ -379,7 +379,7 @@ var templatesTopic = doc.Topic{
 	Blocks: []doc.Block{
 		doc.Paragraph(`A template is text in which winch fills in the values of each host.`),
 		doc.Heading("Syntax"),
-		doc.Paragraph(`The !tpl tag marks a template. It builds text, such as a path or a line. The template files of a recipe use the same language. {{ expression }} prints the value of an expression. Templates and expressions use one language, with the same data and functions; run winch doc expressions.`),
+		doc.Paragraph(`The !tpl tag marks a template. It builds text, such as a path or a line. The template files of a recipe use the same language. {{ expression }} prints the value of an expression. A string without !tpl is plain text: a {{ }} in it stays as it is. Templates and expressions use one language, with the same data and functions; run winch doc expressions.`),
 		doc.Heading("Blocks"),
 		doc.Paragraph(`if, else if, and else choose a part. for name in list repeats a part for each element of a list, with the element under that name. end closes a block: {{ for admin in vars.admins }}{{ if admin != "root" }}{{ admin }} {{ end }}{{ end }}.`),
 		doc.List(
@@ -544,7 +544,7 @@ var secretsTopic = doc.Topic{
 			{"winch secret decrypt [<path>]", "print the plaintext of the secret at the path, or of a secret on stdin"},
 			{"winch secret rekey", "encrypt all secrets for the current recipients"},
 		}),
-		doc.Paragraph(`winch secret generate and winch secret encrypt need the recipients, but no age key. generate never prints the password.`),
+		doc.Paragraph(`winch secret generate and winch secret encrypt need the recipients, but no age key. generate makes a password of 32 letters and digits, and never prints the password.`),
 		doc.Paragraph(`winch secret encrypt reads a pipe on stdin. At a terminal, it asks for one line twice and does not show what you type. When the two values differ, it writes nothing.`),
 		doc.Paragraph(`winch secret decrypt needs the age key. It prints the plaintext and nothing else. It reads a !secret value on stdin, with or without the tag. A path to a map or to a value that is not a !secret is an error.`),
 		doc.Heading("Paths"),
@@ -611,7 +611,7 @@ var workflowTopic = doc.Topic{
 		doc.Heading("Plan and apply"),
 		doc.Paragraph(`winch plan shows the changes and changes nothing. winch apply shows the same plan, asks, and then makes the changes. For each host, the plan connects to the host, reads the facts, evaluates the steps, checks the requirements of the recipes, and checks each step on the host. Apply checks each step again right before it changes it. The second check decides.`),
 		doc.Heading("Apply output"),
-		doc.Paragraph(`Apply prints a line for each step that changes or fails, then the summary. A step that checks as ok prints nothing: a planned change that the second check finds made, and a handler restart that checks as ok. An access check that passes prints access check passed after the step or handler that started it. The access check at the end of a host prints access check after the run passed. A health gate that passes prints health passed and its command. The summary line of plan and of apply counts hosts, not steps.`),
+		doc.Paragraph(`Apply prints a line for each step that changes or fails, then the summary. A step that checks as ok prints nothing: a planned change that the second check finds made, and a handler restart that checks as ok. An access check that passes prints access check passed after the step or handler that started it. The access check at the end of a host prints access check after the run passed. A health gate that passes prints health passed and its command. The summary line of plan and of apply counts hosts, not steps. An unreachable host counts as failed. A host that changed and then failed counts only as failed.`),
 		doc.Heading("Plan marks"),
 		doc.Table([][]string{
 			{"+", "create"},
@@ -738,7 +738,7 @@ winch apply site --batch
 		doc.Paragraph(`winch keeps the helper in /var/lib/winch/bin/ and sends it when it is missing. The helper exits when the session ends and leaves no process, except a confirm_access timer until it ends.`),
 		doc.Paragraph(`The helpers for amd64 and arm64 are inside the winch binary. A winch built with go install has none: plan, apply, run, and exec fail before they contact a host. Install a release.`),
 		doc.Heading("How commands run"),
-		doc.Paragraph(`Every command on the host, also one that a module runs, such as apt-get or systemctl, runs as root in /, with only this environment:`),
+		doc.Paragraph(`Every command on the host, also one that a module runs, such as apt-get or systemctl, runs as root in /, with only this environment, except a cmd with user or dir:`),
 		doc.Table([][]string{
 			{"LC_ALL", "C.UTF-8"},
 			{"PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
@@ -769,6 +769,7 @@ winch apply site --batch
 			{"reboot", "the boot ID and the error of a failed reboot, until the next boot"},
 			{"lock", "the session lock"},
 		}),
+		doc.Paragraph(`Each session updates the modification time of the helper and writes lock. A file-integrity tool such as AIDE reports both.`),
 		doc.Paragraph(`To remove winch from a host, delete /var/lib/winch/. Pending handlers, then commands, health gates, and certbot hooks are then lost. The next run of winch starts from the state of the host.`),
 	},
 }
