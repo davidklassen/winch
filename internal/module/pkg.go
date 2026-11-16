@@ -96,6 +96,13 @@ func aptGet(ctx context.Context, args ...string) (string, error) {
 	return runLimited(ctx, 0, KillDelay, aptEnv, "", "apt-get", slices.Concat(args, []string{"-o", aptSolver})...)
 }
 
+// aptUpdate refreshes a package index. Its error shows only apt's warnings
+// and errors, without a line for each index file.
+func aptUpdate(ctx context.Context, args ...string) error {
+	_, err := aptGet(ctx, slices.Concat([]string{"update", "-qq", "--error-on=any"}, args)...)
+	return err
+}
+
 func (p *Pkg) Check(ctx context.Context, st *State, say Say) (Result, error) {
 	// index are the apt flags of the package index that the check reads.
 	index := noBinaryCache
@@ -619,7 +626,7 @@ func (p *Pkg) Apply(ctx context.Context, say Say) error {
 		if err := waitIndexLock(ctx, say.Progress); err != nil {
 			return err
 		}
-		if _, err := aptGet(ctx, "update", "-q", "--error-on=any"); err != nil {
+		if err := aptUpdate(ctx); err != nil {
 			return err
 		}
 	}

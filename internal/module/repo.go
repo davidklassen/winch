@@ -586,10 +586,8 @@ func (r *Repo) Apply(ctx context.Context, say Say) error {
 
 // update refreshes the index of this source only.
 func (r *Repo) update(ctx context.Context) error {
-	_, err := aptGet(ctx, slices.Concat([]string{"update", "-q", "--error-on=any",
-		"-o", "Dir::Etc::SourceList=" + r.SourcePath(), "-o", "Dir::Etc::SourceParts=-",
+	return aptUpdate(ctx, slices.Concat([]string{"-o", "Dir::Etc::SourceList=" + r.SourcePath(), "-o", "Dir::Etc::SourceParts=-",
 		"-o", "APT::Get::List-Cleanup=0"}, noBinaryCache)...)
-	return err
 }
 
 // undo puts the files back as Check found them, the last first.
