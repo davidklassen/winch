@@ -532,14 +532,14 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 	guard := s.Guard.Confirm || res.Guard
 	var deadline time.Time
 	var notifiedLines []string
+	touches := rb.touches(m)
 	for _, h := range s.Guard.Handlers {
-		saved, _, err := rb.save(rb.handlerStore(h), m)
-		if err != nil {
+		if _, _, err := rb.save(rb.handlerStore(h), m); err != nil {
 			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 		}
 		n := notifiedStep{Handler: h}
-		for _, sv := range saved {
-			n.Paths = append(n.Paths, sv.Path)
+		for _, t := range touches {
+			n.Paths = append(n.Paths, t.Path)
 		}
 		line, _ := json.Marshal(n)
 		notifiedLines = append(notifiedLines, string(line))
@@ -549,7 +549,7 @@ func step(ctx context.Context, params json.RawMessage, apply bool, login module.
 		if _, _, err := rb.save(rb.store(st), m); err != nil {
 			return out, errors.Join(err, handlers.remove(notified...), thens.remove(thenLines...))
 		}
-		for _, t := range rb.touches(m) {
+		for _, t := range touches {
 			line, _ := json.Marshal(untestedFile{Store: st, Path: t.Path})
 			untested = append(untested, string(line))
 		}
