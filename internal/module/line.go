@@ -21,7 +21,7 @@ import (
 type Line struct {
 	Path       string  `yaml:"path,required" json:"path" line:"absolute" doc:"Absolute. A missing file is a change in the plan, since an earlier step can create it. Apply fails when it is still missing."`
 	Line       string  `yaml:"line" json:"line,omitempty" line:"line to keep" doc:"Line to keep. It replaces the one line that match finds, or goes at the end of the file."`
-	Match      string  `yaml:"match,required" json:"match" line:"regular expression for the line" doc:"Regular expression for the line. More than one matching line fails the check."`
+	Match      string  `yaml:"match,required" json:"match" line:"regular expression for the line" doc:"Regular expression for the line. Without absent, more than one matching line fails the check."`
 	Validation *string `yaml:"validate" json:"validate,omitempty" line:"check command, as for file" doc:"Check command, as for file. It runs with absent too."`
 	Absent     bool    `yaml:"absent" json:"absent,omitempty" line:"remove the matching lines" doc:"Remove the matching lines."`
 }
