@@ -721,13 +721,18 @@ func TestAccessPassedAfterFailedGuardedCmd(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		lostLast bool
+		putBack  bool
 		want     string
 	}{
-		{"the check after the run passes", false, "web1: base: + file /etc/motd\nweb1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1\nweb1: base: access check passed\nweb1: access check after the run passed\n\n1 host: 0 changed, 0 unchanged, 1 failed\n"},
-		{"the check after the run fails", true, "web1: base: + file /etc/motd\nweb1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1\n  the access check after the run failed: ssh: connect to host web1 port 22: Connection timed out\nweb1: base: access check passed\n\n1 host: 0 changed, 0 unchanged, 1 failed\n"},
+		{"the check after the run passes", false, false, "web1: base: + file /etc/motd\nweb1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1\nweb1: base: access check passed\nweb1: access check after the run passed\n\n1 host: 0 changed, 0 unchanged, 1 failed\n"},
+		{"the check after the run fails", true, false, "web1: base: + file /etc/motd\nweb1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1\n  the access check after the run failed: ssh: connect to host web1 port 22: Connection timed out\nweb1: base: access check passed\n\n1 host: 0 changed, 0 unchanged, 1 failed\n"},
+		{"a handler did not run", false, true, "web1: base: + file /etc/motd\nweb1: base: failed: cmd pam-auth-update: pam-auth-update: exit status 1\nweb1: base: access check passed\nweb1: put back /etc/ssh/sshd_config.d/local.conf: the handler ssh.reload did not run\nweb1: access check after the run passed\n\n1 host: 0 changed, 0 unchanged, 1 failed\n"},
 	} {
 		h := fakehost.New()
 		h.FailCommand("web1", "pam-auth-update")
+		if tt.putBack {
+			h.SetPutBack("web1", protocol.PutBack{Handler: "ssh.reload", Paths: []string{"/etc/ssh/sshd_config.d/local.conf"}})
+		}
 		checks := 0
 		h.OnAccess = func(host string) {
 			if checks++; checks == 2 && tt.lostLast {
@@ -746,6 +751,38 @@ func TestAccessPassedAfterFailedGuardedCmd(t *testing.T) {
 		if b.String() != tt.want {
 			t.Errorf("%s: output:\n%s\nwant:\n%s", tt.name, b.String(), tt.want)
 		}
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (apply prints the put-back line;
+// on a host that fails, the access check lines print after the error)
+func TestPutBackAfterFailedStep(t *testing.T) {
+	p := loadWeb1(t, map[string]string{"pipelines/site.yaml": `stages:
+  - name: base
+    hosts: all
+    steps:
+      - file:
+          path: /etc/motd
+          content: hi
+      - cmd:
+          command: pam-auth-update
+          changes: [/etc/pam.d]
+      - cmd:
+          command: boom
+`})
+	h := fakehost.New()
+	h.FailCommand("web1", "boom")
+	h.SetPutBack("web1", protocol.PutBack{Handler: "ssh.reload", Paths: []string{"/etc/ssh/sshd_config.d/local.conf"}})
+	plan := run.MakePlan(context.Background(), p, h.Connector(), run.Options{})
+	var b bytes.Buffer
+	o := run.Apply(context.Background(), plan, h.Connector(), run.Text(plain(&b), plain(&b)))
+	if o.OK() {
+		t.Fatal("apply succeeded after a failed step")
+	}
+	want := "web1: base: + file /etc/motd\nweb1: base: ~ cmd pam-auth-update\nweb1: base: access check passed\nweb1: base: failed: cmd boom: boom: exit status 1\n" +
+		"web1: put back /etc/ssh/sshd_config.d/local.conf: the handler ssh.reload did not run\nweb1: access check after the run passed\n\n1 host: 0 changed, 0 unchanged, 1 failed\n"
+	if b.String() != want {
+		t.Errorf("output:\n%s\nwant:\n%s", b.String(), want)
 	}
 }
 

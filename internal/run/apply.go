@@ -244,8 +244,8 @@ func Apply(ctx context.Context, plan *Plan, connect Connect, rep Reporter) *Outc
 			delete(o.Changed, name)
 			rep.Host(HostEvent{Phase: "apply", Host: name, Status: hostStatus(err), Error: err.Error()})
 			if a := runs[name]; a != nil {
-				for _, scope := range a.held {
-					rep.Access(name, scope)
+				for _, report := range a.held {
+					report()
 				}
 			}
 		}
@@ -439,10 +439,10 @@ type hostApply struct {
 	conn Conn
 	// rollback is the plan of the rollback of an earlier run, until it runs.
 	rollback []string
-	// held are the scopes of the access checks that passed on a host that
-	// failed, in the order they ran; "" is the check after the run. Apply
-	// reports them after the error of the host.
-	held []string
+	// held are the reports of the passed access checks and the put-back
+	// lines of a host that failed, in the order they happened. Apply prints
+	// them after the error of the host.
+	held []func()
 }
 
 // finish ends the run of the host with the error err of the run. The helper
@@ -450,10 +450,6 @@ type hostApply struct {
 // When the run changed the host, the access check after the run follows.
 func (a *hostApply) finish(ctx context.Context, changed bool, err error) error {
 	back, eerr := a.conn.End(context.WithoutCancel(ctx))
-	for _, b := range back {
-		recipe, _, stage, handler := project.ParseRecord(b.Handler)
-		a.rep.PutBack(a.host, cmp.Or(recipe, stage)+"."+handler, b.Paths)
-	}
 	err = errors.Join(err, eerr)
 	passed := false
 	if changed {
@@ -472,13 +468,22 @@ func (a *hostApply) finish(ctx context.Context, changed bool, err error) error {
 		}
 	}
 	err = errors.Join(err, a.close())
-	switch {
-	case passed && err == nil:
-		a.rep.Access(a.host, "")
-	case passed:
-		a.held = append(a.held, "")
+	var reports []func()
+	for _, b := range back {
+		recipe, _, stage, handler := project.ParseRecord(b.Handler)
+		reports = append(reports, func() { a.rep.PutBack(a.host, cmp.Or(recipe, stage)+"."+handler, b.Paths) })
 	}
-	return err
+	if passed {
+		reports = append(reports, func() { a.rep.Access(a.host, "") })
+	}
+	if err != nil {
+		a.held = append(a.held, reports...)
+		return err
+	}
+	for _, report := range reports {
+		report()
+	}
+	return nil
 }
 
 func (a *hostApply) close() error {
@@ -882,7 +887,8 @@ func (a *hostApply) step(ctx context.Context, ev StepEvent, l string, p Planned,
 	case passed && err == nil:
 		a.rep.Access(a.host, ev.scope())
 	case passed:
-		a.held = append(a.held, ev.scope())
+		scope := ev.scope()
+		a.held = append(a.held, func() { a.rep.Access(a.host, scope) })
 	}
 	if err != nil {
 		return module.Result{}, fmt.Errorf("%s: failed: %s: %w", ev.scope(), l, err)
