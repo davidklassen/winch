@@ -1,5 +1,105 @@
 # Changelog
 
+## v0.4.0
+
+### Breaking changes
+
+- Templates use the expression language of `!expr`. `!tpl` values and
+  template files no longer run on Go's text/template. To migrate:
+  - drop the leading dot: `{{ .vars.domain }}` is `{{ vars.domain }}`,
+    `{{ .host.name }}` is `{{ host.name }}`, `{{ .item }}` is
+    `{{ item }}`;
+  - `{{ range .vars.list }}` is `{{ for x in vars.list }}`, and the
+    body reads `x` in place of `.`. `{{ range $k, $v := .vars.map }}`
+    is `{{ for k, v in vars.map }}`;
+  - functions take their arguments in parentheses, as in `!expr`:
+    `{{ join .vars.names ", " }}` is `{{ join(vars.names, ", ") }}`,
+    `{{ quote .vars.x }}` is `{{ quote(vars.x) }}`;
+  - `with`, `define`, `template`, `block`, `break`, `continue`, and
+    `$x :=` variables are gone.
+  An old template fails to load, with the file, line, and column. Also:
+  - printing null fails, and a list or a map prints as JSON;
+  - `if` takes true or false: `{{ if vars.name }}` on a string fails.
+    Write `{{ if vars.name != "" }}`;
+  - `keys`, `values`, and `toPairs` of an empty map give an empty list,
+    not null; a bare `now` is a load error.
+- The `assert` module is gone. An `assert` step is an unknown module.
+  Use a health gate on the stage: its `command` runs after the stage on
+  each host that changed. Pending assert records on a host show in the
+  plan as gone, and apply removes them.
+- A failure in a stage stops the pipeline after that stage. Before, the
+  later stages ran on the other hosts. The hosts of the failed stage
+  finish it; each host of a later stage with a change fails with `not
+  started: <host> failed in stage <stage>`. To go on without a failed
+  host, leave it out with `--hosts`.
+
+### Added
+
+- Read other hosts: `hosts` lists every host of the inventory, with
+  `name`, `address`, `groups`, `vars`, and `facts`. `match()` works in
+  templates and defaults, and its hosts have facts and all their
+  variables. New facts: `ssh.ed25519`, `ssh.ecdsa`, `ssh.rsa`,
+  `net.ipv4`, and `net.ipv6`.
+- Templates: `for` over a map, in sorted key order; `for key, value in
+  ...` over a map or a list; `{{ /* comment */ }}`.
+- A health gate `command` can be a `!tpl`. It reads the data of the
+  host.
+- `absent: true` on `unit` stops the unit, removes its links and file,
+  and runs daemon-reload. On `repo`, it removes the source and its key.
+- Firewall rules can have both `tcp` and `udp`, or only `from` to
+  accept all traffic from those sources.
+- `cmd` has `changes`: the PAM or sudo paths that the command changes,
+  such as with `pam-auth-update`. The step gets the access check and
+  the rollback, as a file step in `/etc/pam.d` does.
+- `join` takes numbers as well as strings.
+
+### Fixed
+
+- Login protection:
+  - the access check after the run also runs when a step fails or after
+    the first Ctrl-C, on a host that changed something;
+  - when a run ends before a `confirm_access` handler ran, only the
+    files of the steps that notified it go back, and apply prints `put
+    back <paths>: the handler <recipe>.<handler> did not run`. Before,
+    the files of the whole recipe went back;
+  - the rollback timer of a guarded `cmd` starts when the command ends;
+  - apply prints `access check passed`, and the plan marks a changed
+    firewall step. On a failed host, these lines print after the error;
+  - a failed restore at the session end shows its error.
+- Secrets:
+  - a value built from another host's secret is masked, also in JSON;
+  - a file that others can read and that holds another host's secret
+    gets the load warning;
+  - private key blocks are masked in file diffs, also in JSON;
+  - a format placeholder such as `{}` or `%s` in a URL password no
+    longer warns.
+- `pkg`:
+  - after a repo change or an `upgrade`, the plan fails on a package
+    name that apt does not know or that only other packages provide.
+    Before, apply failed at that step after earlier steps had changed
+    the host;
+  - the plan simulates earlier installs at the versions they planned.
+- `cmd` runs `unless` as the step's `user`, in its `dir`. The plan
+  shows the stderr of a failed `unless`.
+- The error of a failed command shows the output up to its last 64 KiB,
+  not its last 10 lines.
+- A failed `then` on a loop step names the step, not an element.
+- `service`: `enabled` fails on a runtime-enabled unit without
+  `[Install]` and on a unit from an init script, and works on an
+  indirect unit with its own install rules.
+- `user` never creates `/nonexistent`.
+- A file, dir, or link step with `absent: true` gets a plan note when
+  an earlier package can create its path.
+- The first hosts of a parallel stage start together.
+- A passed health gate prints `health passed: <command>`.
+- Messages: `notify` to a handler of another stage says so; `join` and
+  `get` say why they fail; `secret generate` on a variable that nothing
+  reads says what to do; `secret init` names the key it uses; and more
+  errors name the fix.
+- `winch doc` fixes for `cmd`, `service`, `user`, `firewall`, `secret
+  init`, the secrets page, and handlers.
+- Built with Go 1.27.4, which fixes GO-2026-6859 in `net/http`.
+
 ## v0.3.0
 
 ### Added
