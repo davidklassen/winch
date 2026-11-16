@@ -656,7 +656,7 @@ func (a *hostApply) steps(ctx context.Context, stage *project.Stage, h *project.
 		ev.Step, ev.Module = label(p.Step), p.Step.Module
 		l := oneLine(ev.label())
 		a.progress.Busy(a.host, ev.scope()+": "+l)
-		res, err := a.step(ctx, ev, l, p, guard(stage, p))
+		res, err := a.step(ctx, ev, l, p, guard(stage, h, p))
 		changed = changed || res.Status == module.Change
 		if err != nil {
 			return changed, err
@@ -817,9 +817,12 @@ func (a *hostApply) afterStart(st project.Step, record string) project.Step {
 // store of the recipe, or of the stage for a module step of the stage, when
 // that has a step with confirm_access. It also saves in the store of each
 // confirm_access handler that the step notifies on the host, and in each
-// store of p.SSHD.
-func guard(stage *project.Stage, p Planned) protocol.Guard {
+// store of p.SSHD. handler is the handler of p, or nil.
+func guard(stage *project.Stage, handler *project.Handler, p Planned) protocol.Guard {
 	g := protocol.Guard{Store: ownStore(stage, p).name(), Confirm: p.Step.ConfirmAccess}
+	if handler != nil && g.Confirm {
+		g.Handler = handler.Record()
+	}
 	if p.In != nil {
 		g.Save = p.In.Recipe.ConfirmsAccess()
 	} else {

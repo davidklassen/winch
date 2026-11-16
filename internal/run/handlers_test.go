@@ -979,7 +979,7 @@ func TestStageHandlers(t *testing.T) {
 	}
 	guards := map[string]protocol.Guard{
 		"web1 /etc/app/a.conf": {Store: "site\tweb", Save: true, Handlers: []string{"site\tweb\treload"}},
-		"web1 app":             {Store: "site\tweb", Save: true, Confirm: true},
+		"web1 app":             {Store: "site\tweb", Save: true, Confirm: true, Handler: "site\tweb\treload"},
 		"web1 /etc/other.conf": {Store: "site\tother"},
 		"web1 other-reload":    {Store: "site\tother"},
 	}

@@ -107,6 +107,10 @@ type Guard struct {
 	// Confirm is the confirm_access of the step: a change starts the
 	// rollback timer, which puts back the whole store.
 	Confirm bool `json:"confirm,omitempty"`
+	// Handler is the record of the handler whose step with confirm_access
+	// this is. After the access check passes or the rollback puts the files
+	// back, the end of the run puts back nothing for that handler.
+	Handler string `json:"handler,omitempty"`
 }
 
 // Ended is the result of end. Error is the error of end; PutBack holds the

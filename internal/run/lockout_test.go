@@ -126,7 +126,7 @@ web1: access check after the run passed
 	}
 	want := map[string]protocol.Guard{
 		"web1 /etc/ssh/sshd_config.d/local.conf": {Store: "ssh", Save: true, Handlers: []string{"ssh.reload"}, SSHD: []string{"ssh"}},
-		"web1 ssh":                               {Store: "ssh", Save: true, Confirm: true, LoadsSSHD: true},
+		"web1 ssh":                               {Store: "ssh", Save: true, Confirm: true, LoadsSSHD: true, Handler: "ssh.reload"},
 		"web1 /etc/motd":                         {Store: "site\tbase"},
 		"web1 /etc/nftables.conf":                {Store: "site\tfirewall", Save: true},
 		"web1 nftables":                          {Store: "site\tfirewall", Save: true, Confirm: true},

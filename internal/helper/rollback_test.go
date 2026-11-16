@@ -1067,6 +1067,102 @@ func TestEndKeepsTheFilesOfAHandlerThatRan(t *testing.T) {
 	}
 }
 
+// applyHandler applies "new" to a with a notify of the handler ssh.reload and
+// of others, and then to b as the guarded step of ssh.reload.
+func (l *lockout) applyHandler(t *testing.T, others ...string) {
+	t.Helper()
+	g := protocol.Guard{Store: "ssh", Save: true, Handlers: append([]string{"ssh.reload"}, others...)}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: g.Handlers}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	g = protocol.Guard{Store: "ssh", Save: true, Confirm: true, Handler: "ssh.reload"}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.b, "new\n"), Guard: g}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a handler whose access check
+// passed keeps the files)
+func TestEndKeepsTheFilesOfAHandlerWhoseCheckPassed(t *testing.T) {
+	l := startLockout(t)
+	l.applyHandler(t, "nftables.reload")
+	if r := l.c.call(t, "confirm", nil); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	want := protocol.Ended{PutBack: []protocol.PutBack{{Handler: "nftables.reload", Paths: []string{l.a}}}}
+	if e := l.endResult(t); !reflect.DeepEqual(e, want) {
+		t.Errorf("end = %+v, want %+v", e, want)
+	}
+	if b := content(t, l.b); b != "new\n" {
+		t.Errorf("b = %q, want new", b)
+	}
+	// A handler that has not ended runs again in the next run.
+	if p := pendingAll(t, l.c); !slices.Equal(p.Handlers, []string{"ssh.reload"}) {
+		t.Errorf("pending handlers %v, want ssh.reload", p.Handlers)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (when the rollback timer of a
+// handler's step ends first, the end puts back nothing for the handler)
+func TestEndReportsNothingAfterTheTimerOfAHandler(t *testing.T) {
+	l := startLockout(t)
+	l.applyHandler(t)
+	l.expire(t, nil)
+	l.waitTimer(t)
+	if r := l.c.call(t, "confirm", nil); r.Error != errTimerFirst.Error() {
+		t.Fatalf("confirm: %q, want %q", r.Error, errTimerFirst)
+	}
+	if e := l.endResult(t); len(e.PutBack) != 0 || e.Error != "" {
+		t.Errorf("end = %+v, want no put-back line", e)
+	}
+	if p := pendingAll(t, l.c); len(p.Handlers) != 0 {
+		t.Errorf("pending handlers %v, want none", p.Handlers)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (when the guarded step fails
+// the access check, its rollback puts the files back, and no put-back line
+// follows)
+func TestEndReportsNothingAfterTheRollbackOfAHandler(t *testing.T) {
+	l := startLockout(t)
+	l.applyHandler(t)
+	if r := l.c.call(t, "rollback", nil); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if e := l.endResult(t); len(e.PutBack) != 0 || e.Error != "" {
+		t.Errorf("end = %+v, want no put-back line", e)
+	}
+	if a, b := content(t, l.a), content(t, l.b); a != "old\n" || b != "old\n" {
+		t.Errorf("a = %q, b = %q; want both old", a, b)
+	}
+	if p := pendingAll(t, l.c); len(p.Handlers) != 0 {
+		t.Errorf("pending handlers %v, want none", p.Handlers)
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (a guarded step that fails
+// rolls back at once; the end puts back nothing for its handler)
+func TestEndReportsNothingAfterAFailedHandlerStep(t *testing.T) {
+	l := startLockout(t)
+	g := protocol.Guard{Store: "ssh", Save: true, Handlers: []string{"ssh.reload"}}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: fileArgs(l.a, "new\n"), Guard: g, Notify: g.Handlers}); r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	g = protocol.Guard{Store: "ssh", Save: true, Confirm: true, Handler: "ssh.reload"}
+	if r := l.c.call(t, "apply", protocol.Step{Module: "file", Args: failingFileArgs(l.b), Guard: g}); !strings.HasSuffix(r.Error, "; the old files are back") {
+		t.Fatalf("apply error %q, want the rollback", r.Error)
+	}
+	if e := l.endResult(t); len(e.PutBack) != 0 || e.Error != "" {
+		t.Errorf("end = %+v, want no put-back line", e)
+	}
+	if a := content(t, l.a); a != "old\n" {
+		t.Errorf("a = %q, want old", a)
+	}
+	if p := pendingAll(t, l.c); len(p.Handlers) != 0 {
+		t.Errorf("pending handlers %v, want none", p.Handlers)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (when the session is gone, the
 // old files come back)
 func TestEndRollsBackARunningTimer(t *testing.T) {
