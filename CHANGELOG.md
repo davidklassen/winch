@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.4.1
+
+### Fixed
+
+- Login protection:
+  - a handler whose access check passed keeps the files of the steps
+    that notified it. Before, a later failed step of the handler put
+    them back while the service ran the new config;
+  - after a rollback of a handler's guarded step, apply no longer
+    prints a false `put back ...: the handler ... did not run`;
+  - putting back the file of a notifying step in a directory that the
+    run created removes only that file. Before, it removed the whole
+    directory with the files of other steps;
+  - on a failed host, the put-back line prints after the error of the
+    host.
+- `winch exec` runs while a variable of the project has no value. It
+  runs no step, so a value that only a later run makes, such as a
+  join key, no longer blocks it.
+- `winch validate` checks the plain keys of a block that also holds an
+  `!expr` key, such as a firewall rule with `tcp: 70000` and an
+  expression in `from`.
+- A tagged value that starts with `{{`, such as
+  `path: !tpl {{ vars.d }}/x`, fails with
+  `a value that starts with "{{" needs quotes` at its line. Before,
+  YAML's error named the line above, with no hint.
+- A failed `apt-get update` shows only apt's warnings and errors, not
+  a line for each index file.
+- A failed `validate` names what it removed or put back: a file, a
+  symbolic link, or a directory.
+- `winch doc` states rules it left out: `enabled` on a unit from an
+  init script, two matching lines in `line`, no `%s` in `validate`,
+  `cmd` as `user` in `dir`, the files that each session touches,
+  what `secret generate` makes, `{{ }}` without `!tpl`, and how the
+  summary counts hosts.
+
 ## v0.4.0
 
 ### Breaking changes
