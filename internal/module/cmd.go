@@ -38,48 +38,54 @@ func (c *Cmd) UnlessCommand() string {
 }
 
 func (c *Cmd) Validate() error {
-	if err := checkCommand("command", &c.Command); err != nil {
-		return err
-	}
-	if c.Timeout != nil {
-		if err := CheckSeconds("timeout", *c.Timeout); err != nil {
-			return err
-		}
-	}
-	if err := checkCommand("unless", c.Unless); err != nil {
-		return err
-	}
 	if c.Unless != nil && c.Creates != "" {
 		return &yamlx.FieldError{At: "unless", Msg: "a cmd step has at most one of creates and unless"}
 	}
-	if c.Creates != "" {
+	return nil
+}
+
+func (c *Cmd) CheckField(key string) error {
+	switch key {
+	case "command":
+		return checkCommand("command", &c.Command)
+	case "timeout":
+		if c.Timeout != nil {
+			return CheckSeconds("timeout", *c.Timeout)
+		}
+	case "unless":
+		return checkCommand("unless", c.Unless)
+	case "creates":
+		if c.Creates == "" {
+			return nil
+		}
 		if err := checkAbs("creates", c.Creates); err != nil {
 			return err
 		}
 		if i := strings.IndexAny(c.Creates, "*?["); i >= 0 {
 			return &yamlx.FieldError{Field: "creates", Msg: fmt.Sprintf("names one path; %q is not allowed", c.Creates[i:i+1])}
 		}
-	}
-	if c.Dir != "" {
-		if err := checkAbs("dir", c.Dir); err != nil {
-			return err
+	case "dir":
+		if c.Dir != "" {
+			return checkAbs("dir", c.Dir)
 		}
-	}
-	for _, p := range c.Changes {
-		if err := checkAbs("changes", p); err != nil {
-			return err
+	case "changes":
+		for _, p := range c.Changes {
+			if err := checkAbs("changes", p); err != nil {
+				return err
+			}
+			if i := strings.IndexAny(p, "*?["); i >= 0 {
+				return &yamlx.FieldError{Field: "changes", Msg: fmt.Sprintf("%q is not allowed; list each path", p[i:i+1])}
+			}
 		}
-		if i := strings.IndexAny(p, "*?["); i >= 0 {
-			return &yamlx.FieldError{Field: "changes", Msg: fmt.Sprintf("%q is not allowed; list each path", p[i:i+1])}
+		// The home of the login user differs by host, so only the PAM and the
+		// sudo rules count here.
+		if c.Changes != nil && !slices.ContainsFunc(c.Changes, func(p string) bool { return pamPath(p) || sudoersPath(p) }) {
+			return &yamlx.FieldError{At: "changes", Msg: "changes protects only paths that the access check covers"}
 		}
-	}
-	// The home of the login user differs by host, so only the PAM and the
-	// sudo rules count here.
-	if c.Changes != nil && !slices.ContainsFunc(c.Changes, func(p string) bool { return pamPath(p) || sudoersPath(p) }) {
-		return &yamlx.FieldError{At: "changes", Msg: "changes protects only paths that the access check covers"}
-	}
-	if c.User != "" {
-		return checkAccountName("user", "user", c.User)
+	case "user":
+		if c.User != "" {
+			return checkAccountName("user", "user", c.User)
+		}
 	}
 	return nil
 }

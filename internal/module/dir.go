@@ -41,33 +41,39 @@ func (*Dir) Noun() string { return "a dir step" }
 func (d *Dir) Main() string { return d.Path }
 
 func (d *Dir) Validate() error {
-	if err := checkPath(d.Path); err != nil {
-		return err
-	}
 	if d.Absent {
 		return absentTakesNone(arg{"owner", d.Owner != ""}, arg{"group", d.Group != ""}, arg{"mode", d.Mode != ""}, arg{"recurse", d.Recurse}, arg{"replace", d.Replace}, arg{"purge", d.Purge}, arg{"keep", d.KeepPatterns != nil})
 	}
 	if d.KeepPatterns != nil && !d.Purge {
 		return &yamlx.FieldError{Field: "keep", Msg: "needs purge: true"}
 	}
-	for _, pattern := range d.KeepPatterns {
-		if pattern == "" {
-			return &yamlx.FieldError{Field: "keep", Msg: "a pattern is empty"}
+	return nil
+}
+
+func (d *Dir) CheckField(key string) error {
+	switch key {
+	case "path":
+		return checkPath(d.Path)
+	case "keep":
+		for _, pattern := range d.KeepPatterns {
+			if pattern == "" {
+				return &yamlx.FieldError{Field: "keep", Msg: "a pattern is empty"}
+			}
+			if strings.Contains(pattern, "/") {
+				return &yamlx.FieldError{Field: "keep", Msg: fmt.Sprintf("pattern %q has a /; keep matches names in the directory", pattern)}
+			}
+			if _, err := path.Match(pattern, ""); err != nil {
+				return &yamlx.FieldError{Field: "keep", Msg: fmt.Sprintf("invalid glob pattern %q: %s", pattern, err)}
+			}
 		}
-		if strings.Contains(pattern, "/") {
-			return &yamlx.FieldError{Field: "keep", Msg: fmt.Sprintf("pattern %q has a /; keep matches names in the directory", pattern)}
-		}
-		if _, err := path.Match(pattern, ""); err != nil {
-			return &yamlx.FieldError{Field: "keep", Msg: fmt.Sprintf("invalid glob pattern %q: %s", pattern, err)}
-		}
+	case "owner":
+		return checkOwner("owner", d.Owner)
+	case "group":
+		return checkOwner("group", d.Group)
+	case "mode":
+		return checkMode(d.Mode, "0755")
 	}
-	if err := checkOwner("owner", d.Owner); err != nil {
-		return err
-	}
-	if err := checkOwner("group", d.Group); err != nil {
-		return err
-	}
-	return checkMode(d.Mode, "0755")
+	return nil
 }
 
 // ModeWarning returns a warning for a mode with a read bit and no execute

@@ -92,32 +92,42 @@ func (r *Rule) Validate() error {
 	if r.TCP == nil && r.UDP == nil && r.From == nil {
 		return errors.New("a rule needs tcp, udp, or from")
 	}
-	for _, pp := range r.protocols() {
-		if len(pp.ports) == 0 {
-			return &yamlx.FieldError{Field: pp.name, Msg: "needs a port"}
+	return nil
+}
+
+func (r *Rule) CheckField(key string) error {
+	switch key {
+	case "tcp", "udp":
+		ports := r.TCP
+		if key == "udp" {
+			ports = r.UDP
 		}
-		for i, p := range pp.ports {
+		if len(ports) == 0 {
+			return &yamlx.FieldError{Field: key, Msg: "needs a port"}
+		}
+		for i, p := range ports {
 			if p < 1 || p > 65535 {
-				return &yamlx.FieldError{Field: pp.name, Msg: fmt.Sprintf("port %d is not between 1 and 65535", p)}
+				return &yamlx.FieldError{Field: key, Msg: fmt.Sprintf("port %d is not between 1 and 65535", p)}
 			}
-			if slices.Contains(pp.ports[:i], p) {
-				return &yamlx.FieldError{Field: pp.name, Msg: fmt.Sprintf("port %d is in the list twice", p)}
+			if slices.Contains(ports[:i], p) {
+				return &yamlx.FieldError{Field: key, Msg: fmt.Sprintf("port %d is in the list twice", p)}
 			}
 		}
-	}
-	if r.From != nil && len(r.From) == 0 {
-		return &yamlx.FieldError{Field: "from", Msg: "needs an address or a network"}
-	}
-	var seen []netip.Prefix
-	for _, s := range r.From {
-		p, err := parseSource(s)
-		if err != nil {
-			return &yamlx.FieldError{Field: "from", Msg: err.Error()}
+	case "from":
+		if len(r.From) == 0 {
+			return &yamlx.FieldError{Field: "from", Msg: "needs an address or a network"}
 		}
-		if slices.Contains(seen, p) {
-			return &yamlx.FieldError{Field: "from", Msg: sourceText(p) + " is in the list twice"}
+		var seen []netip.Prefix
+		for _, s := range r.From {
+			p, err := parseSource(s)
+			if err != nil {
+				return &yamlx.FieldError{Field: "from", Msg: err.Error()}
+			}
+			if slices.Contains(seen, p) {
+				return &yamlx.FieldError{Field: "from", Msg: sourceText(p) + " is in the list twice"}
+			}
+			seen = append(seen, p)
 		}
-		seen = append(seen, p)
 	}
 	return nil
 }
@@ -171,7 +181,7 @@ func sourceText(p netip.Prefix) string {
 	return p.String()
 }
 
-// sources returns From, which Validate checked.
+// sources returns From, which CheckField checked.
 func (r *Rule) sources() []netip.Prefix {
 	var out []netip.Prefix
 	for _, s := range r.From {

@@ -27,9 +27,9 @@ func TestHostnameValidate(t *testing.T) {
 		{"mail.example.com", "use !expr host.short"},
 	}
 	for _, tt := range tests {
-		err := (&Hostname{Name: tt.name}).Validate()
+		err := (&Hostname{Name: tt.name}).CheckField("name")
 		if tt.wantErr == "" && err != nil || tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
-			t.Errorf("Validate(%q) = %v, want %q", tt.name, err, tt.wantErr)
+			t.Errorf("CheckField(%q) = %v, want %q", tt.name, err, tt.wantErr)
 		}
 	}
 }
@@ -57,13 +57,13 @@ func TestStaticHostname(t *testing.T) {
 // spec: Modules/hostname and timezone
 func TestTimezoneValidate(t *testing.T) {
 	for _, ok := range []string{"UTC", "Etc/UTC", "Europe/Berlin", "America/Argentina/Buenos_Aires", "Etc/GMT+5", "Etc/GMT-14"} {
-		if err := (&Timezone{Name: ok}).Validate(); err != nil {
-			t.Errorf("Validate(%q) = %v", ok, err)
+		if err := (&Timezone{Name: ok}).CheckField("name"); err != nil {
+			t.Errorf("CheckField(%q) = %v", ok, err)
 		}
 	}
 	for _, bad := range []string{"", "/Etc/UTC", "Etc/UTC/", "Etc//UTC", "../etc/passwd", "Etc/../UTC", "Europe/Ber lin", "Etc/UTC\n"} {
-		if err := (&Timezone{Name: bad}).Validate(); err == nil || !strings.Contains(err.Error(), "is not a time zone name") {
-			t.Errorf("Validate(%q) = %v", bad, err)
+		if err := (&Timezone{Name: bad}).CheckField("name"); err == nil || !strings.Contains(err.Error(), "is not a time zone name") {
+			t.Errorf("CheckField(%q) = %v", bad, err)
 		}
 	}
 }

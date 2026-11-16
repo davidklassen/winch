@@ -289,7 +289,7 @@ func FuzzLineEdit(f *testing.F) {
 	f.Add("a\r\nport 1\r\n", "port 2", "^port", false)
 	f.Fuzz(func(t *testing.T, content, line, match string, absent bool) {
 		l := &Line{Path: "/etc/a", Line: line, Match: match, Absent: absent}
-		if l.Validate() != nil {
+		if l.CheckField("match") != nil || l.CheckField("line") != nil || l.Validate() != nil {
 			return
 		}
 		once, _, err := l.edit([]byte(content))

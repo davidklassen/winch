@@ -334,8 +334,18 @@ func agreeOff(real, alt1, alt2 any) bool {
 
 // maskError returns err, an error of the real values, with each part of its
 // message that differs from the errors of the two placeholder variants as
-// secret.Mark. A variant without an error masks the whole message.
+// secret.Mark. A variant without an error masks the whole message. Each error
+// of a list that has a position is compared with the error of each variant at
+// that position: a placeholder can fail a check of its own key.
 func maskError(err error, alt [2]error) error {
+	if list, ok := err.(interface{ Unwrap() []error }); ok {
+		errs := list.Unwrap()
+		var out []error
+		for i, e := range errs {
+			out = append(out, maskError(e, [2]error{errorAt(alt[0], errs, i), errorAt(alt[1], errs, i)}))
+		}
+		return errors.Join(out...)
+	}
 	msg := err.Error()
 	ye, ok := err.(*yamlx.Error)
 	if ok {
@@ -358,6 +368,34 @@ func maskError(err error, alt [2]error) error {
 		return &yamlx.Error{Pos: ye.Pos, Msg: shown}
 	}
 	return errors.New(shown)
+}
+
+// errorAt returns the error of alt that matches errs[i]: the error in the
+// same place among the errors at its position, or nil when alt has another
+// number of errors there. For an error without a position, it returns alt.
+func errorAt(alt error, errs []error, i int) error {
+	ye, ok := errs[i].(*yamlx.Error)
+	if !ok {
+		return alt
+	}
+	at := func(list []error) []error {
+		var out []error
+		for _, e := range list {
+			if pe, ok := e.(*yamlx.Error); ok && pe.Pos == ye.Pos {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+	alts := []error{alt}
+	if l, ok := alt.(interface{ Unwrap() []error }); ok {
+		alts = l.Unwrap()
+	}
+	real, other := at(errs), at(alts)
+	if len(real) != len(other) {
+		return nil
+	}
+	return other[slices.Index(real, errs[i])]
 }
 
 // Recipients returns the recipients in the project file.

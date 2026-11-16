@@ -26,8 +26,8 @@ func (z *Timezone) Main() string { return z.Name }
 
 var zoneRe = regexp.MustCompile(`^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$`)
 
-func (z *Timezone) Validate() error {
-	if !zoneRe.MatchString(z.Name) {
+func (z *Timezone) CheckField(key string) error {
+	if key == "name" && !zoneRe.MatchString(z.Name) {
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q is not a time zone name such as Etc/UTC or Europe/Berlin", z.Name)}
 	}
 	return nil

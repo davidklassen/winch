@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/davidklassen/winch/internal/golden"
@@ -484,5 +485,59 @@ func TestFromValueKinds(t *testing.T) {
 		if err == nil || err.Error() != tt.want {
 			t.Errorf("%s: got %v, want %s", tt.name, err, tt.want)
 		}
+	}
+}
+
+type checkedDoc struct {
+	A    int      `yaml:"a"`
+	B    int      `yaml:"b"`
+	Tags []string `yaml:"tags"`
+}
+
+func (d *checkedDoc) CheckField(key string) error {
+	switch {
+	case key == "a" && d.A < 0:
+		return &FieldError{Field: "a", Msg: "is negative"}
+	case key == "b" && d.B < 0:
+		return &FieldError{Field: "b", Msg: "is negative"}
+	case key == "tags" && slices.Contains(d.Tags, ""):
+		return &FieldError{Field: "tags", Msg: "has an empty tag"}
+	}
+	return nil
+}
+
+func (d *checkedDoc) Validate() error {
+	if d.A == d.B {
+		return errors.New("a and b are equal")
+	}
+	return nil
+}
+
+// spec: Templates and expressions ("winch checks each one when it loads the project")
+func TestCheckField(t *testing.T) {
+	tests := []struct {
+		name   string
+		decode func(*Node, any) error
+		yaml   string
+		want   string
+	}{
+		{"a plain key beside a tagged key", DecodeLazy, "a: -1\nb: !expr x\n", "t.yaml:1:4: a: is negative"},
+		{"a key with a tagged item", DecodeLazy, "a: 1\ntags: ['', !expr x]\n", "<nil>"},
+		{"a cross check waits for a tagged key", DecodeLazy, "a: 0\nb: !expr x\n", "<nil>"},
+		{"each key", Decode, "a: -1\nb: -2\n", "t.yaml:1:4: a: is negative\nt.yaml:2:4: b: is negative"},
+		{"no Validate after a failed key", Decode, "a: -1\nb: -1\n", "t.yaml:1:4: a: is negative\nt.yaml:2:4: b: is negative"},
+		{"Validate", Decode, "a: 1\nb: 1\n", "t.yaml:1:1: a and b are equal"},
+		{"unchecked", DecodeUnchecked, "a: -1\nb: -1\n", "<nil>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := Parse("t.yaml", []byte(tt.yaml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := fmt.Sprint(tt.decode(n, &checkedDoc{})); got != tt.want {
+				t.Errorf("got  %s\nwant %s", got, tt.want)
+			}
+		})
 	}
 }

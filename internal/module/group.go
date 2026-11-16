@@ -27,13 +27,20 @@ func (*Group) Noun() string { return "a group step" }
 func (g *Group) Main() string { return g.Name }
 
 func (g *Group) Validate() error {
-	if err := checkAccountName("name", "group", g.Name); err != nil {
-		return err
-	}
 	if g.Absent {
 		return absentTakesNone(arg{"gid", g.GID != ""}, arg{"system", g.System})
 	}
-	return checkID("gid", g.GID)
+	return nil
+}
+
+func (g *Group) CheckField(key string) error {
+	switch key {
+	case "name":
+		return checkAccountName("name", "group", g.Name)
+	case "gid":
+		return checkID("gid", g.GID)
+	}
+	return nil
 }
 
 // An account that exists may have a name such as Debian-exim; winch creates
