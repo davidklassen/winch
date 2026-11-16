@@ -64,15 +64,9 @@ func (f *File) ValidateCommand() string {
 }
 
 func (f *File) Validate() error {
-	if err := checkPath(f.Path); err != nil {
-		return err
-	}
 	sources := []arg{{"content", f.Content != nil}, {"template", f.Template != ""}, {"source", f.Source != ""}, {"copy_from", f.CopyFrom != ""}, {"stock", f.Stock}}
 	if f.Absent {
 		return absentTakesNone(append(sources, arg{"owner", f.Owner != ""}, arg{"group", f.Group != ""}, arg{"mode", f.Mode != ""}, arg{"validate", f.Validation != nil}, arg{"replace", f.Replace})...)
-	}
-	if err := checkCommand("validate", f.Validation); err != nil {
-		return err
 	}
 	set := 0
 	for _, a := range sources {
@@ -87,31 +81,36 @@ func (f *File) Validate() error {
 		if f.Owner == "" && f.Group == "" && f.Mode == "" {
 			return &yamlx.FieldError{Msg: "a file step needs content, template, source, copy_from, or stock, one of owner, group, and mode, or absent: true"}
 		}
-		if err := takesNone("needs content, template, source, copy_from, or stock", arg{"validate", f.Validation != nil}, arg{"replace", f.Replace}); err != nil {
-			return err
+		return takesNone("needs content, template, source, copy_from, or stock", arg{"validate", f.Validation != nil}, arg{"replace", f.Replace})
+	}
+	if f.CopyFrom != "" && f.CopyFrom == f.Path {
+		return &yamlx.FieldError{Field: "copy_from", Msg: "is the path of the step itself"}
+	}
+	return nil
+}
+
+func (f *File) CheckField(key string) error {
+	switch key {
+	case "path":
+		return checkPath(f.Path)
+	case "validate":
+		return checkCommand("validate", f.Validation)
+	case "template":
+		return CheckRelative("template", f.Template)
+	case "source":
+		return CheckRelative("source", f.Source)
+	case "copy_from":
+		if f.CopyFrom != "" {
+			return checkAbs("copy_from", f.CopyFrom)
 		}
+	case "owner":
+		return checkOwner("owner", f.Owner)
+	case "group":
+		return checkOwner("group", f.Group)
+	case "mode":
+		return checkMode(f.Mode, "0644")
 	}
-	if err := CheckRelative("template", f.Template); err != nil {
-		return err
-	}
-	if err := CheckRelative("source", f.Source); err != nil {
-		return err
-	}
-	if f.CopyFrom != "" {
-		if err := checkAbs("copy_from", f.CopyFrom); err != nil {
-			return err
-		}
-		if f.CopyFrom == f.Path {
-			return &yamlx.FieldError{Field: "copy_from", Msg: "is the path of the step itself"}
-		}
-	}
-	if err := checkOwner("owner", f.Owner); err != nil {
-		return err
-	}
-	if err := checkOwner("group", f.Group); err != nil {
-		return err
-	}
-	return checkMode(f.Mode, "0644")
+	return nil
 }
 
 func checkCommand(field string, c *string) error {

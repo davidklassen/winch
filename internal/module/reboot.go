@@ -25,8 +25,8 @@ func (r *Reboot) Main() string {
 	return ""
 }
 
-func (r *Reboot) Validate() error {
-	if r.Timeout != nil {
+func (r *Reboot) CheckField(key string) error {
+	if key == "timeout" && r.Timeout != nil {
 		return CheckSeconds("timeout", *r.Timeout)
 	}
 	return nil

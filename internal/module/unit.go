@@ -37,28 +37,6 @@ func (u *Unit) Main() string { return u.Name }
 func (u *Unit) Path() string { return unitDir + "/" + u.Name }
 
 func (u *Unit) Validate() error {
-	if !unitRe.MatchString(u.Name) {
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q is not a unit name", u.Name)}
-	}
-	i := strings.LastIndexByte(u.Name, '.')
-	switch typ := u.Name[i+1:]; {
-	case i < 0 || !slices.Contains(unitTypes, typ):
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs a unit type, such as .service or .timer", u.Name)}
-	case typ == "device" || typ == "scope":
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("systemd does not load a .%s unit from a file", typ)}
-	}
-	stem := u.Name[:i]
-	prefix, instance, at := strings.Cut(stem, "@")
-	switch {
-	case stem == "":
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs a name before the type", u.Name)}
-	case at && prefix == "":
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs a name before \"@\"", u.Name)}
-	case instance != "":
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q is an instance; write the template %q, and put instance settings in a drop-in", u.Name, prefix+"@"+u.Name[i:])}
-	case len(u.Name) > 255:
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters; a unit name has at most 255", len(u.Name))}
-	}
 	if u.Absent {
 		return absentTakesNone(arg{"source", u.SourcePos.Line > 0}, arg{"content", u.Content != nil})
 	}
@@ -66,13 +44,43 @@ func (u *Unit) Validate() error {
 	case u.Content != nil && u.SourcePos.Line > 0:
 		return &yamlx.FieldError{At: "content", Msg: "a unit step has at most one of content and source"}
 	case u.Content != nil:
-		return nil
 	case u.SourcePos.Line > 0 && u.Source == "":
 		return &yamlx.FieldError{Field: "source", Msg: "is empty"}
 	case u.Source == "":
 		return &yamlx.FieldError{Msg: "a unit step needs content or source"}
 	}
-	return CheckRelative("source", u.Source)
+	return nil
+}
+
+func (u *Unit) CheckField(key string) error {
+	switch key {
+	case "name":
+		if !unitRe.MatchString(u.Name) {
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q is not a unit name", u.Name)}
+		}
+		i := strings.LastIndexByte(u.Name, '.')
+		switch typ := u.Name[i+1:]; {
+		case i < 0 || !slices.Contains(unitTypes, typ):
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs a unit type, such as .service or .timer", u.Name)}
+		case typ == "device" || typ == "scope":
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("systemd does not load a .%s unit from a file", typ)}
+		}
+		stem := u.Name[:i]
+		prefix, instance, at := strings.Cut(stem, "@")
+		switch {
+		case stem == "":
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs a name before the type", u.Name)}
+		case at && prefix == "":
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q needs a name before \"@\"", u.Name)}
+		case instance != "":
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%q is an instance; write the template %q, and put instance settings in a drop-in", u.Name, prefix+"@"+u.Name[i:])}
+		case len(u.Name) > 255:
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters; a unit name has at most 255", len(u.Name))}
+		}
+	case "source":
+		return CheckRelative("source", u.Source)
+	}
+	return nil
 }
 
 func (u *Unit) Text() ([]byte, string) { return u.Data, notText(u.Data) }

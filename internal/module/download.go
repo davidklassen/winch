@@ -75,45 +75,52 @@ func parseHTTPURL(s string) (*url.URL, error) {
 var archiveTypes = []string{".tar.gz", ".tgz", ".tar.xz", ".zip"}
 
 func (d *Download) Validate() error {
-	if strings.ContainsFunc(d.URL, unicode.IsControl) {
-		return &yamlx.FieldError{Field: "url", Msg: "has a control character"}
-	}
-	if _, err := parseHTTPURL(d.URL); err != nil {
-		return err
-	}
-	if !sha256Re.MatchString(d.SHA256) {
-		return &yamlx.FieldError{Field: "sha256", Msg: "must be 64 lowercase hexadecimal digits, as sha256sum prints them"}
-	}
 	switch {
 	case d.Path != "" && d.Unpack != "":
 		return &yamlx.FieldError{At: "unpack", Msg: "a download step has at most one of path and unpack"}
 	case d.Path != "":
-		if err := checkPath(d.Path); err != nil {
-			return err
-		}
 	case d.Unpack == "":
 		return &yamlx.FieldError{Msg: "a download step needs path or unpack"}
-	default:
+	case d.archiveType() == "":
+		return &yamlx.FieldError{Field: "url", Msg: "unpack needs a URL whose path ends in .tar.gz, .tgz, .tar.xz, or .zip"}
+	case d.Mode != "":
+		return &yamlx.FieldError{Field: "mode", Msg: "unpack takes the modes of the archive, without write permission for group and others; it takes no mode"}
+	}
+	return nil
+}
+
+func (d *Download) CheckField(key string) error {
+	switch key {
+	case "url":
+		if strings.ContainsFunc(d.URL, unicode.IsControl) {
+			return &yamlx.FieldError{Field: "url", Msg: "has a control character"}
+		}
+		_, err := parseHTTPURL(d.URL)
+		return err
+	case "sha256":
+		if !sha256Re.MatchString(d.SHA256) {
+			return &yamlx.FieldError{Field: "sha256", Msg: "must be 64 lowercase hexadecimal digits, as sha256sum prints them"}
+		}
+	case "path":
+		if d.Path != "" {
+			return checkPath(d.Path)
+		}
+	case "unpack":
+		if d.Unpack == "" {
+			return nil
+		}
 		if d.Unpack == "/" {
 			return &yamlx.FieldError{Field: "unpack", Msg: "must not be /"}
 		}
-		if err := checkAbs("unpack", d.Unpack); err != nil {
-			return err
-		}
-		if d.archiveType() == "" {
-			return &yamlx.FieldError{Field: "url", Msg: "unpack needs a URL whose path ends in .tar.gz, .tgz, .tar.xz, or .zip"}
-		}
-		if d.Mode != "" {
-			return &yamlx.FieldError{Field: "mode", Msg: "unpack takes the modes of the archive, without write permission for group and others; it takes no mode"}
-		}
+		return checkAbs("unpack", d.Unpack)
+	case "owner":
+		return checkOwner("owner", d.Owner)
+	case "group":
+		return checkOwner("group", d.Group)
+	case "mode":
+		return checkMode(d.Mode, "0755")
 	}
-	if err := checkOwner("owner", d.Owner); err != nil {
-		return err
-	}
-	if err := checkOwner("group", d.Group); err != nil {
-		return err
-	}
-	return checkMode(d.Mode, "0755")
+	return nil
 }
 
 // archiveType returns the archive suffix of the path of the URL, or "".

@@ -385,6 +385,10 @@ func TestValidate(t *testing.T) {
 			"recipes/nginx/recipe.yaml": "steps: [{pkg: {name: nginx}, notify: other.reload}]\n",
 			"recipes/other/recipe.yaml": "steps: []\n",
 		}},
+		{name: "field-check-beside-expression", files: map[string]string{
+			"winch.yaml":          "name: acme\ninventory: test\nvars:\n  net: 10.0.0.0/8\n",
+			"pipelines/site.yaml": stage("      - firewall:\n          allow:\n            - tcp: 70000\n              from: !expr vars.net\n"),
+		}},
 		{name: "stage-notify-no-handlers", files: map[string]string{
 			"winch.yaml":            "name: acme\nhosts: {web1.acme.com: {}}\nsteps: [{pkg: {name: nginx}, notify: reload}]\n",
 			"inventories/test.yaml": "",

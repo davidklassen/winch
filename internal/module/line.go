@@ -38,33 +38,41 @@ func (l *Line) ValidateCommand() string {
 }
 
 func (l *Line) Validate() error {
-	if err := checkPath(l.Path); err != nil {
-		return err
-	}
-	if l.Match == "" {
-		return &yamlx.FieldError{Field: "match", Msg: "is empty"}
-	}
-	re, err := regexp.Compile(l.Match)
-	if se, ok := errors.AsType[*syntax.Error](err); ok && se.Code == syntax.ErrInvalidPerlOp {
-		return &yamlx.FieldError{Field: "match", Msg: se.Expr + " is not supported; match has the RE2 syntax, without lookahead, lookbehind, or backreferences"}
-	} else if ok {
-		return &yamlx.FieldError{Field: "match", Msg: "not a regular expression: " + string(se.Code) + ": " + se.Expr}
-	}
-	if re.MatchString("") {
-		return &yamlx.FieldError{Field: "match", Msg: "matches an empty line"}
-	}
-	if err := checkCommand("validate", l.Validation); err != nil {
-		return err
-	}
 	switch {
 	case l.Absent:
 		return absentTakesNone(arg{"line", l.Line != ""})
 	case l.Line == "":
 		return &yamlx.FieldError{Msg: "a line step needs line, or absent: true"}
-	case strings.ContainsAny(l.Line, "\n\r"):
-		return &yamlx.FieldError{Field: "line", Msg: "must be one line"}
-	case !re.MatchString(l.Line):
+	}
+	if re, err := regexp.Compile(l.Match); err == nil && !re.MatchString(l.Line) {
 		return &yamlx.FieldError{Field: "line", Msg: "match does not find it, so each run would add it again"}
+	}
+	return nil
+}
+
+func (l *Line) CheckField(key string) error {
+	switch key {
+	case "path":
+		return checkPath(l.Path)
+	case "match":
+		if l.Match == "" {
+			return &yamlx.FieldError{Field: "match", Msg: "is empty"}
+		}
+		re, err := regexp.Compile(l.Match)
+		if se, ok := errors.AsType[*syntax.Error](err); ok && se.Code == syntax.ErrInvalidPerlOp {
+			return &yamlx.FieldError{Field: "match", Msg: se.Expr + " is not supported; match has the RE2 syntax, without lookahead, lookbehind, or backreferences"}
+		} else if ok {
+			return &yamlx.FieldError{Field: "match", Msg: "not a regular expression: " + string(se.Code) + ": " + se.Expr}
+		}
+		if re.MatchString("") {
+			return &yamlx.FieldError{Field: "match", Msg: "matches an empty line"}
+		}
+	case "validate":
+		return checkCommand("validate", l.Validation)
+	case "line":
+		if strings.ContainsAny(l.Line, "\n\r") {
+			return &yamlx.FieldError{Field: "line", Msg: "must be one line"}
+		}
 	}
 	return nil
 }

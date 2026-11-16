@@ -73,6 +73,27 @@ func (s *Service) UnitFile() string {
 }
 
 func (s *Service) Validate() error {
+	switch {
+	case s.Reloaded && s.Restarted:
+		return &yamlx.FieldError{At: "restarted", Msg: "a service step has at most one of reloaded and restarted"}
+	case s.Reloaded || s.Restarted:
+		action := "reloaded"
+		if s.Restarted {
+			action = "restarted"
+		}
+		return takesNone("not with "+action+": true", arg{"running", s.Running != nil}, arg{"enabled", s.Enabled != nil})
+	case s.Running == nil && s.Enabled == nil && s.Actions:
+		return &yamlx.FieldError{Msg: "a service step needs running, enabled, reloaded, or restarted"}
+	case s.Running == nil && s.Enabled == nil:
+		return &yamlx.FieldError{Msg: "a service step needs running or enabled"}
+	}
+	return nil
+}
+
+func (s *Service) CheckField(key string) error {
+	if key != "name" {
+		return nil
+	}
 	unit := s.Unit()
 	added := unit != s.Name
 	stem := unit[:strings.LastIndexByte(unit, '.')]
@@ -91,18 +112,6 @@ func (s *Service) Validate() error {
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters with .service added; a unit name has at most 255", n)}
 	case n > 255:
 		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("has %d characters; a unit name has at most 255", n)}
-	case s.Reloaded && s.Restarted:
-		return &yamlx.FieldError{At: "restarted", Msg: "a service step has at most one of reloaded and restarted"}
-	case s.Reloaded || s.Restarted:
-		action := "reloaded"
-		if s.Restarted {
-			action = "restarted"
-		}
-		return takesNone("not with "+action+": true", arg{"running", s.Running != nil}, arg{"enabled", s.Enabled != nil})
-	case s.Running == nil && s.Enabled == nil && s.Actions:
-		return &yamlx.FieldError{Msg: "a service step needs running, enabled, reloaded, or restarted"}
-	case s.Running == nil && s.Enabled == nil:
-		return &yamlx.FieldError{Msg: "a service step needs running or enabled"}
 	}
 	return nil
 }

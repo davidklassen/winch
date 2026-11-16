@@ -26,23 +26,33 @@ func (d *Debconf) Main() string { return d.Question }
 var debconfTypes = []string{"string", "password", "boolean", "select", "multiselect"}
 
 func (d *Debconf) Validate() error {
-	if !pkgNameRe.MatchString(d.Package) {
-		return &yamlx.FieldError{Field: "package", Msg: fmt.Sprintf("%q is not a package name", d.Package)}
-	}
-	if d.Question == "" {
-		return &yamlx.FieldError{Field: "question", Msg: "is empty"}
-	}
-	if hasSpace(d.Question) {
-		return &yamlx.FieldError{Field: "question", Msg: spaceMsg}
-	}
-	if !slices.Contains(debconfTypes, d.Type) {
-		return &yamlx.FieldError{Field: "type", Msg: fmt.Sprintf("%q is not a type; use string, password, boolean, select, or multiselect", d.Type)}
-	}
-	if strings.ContainsFunc(d.Value, unicode.IsControl) {
-		return &yamlx.FieldError{Field: "value", Msg: "has a control character, such as a newline"}
-	}
 	if d.Type == "boolean" && d.Value != "true" && d.Value != "false" {
 		return &yamlx.FieldError{Field: "value", Msg: `a boolean answer is "true" or "false"`}
+	}
+	return nil
+}
+
+func (d *Debconf) CheckField(key string) error {
+	switch key {
+	case "package":
+		if !pkgNameRe.MatchString(d.Package) {
+			return &yamlx.FieldError{Field: "package", Msg: fmt.Sprintf("%q is not a package name", d.Package)}
+		}
+	case "question":
+		if d.Question == "" {
+			return &yamlx.FieldError{Field: "question", Msg: "is empty"}
+		}
+		if hasSpace(d.Question) {
+			return &yamlx.FieldError{Field: "question", Msg: spaceMsg}
+		}
+	case "type":
+		if !slices.Contains(debconfTypes, d.Type) {
+			return &yamlx.FieldError{Field: "type", Msg: fmt.Sprintf("%q is not a type; use string, password, boolean, select, or multiselect", d.Type)}
+		}
+	case "value":
+		if strings.ContainsFunc(d.Value, unicode.IsControl) {
+			return &yamlx.FieldError{Field: "value", Msg: "has a control character, such as a newline"}
+		}
 	}
 	return nil
 }

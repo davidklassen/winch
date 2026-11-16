@@ -21,15 +21,17 @@ import (
 // struct, or of its key in such a map. A field `XPos Pos` gets the position
 // of the value of field X. A field of type *Node gets the node
 // as it is. After a struct decodes without errors, Decode calls its
-// Validate() error method when it has one.
+// CheckField(key string) error method for each key of n, and then its
+// Validate() error method, when it has them. Validate runs only when no
+// CheckField fails.
 func Decode(n *Node, v any) error { return (&decoder{}).run(n, v) }
 
 // DecodeLazy is Decode for a value that can hold tagged scalars. It skips
-// them, counts their keys as set, and skips Validate for a struct that holds
-// one.
+// them, counts their keys as set, skips CheckField for a key that holds one,
+// and skips Validate for a struct that holds one.
 func DecodeLazy(n *Node, v any) error { return (&decoder{lazy: true}).run(n, v) }
 
-// DecodeUnchecked is Decode without the Validate calls.
+// DecodeUnchecked is Decode without the CheckField and Validate calls.
 func DecodeUnchecked(n *Node, v any) error { return (&decoder{unchecked: true}).run(n, v) }
 
 var (
@@ -230,6 +232,7 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 	before, deferred := len(d.errs), d.deferred
 	fs := Fields(v.Type())
 	seen := map[string]Pos{}
+	var checked []string
 	for _, p := range n.Pairs {
 		i := slices.IndexFunc(fs, func(f Field) bool { return f.Name == p.Key })
 		if i < 0 {
@@ -241,7 +244,11 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 			continue
 		}
 		seen[p.Key] = p.Value.Pos
+		keyDeferred := d.deferred
 		d.value(p.Value, v.Field(fs[i].Index), p.Key)
+		if d.deferred == keyDeferred {
+			checked = append(checked, p.Key)
+		}
 		if f := v.FieldByName(v.Type().Field(fs[i].Index).Name + "Pos"); f.IsValid() && f.Type() == posType {
 			f.Set(reflect.ValueOf(p.Value.Pos))
 		}
@@ -259,26 +266,35 @@ func (d *decoder) strct(n *Node, v reflect.Value, name string) {
 			d.errorf(n.Pos, "", "%s", msg)
 		}
 	}
-	if len(d.errs) > before || d.deferred > deferred || d.unchecked {
+	if len(d.errs) > before || d.unchecked {
 		return
 	}
-	val, ok := v.Addr().Interface().(interface{ Validate() error })
-	if !ok {
+	if c, ok := v.Addr().Interface().(interface{ CheckField(key string) error }); ok {
+		for _, key := range checked {
+			d.check(c.CheckField(key), n.Pos, seen)
+		}
+	}
+	if len(d.errs) > before || d.deferred > deferred {
 		return
 	}
-	err := val.Validate()
+	if val, ok := v.Addr().Interface().(interface{ Validate() error }); ok {
+		d.check(val.Validate(), n.Pos, seen)
+	}
+}
+
+// check adds err of a check of the struct at pos, at the key that err names.
+func (d *decoder) check(err error, pos Pos, seen map[string]Pos) {
 	if err == nil {
 		return
 	}
 	if fe, ok := errors.AsType[*FieldError](err); ok {
-		pos, ok := seen[cmp.Or(fe.Field, fe.At)]
-		if !ok {
-			pos = n.Pos
+		if p, ok := seen[cmp.Or(fe.Field, fe.At)]; ok {
+			pos = p
 		}
 		d.errorf(pos, fe.Field, "%s", fe.Msg)
 		return
 	}
-	d.errorf(n.Pos, "", "%s", err)
+	d.errorf(pos, "", "%s", err)
 }
 
 // Strings decodes from one string or a list of strings.

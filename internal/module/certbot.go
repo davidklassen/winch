@@ -47,39 +47,48 @@ var (
 )
 
 func (c *Certbot) Validate() error {
-	if !certNameRe.MatchString(c.Name) {
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf(`%q is not a certificate name: letters, digits, ., _, and -, starting with a letter or digit`, c.Name)}
+	switch {
+	case c.Authenticator == "webroot" && c.WebrootPath == "":
+		return &yamlx.FieldError{Field: "authenticator", Msg: "webroot needs webroot_path"}
+	case c.WebrootPath != "" && c.Authenticator != "webroot":
+		return &yamlx.FieldError{Field: "webroot_path", Msg: "needs authenticator: webroot"}
 	}
-	if len(c.Domains) == 0 {
-		return &yamlx.FieldError{Field: "domains", Msg: "needs at least one domain"}
-	}
-	for i, d := range c.Domains {
-		switch {
-		case strings.HasPrefix(d, "*."):
-			return &yamlx.FieldError{Field: "domains", Msg: fmt.Sprintf("%q is a wildcard, which needs a DNS challenge; the nginx, apache, standalone, and webroot authenticators answer only HTTP challenges", d)}
-		case !domainRe.MatchString(d):
-			return &yamlx.FieldError{Field: "domains", Msg: fmt.Sprintf("%q is not a domain name such as example.com; certbot takes lowercase names", d)}
-		case len(d) > 253:
-			return &yamlx.FieldError{Field: "domains", Msg: fmt.Sprintf("%q is longer than 253 characters", d)}
-		case slices.Contains(c.Domains[:i], d):
-			return &yamlx.FieldError{Field: "domains", Msg: fmt.Sprintf("%s is in the list twice", d)}
+	return nil
+}
+
+func (c *Certbot) CheckField(key string) error {
+	switch key {
+	case "name":
+		if !certNameRe.MatchString(c.Name) {
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf(`%q is not a certificate name: letters, digits, ., _, and -, starting with a letter or digit`, c.Name)}
 		}
-	}
-	if user, host, ok := strings.Cut(c.Email, "@"); !ok || user == "" || host == "" || strings.ContainsFunc(c.Email, unicode.IsSpace) {
-		return &yamlx.FieldError{Field: "email", Msg: fmt.Sprintf("%q is not an email address", c.Email)}
-	}
-	switch c.Authenticator {
-	case "", "nginx", "apache", "standalone":
-	case "webroot":
+	case "domains":
+		if len(c.Domains) == 0 {
+			return &yamlx.FieldError{Field: "domains", Msg: "needs at least one domain"}
+		}
+		for i, d := range c.Domains {
+			switch {
+			case strings.HasPrefix(d, "*."):
+				return &yamlx.FieldError{Field: "domains", Msg: fmt.Sprintf("%q is a wildcard, which needs a DNS challenge; the nginx, apache, standalone, and webroot authenticators answer only HTTP challenges", d)}
+			case !domainRe.MatchString(d):
+				return &yamlx.FieldError{Field: "domains", Msg: fmt.Sprintf("%q is not a domain name such as example.com; certbot takes lowercase names", d)}
+			case len(d) > 253:
+				return &yamlx.FieldError{Field: "domains", Msg: fmt.Sprintf("%q is longer than 253 characters", d)}
+			case slices.Contains(c.Domains[:i], d):
+				return &yamlx.FieldError{Field: "domains", Msg: fmt.Sprintf("%s is in the list twice", d)}
+			}
+		}
+	case "email":
+		if user, host, ok := strings.Cut(c.Email, "@"); !ok || user == "" || host == "" || strings.ContainsFunc(c.Email, unicode.IsSpace) {
+			return &yamlx.FieldError{Field: "email", Msg: fmt.Sprintf("%q is not an email address", c.Email)}
+		}
+	case "authenticator":
+		if !slices.Contains([]string{"", "nginx", "apache", "standalone", "webroot"}, c.Authenticator) {
+			return &yamlx.FieldError{Field: "authenticator", Msg: fmt.Sprintf("%q is not an authenticator; use nginx, apache, standalone, or webroot", c.Authenticator)}
+		}
+	case "webroot_path":
 		if c.WebrootPath == "" {
-			return &yamlx.FieldError{Field: "authenticator", Msg: "webroot needs webroot_path"}
-		}
-	default:
-		return &yamlx.FieldError{Field: "authenticator", Msg: fmt.Sprintf("%q is not an authenticator; use nginx, apache, standalone, or webroot", c.Authenticator)}
-	}
-	if c.WebrootPath != "" {
-		if c.Authenticator != "webroot" {
-			return &yamlx.FieldError{Field: "webroot_path", Msg: "needs authenticator: webroot"}
+			return nil
 		}
 		if err := checkAbs("webroot_path", c.WebrootPath); err != nil {
 			return err
@@ -87,14 +96,12 @@ func (c *Certbot) Validate() error {
 		if strings.Contains(c.WebrootPath, ",") {
 			return &yamlx.FieldError{Field: "webroot_path", Msg: `has a ",", which certbot reads as a list`}
 		}
-	}
-	for _, h := range []struct {
-		field string
-		hook  *string
-	}{{"pre_hook", c.PreHook}, {"post_hook", c.PostHook}, {"deploy_hook", c.DeployHook}} {
-		if err := checkCommand(h.field, h.hook); err != nil {
-			return err
-		}
+	case "pre_hook":
+		return checkCommand("pre_hook", c.PreHook)
+	case "post_hook":
+		return checkCommand("post_hook", c.PostHook)
+	case "deploy_hook":
+		return checkCommand("deploy_hook", c.DeployHook)
 	}
 	return nil
 }

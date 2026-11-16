@@ -19,8 +19,8 @@ func (*Upgrade) Noun() string { return "an upgrade step" }
 
 func (u *Upgrade) Main() string { return u.Mode }
 
-func (u *Upgrade) Validate() error {
-	if u.Mode != "safe" && u.Mode != "full" {
+func (u *Upgrade) CheckField(key string) error {
+	if key == "mode" && u.Mode != "safe" && u.Mode != "full" {
 		return &yamlx.FieldError{Field: "mode", Msg: fmt.Sprintf("must be safe or full, not %q", u.Mode)}
 	}
 	return nil

@@ -81,9 +81,6 @@ func hasSpace(s string) bool {
 const spaceMsg = "has white space or a control character"
 
 func (r *Repo) Validate() error {
-	if !sourceNameRe.MatchString(r.Name) {
-		return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf(`%q is not a source name; a name has letters, digits, _, -, and ., and does not start with .`, r.Name)}
-	}
 	if r.Absent {
 		return absentTakesNone(arg{"url", r.URLPos.Line > 0}, arg{"suite", r.SuitePos.Line > 0}, arg{"components", r.Components != nil}, arg{"key", r.KeyPos.Line > 0}, arg{"key_content", r.KeyContent != nil})
 	}
@@ -93,29 +90,8 @@ func (r *Repo) Validate() error {
 	case r.SuitePos.Line == 0:
 		return &yamlx.FieldError{Msg: "a repo step needs suite"}
 	}
-	if hasSpace(r.URL) {
-		return &yamlx.FieldError{Field: "url", Msg: spaceMsg}
-	}
-	u, err := parseHTTPURL(r.URL)
-	switch {
-	case err != nil:
-		return err
-	case u.User != nil:
+	if u, err := parseHTTPURL(r.URL); err == nil && u.User != nil {
 		return &yamlx.FieldError{Field: "url", Msg: fmt.Sprintf("holds a user name or password, and every user of the host can read the source file; put them in /etc/apt/auth.conf.d/%s.conf with mode 0600", r.Name)}
-	}
-	if r.Suite == "" {
-		return &yamlx.FieldError{Field: "suite", Msg: "is empty"}
-	}
-	if hasSpace(r.Suite) {
-		return &yamlx.FieldError{Field: "suite", Msg: spaceMsg}
-	}
-	for i, c := range r.Components {
-		switch {
-		case c == "":
-			return &yamlx.FieldError{Field: "components", Msg: fmt.Sprintf("element %d is empty", i+1)}
-		case hasSpace(c):
-			return &yamlx.FieldError{Field: "components", Msg: fmt.Sprintf("element %d %s", i+1, spaceMsg)}
-		}
 	}
 	flat := strings.HasSuffix(r.Suite, "/")
 	switch {
@@ -127,7 +103,41 @@ func (r *Repo) Validate() error {
 	if r.KeyPos.Line > 0 && r.KeyContent != nil {
 		return &yamlx.FieldError{At: "key_content", Msg: "a repo step has at most one of key and key_content"}
 	}
-	return CheckRelative("key", r.Key)
+	return nil
+}
+
+func (r *Repo) CheckField(key string) error {
+	switch key {
+	case "name":
+		if !sourceNameRe.MatchString(r.Name) {
+			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf(`%q is not a source name; a name has letters, digits, _, -, and ., and does not start with .`, r.Name)}
+		}
+	case "url":
+		if hasSpace(r.URL) {
+			return &yamlx.FieldError{Field: "url", Msg: spaceMsg}
+		}
+		_, err := parseHTTPURL(r.URL)
+		return err
+	case "suite":
+		if r.Suite == "" {
+			return &yamlx.FieldError{Field: "suite", Msg: "is empty"}
+		}
+		if hasSpace(r.Suite) {
+			return &yamlx.FieldError{Field: "suite", Msg: spaceMsg}
+		}
+	case "components":
+		for i, c := range r.Components {
+			switch {
+			case c == "":
+				return &yamlx.FieldError{Field: "components", Msg: fmt.Sprintf("element %d is empty", i+1)}
+			case hasSpace(c):
+				return &yamlx.FieldError{Field: "components", Msg: fmt.Sprintf("element %d %s", i+1, spaceMsg)}
+			}
+		}
+	case "key":
+		return CheckRelative("key", r.Key)
+	}
+	return nil
 }
 
 // SetKey sets the key data to data, the content of the key file name. data

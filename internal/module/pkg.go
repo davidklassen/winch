@@ -49,6 +49,19 @@ func (p *Pkg) Main() string { return strings.Join(p.Name, ", ") }
 var pkgNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+$`)
 
 func (p *Pkg) Validate() error {
+	switch {
+	case p.Purge && !p.Absent:
+		return &yamlx.FieldError{Field: "purge", Msg: "needs absent: true"}
+	case p.Absent && p.Recommends != nil:
+		return &yamlx.FieldError{Field: "recommends", Msg: "not with absent: true"}
+	}
+	return nil
+}
+
+func (p *Pkg) CheckField(key string) error {
+	if key != "name" {
+		return nil
+	}
 	if len(p.Name) == 0 {
 		return &yamlx.FieldError{Field: "name", Msg: "needs at least one package"}
 	}
@@ -61,12 +74,6 @@ func (p *Pkg) Validate() error {
 		case slices.Contains(p.Name[:i], n):
 			return &yamlx.FieldError{Field: "name", Msg: fmt.Sprintf("%s is in the list twice", n)}
 		}
-	}
-	switch {
-	case p.Purge && !p.Absent:
-		return &yamlx.FieldError{Field: "purge", Msg: "needs absent: true"}
-	case p.Absent && p.Recommends != nil:
-		return &yamlx.FieldError{Field: "recommends", Msg: "not with absent: true"}
 	}
 	return nil
 }

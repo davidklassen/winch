@@ -34,24 +34,35 @@ func (l *Link) ValidateCommand() string {
 }
 
 func (l *Link) Validate() error {
-	if err := checkPath(l.Path); err != nil {
-		return err
-	}
 	switch {
 	case l.Absent:
 		return absentTakesNone(arg{"target", l.Target != nil}, arg{"validate", l.Validation != nil}, arg{"replace", l.Replace})
 	case l.Target == nil:
 		return &yamlx.FieldError{Msg: "a link step needs target, or absent: true"}
-	case *l.Target == "":
-		return &yamlx.FieldError{Field: "target", Msg: "is empty"}
-	case strings.ContainsFunc(*l.Target, unicode.IsControl):
-		return &yamlx.FieldError{Field: "target", Msg: "has a control character"}
-	case dotDotAfterPart(*l.Target):
-		return &yamlx.FieldError{Field: "target", Msg: `".." after another part is not allowed; write the target without it`}
-	case path.Clean(*l.Target) != *l.Target:
-		return &yamlx.FieldError{Field: "target", Msg: fmt.Sprintf("must be a clean path, such as %q", path.Clean(*l.Target))}
 	}
-	return checkCommand("validate", l.Validation)
+	return nil
+}
+
+func (l *Link) CheckField(key string) error {
+	switch key {
+	case "path":
+		return checkPath(l.Path)
+	case "target":
+		switch {
+		case l.Target == nil:
+		case *l.Target == "":
+			return &yamlx.FieldError{Field: "target", Msg: "is empty"}
+		case strings.ContainsFunc(*l.Target, unicode.IsControl):
+			return &yamlx.FieldError{Field: "target", Msg: "has a control character"}
+		case dotDotAfterPart(*l.Target):
+			return &yamlx.FieldError{Field: "target", Msg: `".." after another part is not allowed; write the target without it`}
+		case path.Clean(*l.Target) != *l.Target:
+			return &yamlx.FieldError{Field: "target", Msg: fmt.Sprintf("must be a clean path, such as %q", path.Clean(*l.Target))}
+		}
+	case "validate":
+		return checkCommand("validate", l.Validation)
+	}
+	return nil
 }
 
 // dotDotAfterPart reports a ".." that follows a name. The host resolves

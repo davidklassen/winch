@@ -64,9 +64,6 @@ func (*User) Noun() string { return "a user step" }
 // and the passwords "!" and "*" that lock the account.
 var hashRe = regexp.MustCompile(`^(!?\$[0-9a-z]+\$[./0-9A-Za-z$=,+-]+|!|\*)$`)
 
-// checkHash runs last in Validate. A password from a secret is a placeholder
-// in the evaluations that mask an error, and the placeholder fails checkHash.
-// An earlier error then shows in the same way in all evaluations.
 func checkHash(pw string) error {
 	if pw != "" && !hashRe.MatchString(pw) {
 		return &yamlx.FieldError{At: "password", Msg: `password is not a crypt hash, such as one from mkpasswd -m yescrypt or openssl passwd -6, or "!" or "*"`}
@@ -80,78 +77,85 @@ const noHome = "/nonexistent"
 func (u *User) Main() string { return u.Name }
 
 func (u *User) Validate() error {
-	if err := checkAccountName("name", "user", u.Name); err != nil {
-		return err
-	}
 	if u.Absent {
 		return absentTakesNone(arg{"uid", u.UID != ""}, arg{"group", u.Group != ""}, arg{"system", u.System}, arg{"home", u.Home != ""}, arg{"shell", u.Shell != ""}, arg{"groups", u.Groups != nil}, arg{"add_groups", u.AddGroups != nil}, arg{"password", u.Password != ""}, arg{"comment", u.Comment != ""}, arg{"authorized_keys", u.AuthorizedKeys != nil})
 	}
-	if err := checkID("uid", u.UID); err != nil {
-		return err
+	if u.AddGroups != nil && u.Groups != nil {
+		return &yamlx.FieldError{At: "add_groups", Msg: "a user step has at most one of groups and add_groups"}
 	}
-	if err := checkOwner("group", u.Group); err != nil {
-		return err
+	if u.AuthorizedKeys != nil && u.System && u.Home == "" {
+		return &yamlx.FieldError{Field: "authorized_keys", Msg: "a system user without home has no home for its keys; set home"}
 	}
-	if u.Home != "" {
-		if err := checkAbs("home", u.Home); err != nil {
-			return err
+	return nil
+}
+
+func (u *User) CheckField(key string) error {
+	switch key {
+	case "name":
+		return checkAccountName("name", "user", u.Name)
+	case "uid":
+		return checkID("uid", u.UID)
+	case "group":
+		return checkOwner("group", u.Group)
+	case "home":
+		if u.Home != "" {
+			return checkAbs("home", u.Home)
 		}
-	}
-	if u.Shell != "" {
-		if err := checkAbs("shell", u.Shell); err != nil {
-			return err
+	case "shell":
+		if u.Shell != "" {
+			return checkAbs("shell", u.Shell)
 		}
-	}
-	field, groups := "groups", u.Groups
-	if u.AddGroups != nil {
-		if u.Groups != nil {
-			return &yamlx.FieldError{At: "add_groups", Msg: "a user step has at most one of groups and add_groups"}
+	case "groups", "add_groups":
+		groups := u.Groups
+		if key == "add_groups" {
+			groups = u.AddGroups
 		}
-		field, groups = "add_groups", u.AddGroups
-	}
-	if groups != nil {
+		if groups == nil {
+			return nil
+		}
 		for i, g := range *groups {
-			if err := checkAccountName(field, "group", g); err != nil {
+			if err := checkAccountName(key, "group", g); err != nil {
 				return err
 			}
 			if slices.Contains((*groups)[:i], g) {
-				return &yamlx.FieldError{Field: field, Msg: fmt.Sprintf("%s is in the list twice", g)}
+				return &yamlx.FieldError{Field: key, Msg: fmt.Sprintf("%s is in the list twice", g)}
 			}
 		}
-	}
-	switch {
-	case strings.ContainsFunc(u.Comment, unicode.IsControl):
-		return &yamlx.FieldError{Field: "comment", Msg: "has a control character"}
-	case strings.Contains(u.Comment, ":"):
-		return &yamlx.FieldError{Field: "comment", Msg: `must not have ":"`}
-	}
-	if u.AuthorizedKeys == nil {
+	case "comment":
+		switch {
+		case strings.ContainsFunc(u.Comment, unicode.IsControl):
+			return &yamlx.FieldError{Field: "comment", Msg: "has a control character"}
+		case strings.Contains(u.Comment, ":"):
+			return &yamlx.FieldError{Field: "comment", Msg: `must not have ":"`}
+		}
+	case "authorized_keys":
+		if u.AuthorizedKeys == nil {
+			return nil
+		}
+		seen := map[string]int{}
+		for i, k := range *u.AuthorizedKeys {
+			pk, err := parseKey(k)
+			switch {
+			case k == "":
+				return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is empty", i+1)}
+			case strings.ContainsAny(k, "\r\n"):
+				return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d has more than one line", i+1)}
+			case err != nil:
+				return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is not a key: %s", i+1, err)}
+			case pk.typ == "ssh-dss":
+				return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is an ssh-dss key; sshd rejects ssh-dss keys", i+1)}
+			case pk.typ == "ssh-rsa" && pk.rsaBits < 1024:
+				return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is a %d-bit RSA key; sshd rejects RSA keys under 1024 bits", i+1, pk.rsaBits)}
+			}
+			if j, ok := seen[string(pk.blob)]; ok {
+				return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d has the key of element %d", i+1, j+1)}
+			}
+			seen[string(pk.blob)] = i
+		}
+	case "password":
 		return checkHash(u.Password)
 	}
-	if u.System && u.Home == "" {
-		return &yamlx.FieldError{Field: "authorized_keys", Msg: "a system user without home has no home for its keys; set home"}
-	}
-	seen := map[string]int{}
-	for i, k := range *u.AuthorizedKeys {
-		key, err := parseKey(k)
-		switch {
-		case k == "":
-			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is empty", i+1)}
-		case strings.ContainsAny(k, "\r\n"):
-			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d has more than one line", i+1)}
-		case err != nil:
-			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is not a key: %s", i+1, err)}
-		case key.typ == "ssh-dss":
-			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is an ssh-dss key; sshd rejects ssh-dss keys", i+1)}
-		case key.typ == "ssh-rsa" && key.rsaBits < 1024:
-			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d is a %d-bit RSA key; sshd rejects RSA keys under 1024 bits", i+1, key.rsaBits)}
-		}
-		if j, ok := seen[string(key.blob)]; ok {
-			return &yamlx.FieldError{Field: "authorized_keys", Msg: fmt.Sprintf("element %d has the key of element %d", i+1, j+1)}
-		}
-		seen[string(key.blob)] = i
-	}
-	return checkHash(u.Password)
+	return nil
 }
 
 func (u *User) Check(ctx context.Context, st *State, _ Say) (Result, error) {
