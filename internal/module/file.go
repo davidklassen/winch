@@ -610,7 +610,7 @@ func (f *File) Apply(ctx context.Context, _ Say) error {
 	}
 	defer sub.Close()
 	err = writeFile(sub, name, content, uid, gid, mode, func(tmp string) error {
-		return put(ctx, dir, missing, sub, tmp, name, f.Validation)
+		return put(ctx, dir, missing, sub, tmp, name, "file", f.Validation)
 	})
 	return pathError("write", f.Path, err)
 }

@@ -156,5 +156,5 @@ func (l *Link) Apply(ctx context.Context, _ Say) error {
 		return pathError("create link", l.Path, err)
 	}
 	defer sub.Remove(tmp)
-	return pathError("create link", l.Path, put(ctx, dir, missing, sub, tmp, name, l.Validation))
+	return pathError("create link", l.Path, put(ctx, dir, missing, sub, tmp, name, "symbolic link", l.Validation))
 }

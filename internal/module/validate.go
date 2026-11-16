@@ -8,14 +8,16 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"strings"
 )
 
-// put renames tmp to name in dir. A directory at name, which a rename cannot
-// replace, moves aside first and is removed after. With a validate command,
-// it keeps the old entry at name as a hard link, runs the command, and puts
-// the old state back when the command fails: the old entry, or no entry and
-// none of the missing parents that it created below top.
-func put(ctx context.Context, top *os.Root, missing []string, dir *os.Root, tmp, name string, validate *string) error {
+// put renames tmp to name in dir. What is the kind of tmp for messages, such
+// as "file". A directory at name, which a rename cannot replace, moves aside
+// first and is removed after. With a validate command, it keeps the old entry
+// at name as a hard link, runs the command, and puts the old state back when
+// the command fails: the old entry, or no entry and none of the missing
+// parents that it created below top.
+func put(ctx context.Context, top *os.Root, missing []string, dir *os.Root, tmp, name, what string, validate *string) error {
 	fi, err := dir.Lstat(name)
 	exists := err == nil
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -66,12 +68,12 @@ func put(ctx context.Context, top *os.Root, missing []string, dir *os.Root, tmp,
 		if err := dir.Rename(backup, name); err != nil {
 			return errors.Join(failed, fmt.Errorf("put back the old %s, kept as %s: %w", name, backup, err))
 		}
-		return fmt.Errorf("validate failed, and the old file is back: %w", verr)
+		return fmt.Errorf("validate failed, and the old %s is back: %w", strings.TrimPrefix(kind(fi), "a "), verr)
 	}
 	if err := dir.Remove(name); err != nil {
 		return errors.Join(failed, err)
 	}
-	errs := []error{fmt.Errorf("validate failed, and the new file is removed: %w", verr)}
+	errs := []error{fmt.Errorf("validate failed, and the new %s is removed: %w", what, verr)}
 	// The missing parents, relative to top, from the deepest.
 	rel := ""
 	var parents []string
