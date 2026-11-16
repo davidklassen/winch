@@ -146,7 +146,7 @@ func (r *rollbacks) store(name string) string {
 }
 
 // notified holds a line for each step of the run that notified handlers with
-// confirm_access: per handler, the paths that the step saved in its store.
+// confirm_access: per handler, the paths that the step changes.
 // The reconnect after a reboot keeps it; the next run's first session removes
 // it with the stores.
 func (r *rollbacks) notified() records {
@@ -332,7 +332,9 @@ func (r *rollbacks) touches(m module.Module) []module.Touch {
 // save keeps the old state of the paths that the checked step m changes in
 // the store in dir. It returns the saved state of each, and the whole store.
 // A path that the store has keeps its first state: the state before the first
-// change.
+// change. A path below a missing directory gets a missing entry of its own,
+// so that the end and the rollback of a later step remove the path without
+// the directory.
 func (r *rollbacks) save(dir string, m module.Module) (saved, all []module.Saved, err error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, nil, err
@@ -346,18 +348,29 @@ func (r *rollbacks) save(dir string, m module.Module) (saved, all []module.Saved
 		// A tree is saved again after the attributes of its directory: the
 		// restore of the tree comes first, then that of the attributes.
 		i := slices.IndexFunc(all, func(s module.Saved) bool {
-			return s.Path == t.Path && (s.Dir == nil || !t.Tree) || strings.HasPrefix(t.Path, s.Path+"/") && s.Missing
+			return s.Path == t.Path && (s.Dir == nil || !t.Tree)
 		})
 		if i >= 0 {
 			saved = append(saved, all[i])
 			continue
 		}
-		s, err := module.Save(t, filepath.Join(dir, rand.Text()+".tar"))
-		if err != nil {
-			return nil, nil, err
+		below := slices.ContainsFunc(all, func(s module.Saved) bool {
+			return strings.HasPrefix(t.Path, s.Path+"/") && s.Missing
+		})
+		if !below {
+			s, err := module.Save(t, filepath.Join(dir, rand.Text()+".tar"))
+			if err != nil {
+				return nil, nil, err
+			}
+			all = append(all, s)
+			saved = append(saved, s)
+			below = s.Path != t.Path
 		}
-		all = append(all, s)
-		saved = append(saved, s)
+		if below {
+			own := module.Saved{Path: t.Path, Missing: true}
+			all = append(all, own)
+			saved = append(saved, own)
+		}
 	}
 	if len(all) == have {
 		return saved, all, nil

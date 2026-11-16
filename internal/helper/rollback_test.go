@@ -746,6 +746,34 @@ func TestStoreSavesATreeAfterAttributes(t *testing.T) {
 	}
 }
 
+// spec: Running a pipeline/Lockout protection (a path that did not exist is
+// removed on restore; the files of other steps stay)
+func TestStoreSavesAPathBelowAMissingDirectory(t *testing.T) {
+	rb := &rollbacks{dir: t.TempDir(), project: "acme"}
+	store := rb.store("ssh")
+	d := filepath.Join(t.TempDir(), "new")
+	x, y := filepath.Join(d, "x"), filepath.Join(d, "y")
+	saved, all, err := rb.save(store, &module.File{Path: y})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []module.Saved{{Path: d, Missing: true}, {Path: y, Missing: true}}
+	if !slices.Equal(saved, want) || !slices.Equal(all, want) {
+		t.Errorf("first save: saved %+v, all %+v; want both %+v", saved, all, want)
+	}
+	// The rollback of a later step leaves the directory of an earlier step.
+	saved, all, err = rb.save(store, &module.File{Path: x})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []module.Saved{{Path: x, Missing: true}}; !slices.Equal(saved, want) {
+		t.Errorf("second save: saved %+v, want %+v", saved, want)
+	}
+	if want := append(want, module.Saved{Path: x, Missing: true}); !slices.Equal(all, want) {
+		t.Errorf("second save: all %+v, want %+v", all, want)
+	}
+}
+
 // spec: Running a pipeline/Lockout protection (the timer job: the store of
 // the recipe and the undo step for confirm_access; the step's own paths for
 // another guarded step)
@@ -1229,6 +1257,44 @@ func TestEndPutsBackOnlyTheFilesOfTheNotifyingSteps(t *testing.T) {
 		if a, b := content(t, l.a), content(t, l.b); a != "old\n" || b != "new\n" {
 			t.Errorf("%s: a = %q, b = %q; want a old and b new", tt.name, a, b)
 		}
+	}
+}
+
+// spec: Running a pipeline/Lockout protection (the files of the recipe's
+// other steps stay, also in a directory that the run created)
+func TestEndKeepsTheOtherFilesInADirectoryThatTheRunCreated(t *testing.T) {
+	for name, notifyFirst := range map[string]bool{"other first": false, "notifying first": true} {
+		t.Run(name, func(t *testing.T) {
+			l := startLockout(t)
+			dir := filepath.Join(filepath.Dir(l.a), "new")
+			x, y := filepath.Join(dir, "x"), filepath.Join(dir, "y")
+			uid, gid := yamlx.NameOrID(strconv.Itoa(os.Getuid())), yamlx.NameOrID(strconv.Itoa(os.Getgid()))
+			dirArgs, _ := json.Marshal(module.Dir{Path: dir, Owner: uid, Group: gid, Mode: "0700"})
+			g := protocol.Guard{Store: "ssh", Save: true}
+			mkdir := protocol.Step{Module: "dir", Args: dirArgs, Guard: g}
+			other := protocol.Step{Module: "file", Args: fileArgs(x, "new\n"), Guard: g}
+			g.Handlers = []string{"ssh.reload"}
+			notifying := protocol.Step{Module: "file", Args: fileArgs(y, "new\n"), Guard: g, Notify: g.Handlers}
+			steps := []protocol.Step{mkdir, other, notifying}
+			if notifyFirst {
+				steps = []protocol.Step{mkdir, notifying, other}
+			}
+			for _, s := range steps {
+				if r := l.c.call(t, "apply", s); r.Error != "" {
+					t.Fatal(r.Error)
+				}
+			}
+			want := protocol.Ended{PutBack: []protocol.PutBack{{Handler: "ssh.reload", Paths: []string{y}}}}
+			if got := l.endResult(t); !reflect.DeepEqual(got, want) {
+				t.Errorf("end = %+v, want %+v", got, want)
+			}
+			if _, err := os.Lstat(y); !os.IsNotExist(err) {
+				t.Errorf("y stays: %v", err)
+			}
+			if _, err := os.Lstat(x); err != nil {
+				t.Errorf("x is gone: %v", err)
+			}
+		})
 	}
 }
 
