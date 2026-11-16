@@ -269,7 +269,7 @@ type nameAt struct {
 // inventory is the one named inventory, or the default from winch.yaml. set
 // holds the --set flags.
 func Load(ctx context.Context, dir, inventory, pipeline string, set []string, keys Keys) (*Project, error) {
-	return load(ctx, dir, inventory, set, keys, true, func(l *loader) (*Pipeline, error) { return l.loadPipeline(pipeline) })
+	return load(ctx, dir, inventory, set, keys, true, true, func(l *loader) (*Pipeline, error) { return l.loadPipeline(pipeline) })
 }
 
 // Command is a winch run or winch exec on the command line: a host pattern,
@@ -283,15 +283,16 @@ type Command struct {
 
 // LoadCommand reads the project in dir with one inventory and a pipeline run.
 // Its one stage run holds the step of c on the hosts of its pattern; without a
-// module, the stage has no steps.
+// module, the stage has no steps, and a variable without a value is no error.
 func LoadCommand(ctx context.Context, dir, inventory string, keys Keys, c Command) (*Project, error) {
-	return load(ctx, dir, inventory, nil, keys, false, func(l *loader) (*Pipeline, error) { return l.commandPipeline(c) })
+	return load(ctx, dir, inventory, nil, keys, false, c.Module != "", func(l *loader) (*Pipeline, error) { return l.commandPipeline(c) })
 }
 
 // load loads the project with the pipeline that pipeline returns, and every
 // other pipeline. With own, that pipeline is one of the project and not one
-// of the others.
-func load(ctx context.Context, dir, inventory string, set []string, keys Keys, own bool, pipeline func(*loader) (*Pipeline, error)) (*Project, error) {
+// of the others. With values, a variable that something reads and that has no
+// value is an error.
+func load(ctx context.Context, dir, inventory string, set []string, keys Keys, own, values bool, pipeline func(*loader) (*Pipeline, error)) (*Project, error) {
 	cfg, cfgErr := loadConfig(dir)
 	if cfg == nil {
 		return nil, cfgErr
@@ -321,7 +322,7 @@ func load(ctx context.Context, dir, inventory string, set []string, keys Keys, o
 	}
 	// A pipeline that fails to load logs no reads; winch validate reports it.
 	if othersErr == nil {
-		if err := l.checkNames(sets); err != nil {
+		if err := l.checkNames(sets, values); err != nil {
 			return nil, err
 		}
 	}
@@ -450,7 +451,7 @@ func Validate(dir, inventory string, set []string) ([]*yamlx.Error, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-	if err := l.checkNames(sets); err != nil {
+	if err := l.checkNames(sets, true); err != nil {
 		return nil, err
 	}
 	warnings, _, err := scanProject(dir, cfg.file, func([]byte) {})

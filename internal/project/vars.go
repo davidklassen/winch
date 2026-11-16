@@ -149,28 +149,30 @@ func (l *loader) parseSets(set []string) ([]setValue, error) {
 	return out, errors.Join(errs...)
 }
 
-// checkNames checks that each read names a variable with a default or a
-// value, in some inventory, a recipe step, or sets. It checks that each value
-// of the loaded inventories, of a recipe step, and of sets is for a variable
-// with a default or a read.
-func (l *loader) checkNames(sets []setValue) error {
-	given := l.inventoryNames()
-	for name := range l.vars {
-		given[name] = true
-	}
-	for _, v := range l.given {
-		given[v.name] = true
-	}
-	for _, s := range sets {
-		given[s.name] = true
-	}
-	read := l.readNames()
+// checkNames checks, with values, that each read names a variable with a
+// default or a value, in some inventory, a recipe step, or sets. It checks
+// that each value of the loaded inventories, of a recipe step, and of sets is
+// for a variable with a default or a read.
+func (l *loader) checkNames(sets []setValue, values bool) error {
 	var errs []error
-	for _, r := range l.reads {
-		if !given[r.name] {
-			errs = append(errs, yamlx.Errorf(r.pos, "vars.%s has no value: set it in the inventory, or give it a default%s%s", r.name, yamlx.Suggest(r.name, slices.Sorted(maps.Keys(given))), r.snippet))
+	if values {
+		given := l.inventoryNames()
+		for name := range l.vars {
+			given[name] = true
+		}
+		for _, v := range l.given {
+			given[v.name] = true
+		}
+		for _, s := range sets {
+			given[s.name] = true
+		}
+		for _, r := range l.reads {
+			if !given[r.name] {
+				errs = append(errs, yamlx.Errorf(r.pos, "vars.%s has no value: set it in the inventory, or give it a default%s%s", r.name, yamlx.Suggest(r.name, slices.Sorted(maps.Keys(given))), r.snippet))
+			}
 		}
 	}
+	read := l.readNames()
 	for _, v := range l.given {
 		if msg := unreadValue(v.name, read); msg != "" {
 			errs = append(errs, yamlx.Errorf(v.pos, "%s", msg))

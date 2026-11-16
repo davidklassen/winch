@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -332,6 +334,37 @@ func TestExecJSON(t *testing.T) {
 	lines = jsonLines(t, r.out)
 	if r.code != exitUnreachable || len(lines) != 4 || lines[2]["type"] != "host" || lines[2]["phase"] != "exec" || lines[2]["status"] != "unreachable" || r.err != "" {
 		t.Errorf("unreachable: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+}
+
+// spec: CLI (winch exec runs no step)
+func TestExecVarWithoutValue(t *testing.T) {
+	dir := writeProject(t, strings.Replace(motd, `"hello\n"`, "!expr vars.release", 1))
+	h := fakehost.New()
+	h.SetExec("web1", module.ExecResult{Output: "up\n"})
+	r := winch(t, dir, h, false, "", "exec", "web1", "--", "uptime")
+	if r.code != exitOK || r.out != "web1\n  up\n\n" || r.err != "" {
+		t.Errorf("exec: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
+	}
+	for _, args := range [][]string{{"plan", "site"}, {"run", "web1", "pkg", "name=htop", "--yes"}} {
+		r = winch(t, dir, fakehost.New(), false, "", args...)
+		if r.code != exitInvalid || !strings.Contains(r.err, `pipelines/site.yaml:7:20: vars.release has no value: set it in the inventory, or give it a default`) {
+			t.Errorf("%s: exit %d, stderr %q", args[0], r.code, r.err)
+		}
+	}
+
+	identity, id := newIdentity(t)
+	dir = secretProject(t, id)
+	setPassword(t, dir, encrypt(t, dir, "hunter2"))
+	pipeline := strings.Replace(secretPipeline, "| chpasswd", "{{ vars.release }} | chpasswd", 1)
+	if err := os.WriteFile(filepath.Join(dir, "pipelines/site.yaml"), []byte(pipeline), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h = fakehost.New()
+	h.SetExec("web1", module.ExecResult{Output: "pw=hunter2\n"})
+	r = winchWith(t, dir, "", identity, "", h, false, "", "exec", "web1", "--", "cat", "/etc/pw")
+	if r.code != exitOK || r.out != "web1\n  pw=(secret)\n\n" {
+		t.Errorf("exec with a secret: exit %d, stdout %q, stderr %q", r.code, r.out, r.err)
 	}
 }
 
